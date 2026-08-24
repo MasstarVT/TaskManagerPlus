@@ -124,10 +124,17 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
             return;
         }
 
-        Replace(Temperatures, readings.Where(r => r.Type == SensorType.Temperature));
-        Replace(Fans, readings.Where(r => r.Type == SensorType.Fan));
-        Replace(Voltages, readings.Where(r => r.Type == SensorType.Voltage));
-        Replace(Wattages, readings.Where(r => r.Type == SensorType.Power));
+        // LibreHardwareMonitorLib reports an exact 0 (not null) for a fair number of sensors it
+        // enumerates but doesn't actually have working support for on a given board/CPU/drive
+        // (varies a lot by hardware - e.g. a specific NVMe "Composite Temperature" duplicate, or
+        // per-core power on some AMD SKUs). A real reading is never exactly 0 for these sensor
+        // types on a running PC, so treat exact 0 the same as "no data" and drop it, rather than
+        // showing a wall of misleading "0 °C"/"0 W"/"0 V" tiles. Fans are the one exception - 0
+        // RPM is a normal, real reading for a semi-passive fan that's stopped at idle.
+        Replace(Temperatures, readings.Where(r => r.Type == SensorType.Temperature && HasNonZeroReading(r)));
+        Replace(Fans, readings.Where(r => r.Type == SensorType.Fan && r.Value.HasValue));
+        Replace(Voltages, readings.Where(r => r.Type == SensorType.Voltage && HasNonZeroReading(r)));
+        Replace(Wattages, readings.Where(r => r.Type == SensorType.Power && HasNonZeroReading(r)));
 
         // Sensor names aren't standardized across CPU vendors (Intel: "CPU Package"; AMD:
         // "Core (Tctl/Tdie)"; varies further by model), so try a few known hints in order
@@ -149,11 +156,13 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
             target.Add(reading);
     }
 
+    private static bool HasNonZeroReading(SensorReading r) => r.Value is float v && v != 0f;
+
     private static double? FindByNameContains(IEnumerable<SensorReading> sensors, params string[] hints)
     {
         foreach (var hint in hints)
         {
-            var match = sensors.FirstOrDefault(s => s.Value.HasValue && s.SensorName.Contains(hint, StringComparison.OrdinalIgnoreCase));
+            var match = sensors.FirstOrDefault(s => HasNonZeroReading(s) && s.SensorName.Contains(hint, StringComparison.OrdinalIgnoreCase));
             if (match is not null) return match.Value;
         }
         return null;

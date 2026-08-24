@@ -63,7 +63,7 @@
                 </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
                     <DataTemplate>
-                        <views:VfdMeter Title="{Binding SensorName}" Glow="False" Width="140" Margin="0,0,8,8"
+                        <views:VfdMeter Title="{Binding SensorName}" Glow="False" Width="172" Margin="0,0,8,8"
                                         Percent="{Binding Value, TargetNullValue=0}"
                                         ValueText="{Binding Value, StringFormat={}{0:0.#}, TargetNullValue=–}" Unit="°C"
                                         SubText="{Binding HardwareName}"
@@ -80,7 +80,7 @@
                 </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
                     <DataTemplate>
-                        <views:VfdMeter Title="{Binding SensorName}" Glow="False" Width="140" Margin="0,0,8,8"
+                        <views:VfdMeter Title="{Binding SensorName}" Glow="False" Width="172" Margin="0,0,8,8"
                                         ValueText="{Binding Value, StringFormat={}{0:0}, TargetNullValue=–}" Unit="RPM"
                                         SubText="{Binding HardwareName}" AccentBrush="{DynamicResource AccentBrush}" />
                     </DataTemplate>
@@ -95,7 +95,7 @@
                 </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
                     <DataTemplate>
-                        <views:VfdMeter Title="{Binding SensorName}" Glow="False" Width="140" Margin="0,0,8,8"
+                        <views:VfdMeter Title="{Binding SensorName}" Glow="False" Width="172" Margin="0,0,8,8"
                                         ValueText="{Binding Value, StringFormat={}{0:0.###}, TargetNullValue=–}" Unit="V"
                                         SubText="{Binding HardwareName}" AccentBrush="{DynamicResource AccentBrush}" />
                     </DataTemplate>
@@ -110,7 +110,7 @@
                 </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
                     <DataTemplate>
-                        <views:VfdMeter Title="{Binding SensorName}" Glow="False" Width="140" Margin="0,0,8,8"
+                        <views:VfdMeter Title="{Binding SensorName}" Glow="False" Width="172" Margin="0,0,8,8"
                                         ValueText="{Binding Value, StringFormat={}{0:0.#}, TargetNullValue=–}" Unit="W"
                                         SubText="{Binding HardwareName}" AccentBrush="{DynamicResource DangerBrush}" />
                     </DataTemplate>

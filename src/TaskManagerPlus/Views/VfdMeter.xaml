@@ -14,14 +14,16 @@
         <StackPanel>
             <Grid Margin="0,0,0,8">
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
-                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
-                    <Border Width="8" Height="8" CornerRadius="4" Margin="0,0,7,0"
-                            Background="{Binding AccentBrush, ElementName=Root}" />
-                    <TextBlock Text="{Binding Title, ElementName=Root}" Style="{StaticResource CardTitle}" Margin="0" />
-                </StackPanel>
+                <Border Grid.Column="0" Width="8" Height="8" CornerRadius="4" Margin="0,0,7,0" VerticalAlignment="Center"
+                        Background="{Binding AccentBrush, ElementName=Root}" />
+                <!-- A Grid column (not a horizontal StackPanel, which always offers its children
+                     infinite width) actually constrains this TextBlock so TextTrimming can kick
+                     in instead of the text just overflowing the tile with no ellipsis. -->
+                <TextBlock Grid.Column="1" Text="{Binding Title, ElementName=Root}" Style="{StaticResource CardTitle}" Margin="0"
+                           TextTrimming="CharacterEllipsis" ToolTip="{Binding Title, ElementName=Root}" />
             </Grid>
 
             <!-- Inset bezel around the readout -->
@@ -49,7 +51,8 @@
                 </Border>
             </Border>
 
-            <TextBlock Text="{Binding SubText, ElementName=Root}" Style="{StaticResource SubStat}" Margin="0,8,0,0" />
+            <TextBlock Text="{Binding SubText, ElementName=Root}" Style="{StaticResource SubStat}" Margin="0,8,0,0"
+                       TextTrimming="CharacterEllipsis" ToolTip="{Binding SubText, ElementName=Root}" />
         </StackPanel>
     </Border>
 </UserControl>
