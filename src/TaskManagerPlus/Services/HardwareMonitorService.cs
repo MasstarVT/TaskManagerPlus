@@ -23,6 +23,9 @@ public sealed class HardwareMonitorService : IDisposable
     private readonly PerformanceCounter _handleCountCounter;
     private readonly PerformanceCounter _threadCountCounter;
     private readonly PerformanceCounter _processCountCounter;
+    private readonly PerformanceCounter _committedBytesCounter;
+    private readonly PerformanceCounter _commitLimitCounter;
+    private readonly PerformanceCounter _cacheBytesCounter;
 
     private readonly string _cpuName;
     private readonly double _cpuBaseClockGhz;
@@ -72,6 +75,14 @@ public sealed class HardwareMonitorService : IDisposable
         _handleCountCounter = new PerformanceCounter("Process", "Handle Count", "_Total", readOnly: true);
         _threadCountCounter = new PerformanceCounter("Process", "Thread Count", "_Total", readOnly: true);
         _processCountCounter = new PerformanceCounter("System", "Processes", readOnly: true);
+
+        // Instantaneous gauges (not rates), so no priming needed below like the disk/CPU
+        // counters get. Used for the Memory tab's Committed/Cached breakdown - see CLAUDE.md's
+        // Memory deep-dive notes for why these are the Windows-native categories used instead of
+        // macOS-style "wired"/"compressed" labels.
+        _committedBytesCounter = new PerformanceCounter("Memory", "Committed Bytes", readOnly: true);
+        _commitLimitCounter = new PerformanceCounter("Memory", "Commit Limit", readOnly: true);
+        _cacheBytesCounter = new PerformanceCounter("Memory", "Cache Bytes", readOnly: true);
 
         // Rate counters return 0 on their first read; prime them now so the
         // very first UI sample isn't a meaningless zero.
@@ -125,6 +136,10 @@ public sealed class HardwareMonitorService : IDisposable
 
             RamTotalBytes = totalBytes,
             RamUsedBytes = totalBytes - availBytes,
+            RamAvailableBytes = availBytes,
+            CommittedBytes = (long)_committedBytesCounter.NextValue(),
+            CommitLimitBytes = (long)_commitLimitCounter.NextValue(),
+            CacheBytes = (long)_cacheBytesCounter.NextValue(),
 
             DiskActivePercent = Math.Round(diskPercent, 1),
             DiskReadBytesPerSec = diskRead,
@@ -232,5 +247,8 @@ public sealed class HardwareMonitorService : IDisposable
         _handleCountCounter.Dispose();
         _threadCountCounter.Dispose();
         _processCountCounter.Dispose();
+        _committedBytesCounter.Dispose();
+        _commitLimitCounter.Dispose();
+        _cacheBytesCounter.Dispose();
     }
 }

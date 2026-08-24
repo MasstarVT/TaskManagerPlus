@@ -164,6 +164,26 @@ both series of a pair together. `CpuView.xaml`/`MemoryView.xaml`/
 `StorageView.xaml`/`NetworkView.xaml`/`SummaryView.xaml` just bind to the
 `ISeries[]` as before and don't need to know about the pair.
 
+### Memory breakdown (Available/Committed/Cached)
+
+Windows has no macOS-style "wired"/"compressed" memory concept, so the
+Memory tab's breakdown uses Windows' own real terms instead of inventing
+categories that don't exist: **Available** (physical free, from
+`GlobalMemoryStatusEx.ullAvailPhys` — already read for `RamUsedBytes`, just
+not previously surfaced), **Committed** (`Memory\Committed Bytes` /
+`Memory\Commit Limit` PerfCounters — the same overall memory-pressure
+figure Task Manager's own UI calls "Committed"), and **Cached**
+(`Memory\Cache Bytes`). All three are plain instantaneous PerfCounter
+gauges added to `HardwareMonitorService` alongside the existing ones, no
+new dependency. `PerformanceViewModel.CommittedSeries`/`MemoryBytesYAxes`
+follow the same glow+core `LineOf` chart pattern as Cpu/Ram/Disk, just on a
+byte scale instead of 0–100%; `Committed` shares RAM's theme color rather
+than getting its own `ThemeColors` field. `Common/Formatting.cs` (new)
+holds the two byte-formatting helpers that were previously near-duplicated
+in `PerformanceViewModel` (rate, `".../s"`) and `SystemSpecsViewModel`
+(capacity, `"Unknown"` fallback) — both now call the shared
+`FormatBytes`/`FormatByteRate`.
+
 ### CPU topology (NUMA node + P-core/E-core)
 
 `Services/CpuTopologyService.Query()` is a one-time (not per-tick) call to

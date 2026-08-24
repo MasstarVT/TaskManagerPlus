@@ -2,6 +2,7 @@
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="clr-namespace:TaskManagerPlus.ViewModels"
+             xmlns:views="clr-namespace:TaskManagerPlus.Views"
              xmlns:lvc="clr-namespace:LiveChartsCore.SkiaSharpView.WPF;assembly=LiveChartsCore.SkiaSharpView.WPF"
              d:DataContext="{d:DesignInstance Type=vm:MemoryViewModel}"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
@@ -43,7 +44,39 @@
                         </TextBlock>
                     </Grid>
                     <lvc:CartesianChart Series="{Binding Performance.RamSeries}" XAxes="{Binding Performance.HiddenXAxes}" YAxes="{Binding Performance.PercentYAxes}"
-                                         Height="200" TooltipPosition="Hidden" LegendPosition="Hidden" Background="Transparent" />
+                                         Height="180" TooltipPosition="Hidden" LegendPosition="Hidden" Background="Transparent" />
+                </StackPanel>
+            </Border>
+
+            <!-- Windows-native memory breakdown: Windows has no macOS-style "wired"/"compressed"
+                 concept, so these use Windows' own terms - Available (physical free), Committed
+                 (Task Manager's own overall memory-pressure figure), Cached (system file cache). -->
+            <TextBlock Text="Breakdown" Style="{StaticResource SubStat}" Margin="0,0,0,10" />
+            <UniformGrid Columns="3" Margin="0,0,0,16">
+                <views:VfdMeter Title="Available" Glow="False" Margin="0,0,8,0"
+                                Percent="{Binding Performance.RamAvailablePercent}"
+                                ValueText="{Binding Performance.RamAvailableGb, StringFormat={}{0:0.0}}" Unit="GB"
+                                SubText="Physical free" AccentBrush="{Binding Performance.RamColor, Converter={StaticResource ColorToBrushConverter}}" />
+                <views:VfdMeter Title="Committed" Glow="False" Margin="4,0,4,0"
+                                Percent="{Binding Performance.CommittedPercent}"
+                                ValueText="{Binding Performance.CommittedGb, StringFormat={}{0:0.0}}" Unit="GB"
+                                SubText="{Binding Performance.CommitLimitGb, StringFormat={}of {0:0.0} GB limit}"
+                                AccentBrush="{Binding Performance.RamColor, Converter={StaticResource ColorToBrushConverter}}" />
+                <views:VfdMeter Title="Cached" Glow="False" Margin="8,0,0,0"
+                                Percent="{Binding Performance.CachedPercent}"
+                                ValueText="{Binding Performance.CachedGb, StringFormat={}{0:0.0}}" Unit="GB"
+                                SubText="System file cache" AccentBrush="{Binding Performance.RamColor, Converter={StaticResource ColorToBrushConverter}}" />
+            </UniformGrid>
+
+            <!-- Committed trend -->
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel>
+                    <StackPanel Style="{StaticResource TitleRow}">
+                        <Border Style="{StaticResource ColorDot}" Background="{Binding Performance.RamColor, Converter={StaticResource ColorToBrushConverter}}" />
+                        <TextBlock Text="Committed memory" Style="{StaticResource CardTitle}" Margin="0" />
+                    </StackPanel>
+                    <lvc:CartesianChart Series="{Binding Performance.CommittedSeries}" XAxes="{Binding Performance.HiddenXAxes}" YAxes="{Binding Performance.MemoryBytesYAxes}"
+                                         Height="180" TooltipPosition="Hidden" LegendPosition="Hidden" Background="Transparent" />
                 </StackPanel>
             </Border>
 

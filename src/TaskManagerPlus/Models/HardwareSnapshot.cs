@@ -16,6 +16,19 @@ public sealed class HardwareSnapshot
     public long RamTotalBytes { get; init; }
     public double RamPercent => RamTotalBytes == 0 ? 0 : (double)RamUsedBytes / RamTotalBytes * 100.0;
 
+    /// <summary>Physical memory free (GlobalMemoryStatusEx.ullAvailPhys).</summary>
+    public long RamAvailableBytes { get; init; }
+
+    /// <summary>Total virtual memory currently committed (Memory\Committed Bytes) - Windows'
+    /// own overall memory-pressure figure, closest analogue to Task Manager's "Committed".</summary>
+    public long CommittedBytes { get; init; }
+
+    /// <summary>Current commit limit - physical RAM plus page file size (Memory\Commit Limit).</summary>
+    public long CommitLimitBytes { get; init; }
+
+    /// <summary>System file cache / standby memory (Memory\Cache Bytes).</summary>
+    public long CacheBytes { get; init; }
+
     public double DiskActivePercent { get; init; }
     public double DiskReadBytesPerSec { get; init; }
     public double DiskWriteBytesPerSec { get; init; }

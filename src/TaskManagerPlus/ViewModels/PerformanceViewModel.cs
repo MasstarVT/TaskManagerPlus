@@ -35,6 +35,7 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
     public ObservableCollection<double> DiskHistory { get; } = NewHistory();
     public ObservableCollection<double> NetworkReceiveHistory { get; } = NewHistory();
     public ObservableCollection<double> NetworkSendHistory { get; } = NewHistory();
+    public ObservableCollection<double> CommittedHistory { get; } = NewHistory();
 
     public ObservableCollection<CoreUsage> Cores { get; } = new();
 
@@ -51,14 +52,18 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
     private readonly LineSeries<double> _netRecvCore;
     private readonly LineSeries<double> _netSendGlow;
     private readonly LineSeries<double> _netSendCore;
+    private readonly LineSeries<double> _committedGlow;
+    private readonly LineSeries<double> _committedCore;
 
     public ISeries[] CpuSeries { get; }
     public ISeries[] RamSeries { get; }
     public ISeries[] DiskSeries { get; }
     public ISeries[] NetworkSeries { get; }
+    public ISeries[] CommittedSeries { get; }
     public Axis[] PercentYAxes { get; }
     public Axis[] HiddenXAxes { get; }
     public Axis[] NetworkYAxes { get; }
+    public Axis[] MemoryBytesYAxes { get; }
 
     // Shared paints so the Network chart's legend/tooltip (the only ones left visible) render
     // in the app's dark palette instead of LiveCharts' default light-theme black-on-white.
@@ -109,6 +114,30 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
 
     private double _ramPercent;
     public double RamPercent { get => _ramPercent; private set => SetProperty(ref _ramPercent, value); }
+
+    // Windows-native memory breakdown (Available/Committed/Cached) - see CLAUDE.md's Memory
+    // deep-dive notes for why these are the categories used instead of macOS-style
+    // "wired"/"compressed" labels, which don't have a real Windows equivalent.
+    private double _ramAvailableGb;
+    public double RamAvailableGb { get => _ramAvailableGb; private set => SetProperty(ref _ramAvailableGb, value); }
+
+    private double _ramAvailablePercent;
+    public double RamAvailablePercent { get => _ramAvailablePercent; private set => SetProperty(ref _ramAvailablePercent, value); }
+
+    private double _committedGb;
+    public double CommittedGb { get => _committedGb; private set => SetProperty(ref _committedGb, value); }
+
+    private double _commitLimitGb;
+    public double CommitLimitGb { get => _commitLimitGb; private set => SetProperty(ref _commitLimitGb, value); }
+
+    private double _committedPercent;
+    public double CommittedPercent { get => _committedPercent; private set => SetProperty(ref _committedPercent, value); }
+
+    private double _cachedGb;
+    public double CachedGb { get => _cachedGb; private set => SetProperty(ref _cachedGb, value); }
+
+    private double _cachedPercent;
+    public double CachedPercent { get => _cachedPercent; private set => SetProperty(ref _cachedPercent, value); }
 
     private double _diskPercent;
     public double DiskPercent { get => _diskPercent; private set => SetProperty(ref _diskPercent, value); }
@@ -169,7 +198,17 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
             new Axis
             {
                 MinLimit = 0,
-                Labeler = v => FormatBytes(v),
+                Labeler = v => Formatting.FormatByteRate(v),
+                LabelsPaint = AxisTextPaint(),
+                SeparatorsPaint = AxisSeparatorPaint(),
+            },
+        };
+        MemoryBytesYAxes = new[]
+        {
+            new Axis
+            {
+                MinLimit = 0,
+                Labeler = v => Formatting.FormatBytes(v),
                 LabelsPaint = AxisTextPaint(),
                 SeparatorsPaint = AxisSeparatorPaint(),
             },
@@ -180,11 +219,13 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
         (_diskGlow, _diskCore) = LineOf(DiskHistory, SKColors.Orange);
         (_netRecvGlow, _netRecvCore) = LineOf(NetworkReceiveHistory, SKColors.LimeGreen, "Receive");
         (_netSendGlow, _netSendCore) = LineOf(NetworkSendHistory, SKColors.OrangeRed, "Send");
+        (_committedGlow, _committedCore) = LineOf(CommittedHistory, SKColors.MediumPurple);
 
         CpuSeries = new ISeries[] { _cpuGlow, _cpuCore };
         RamSeries = new ISeries[] { _ramGlow, _ramCore };
         DiskSeries = new ISeries[] { _diskGlow, _diskCore };
         NetworkSeries = new ISeries[] { _netRecvGlow, _netRecvCore, _netSendGlow, _netSendCore };
+        CommittedSeries = new ISeries[] { _committedGlow, _committedCore };
 
         _timer = new DispatcherTimer(DispatcherPriority.Background)
         {
@@ -246,6 +287,7 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
         Recolor(_diskGlow, _diskCore, disk);
         Recolor(_netRecvGlow, _netRecvCore, networkReceive);
         Recolor(_netSendGlow, _netSendCore, networkSend);
+        Recolor(_committedGlow, _committedCore, ram); // Committed shares RAM's color - both memory metrics
 
         CpuColor = cpu;
         RamColor = ram;
@@ -272,6 +314,8 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
         PercentYAxes[0].SeparatorsPaint = sepPaint;
         NetworkYAxes[0].LabelsPaint = new SolidColorPaint(textSk);
         NetworkYAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
+        MemoryBytesYAxes[0].LabelsPaint = new SolidColorPaint(textSk);
+        MemoryBytesYAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
 
         LegendTextPaint = new SolidColorPaint(textSk);
         TooltipTextPaint = new SolidColorPaint(textSk);
@@ -311,6 +355,7 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
         PushHistory(DiskHistory, snapshot.DiskActivePercent);
         PushHistory(NetworkReceiveHistory, snapshot.NetworkReceiveBytesPerSec);
         PushHistory(NetworkSendHistory, snapshot.NetworkSendBytesPerSec);
+        PushHistory(CommittedHistory, snapshot.CommittedBytes);
 
         SyncCores(snapshot.CpuPerCorePercent);
 
@@ -322,6 +367,14 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
         RamUsedGb = snapshot.RamUsedBytes / 1024.0 / 1024.0 / 1024.0;
         RamTotalGb = snapshot.RamTotalBytes / 1024.0 / 1024.0 / 1024.0;
         RamPercent = snapshot.RamPercent;
+
+        RamAvailableGb = snapshot.RamAvailableBytes / 1024.0 / 1024.0 / 1024.0;
+        RamAvailablePercent = snapshot.RamTotalBytes == 0 ? 0 : (double)snapshot.RamAvailableBytes / snapshot.RamTotalBytes * 100.0;
+        CommittedGb = snapshot.CommittedBytes / 1024.0 / 1024.0 / 1024.0;
+        CommitLimitGb = snapshot.CommitLimitBytes / 1024.0 / 1024.0 / 1024.0;
+        CommittedPercent = snapshot.CommitLimitBytes == 0 ? 0 : (double)snapshot.CommittedBytes / snapshot.CommitLimitBytes * 100.0;
+        CachedGb = snapshot.CacheBytes / 1024.0 / 1024.0 / 1024.0;
+        CachedPercent = snapshot.RamTotalBytes == 0 ? 0 : (double)snapshot.CacheBytes / snapshot.RamTotalBytes * 100.0;
 
         DiskPercent = snapshot.DiskActivePercent;
 
@@ -360,15 +413,6 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
 
         for (int i = 0; i < percentages.Length; i++)
             Cores[i].Percent = percentages[i];
-    }
-
-    private static string FormatBytes(double bytes)
-    {
-        string[] units = { "B/s", "KB/s", "MB/s", "GB/s" };
-        double abs = Math.Abs(bytes);
-        int i = 0;
-        while (abs >= 1024 && i < units.Length - 1) { abs /= 1024; i++; }
-        return $"{abs:0.#} {units[i]}";
     }
 
     public void Dispose()

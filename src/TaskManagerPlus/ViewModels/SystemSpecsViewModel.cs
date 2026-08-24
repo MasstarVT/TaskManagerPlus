@@ -101,7 +101,7 @@ public sealed class SystemSpecsViewModel : ObservableObject
         CpuName = string.IsNullOrWhiteSpace(specs.CpuName) ? "Unknown CPU" : specs.CpuName;
         CpuDetails = $"{specs.CpuPhysicalCores} cores, {specs.CpuLogicalProcessors} logical processors  •  Max speed {specs.CpuMaxClockGhz:0.00} GHz";
 
-        RamTotal = FormatBytes(specs.RamTotalBytes);
+        RamTotal = Formatting.FormatBytes(specs.RamTotalBytes);
         RamDetails = specs.MemoryModules.Count switch
         {
             0 => "No modules detected",
@@ -121,7 +121,7 @@ public sealed class SystemSpecsViewModel : ObservableObject
                     m.SpeedMhz > 0 ? $"{m.SpeedMhz:0} MHz" : null,
                     m.Manufacturer,
                 }.Where(s => !string.IsNullOrWhiteSpace(s))),
-                SizeText = FormatBytes(m.CapacityBytes),
+                SizeText = Formatting.FormatBytes(m.CapacityBytes),
             });
         }
 
@@ -132,7 +132,7 @@ public sealed class SystemSpecsViewModel : ObservableObject
             {
                 Primary = string.IsNullOrWhiteSpace(g.Name) ? "Unknown GPU" : g.Name,
                 Secondary = string.IsNullOrWhiteSpace(g.DriverVersion) ? string.Empty : $"Driver {g.DriverVersion}",
-                SizeText = g.AdapterRamBytes > 0 ? FormatBytes(g.AdapterRamBytes) : string.Empty,
+                SizeText = g.AdapterRamBytes > 0 ? Formatting.FormatBytes(g.AdapterRamBytes) : string.Empty,
             });
         }
 
@@ -143,18 +143,8 @@ public sealed class SystemSpecsViewModel : ObservableObject
             {
                 Primary = string.IsNullOrWhiteSpace(d.Model) ? "Unknown disk" : d.Model,
                 Secondary = string.Join(" ", new[] { d.MediaType, d.InterfaceType }.Where(s => !string.IsNullOrWhiteSpace(s))),
-                SizeText = FormatBytes(d.SizeBytes),
+                SizeText = Formatting.FormatBytes(d.SizeBytes),
             });
         }
-    }
-
-    private static string FormatBytes(long bytes)
-    {
-        if (bytes <= 0) return "Unknown";
-        string[] units = { "B", "KB", "MB", "GB", "TB" };
-        double abs = bytes;
-        int i = 0;
-        while (abs >= 1024 && i < units.Length - 1) { abs /= 1024; i++; }
-        return $"{abs:0.#} {units[i]}";
     }
 }
