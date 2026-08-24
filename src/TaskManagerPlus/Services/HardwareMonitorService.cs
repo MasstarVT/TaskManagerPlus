@@ -45,10 +45,21 @@ public sealed class HardwareMonitorService : IDisposable
         _cpuTotalCounter = new PerformanceCounter("Processor Information", "% Processor Time", "_Total", readOnly: true);
         _cpuTotalPerformanceCounter = new PerformanceCounter("Processor Information", "% Processor Performance", "_Total", readOnly: true);
 
+        // Instance names in this category are "<NUMA node>,<core>" (e.g. "0,0", "0,1", ...,
+        // "0,_Total" for a per-node aggregate). Two bugs to avoid here: (1) filtering only the
+        // exact string "_Total" misses per-node aggregates like "0,_Total", which would otherwise
+        // be counted as a bogus extra "core"; (2) sorting the instance names as strings puts
+        // "0,10" before "0,2" (lexicographic, not numeric). Both matter beyond cosmetics: CPU
+        // topology (CpuTopologyService) indexes cores by the OS's actual logical-processor
+        // number, so CpuPerCorePercent[i] needs to line up 1:1 with that same index - sort
+        // numerically by (node, core) instead.
         var coreInstances = new PerformanceCounterCategory("Processor Information")
             .GetInstanceNames()
-            .Where(n => n != "_Total")
-            .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+            .Where(n => n != "_Total" && !n.EndsWith(",_Total", StringComparison.OrdinalIgnoreCase))
+            .Select(n => (Name: n, Key: ParseNumaCoreKey(n)))
+            .OrderBy(x => x.Key.NumaNode)
+            .ThenBy(x => x.Key.Core)
+            .Select(x => x.Name)
             .ToArray();
         _cpuCoreUsageCounters = coreInstances
             .Select(name => new PerformanceCounter("Processor Information", "% Processor Time", name, readOnly: true))
@@ -130,6 +141,16 @@ public sealed class HardwareMonitorService : IDisposable
     }
 
     private static double Clamp(double v) => Math.Max(0, Math.Min(100, v));
+
+    /// <summary>Parses a "Processor Information" instance name ("&lt;node&gt;,&lt;core&gt;") into
+    /// a sortable (node, core) key, defaulting to (0, 0) for any unexpected format.</summary>
+    private static (int NumaNode, int Core) ParseNumaCoreKey(string instanceName)
+    {
+        var parts = instanceName.Split(',');
+        if (parts.Length == 2 && int.TryParse(parts[0], out int node) && int.TryParse(parts[1], out int core))
+            return (node, core);
+        return (0, 0);
+    }
 
     private static (long Received, long Sent) ReadTotalNetworkBytes()
     {

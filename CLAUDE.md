@@ -164,6 +164,35 @@ both series of a pair together. `CpuView.xaml`/`MemoryView.xaml`/
 `StorageView.xaml`/`NetworkView.xaml`/`SummaryView.xaml` just bind to the
 `ISeries[]` as before and don't need to know about the pair.
 
+### CPU topology (NUMA node + P-core/E-core)
+
+`Services/CpuTopologyService.Query()` is a one-time (not per-tick) call to
+the Win32 `GetLogicalProcessorInformationEx` API — there's no WMI
+equivalent for NUMA membership or P-core/E-core (`EfficiencyClass`)
+per logical processor. It reads the returned buffer's variable-length,
+unioned native structs at fixed byte offsets (documented in the file)
+rather than trying to `Marshal.PtrToStructure` an exact mirror of the
+version-dependent layout — deliberately the highest-risk interop in the
+app, so any failure degrades to `CpuTopologySnapshot.Flat` (every core on
+node 0, no P/E distinction) instead of throwing. `PerformanceViewModel`
+queries it once in its constructor and exposes `HasHybridTopology`/
+`HasMultipleNumaNodes`; `CoreUsage.NumaNode`/`IsPCore` are set once when a
+core tile is first created in `SyncCores`, not reassigned per tick.
+`CpuViewModel.CoresByNumaNode` groups `Performance.Cores` by `NumaNode` for
+the CPU tab's per-core `VfdMeter` grid, which shows "NUMA Node N" headers
+only when `HasMultipleNumaNodes` and a P-core/E-core `SubText` tag only
+when `HasHybridTopology` — both hidden on ordinary single-node,
+non-hybrid CPUs, which is nearly every desktop the app will run on.
+
+Getting `HardwareMonitorService`'s existing per-core `PerformanceCounter`
+array (`CpuPerCorePercent[i]`) to line up 1:1 with this topology's logical
+index required fixing two pre-existing bugs in how its `"Processor
+Information"` counter instances were selected: the `_Total` filter didn't
+catch per-NUMA-node aggregates like `"0,_Total"` (only the literal
+`"_Total"`), and instance names were sorted as strings (`"0,10"` before
+`"0,2"`) instead of numerically by `(node, core)`. Both are fixed in
+`HardwareMonitorService`'s constructor now.
+
 ### Notable implementation details
 
 - **CPU clock speed**: not directly exposed by Windows. Computed the same

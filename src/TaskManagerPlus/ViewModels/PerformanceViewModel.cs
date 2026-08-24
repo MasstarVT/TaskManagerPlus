@@ -18,6 +18,18 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
     private readonly HardwareMonitorService _hardware = new();
     private readonly DispatcherTimer _timer;
 
+    // Topology is static (doesn't change at runtime), so it's queried once here rather than
+    // per tick, and kept out of the per-tick HardwareSnapshot DTO.
+    private readonly CpuTopologySnapshot _topology = CpuTopologyService.Query();
+
+    /// <summary>True only on genuinely hybrid CPUs (Intel 12th-gen+ style P-core/E-core split) -
+    /// the CPU tab should hide the P/E color distinction entirely when this is false.</summary>
+    public bool HasHybridTopology => _topology.HasHybridTopology;
+
+    /// <summary>True only when the system has more than one NUMA node - the CPU tab should show
+    /// a single flat core grid (no "NUMA Node N" group headers) when this is false.</summary>
+    public bool HasMultipleNumaNodes => _topology.HasMultipleNumaNodes;
+
     public ObservableCollection<double> CpuHistory { get; } = NewHistory();
     public ObservableCollection<double> RamHistory { get; } = NewHistory();
     public ObservableCollection<double> DiskHistory { get; } = NewHistory();
@@ -330,7 +342,19 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
         {
             Cores.Clear();
             for (int i = 0; i < percentages.Length; i++)
-                Cores.Add(new CoreUsage { Index = i, Percent = percentages[i] });
+            {
+                // Topology is indexed by logical processor number; percentages[] is expected to
+                // line up 1:1 with it (see HardwareMonitorService's numeric node/core sort), but
+                // guard the lookup anyway in case core counts ever disagree.
+                var topo = i < _topology.Cores.Count ? _topology.Cores[i] : null;
+                Cores.Add(new CoreUsage
+                {
+                    Index = i,
+                    Percent = percentages[i],
+                    NumaNode = topo?.NumaNode ?? 0,
+                    IsPCore = topo?.IsPCore ?? true,
+                });
+            }
             return;
         }
 
