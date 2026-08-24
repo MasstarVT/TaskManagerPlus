@@ -142,6 +142,12 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
     private double _diskPercent;
     public double DiskPercent { get => _diskPercent; private set => SetProperty(ref _diskPercent, value); }
 
+    private double _diskReadBps;
+    public double DiskReadBps { get => _diskReadBps; private set => SetProperty(ref _diskReadBps, value); }
+
+    private double _diskWriteBps;
+    public double DiskWriteBps { get => _diskWriteBps; private set => SetProperty(ref _diskWriteBps, value); }
+
     private double _networkReceiveBps;
     public double NetworkReceiveBps { get => _networkReceiveBps; private set => SetProperty(ref _networkReceiveBps, value); }
 
@@ -377,6 +383,8 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
         CachedPercent = snapshot.RamTotalBytes == 0 ? 0 : (double)snapshot.CacheBytes / snapshot.RamTotalBytes * 100.0;
 
         DiskPercent = snapshot.DiskActivePercent;
+        DiskReadBps = snapshot.DiskReadBytesPerSec;
+        DiskWriteBps = snapshot.DiskWriteBytesPerSec;
 
         NetworkReceiveBps = snapshot.NetworkReceiveBytesPerSec;
         NetworkSendBps = snapshot.NetworkSendBytesPerSec;

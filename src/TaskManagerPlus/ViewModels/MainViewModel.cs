@@ -27,6 +27,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     // EnergyThermalsViewModel's remarks.
     public EnergyThermalsViewModel EnergyThermals { get; } = new();
 
+    public LoggingViewModel Logging { get; }
+
     public bool IsElevated { get; } = new WindowsPrincipal(WindowsIdentity.GetCurrent())
         .IsInRole(WindowsBuiltInRole.Administrator);
 
@@ -46,6 +48,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Memory = new MemoryViewModel(Performance);
         Storage = new StorageViewModel(Performance);
         Network = new NetworkViewModel(Performance);
+        Logging = new LoggingViewModel(Performance, EnergyThermals);
 
         ToggleSettingsCommand = new RelayCommand(_ => IsSettingsOpen = !IsSettingsOpen);
 
@@ -94,5 +97,6 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Performance.Dispose();
         Services.Dispose();
         EnergyThermals.Dispose();
+        Logging.Dispose();
     }
 }

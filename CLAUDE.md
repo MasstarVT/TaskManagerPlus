@@ -17,7 +17,10 @@ saturation slider, on top of the existing per-metric accent colors. CPU
 topology (NUMA/P-core-E-core), a Windows-native memory breakdown, and real
 temperature/fan/voltage/power sensors (via LibreHardwareMonitorLib) round
 out the TMOG/HWiNFO-inspired depth — see the CPU/Memory/Energy & Thermals
-sections below for the details and known limitations of each.
+sections below for the details and known limitations of each. A global
+Start/Stop Logging control in the footer status bar writes every metric
+to a CSV, one row per second, the same "log everything" approach HWiNFO's
+own logging feature uses — see the Logging section below.
 
 ## Commands
 
@@ -254,6 +257,30 @@ catch per-NUMA-node aggregates like `"0,_Total"` (only the literal
 `"_Total"`), and instance names were sorted as strings (`"0,10"` before
 `"0,2"`) instead of numerically by `(node, core)`. Both are fixed in
 `HardwareMonitorService`'s constructor now.
+
+### Logging (HWiNFO-style CSV)
+
+`Services/LoggingService.cs` is a thin wrapper around an open `StreamWriter`
+(`Start`/`WriteRow`/`Stop`) - it just writes whatever rows it's given, no
+polling of its own. `ViewModels/LoggingViewModel.cs` is the piece that
+decides *what* goes in each row: it owns its own 1s `DispatcherTimer` but
+never samples hardware itself - it reads already-polled state straight off
+`PerformanceViewModel`/`EnergyThermalsViewModel` (both are already ticking
+independently), so logging never adds a third redundant poller.
+
+Clicking "Start Logging" (footer status bar, visible from every tab) opens
+a `Microsoft.Win32.SaveFileDialog` defaulted to
+`%AppData%\TaskManagerPlus\Logs\TaskManagerPlus-<timestamp>.csv`, then
+**snapshots the column set** at that moment: CPU total/clock + one column
+per current logical core, the memory breakdown, disk, network, and one
+column per current Energy & Thermals sensor reading (temps/fans/voltages/
+power - same `SensorReading.Identifier` used to look each one up on later
+ticks). This snapshot is deliberate - the column set is fixed for the
+lifetime of one log file (same as HWiNFO), so if a sensor list or core
+count ever changed mid-session, later rows just leave that cell blank
+rather than silently reshaping the CSV's columns partway through. Values
+are culture-invariant (`CultureInfo.InvariantCulture`) so the CSV parses
+the same regardless of the machine's regional settings.
 
 ### Notable implementation details
 
