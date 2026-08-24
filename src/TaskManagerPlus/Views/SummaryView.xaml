@@ -8,20 +8,6 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              mc:Ignorable="d">
-    <UserControl.Resources>
-        <Style x:Key="ColorDot" TargetType="Border">
-            <Setter Property="Width" Value="9" />
-            <Setter Property="Height" Value="9" />
-            <Setter Property="CornerRadius" Value="4.5" />
-            <Setter Property="Margin" Value="0,0,8,0" />
-            <Setter Property="VerticalAlignment" Value="Center" />
-        </Style>
-        <Style x:Key="TitleRow" TargetType="StackPanel">
-            <Setter Property="Orientation" Value="Horizontal" />
-            <Setter Property="Margin" Value="0,0,0,12" />
-        </Style>
-    </UserControl.Resources>
-
     <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16">
         <Grid>
             <Grid.ColumnDefinitions>
@@ -111,10 +97,10 @@
                     </StackPanel>
                 </Border>
 
-                <views:MeterTile Title="Disk" Percent="{Binding Performance.DiskPercent}"
-                                  ValueText="{Binding Performance.DiskPercent, StringFormat={}{0:0.0}%}"
-                                  SubText="Active time" AccentBrush="{Binding Performance.DiskColor, Converter={StaticResource ColorToBrushConverter}}"
-                                  Margin="0,0,0,16" />
+                <views:VfdMeter Title="Disk" Percent="{Binding Performance.DiskPercent}"
+                                ValueText="{Binding Performance.DiskPercent, StringFormat={}{0:0.0}}" Unit="%"
+                                SubText="Active time" AccentBrush="{Binding Performance.DiskColor, Converter={StaticResource ColorToBrushConverter}}"
+                                Margin="0,0,0,16" />
 
                 <Border Style="{StaticResource CardStyle}">
                     <StackPanel>

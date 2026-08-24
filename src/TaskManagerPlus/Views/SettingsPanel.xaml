@@ -19,8 +19,8 @@
                     <ControlTemplate TargetType="Button">
                         <Grid>
                             <Ellipse Fill="{Binding Converter={StaticResource ColorToBrushConverter}}"
-                                     Stroke="{StaticResource BorderBrush2}" StrokeThickness="1" />
-                            <Ellipse x:Name="ring" Stroke="{StaticResource TextPrimaryBrush}" StrokeThickness="2"
+                                     Stroke="{DynamicResource BorderBrush2}" StrokeThickness="1" />
+                            <Ellipse x:Name="ring" Stroke="{DynamicResource TextPrimaryBrush}" StrokeThickness="2"
                                      Margin="-3" Opacity="0" />
                         </Grid>
                         <ControlTemplate.Triggers>
@@ -46,15 +46,47 @@
             <Setter Property="HorizontalAlignment" Value="Left" />
             <Setter Property="Padding" Value="10,5" />
         </Style>
+
+        <Style x:Key="ThemeModeButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Margin" Value="0,0,7,7" />
+            <Setter Property="Padding" Value="12,7" />
+            <Setter Property="FontSize" Value="12" />
+        </Style>
     </UserControl.Resources>
 
-    <Border Background="{StaticResource BgPanelBrush}" BorderBrush="{StaticResource BorderBrush2}" BorderThickness="1,0,0,0">
+    <Border Background="{DynamicResource BgPanelBrush}" BorderBrush="{DynamicResource BorderBrush2}" BorderThickness="1,0,0,0">
         <ScrollViewer VerticalScrollBarVisibility="Auto">
             <StackPanel Margin="18">
 
                 <TextBlock Text="Colors" FontSize="17" FontWeight="SemiBold" Margin="0,0,0,2" />
                 <TextBlock Text="Pick a swatch or type a hex code. Changes apply instantly and are remembered."
                            Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,20" />
+
+                <!-- Theme family -->
+                <TextBlock Text="Theme" Style="{StaticResource ColorRowLabel}" />
+                <ItemsControl ItemsSource="{Binding ThemeModeNames}" Margin="0,0,0,8">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Button Content="{Binding}" Style="{StaticResource ThemeModeButton}"
+                                    Command="{Binding DataContext.SetThemeModeCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                    CommandParameter="{Binding}">
+                                <Button.Background>
+                                    <MultiBinding Converter="{StaticResource ThemeModeSelectedBrushConverter}">
+                                        <Binding Path="." />
+                                        <Binding Path="DataContext.ThemeMode" RelativeSource="{RelativeSource AncestorType=UserControl}" />
+                                    </MultiBinding>
+                                </Button.Background>
+                            </Button>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+
+                <TextBlock Text="Saturation" Style="{StaticResource ColorRowLabel}" Margin="0,4,0,8" />
+                <Slider Minimum="0" Maximum="2" TickFrequency="0.1" IsSnapToTickEnabled="False"
+                        Value="{Binding Saturation}" Margin="0,0,0,22" />
 
                 <!-- Accent -->
                 <TextBlock Text="Accent" Style="{StaticResource ColorRowLabel}" />
@@ -73,7 +105,7 @@
                 <TextBox Style="{StaticResource HexBox}" Margin="0,0,0,22"
                          Text="{Binding Accent, Converter={StaticResource ColorToHexConverter}, UpdateSourceTrigger=LostFocus}" />
 
-                <TextBlock Text="PERFORMANCE CHARTS" FontSize="10.5" FontWeight="Bold" Foreground="{StaticResource TextTertiaryBrush}"
+                <TextBlock Text="PERFORMANCE CHARTS" FontSize="10.5" FontWeight="Bold" Foreground="{DynamicResource TextTertiaryBrush}"
                            Margin="0,0,0,14" />
 
                 <!-- CPU -->

@@ -13,5 +13,11 @@ public sealed class ThemeColors
     public string NetworkReceive { get; set; } = "#3DD68C";
     public string NetworkSend { get; set; } = "#F0546A";
 
+    /// <summary>Theme family: "Dark", "Light", "Green", "Amber", "Blue", or "Monochrome".</summary>
+    public string ThemeMode { get; set; } = "Dark";
+
+    /// <summary>Palette saturation multiplier: 0 = grayscale, 1 = normal, up to 2 = boosted.</summary>
+    public double Saturation { get; set; } = 1.0;
+
     public static ThemeColors Defaults => new();
 }

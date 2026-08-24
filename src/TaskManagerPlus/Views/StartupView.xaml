@@ -20,7 +20,7 @@
             </Grid.ColumnDefinitions>
             <TextBlock Grid.Column="0" VerticalAlignment="Center"
                        Text="Apps that launch automatically when you sign in."
-                       Foreground="{StaticResource TextSecondaryBrush}" />
+                       Foreground="{DynamicResource TextSecondaryBrush}" />
             <Button Grid.Column="1" Content="Refresh" Command="{Binding RefreshCommand}" Style="{StaticResource PrimaryButton}" />
         </Grid>
 
@@ -54,12 +54,12 @@
                                          Danger/Success looks are inlined here instead of swapped in wholesale. -->
                                     <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
                                         <Setter Property="Background" Value="Transparent" />
-                                        <Setter Property="Foreground" Value="{StaticResource SuccessBrush}" />
-                                        <Setter Property="BorderBrush" Value="{StaticResource BorderBrush2}" />
+                                        <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
+                                        <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush2}" />
                                         <Style.Triggers>
                                             <DataTrigger Binding="{Binding IsEnabled}" Value="True">
-                                                <Setter Property="Foreground" Value="{StaticResource DangerBrush}" />
-                                                <Setter Property="BorderBrush" Value="{StaticResource DangerMutedBrush}" />
+                                                <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                <Setter Property="BorderBrush" Value="{DynamicResource DangerMutedBrush}" />
                                             </DataTrigger>
                                         </Style.Triggers>
                                     </Style>
@@ -72,6 +72,6 @@
         </DataGrid>
 
         <TextBlock Grid.Row="2" Text="{Binding StatusMessage}" Margin="0,8,0,0"
-                   Foreground="{StaticResource TextSecondaryBrush}" />
+                   Foreground="{DynamicResource TextSecondaryBrush}" />
     </Grid>
 </UserControl>

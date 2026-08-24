@@ -2,9 +2,9 @@ using System.Windows.Controls;
 
 namespace TaskManagerPlus.Views;
 
-public partial class PerformanceView : UserControl
+public partial class StorageView : UserControl
 {
-    public PerformanceView()
+    public StorageView()
     {
         InitializeComponent();
     }

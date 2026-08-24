@@ -50,10 +50,20 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
 
     // Shared paints so the Network chart's legend/tooltip (the only ones left visible) render
     // in the app's dark palette instead of LiveCharts' default light-theme black-on-white.
-    public SolidColorPaint LegendTextPaint { get; } = AxisTextPaint();
-    public SolidColorPaint LegendBackgroundPaint { get; } = new(new SKColor(0x26, 0x26, 0x2B));
-    public SolidColorPaint TooltipTextPaint { get; } = AxisTextPaint();
-    public SolidColorPaint TooltipBackgroundPaint { get; } = new(new SKColor(0x26, 0x26, 0x2B));
+    // Settable (not just field-initialized) so ApplyAxisTheme can repaint them on a theme-family
+    // switch - these live outside WPF's resource system (SkiaSharp paints), so DynamicResource
+    // alone can't reach them.
+    private SolidColorPaint _legendTextPaint = AxisTextPaint();
+    public SolidColorPaint LegendTextPaint { get => _legendTextPaint; private set => SetProperty(ref _legendTextPaint, value); }
+
+    private SolidColorPaint _legendBackgroundPaint = new(new SKColor(0x26, 0x26, 0x2B));
+    public SolidColorPaint LegendBackgroundPaint { get => _legendBackgroundPaint; private set => SetProperty(ref _legendBackgroundPaint, value); }
+
+    private SolidColorPaint _tooltipTextPaint = AxisTextPaint();
+    public SolidColorPaint TooltipTextPaint { get => _tooltipTextPaint; private set => SetProperty(ref _tooltipTextPaint, value); }
+
+    private SolidColorPaint _tooltipBackgroundPaint = new(new SKColor(0x26, 0x26, 0x2B));
+    public SolidColorPaint TooltipBackgroundPaint { get => _tooltipBackgroundPaint; private set => SetProperty(ref _tooltipBackgroundPaint, value); }
 
     private Color _cpuColor;
     public Color CpuColor { get => _cpuColor; private set => SetProperty(ref _cpuColor, value); }
@@ -229,6 +239,32 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
         RamColor = ram;
         DiskColor = disk;
         NetworkColor = networkReceive;
+    }
+
+    /// <summary>
+    /// Repaints chart axis text/gridlines and the network chart's legend/tooltip to match the
+    /// active theme family. These are SkiaSharp paints that live outside WPF's resource system,
+    /// so a DynamicResource-driven theme-family switch can't reach them on its own - called from
+    /// MainViewModel whenever ThemeViewModel.ThemeModeChanged fires.
+    /// </summary>
+    public void ApplyAxisTheme(Color text, Color separator, Color panelBackground)
+    {
+        var textSk = new SKColor(text.R, text.G, text.B);
+        var sepSk = new SKColor(separator.R, separator.G, separator.B, separator.A);
+        var panelSk = new SKColor(panelBackground.R, panelBackground.G, panelBackground.B);
+
+        var textPaint = new SolidColorPaint(textSk);
+        var sepPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
+
+        PercentYAxes[0].LabelsPaint = textPaint;
+        PercentYAxes[0].SeparatorsPaint = sepPaint;
+        NetworkYAxes[0].LabelsPaint = new SolidColorPaint(textSk);
+        NetworkYAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
+
+        LegendTextPaint = new SolidColorPaint(textSk);
+        TooltipTextPaint = new SolidColorPaint(textSk);
+        LegendBackgroundPaint = new SolidColorPaint(panelSk);
+        TooltipBackgroundPaint = new SolidColorPaint(panelSk);
     }
 
     private static void Recolor(LineSeries<double> glow, LineSeries<double> core, Color color)

@@ -31,7 +31,7 @@
         </Grid.RowDefinitions>
 
         <!-- Header -->
-        <Border Grid.Row="0" Background="{StaticResource BgPanelBrush}" BorderBrush="{StaticResource BorderBrush2}" BorderThickness="0,0,0,1">
+        <Border Grid.Row="0" Background="{DynamicResource BgPanelBrush}" BorderBrush="{DynamicResource BorderBrush2}" BorderThickness="0,0,0,1">
             <Grid Margin="20,12">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
@@ -45,14 +45,14 @@
                     <TextBlock Text="Task Manager Plus" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center" />
                 </StackPanel>
 
-                <TextBlock Grid.Column="2" VerticalAlignment="Center" Foreground="{StaticResource TextSecondaryBrush}">
+                <TextBlock Grid.Column="2" VerticalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}">
                     <TextBlock.Style>
                         <Style TargetType="TextBlock">
                             <Setter Property="Text" Value="Running as administrator" />
                             <Style.Triggers>
                                 <DataTrigger Binding="{Binding IsElevated}" Value="False">
                                     <Setter Property="Text" Value="Not elevated — some actions may be blocked" />
-                                    <Setter Property="Foreground" Value="{StaticResource WarningBrush}" />
+                                    <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
                                 </DataTrigger>
                             </Style.Triggers>
                         </Style>
@@ -68,25 +68,25 @@
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
 
-            <TabControl Grid.Column="0" TabStripPlacement="Left" SelectedIndex="0">
-                <!-- Footer entry pinned to the bottom of the nav rail (see the TabControl
-                     ControlTemplate in Dark.xaml, which docks Tag to the bottom). -->
+            <TabControl Grid.Column="0" TabStripPlacement="Top" SelectedIndex="0">
+                <!-- Footer entry docked to the trailing edge of the top strip (see the
+                     TabControl ControlTemplate in Dark.xaml, which docks Tag to the right). -->
                 <TabControl.Tag>
                     <Button Command="{Binding ToggleSettingsCommand}" Cursor="Hand"
-                            HorizontalContentAlignment="Left" Margin="10,8,10,14" Padding="12,9"
+                            HorizontalContentAlignment="Left" Margin="4,7,14,7" Padding="10,7"
                             Background="Transparent" BorderThickness="0">
                         <Button.Template>
                             <ControlTemplate TargetType="Button">
                                 <Border x:Name="bg" CornerRadius="8" Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}">
                                     <StackPanel Orientation="Horizontal">
-                                        <Path Width="15" Height="15" Stretch="Uniform" Fill="{StaticResource TextSecondaryBrush}" Margin="0,0,10,0"
+                                        <Path Width="15" Height="15" Stretch="Uniform" Fill="{DynamicResource TextSecondaryBrush}" Margin="0,0,8,0"
                                               Data="M12,2 A10,10 0 1 0 12.01,2 Z M12,7 A5,5 0 1 1 11.99,7 Z" />
-                                        <TextBlock Text="Colors" Foreground="{StaticResource TextSecondaryBrush}" VerticalAlignment="Center" />
+                                        <TextBlock Text="Colors" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" />
                                     </StackPanel>
                                 </Border>
                                 <ControlTemplate.Triggers>
                                     <Trigger Property="IsMouseOver" Value="True">
-                                        <Setter TargetName="bg" Property="Background" Value="{StaticResource BgHoverBrush}" />
+                                        <Setter TargetName="bg" Property="Background" Value="{DynamicResource BgHoverBrush}" />
                                     </Trigger>
                                     <DataTrigger Binding="{Binding DataContext.IsSettingsOpen, RelativeSource={RelativeSource AncestorType=Window}}" Value="True">
                                         <Setter TargetName="bg" Property="Background" Value="{DynamicResource AccentMutedBrush}" />
@@ -111,17 +111,65 @@
                     <views:SummaryView DataContext="{Binding Summary}" />
                 </TabItem>
 
-                <TabItem Header="Performance">
+                <TabItem Header="CPU">
                     <TabItem.Tag>
                         <Viewbox Width="16" Height="16">
                             <Canvas Width="16" Height="16">
-                                <Line Style="{StaticResource NavIconStroke}" StrokeThickness="2" X1="2.5" Y1="13" X2="2.5" Y2="9" />
-                                <Line Style="{StaticResource NavIconStroke}" StrokeThickness="2" X1="8" Y1="13" X2="8" Y2="4" />
-                                <Line Style="{StaticResource NavIconStroke}" StrokeThickness="2" X1="13.5" Y1="13" X2="13.5" Y2="7" />
+                                <Rectangle Style="{StaticResource NavIconStroke}" Canvas.Left="3" Canvas.Top="3" Width="10" Height="10" RadiusX="1.5" RadiusY="1.5" />
+                                <Line Style="{StaticResource NavIconStroke}" StrokeThickness="1.4" X1="5.5" Y1="0.5" X2="5.5" Y2="3" />
+                                <Line Style="{StaticResource NavIconStroke}" StrokeThickness="1.4" X1="10.5" Y1="0.5" X2="10.5" Y2="3" />
+                                <Line Style="{StaticResource NavIconStroke}" StrokeThickness="1.4" X1="5.5" Y1="13" X2="5.5" Y2="15.5" />
+                                <Line Style="{StaticResource NavIconStroke}" StrokeThickness="1.4" X1="10.5" Y1="13" X2="10.5" Y2="15.5" />
+                                <Line Style="{StaticResource NavIconStroke}" StrokeThickness="1.4" X1="0.5" Y1="5.5" X2="3" Y2="5.5" />
+                                <Line Style="{StaticResource NavIconStroke}" StrokeThickness="1.4" X1="0.5" Y1="10.5" X2="3" Y2="10.5" />
+                                <Line Style="{StaticResource NavIconStroke}" StrokeThickness="1.4" X1="13" Y1="5.5" X2="15.5" Y2="5.5" />
+                                <Line Style="{StaticResource NavIconStroke}" StrokeThickness="1.4" X1="13" Y1="10.5" X2="15.5" Y2="10.5" />
                             </Canvas>
                         </Viewbox>
                     </TabItem.Tag>
-                    <views:PerformanceView DataContext="{Binding Performance}" />
+                    <views:CpuView DataContext="{Binding Cpu}" />
+                </TabItem>
+
+                <TabItem Header="Memory">
+                    <TabItem.Tag>
+                        <Viewbox Width="16" Height="16">
+                            <Canvas Width="16" Height="16">
+                                <Rectangle Style="{StaticResource NavIconStroke}" Canvas.Left="1.5" Canvas.Top="4" Width="13" Height="8" RadiusX="1.5" RadiusY="1.5" />
+                                <Line Style="{StaticResource NavIconStroke}" StrokeThickness="1.4" X1="5" Y1="4" X2="5" Y2="7" />
+                                <Line Style="{StaticResource NavIconStroke}" StrokeThickness="1.4" X1="8" Y1="4" X2="8" Y2="7" />
+                                <Line Style="{StaticResource NavIconStroke}" StrokeThickness="1.4" X1="11" Y1="4" X2="11" Y2="7" />
+                            </Canvas>
+                        </Viewbox>
+                    </TabItem.Tag>
+                    <views:MemoryView DataContext="{Binding Memory}" />
+                </TabItem>
+
+                <TabItem Header="Storage">
+                    <TabItem.Tag>
+                        <Viewbox Width="16" Height="16">
+                            <Canvas Width="16" Height="16">
+                                <Rectangle Style="{StaticResource NavIconStroke}" Canvas.Left="2" Canvas.Top="1.5" Width="12" Height="5" RadiusX="1.5" RadiusY="1.5" />
+                                <Rectangle Style="{StaticResource NavIconStroke}" Canvas.Left="2" Canvas.Top="9.5" Width="12" Height="5" RadiusX="1.5" RadiusY="1.5" />
+                                <Ellipse Style="{StaticResource NavIconFill}" Canvas.Left="4" Canvas.Top="3.5" Width="1.5" Height="1.5" />
+                                <Ellipse Style="{StaticResource NavIconFill}" Canvas.Left="4" Canvas.Top="11.5" Width="1.5" Height="1.5" />
+                            </Canvas>
+                        </Viewbox>
+                    </TabItem.Tag>
+                    <views:StorageView DataContext="{Binding Storage}" />
+                </TabItem>
+
+                <TabItem Header="Network">
+                    <TabItem.Tag>
+                        <Viewbox Width="16" Height="16">
+                            <Canvas Width="16" Height="16">
+                                <Ellipse Style="{StaticResource NavIconStroke}" Canvas.Left="1" Canvas.Top="1" Width="14" Height="14" />
+                                <Line Style="{StaticResource NavIconStroke}" StrokeThickness="1.2" X1="1" Y1="8" X2="15" Y2="8" />
+                                <Path Style="{StaticResource NavIconStroke}" StrokeThickness="1.2" Data="M 6,1.3 A 10,10 0 0 0 6,14.7" />
+                                <Path Style="{StaticResource NavIconStroke}" StrokeThickness="1.2" Data="M 10,1.3 A 10,10 0 0 1 10,14.7" />
+                            </Canvas>
+                        </Viewbox>
+                    </TabItem.Tag>
+                    <views:NetworkView DataContext="{Binding Network}" />
                 </TabItem>
 
                 <TabItem Header="Processes">
@@ -193,7 +241,7 @@
         </Grid>
 
         <!-- Footer status bar -->
-        <Border Grid.Row="2" Background="{StaticResource BgPanelBrush}" BorderBrush="{StaticResource BorderBrush2}" BorderThickness="0,1,0,0">
+        <Border Grid.Row="2" Background="{DynamicResource BgPanelBrush}" BorderBrush="{DynamicResource BorderBrush2}" BorderThickness="0,1,0,0">
             <Grid Margin="20,7">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
@@ -201,10 +249,10 @@
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <StackPanel Grid.Column="0" Orientation="Horizontal">
-                    <Border Width="7" Height="7" CornerRadius="3.5" Margin="0,0,7,0" VerticalAlignment="Center" Background="{StaticResource SuccessBrush}" />
-                    <TextBlock Text="{Binding Processes.ProcessCount, StringFormat={}{0} processes}" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11.5" VerticalAlignment="Center" />
+                    <Border Width="7" Height="7" CornerRadius="3.5" Margin="0,0,7,0" VerticalAlignment="Center" Background="{DynamicResource SuccessBrush}" />
+                    <TextBlock Text="{Binding Processes.ProcessCount, StringFormat={}{0} processes}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5" VerticalAlignment="Center" />
                 </StackPanel>
-                <TextBlock Grid.Column="2" Text="{Binding Performance.Uptime, StringFormat=Uptime {0}}" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11.5" VerticalAlignment="Center" />
+                <TextBlock Grid.Column="2" Text="{Binding Performance.Uptime, StringFormat=Uptime {0}}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5" VerticalAlignment="Center" />
             </Grid>
         </Border>
     </Grid>

@@ -28,13 +28,13 @@
                     <Style TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
                         <Style.Triggers>
                             <Trigger Property="Text" Value="">
-                                <Setter Property="Background" Value="{StaticResource BgElevatedBrush}" />
+                                <Setter Property="Background" Value="{DynamicResource BgElevatedBrush}" />
                             </Trigger>
                         </Style.Triggers>
                     </Style>
                 </TextBox.Style>
             </TextBox>
-            <TextBlock Grid.Column="0" Text="Search processes, PID, or user" Foreground="{StaticResource TextSecondaryBrush}"
+            <TextBlock Grid.Column="0" Text="Search processes, PID, or user" Foreground="{DynamicResource TextSecondaryBrush}"
                        IsHitTestVisible="False" Margin="10,0,0,0" VerticalAlignment="Center">
                 <TextBlock.Style>
                     <Style TargetType="TextBlock">
@@ -49,7 +49,7 @@
             </TextBlock>
 
             <TextBlock Grid.Column="1" VerticalAlignment="Center" Margin="16,0,0,0"
-                       Foreground="{StaticResource TextSecondaryBrush}">
+                       Foreground="{DynamicResource TextSecondaryBrush}">
                 <Run Text="{Binding ProcessCount, Mode=OneWay}" /><Run Text=" processes" />
             </TextBlock>
 
@@ -81,10 +81,10 @@
                             <TextBlock Text="{Binding Status}" VerticalAlignment="Center">
                                 <TextBlock.Style>
                                     <Style TargetType="TextBlock">
-                                        <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+                                        <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
                                         <Style.Triggers>
                                             <DataTrigger Binding="{Binding Status}" Value="Not responding">
-                                                <Setter Property="Foreground" Value="{StaticResource DangerBrush}" />
+                                                <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
                                             </DataTrigger>
                                         </Style.Triggers>
                                     </Style>
@@ -105,6 +105,6 @@
         </DataGrid>
 
         <TextBlock Grid.Row="2" Text="{Binding StatusMessage}" Margin="0,8,0,0"
-                   Foreground="{StaticResource TextSecondaryBrush}" />
+                   Foreground="{DynamicResource TextSecondaryBrush}" />
     </Grid>
 </UserControl>

@@ -1,0 +1,52 @@
+<UserControl x:Class="TaskManagerPlus.Views.MemoryView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:TaskManagerPlus.ViewModels"
+             xmlns:lvc="clr-namespace:LiveChartsCore.SkiaSharpView.WPF;assembly=LiveChartsCore.SkiaSharpView.WPF"
+             d:DataContext="{d:DesignInstance Type=vm:MemoryViewModel}"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d">
+    <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16">
+        <StackPanel>
+
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <StackPanel Style="{StaticResource TitleRow}" Margin="0,0,0,4">
+                        <Border Style="{StaticResource ColorDot}" Background="{Binding Performance.RamColor, Converter={StaticResource ColorToBrushConverter}}" />
+                        <TextBlock Text="Memory" Style="{StaticResource CardTitle}" Margin="0" />
+                    </StackPanel>
+                    <TextBlock Text="{Binding Performance.RamPercent, StringFormat={}{0:0.0}%}" Style="{StaticResource BigStat}" />
+                    <TextBlock Style="{StaticResource SubStat}">
+                        <Run Text="{Binding Performance.RamUsedGb, StringFormat={}{0:0.0}, Mode=OneWay}" /><Run Text=" / " /><Run Text="{Binding Performance.RamTotalGb, StringFormat={}{0:0.0}, Mode=OneWay}" /><Run Text=" GB" />
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- Memory chart -->
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel>
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" Style="{StaticResource TitleRow}" Margin="0">
+                            <Border Style="{StaticResource ColorDot}" Background="{Binding Performance.RamColor, Converter={StaticResource ColorToBrushConverter}}" />
+                            <TextBlock Text="Memory Utilization" Style="{StaticResource CardTitle}" Margin="0" />
+                        </StackPanel>
+                        <TextBlock Grid.Column="1" VerticalAlignment="Center" FontSize="20" FontWeight="SemiBold">
+                            <Run Text="{Binding Performance.RamUsedGb, StringFormat={}{0:0.0}, Mode=OneWay}" />
+                            <Run Text=" / " FontSize="13" FontWeight="Normal" />
+                            <Run Text="{Binding Performance.RamTotalGb, StringFormat={}{0:0.0}, Mode=OneWay}" FontSize="13" FontWeight="Normal" />
+                            <Run Text=" GB" FontSize="13" FontWeight="Normal" />
+                        </TextBlock>
+                    </Grid>
+                    <lvc:CartesianChart Series="{Binding Performance.RamSeries}" XAxes="{Binding Performance.HiddenXAxes}" YAxes="{Binding Performance.PercentYAxes}"
+                                         Height="200" TooltipPosition="Hidden" LegendPosition="Hidden" Background="Transparent" />
+                </StackPanel>
+            </Border>
+
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

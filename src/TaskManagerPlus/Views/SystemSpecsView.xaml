@@ -9,12 +9,12 @@
     <UserControl.Resources>
         <Style x:Key="SpecLabel" TargetType="TextBlock">
             <Setter Property="FontSize" Value="12" />
-            <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
             <Setter Property="Margin" Value="0,0,0,3" />
         </Style>
         <Style x:Key="SpecValue" TargetType="TextBlock">
             <Setter Property="FontSize" Value="14" />
-            <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
             <Setter Property="TextWrapping" Value="Wrap" />
         </Style>
         <Style x:Key="SecondaryLine" TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
@@ -38,12 +38,12 @@
                     <TextBlock Text="{Binding Secondary}" Style="{StaticResource SecondaryLine}" />
                 </StackPanel>
                 <TextBlock Grid.Column="1" Text="{Binding SizeText}" VerticalAlignment="Center"
-                           Foreground="{StaticResource TextSecondaryBrush}" />
+                           Foreground="{DynamicResource TextSecondaryBrush}" />
             </Grid>
         </DataTemplate>
 
         <Style x:Key="RowSeparator" TargetType="Border">
-            <Setter Property="BorderBrush" Value="{StaticResource BorderSubtleBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderSubtleBrush}" />
             <Setter Property="BorderThickness" Value="0,0,0,1" />
             <Setter Property="Margin" Value="0,0,0,12" />
             <Setter Property="Padding" Value="0,0,0,0" />
@@ -60,7 +60,7 @@
                 </Grid.ColumnDefinitions>
                 <TextBlock Grid.Column="0" VerticalAlignment="Center"
                            Text="Hardware and software detected on this PC."
-                           Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,16" />
+                           Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,16" />
                 <Button Grid.Column="1" Content="Refresh" Command="{Binding RefreshCommand}"
                         Style="{StaticResource PrimaryButton}" Margin="0,0,0,16" />
             </Grid>
