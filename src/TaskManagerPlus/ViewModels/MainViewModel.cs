@@ -10,6 +10,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public PerformanceViewModel Performance { get; } = new();
     public ServicesViewModel Services { get; } = new();
     public StartupViewModel Startup { get; } = new();
+    public SystemSpecsViewModel SystemSpecs { get; } = new();
 
     public bool IsElevated { get; } = new WindowsPrincipal(WindowsIdentity.GetCurrent())
         .IsInRole(WindowsBuiltInRole.Administrator);

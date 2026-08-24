@@ -1,0 +1,180 @@
+<UserControl x:Class="TaskManagerPlus.Views.SystemSpecsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:TaskManagerPlus.ViewModels"
+             d:DataContext="{d:DesignInstance Type=vm:SystemSpecsViewModel}"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d">
+    <UserControl.Resources>
+        <Style x:Key="SpecLabel" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}" />
+            <Setter Property="Margin" Value="0,0,0,3" />
+        </Style>
+        <Style x:Key="SpecValue" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+        </Style>
+        <Style x:Key="SecondaryLine" TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+            <Setter Property="Margin" Value="0,2,0,0" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Secondary}" Value="">
+                    <Setter Property="Visibility" Value="Collapsed" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- One row in the Memory / Graphics / Storage lists: name + subtext on the left, size on the right. -->
+        <DataTemplate x:Key="SpecRowTemplate">
+            <Grid Margin="0,0,0,12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0" Margin="0,0,12,0">
+                    <TextBlock Text="{Binding Primary}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding Secondary}" Style="{StaticResource SecondaryLine}" />
+                </StackPanel>
+                <TextBlock Grid.Column="1" Text="{Binding SizeText}" VerticalAlignment="Center"
+                           Foreground="{StaticResource TextSecondaryBrush}" />
+            </Grid>
+        </DataTemplate>
+
+        <Style x:Key="RowSeparator" TargetType="Border">
+            <Setter Property="BorderBrush" Value="{StaticResource BorderSubtleBrush}" />
+            <Setter Property="BorderThickness" Value="0,0,0,1" />
+            <Setter Property="Margin" Value="0,0,0,12" />
+            <Setter Property="Padding" Value="0,0,0,0" />
+        </Style>
+    </UserControl.Resources>
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16">
+        <StackPanel>
+
+            <Grid Margin="0,0,0,4">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" VerticalAlignment="Center"
+                           Text="Hardware and software detected on this PC."
+                           Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,16" />
+                <Button Grid.Column="1" Content="Refresh" Command="{Binding RefreshCommand}"
+                        Style="{StaticResource PrimaryButton}" Margin="0,0,0,16" />
+            </Grid>
+
+            <!-- Summary tiles -->
+            <UniformGrid Columns="3">
+                <Border Style="{StaticResource CardStyle}" Margin="0,0,8,16">
+                    <StackPanel>
+                        <TextBlock Text="Operating System" Style="{StaticResource CardTitle}" />
+                        <TextBlock Text="{Binding OsName}" Style="{StaticResource SpecValue}" FontSize="16" FontWeight="SemiBold" />
+                        <TextBlock Text="{Binding OsDetails}" Style="{StaticResource SubStat}" Margin="0,4,0,0" TextWrapping="Wrap" />
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource CardStyle}" Margin="4,0,4,16">
+                    <StackPanel>
+                        <TextBlock Text="Processor" Style="{StaticResource CardTitle}" />
+                        <TextBlock Text="{Binding CpuName}" Style="{StaticResource SpecValue}" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" />
+                        <TextBlock Text="{Binding CpuDetails}" Style="{StaticResource SubStat}" Margin="0,4,0,0" TextWrapping="Wrap" />
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource CardStyle}" Margin="8,0,0,16">
+                    <StackPanel>
+                        <TextBlock Text="Memory" Style="{StaticResource CardTitle}" />
+                        <TextBlock Text="{Binding RamTotal}" Style="{StaticResource SpecValue}" FontSize="16" FontWeight="SemiBold" />
+                        <TextBlock Text="{Binding RamDetails}" Style="{StaticResource SubStat}" Margin="0,4,0,0" />
+                    </StackPanel>
+                </Border>
+            </UniformGrid>
+
+            <!-- System / motherboard -->
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel>
+                    <TextBlock Text="System" Style="{StaticResource CardTitle}" />
+                    <UniformGrid Columns="2" Rows="2">
+                        <StackPanel Margin="0,0,12,14">
+                            <TextBlock Text="Computer name" Style="{StaticResource SpecLabel}" />
+                            <TextBlock Text="{Binding ComputerName}" Style="{StaticResource SpecValue}" />
+                        </StackPanel>
+                        <StackPanel Margin="0,0,0,14">
+                            <TextBlock Text="Model" Style="{StaticResource SpecLabel}" />
+                            <TextBlock Text="{Binding SystemModel}" Style="{StaticResource SpecValue}" />
+                        </StackPanel>
+                        <StackPanel Margin="0,0,12,0">
+                            <TextBlock Text="Motherboard" Style="{StaticResource SpecLabel}" />
+                            <TextBlock Text="{Binding Motherboard}" Style="{StaticResource SpecValue}" />
+                        </StackPanel>
+                        <StackPanel>
+                            <TextBlock Text="BIOS version" Style="{StaticResource SpecLabel}" />
+                            <TextBlock Text="{Binding BiosVersion}" Style="{StaticResource SpecValue}" />
+                        </StackPanel>
+                    </UniformGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- Memory modules -->
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel>
+                    <TextBlock Text="Memory modules" Style="{StaticResource CardTitle}" />
+                    <ItemsControl ItemsSource="{Binding MemoryModules}" ItemTemplate="{StaticResource SpecRowTemplate}" />
+                    <TextBlock Text="No memory modules detected.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding MemoryModules.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- Graphics -->
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel>
+                    <TextBlock Text="Graphics" Style="{StaticResource CardTitle}" />
+                    <ItemsControl ItemsSource="{Binding Gpus}" ItemTemplate="{StaticResource SpecRowTemplate}" />
+                    <TextBlock Text="No graphics adapters detected.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding Gpus.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- Storage -->
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel>
+                    <TextBlock Text="Storage" Style="{StaticResource CardTitle}" />
+                    <ItemsControl ItemsSource="{Binding Disks}" ItemTemplate="{StaticResource SpecRowTemplate}" />
+                    <TextBlock Text="No disks detected.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding Disks.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

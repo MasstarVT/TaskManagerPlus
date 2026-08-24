@@ -90,6 +90,9 @@
                 <TabItem Header="Startup">
                     <views:StartupView DataContext="{Binding Startup}" />
                 </TabItem>
+                <TabItem Header="System">
+                    <views:SystemSpecsView DataContext="{Binding SystemSpecs}" />
+                </TabItem>
             </TabControl>
 
             <views:SettingsPanel Grid.Column="1" DataContext="{Binding Theme}">
