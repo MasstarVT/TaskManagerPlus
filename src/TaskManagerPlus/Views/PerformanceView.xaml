@@ -1,0 +1,159 @@
+<UserControl x:Class="TaskManagerPlus.Views.PerformanceView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:TaskManagerPlus.ViewModels"
+             xmlns:lvc="clr-namespace:LiveChartsCore.SkiaSharpView.WPF;assembly=LiveChartsCore.SkiaSharpView.WPF"
+             d:DataContext="{d:DesignInstance Type=vm:PerformanceViewModel}"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d">
+    <UserControl.Resources>
+        <Style x:Key="CardStyle" TargetType="Border">
+            <Setter Property="Background" Value="{StaticResource BgPanelBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush2}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="6" />
+            <Setter Property="Padding" Value="16" />
+            <Setter Property="Margin" Value="0,0,0,16" />
+        </Style>
+        <Style x:Key="CardTitle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Margin" Value="0,0,0,10" />
+        </Style>
+        <Style x:Key="BigStat" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="26" />
+            <Setter Property="FontWeight" Value="Light" />
+        </Style>
+        <Style x:Key="SubStat" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}" />
+        </Style>
+    </UserControl.Resources>
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16">
+        <StackPanel>
+
+            <!-- Summary tiles -->
+            <UniformGrid Columns="4" Margin="0,0,0,16">
+                <Border Style="{StaticResource CardStyle}" Margin="0,0,8,0">
+                    <StackPanel>
+                        <TextBlock Text="CPU" Style="{StaticResource CardTitle}" />
+                        <TextBlock Text="{Binding CpuCurrentPercent, StringFormat={}{0:0.0}%}" Style="{StaticResource BigStat}" />
+                        <TextBlock Text="{Binding CpuCurrentClockGhz, StringFormat={}{0:0.00} GHz}" Style="{StaticResource SubStat}" />
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource CardStyle}" Margin="4,0,4,0">
+                    <StackPanel>
+                        <TextBlock Text="Memory" Style="{StaticResource CardTitle}" />
+                        <TextBlock Text="{Binding RamPercent, StringFormat={}{0:0.0}%}" Style="{StaticResource BigStat}" />
+                        <TextBlock Style="{StaticResource SubStat}">
+                            <Run Text="{Binding RamUsedGb, StringFormat={}{0:0.0}, Mode=OneWay}" /><Run Text=" / " /><Run Text="{Binding RamTotalGb, StringFormat={}{0:0.0}, Mode=OneWay}" /><Run Text=" GB" />
+                        </TextBlock>
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource CardStyle}" Margin="4,0,4,0">
+                    <StackPanel>
+                        <TextBlock Text="Disk" Style="{StaticResource CardTitle}" />
+                        <TextBlock Text="{Binding DiskPercent, StringFormat={}{0:0.0}%}" Style="{StaticResource BigStat}" />
+                        <TextBlock Text="Active time" Style="{StaticResource SubStat}" />
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource CardStyle}" Margin="8,0,0,0">
+                    <StackPanel>
+                        <TextBlock Text="Network" Style="{StaticResource CardTitle}" />
+                        <TextBlock Text="{Binding NetworkReceiveBps, Converter={StaticResource BytesToReadableConverter}, ConverterParameter=rate}" Style="{StaticResource BigStat}" />
+                        <TextBlock Text="{Binding NetworkSendBps, Converter={StaticResource BytesToReadableConverter}, ConverterParameter=rate, StringFormat=Up: {0}}" Style="{StaticResource SubStat}" />
+                    </StackPanel>
+                </Border>
+            </UniformGrid>
+
+            <!-- CPU chart + per-core grid -->
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel>
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="{Binding CpuName}" Style="{StaticResource CardTitle}" Margin="0" />
+                        <TextBlock Grid.Column="1" Text="{Binding CpuSpecs}" Style="{StaticResource SubStat}" VerticalAlignment="Center" />
+                    </Grid>
+                    <lvc:CartesianChart Series="{Binding CpuSeries}" XAxes="{Binding HiddenXAxes}" YAxes="{Binding PercentYAxes}"
+                                         Height="180" TooltipPosition="Hidden" LegendPosition="Hidden" />
+                    <ItemsControl ItemsSource="{Binding Cores}" Margin="0,12,0,0">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Width="72" Height="52" Margin="0,0,6,6" Background="{StaticResource BgElevatedBrush}" CornerRadius="4" Padding="8,6">
+                                    <StackPanel>
+                                        <TextBlock Text="{Binding Label}" Style="{StaticResource SubStat}" />
+                                        <TextBlock Text="{Binding Percent, StringFormat={}{0:0}%}" FontSize="15"
+                                                   Foreground="{Binding Percent, Converter={StaticResource PercentToBrushConverter}}" />
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- Memory chart -->
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel>
+                    <TextBlock Text="Memory" Style="{StaticResource CardTitle}" />
+                    <lvc:CartesianChart Series="{Binding RamSeries}" XAxes="{Binding HiddenXAxes}" YAxes="{Binding PercentYAxes}"
+                                         Height="140" TooltipPosition="Hidden" LegendPosition="Hidden" />
+                </StackPanel>
+            </Border>
+
+            <!-- Disk chart -->
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel>
+                    <TextBlock Text="Disk" Style="{StaticResource CardTitle}" />
+                    <lvc:CartesianChart Series="{Binding DiskSeries}" XAxes="{Binding HiddenXAxes}" YAxes="{Binding PercentYAxes}"
+                                         Height="140" TooltipPosition="Hidden" LegendPosition="Hidden" />
+                </StackPanel>
+            </Border>
+
+            <!-- Network chart -->
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel>
+                    <TextBlock Text="Network" Style="{StaticResource CardTitle}" />
+                    <lvc:CartesianChart Series="{Binding NetworkSeries}" XAxes="{Binding HiddenXAxes}" YAxes="{Binding NetworkYAxes}"
+                                         Height="140" TooltipPosition="Top" LegendPosition="Bottom" />
+                </StackPanel>
+            </Border>
+
+            <!-- System summary -->
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel>
+                    <TextBlock Text="System" Style="{StaticResource CardTitle}" />
+                    <UniformGrid Columns="4">
+                        <StackPanel Margin="0,0,8,0">
+                            <TextBlock Text="Processes" Style="{StaticResource SubStat}" />
+                            <TextBlock Text="{Binding ProcessCount}" FontSize="18" />
+                        </StackPanel>
+                        <StackPanel Margin="8,0,8,0">
+                            <TextBlock Text="Threads" Style="{StaticResource SubStat}" />
+                            <TextBlock Text="{Binding ThreadCount}" FontSize="18" />
+                        </StackPanel>
+                        <StackPanel Margin="8,0,8,0">
+                            <TextBlock Text="Handles" Style="{StaticResource SubStat}" />
+                            <TextBlock Text="{Binding HandleCount}" FontSize="18" />
+                        </StackPanel>
+                        <StackPanel Margin="8,0,0,0">
+                            <TextBlock Text="Uptime" Style="{StaticResource SubStat}" />
+                            <TextBlock Text="{Binding Uptime}" FontSize="18" />
+                        </StackPanel>
+                    </UniformGrid>
+                </StackPanel>
+            </Border>
+
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

@@ -1,0 +1,57 @@
+<UserControl x:Class="TaskManagerPlus.Views.ServicesView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:TaskManagerPlus.ViewModels"
+             d:DataContext="{d:DesignInstance Type=vm:ServicesViewModel}"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d">
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0" Margin="0,0,0,12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="260" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <TextBox Grid.Column="0" Text="{Binding FilterText, UpdateSourceTrigger=PropertyChanged}"
+                     VerticalContentAlignment="Center" Height="32" />
+
+            <Button Grid.Column="2" Content="Start" Margin="0,0,8,0" Command="{Binding StartCommand}" />
+            <Button Grid.Column="3" Content="Stop" Margin="0,0,8,0" Command="{Binding StopCommand}" Style="{StaticResource DangerButton}" />
+            <Button Grid.Column="4" Content="Restart" Command="{Binding RestartCommand}" />
+        </Grid>
+
+        <DataGrid Grid.Row="1"
+                  ItemsSource="{Binding ServicesView}"
+                  SelectedItem="{Binding SelectedService}"
+                  Style="{StaticResource {x:Type DataGrid}}">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="Name" Binding="{Binding DisplayName}" Width="2.5*" />
+                <DataGridTextColumn Header="Service name" Binding="{Binding ServiceName}" Width="1.5*" />
+                <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="110" />
+                <DataGridTextColumn Header="Startup type" Binding="{Binding StartType}" Width="110" />
+                <DataGridTextColumn Header="PID" Binding="{Binding ProcessId}" Width="70" />
+                <DataGridTextColumn Header="Description" Binding="{Binding Description}" Width="3*" />
+            </DataGrid.Columns>
+            <DataGrid.ContextMenu>
+                <ContextMenu>
+                    <MenuItem Header="Start" Command="{Binding StartCommand}" />
+                    <MenuItem Header="Stop" Command="{Binding StopCommand}" />
+                    <MenuItem Header="Restart" Command="{Binding RestartCommand}" />
+                </ContextMenu>
+            </DataGrid.ContextMenu>
+        </DataGrid>
+
+        <TextBlock Grid.Row="2" Text="{Binding StatusMessage}" Margin="0,8,0,0"
+                   Foreground="{StaticResource TextSecondaryBrush}" />
+    </Grid>
+</UserControl>

@@ -1,0 +1,13 @@
+## .NET / Visual Studio
+bin/
+obj/
+*.user
+.vs/
+
+## Rider / VS Code
+.idea/
+.vscode/
+
+## OS cruft
+Thumbs.db
+Desktop.ini

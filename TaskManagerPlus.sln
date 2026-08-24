@@ -1,0 +1,27 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{CEC7F893-DC93-4F71-AB2D-382D0DFB6C40}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TaskManagerPlus", "src\TaskManagerPlus\TaskManagerPlus.csproj", "{C514F058-DF07-4BE0-88F9-C2122AA9E40D}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{C514F058-DF07-4BE0-88F9-C2122AA9E40D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C514F058-DF07-4BE0-88F9-C2122AA9E40D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C514F058-DF07-4BE0-88F9-C2122AA9E40D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C514F058-DF07-4BE0-88F9-C2122AA9E40D}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{C514F058-DF07-4BE0-88F9-C2122AA9E40D} = {CEC7F893-DC93-4F71-AB2D-382D0DFB6C40}
+	EndGlobalSection
+EndGlobal
