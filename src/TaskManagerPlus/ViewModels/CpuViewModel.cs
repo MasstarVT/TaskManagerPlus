@@ -1,8 +1,15 @@
-using System.ComponentModel;
-using System.Windows.Data;
+using System.Collections.ObjectModel;
+using System.Collections.Specialized;
 using TaskManagerPlus.Models;
 
 namespace TaskManagerPlus.ViewModels;
+
+/// <summary>One NUMA node's worth of cores, for the CPU tab's per-core grid.</summary>
+public sealed class CoreGroup
+{
+    public int NumaNode { get; init; }
+    public IReadOnlyList<CoreUsage> Cores { get; init; } = Array.Empty<CoreUsage>();
+}
 
 /// <summary>
 /// Backs the CPU tab. Deliberately owns no timer or HardwareMonitorService of its own -
@@ -23,18 +30,40 @@ public sealed class CpuViewModel
     /// should render a single flat core grid (no group headers) when this is false.</summary>
     public bool HasMultipleNumaNodes => Performance.HasMultipleNumaNodes;
 
-    /// <summary>Performance.Cores grouped by NUMA node, for the per-core grid's optional
-    /// "NUMA Node N" section headers.</summary>
-    public ICollectionView CoresByNumaNode { get; }
+    /// <summary>
+    /// Performance.Cores grouped by NUMA node, each group rendered as its own nested
+    /// WrapPanel-hosted ItemsControl in the view. Built manually here (rather than via
+    /// ICollectionView.GroupDescriptions + ItemsControl.GroupStyle) - NUMA node is static per
+    /// core, so this only needs to rebuild when the Cores collection itself is replaced
+    /// (core-count change), not per tick, and a plain nested ItemsControl avoids depending on
+    /// WPF's grouping/GroupStyle machinery correctly detecting an externally-grouped
+    /// CollectionView, which turned out not to lay out as a wrapping grid in practice.
+    /// </summary>
+    public ObservableCollection<CoreGroup> CoreGroups { get; } = new();
 
     public CpuViewModel(PerformanceViewModel performance)
     {
         Performance = performance;
+        performance.Cores.CollectionChanged += OnCoresCollectionChanged;
+        RebuildGroups();
+    }
 
-        var view = new CollectionViewSource { Source = performance.Cores }.View;
-        view.GroupDescriptions.Add(new PropertyGroupDescription(nameof(CoreUsage.NumaNode)));
-        view.SortDescriptions.Add(new SortDescription(nameof(CoreUsage.NumaNode), ListSortDirection.Ascending));
-        view.SortDescriptions.Add(new SortDescription(nameof(CoreUsage.Index), ListSortDirection.Ascending));
-        CoresByNumaNode = view;
+    private void OnCoresCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        // Per-tick updates only mutate existing CoreUsage.Percent in place (no Add/Remove), so
+        // this only fires on the initial populate or an actual core-count change - cheap to
+        // rebuild fully rather than trying to patch the grouping incrementally.
+        if (e.Action is NotifyCollectionChangedAction.Add or NotifyCollectionChangedAction.Remove
+            or NotifyCollectionChangedAction.Reset)
+        {
+            RebuildGroups();
+        }
+    }
+
+    private void RebuildGroups()
+    {
+        CoreGroups.Clear();
+        foreach (var group in Performance.Cores.GroupBy(c => c.NumaNode).OrderBy(g => g.Key))
+            CoreGroups.Add(new CoreGroup { NumaNode = group.Key, Cores = group.OrderBy(c => c.Index).ToList() });
     }
 }

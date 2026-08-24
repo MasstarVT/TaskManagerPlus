@@ -40,69 +40,74 @@
                                          Height="200" TooltipPosition="Hidden" LegendPosition="Hidden" Background="Transparent" />
 
                     <TextBlock Text="Per-core usage" Style="{StaticResource SubStat}" Margin="0,16,0,10" />
-                    <!-- Grouped by NUMA node when the system has more than one (HasMultipleNumaNodes);
-                         otherwise all cores land in one implicit group and the header just stays
-                         collapsed, so this doesn't need two separate templates for the flat case. -->
-                    <ItemsControl ItemsSource="{Binding CoresByNumaNode}">
+
+                    <!-- One nested ItemsControl per NUMA node (CoreGroups is built in
+                         CpuViewModel, not via ICollectionView grouping - a plain nested
+                         ItemsControl+WrapPanel is what reliably lays cores out side by side;
+                         binding a single ItemsControl to an externally-grouped CollectionView
+                         via GroupStyle did not). Outer panel is a vertical StackPanel (one entry
+                         per NUMA node - almost always just one), inner panel is the WrapPanel
+                         that actually arranges that node's cores in a grid. -->
+                    <ItemsControl ItemsSource="{Binding CoreGroups}">
                         <ItemsControl.ItemsPanel>
                             <ItemsPanelTemplate>
                                 <StackPanel />
                             </ItemsPanelTemplate>
                         </ItemsControl.ItemsPanel>
-                        <ItemsControl.GroupStyle>
-                            <GroupStyle>
-                                <GroupStyle.Panel>
-                                    <ItemsPanelTemplate>
-                                        <WrapPanel />
-                                    </ItemsPanelTemplate>
-                                </GroupStyle.Panel>
-                                <GroupStyle.HeaderTemplate>
-                                    <DataTemplate>
-                                        <TextBlock Text="{Binding Name, StringFormat=NUMA node {0}}"
-                                                   FontSize="10.5" FontWeight="SemiBold" Margin="0,10,0,6">
-                                            <TextBlock.Style>
-                                                <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
-                                                    <Setter Property="Visibility" Value="Collapsed" />
-                                                    <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding DataContext.HasMultipleNumaNodes, RelativeSource={RelativeSource AncestorType=UserControl}}" Value="True">
-                                                            <Setter Property="Visibility" Value="Visible" />
-                                                        </DataTrigger>
-                                                    </Style.Triggers>
-                                                </Style>
-                                            </TextBlock.Style>
-                                        </TextBlock>
-                                    </DataTemplate>
-                                </GroupStyle.HeaderTemplate>
-                            </GroupStyle>
-                        </ItemsControl.GroupStyle>
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <views:VfdMeter Title="{Binding Label}" Percent="{Binding Percent}" Glow="False"
-                                                 ValueText="{Binding Percent, StringFormat={}{0:0}}" Unit="%"
-                                                 AccentBrush="{Binding Percent, Converter={StaticResource PercentToBrushConverter}}"
-                                                 Width="104" Margin="0,0,8,8">
-                                    <views:VfdMeter.Style>
-                                        <Style TargetType="views:VfdMeter">
-                                            <Setter Property="SubText" Value="" />
-                                            <Style.Triggers>
-                                                <MultiDataTrigger>
-                                                    <MultiDataTrigger.Conditions>
-                                                        <Condition Binding="{Binding DataContext.HasHybridTopology, RelativeSource={RelativeSource AncestorType=UserControl}}" Value="True" />
-                                                        <Condition Binding="{Binding IsPCore}" Value="True" />
-                                                    </MultiDataTrigger.Conditions>
-                                                    <Setter Property="SubText" Value="P-core" />
-                                                </MultiDataTrigger>
-                                                <MultiDataTrigger>
-                                                    <MultiDataTrigger.Conditions>
-                                                        <Condition Binding="{Binding DataContext.HasHybridTopology, RelativeSource={RelativeSource AncestorType=UserControl}}" Value="True" />
-                                                        <Condition Binding="{Binding IsPCore}" Value="False" />
-                                                    </MultiDataTrigger.Conditions>
-                                                    <Setter Property="SubText" Value="E-core" />
-                                                </MultiDataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </views:VfdMeter.Style>
-                                </views:VfdMeter>
+                                <StackPanel>
+                                    <TextBlock Text="{Binding NumaNode, StringFormat=NUMA node {0}}"
+                                               FontSize="10.5" FontWeight="SemiBold" Margin="0,4,0,6">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding DataContext.HasMultipleNumaNodes, RelativeSource={RelativeSource AncestorType=UserControl}}" Value="True">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                    <ItemsControl ItemsSource="{Binding Cores}">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <WrapPanel />
+                                            </ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <views:VfdMeter Title="{Binding Label}" Percent="{Binding Percent}" Glow="False"
+                                                                 ValueText="{Binding Percent, StringFormat={}{0:0}}" Unit="%"
+                                                                 AccentBrush="{Binding Percent, Converter={StaticResource PercentToBrushConverter}}"
+                                                                 Width="104" Margin="0,0,8,8">
+                                                    <views:VfdMeter.Style>
+                                                        <Style TargetType="views:VfdMeter">
+                                                            <Setter Property="SubText" Value="" />
+                                                            <Style.Triggers>
+                                                                <MultiDataTrigger>
+                                                                    <MultiDataTrigger.Conditions>
+                                                                        <Condition Binding="{Binding DataContext.HasHybridTopology, RelativeSource={RelativeSource AncestorType=UserControl}}" Value="True" />
+                                                                        <Condition Binding="{Binding IsPCore}" Value="True" />
+                                                                    </MultiDataTrigger.Conditions>
+                                                                    <Setter Property="SubText" Value="P-core" />
+                                                                </MultiDataTrigger>
+                                                                <MultiDataTrigger>
+                                                                    <MultiDataTrigger.Conditions>
+                                                                        <Condition Binding="{Binding DataContext.HasHybridTopology, RelativeSource={RelativeSource AncestorType=UserControl}}" Value="True" />
+                                                                        <Condition Binding="{Binding IsPCore}" Value="False" />
+                                                                    </MultiDataTrigger.Conditions>
+                                                                    <Setter Property="SubText" Value="E-core" />
+                                                                </MultiDataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </views:VfdMeter.Style>
+                                                </views:VfdMeter>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
