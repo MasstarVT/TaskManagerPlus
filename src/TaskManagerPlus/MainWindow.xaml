@@ -46,11 +46,10 @@
                     </TextBlock.Style>
                 </TextBlock>
 
-                <ToggleButton Grid.Column="3" IsChecked="{Binding IsSettingsOpen, Mode=OneWay}"
-                              Command="{Binding ToggleSettingsCommand}"
-                              Width="34" Height="34" Cursor="Hand" ToolTip="Colors">
-                    <ToggleButton.Template>
-                        <ControlTemplate TargetType="ToggleButton">
+                <Button Grid.Column="3" Command="{Binding ToggleSettingsCommand}"
+                        Width="34" Height="34" Cursor="Hand" ToolTip="Colors">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
                             <Border x:Name="bg" CornerRadius="17" Background="{StaticResource BgElevatedBrush}"
                                     BorderBrush="{StaticResource BorderBrush2}" BorderThickness="1">
                                 <Path Width="16" Height="16" Stretch="Uniform" Fill="{StaticResource TextPrimaryBrush}"
@@ -60,14 +59,14 @@
                                 <Trigger Property="IsMouseOver" Value="True">
                                     <Setter TargetName="bg" Property="Background" Value="{StaticResource BgHoverBrush}" />
                                 </Trigger>
-                                <Trigger Property="IsChecked" Value="True">
+                                <DataTrigger Binding="{Binding DataContext.IsSettingsOpen, RelativeSource={RelativeSource AncestorType=Window}}" Value="True">
                                     <Setter TargetName="bg" Property="Background" Value="{DynamicResource AccentMutedBrush}" />
                                     <Setter TargetName="bg" Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
-                                </Trigger>
+                                </DataTrigger>
                             </ControlTemplate.Triggers>
                         </ControlTemplate>
-                    </ToggleButton.Template>
-                </ToggleButton>
+                    </Button.Template>
+                </Button>
             </Grid>
         </Border>
 

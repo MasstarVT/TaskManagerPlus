@@ -53,8 +53,8 @@
                 <Run Text="{Binding ProcessCount, Mode=OneWay}" /><Run Text=" processes" />
             </TextBlock>
 
-            <Button Grid.Column="2" Content="End task" Margin="0,0,8,0" Command="{Binding EndTaskCommand}" Style="{StaticResource DangerButton}" />
-            <Button Grid.Column="3" Content="End process tree" Command="{Binding EndProcessTreeCommand}" Style="{StaticResource DangerButton}" />
+            <Button Grid.Column="2" Content="End process tree" Margin="0,0,8,0" Command="{Binding EndProcessTreeCommand}" />
+            <Button Grid.Column="3" Content="End task" Command="{Binding EndTaskCommand}" Style="{StaticResource DangerButton}" />
         </Grid>
 
         <!-- Grid -->
@@ -76,7 +76,24 @@
                 </DataGridTemplateColumn>
                 <DataGridTextColumn Header="Memory" Binding="{Binding MemoryBytes, Converter={StaticResource BytesToReadableConverter}}" Width="100" />
                 <DataGridTextColumn Header="Threads" Binding="{Binding ThreadCount}" Width="80" />
-                <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="120" />
+                <DataGridTemplateColumn Header="Status" Width="120" SortMemberPath="Status">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding Status}" VerticalAlignment="Center">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding Status}" Value="Not responding">
+                                                <Setter Property="Foreground" Value="{StaticResource DangerBrush}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
                 <DataGridTextColumn Header="User" Binding="{Binding User}" Width="140" />
                 <DataGridTextColumn Header="Path" Binding="{Binding FilePath}" Width="3*" />
             </DataGrid.Columns>

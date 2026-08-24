@@ -25,9 +25,9 @@
             <TextBox Grid.Column="0" Text="{Binding FilterText, UpdateSourceTrigger=PropertyChanged}"
                      VerticalContentAlignment="Center" Height="32" />
 
-            <Button Grid.Column="2" Content="Start" Margin="0,0,8,0" Command="{Binding StartCommand}" />
+            <Button Grid.Column="2" Content="Start" Margin="0,0,8,0" Command="{Binding StartCommand}" Style="{StaticResource SuccessButton}" />
             <Button Grid.Column="3" Content="Stop" Margin="0,0,8,0" Command="{Binding StopCommand}" Style="{StaticResource DangerButton}" />
-            <Button Grid.Column="4" Content="Restart" Command="{Binding RestartCommand}" />
+            <Button Grid.Column="4" Content="Restart" Command="{Binding RestartCommand}" Style="{StaticResource PrimaryButton}" />
         </Grid>
 
         <DataGrid Grid.Row="1"
@@ -37,7 +37,17 @@
             <DataGrid.Columns>
                 <DataGridTextColumn Header="Name" Binding="{Binding DisplayName}" Width="2.5*" />
                 <DataGridTextColumn Header="Service name" Binding="{Binding ServiceName}" Width="1.5*" />
-                <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="110" />
+                <DataGridTemplateColumn Header="Status" Width="120" SortMemberPath="Status">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <Border Width="8" Height="8" CornerRadius="4" Margin="0,0,8,0"
+                                        Background="{Binding Status, Converter={StaticResource ServiceStatusToBrushConverter}}" />
+                                <TextBlock Text="{Binding Status}" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
                 <DataGridTextColumn Header="Startup type" Binding="{Binding StartType}" Width="110" />
                 <DataGridTextColumn Header="PID" Binding="{Binding ProcessId}" Width="70" />
                 <DataGridTextColumn Header="Description" Binding="{Binding Description}" Width="3*" />

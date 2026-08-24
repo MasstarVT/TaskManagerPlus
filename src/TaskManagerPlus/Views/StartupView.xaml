@@ -21,7 +21,7 @@
             <TextBlock Grid.Column="0" VerticalAlignment="Center"
                        Text="Apps that launch automatically when you sign in."
                        Foreground="{StaticResource TextSecondaryBrush}" />
-            <Button Grid.Column="1" Content="Refresh" Command="{Binding RefreshCommand}" />
+            <Button Grid.Column="1" Content="Refresh" Command="{Binding RefreshCommand}" Style="{StaticResource PrimaryButton}" />
         </Grid>
 
         <DataGrid Grid.Row="1"
@@ -47,7 +47,20 @@
                             <Button Content="{Binding IsEnabled, Converter={StaticResource BoolToEnableDisableTextConverter}}"
                                     Command="{Binding DataContext.ToggleEnabledCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                     CommandParameter="{Binding}"
-                                    Padding="10,3" />
+                                    Padding="10,3">
+                                <Button.Style>
+                                    <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsEnabled}" Value="True">
+                                                <Setter Property="Style" Value="{StaticResource DangerButton}" />
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding IsEnabled}" Value="False">
+                                                <Setter Property="Style" Value="{StaticResource SuccessButton}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Button.Style>
+                            </Button>
                         </DataTemplate>
                     </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>

@@ -15,6 +15,7 @@
             <conv:BoolToEnableDisableTextConverter x:Key="BoolToEnableDisableTextConverter" />
             <conv:ColorToBrushConverter x:Key="ColorToBrushConverter" />
             <conv:ColorToHexConverter x:Key="ColorToHexConverter" />
+            <conv:ServiceStatusToBrushConverter x:Key="ServiceStatusToBrushConverter" />
         </ResourceDictionary>
     </Application.Resources>
 </Application>
