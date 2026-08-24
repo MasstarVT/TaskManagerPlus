@@ -23,6 +23,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public StorageViewModel Storage { get; }
     public NetworkViewModel Network { get; }
 
+    // Owns its own timer/sampler (LibreHardwareMonitorLib), unlike the four above - see
+    // EnergyThermalsViewModel's remarks.
+    public EnergyThermalsViewModel EnergyThermals { get; } = new();
+
     public bool IsElevated { get; } = new WindowsPrincipal(WindowsIdentity.GetCurrent())
         .IsInRole(WindowsBuiltInRole.Administrator);
 
@@ -50,6 +54,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         ApplyAxisThemeToPerformance();
         Theme.ThemeModeChanged += ApplyAxisThemeToPerformance;
+
+        ApplyAxisThemeToEnergyThermals();
+        Theme.ThemeModeChanged += ApplyAxisThemeToEnergyThermals;
     }
 
     private void ApplyThemeToPerformance()
@@ -70,12 +77,22 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Performance.ApplyAxisTheme(TextOf("TextSecondaryBrush"), TextOf("BorderBrush2"), TextOf("BgElevatedBrush"));
     }
 
+    private void ApplyAxisThemeToEnergyThermals()
+    {
+        var resources = Application.Current.Resources;
+        Color TextOf(string key) => (resources[key] as SolidColorBrush)?.Color ?? Colors.Gray;
+
+        EnergyThermals.ApplyAxisTheme(TextOf("TextSecondaryBrush"), TextOf("BorderBrush2"));
+    }
+
     public void Dispose()
     {
         Theme.ColorsChanged -= ApplyThemeToPerformance;
         Theme.ThemeModeChanged -= ApplyAxisThemeToPerformance;
+        Theme.ThemeModeChanged -= ApplyAxisThemeToEnergyThermals;
         Processes.Dispose();
         Performance.Dispose();
         Services.Dispose();
+        EnergyThermals.Dispose();
     }
 }

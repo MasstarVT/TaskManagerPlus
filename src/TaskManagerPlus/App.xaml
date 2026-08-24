@@ -18,6 +18,7 @@
             <conv:ServiceStatusToBrushConverter x:Key="ServiceStatusToBrushConverter" />
             <conv:SegmentedMeterBrushConverter x:Key="SegmentedMeterBrushConverter" />
             <conv:ThemeModeSelectedBrushConverter x:Key="ThemeModeSelectedBrushConverter" />
+            <conv:TemperatureToBrushConverter x:Key="TemperatureToBrushConverter" />
         </ResourceDictionary>
     </Application.Resources>
 </Application>

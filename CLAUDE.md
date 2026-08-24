@@ -5,17 +5,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 Task Manager Plus — a Windows Task Manager replacement written in C# / WPF
-(.NET 8): a Summary dashboard, per-subsystem CPU/Memory/Storage/Network tabs
-(live charts), Processes, Services, Startup manager, System specs, and a
-live color-theming system. Navigation is a TMOG-style top horizontal tab
-strip (`TabStripPlacement="Top"`), not a left sidebar rail — this is a
-deliberate redesign away from the earlier iStat-Menus-style rail, matching
-the visual/IA style of [tmog.org](https://tmog.org). Theming supports six
-families (Dark/Light/Green/Amber/Blue/Monochrome "phosphor" palettes) plus
-an adjustable saturation slider, on top of the existing per-metric accent
-colors. Further TMOG/HWiNFO-inspired depth (CPU topology, memory breakdown,
-real sensors) is being layered in a staged plan — see the CPU/Memory/
-Energy & Thermals sections below for what's landed vs. still planned.
+(.NET 8): a Summary dashboard, per-subsystem CPU/Memory/Storage/Network/
+Energy & Thermals tabs (live charts, real sensors), Processes, Services,
+Startup manager, System specs, and a live color-theming system. Navigation
+is a TMOG-style top horizontal tab strip (`TabStripPlacement="Top"`), not a
+left sidebar rail — this is a deliberate redesign away from the earlier
+iStat-Menus-style rail, matching the visual/IA style of
+[tmog.org](https://tmog.org). Theming supports six families (Dark/Light/
+Green/Amber/Blue/Monochrome "phosphor" palettes) plus an adjustable
+saturation slider, on top of the existing per-metric accent colors. CPU
+topology (NUMA/P-core-E-core), a Windows-native memory breakdown, and real
+temperature/fan/voltage/power sensors (via LibreHardwareMonitorLib) round
+out the TMOG/HWiNFO-inspired depth — see the CPU/Memory/Energy & Thermals
+sections below for the details and known limitations of each.
 
 ## Commands
 
@@ -183,6 +185,46 @@ holds the two byte-formatting helpers that were previously near-duplicated
 in `PerformanceViewModel` (rate, `".../s"`) and `SystemSpecsViewModel`
 (capacity, `"Unknown"` fallback) — both now call the shared
 `FormatBytes`/`FormatByteRate`.
+
+### Energy & Thermals (real sensors via LibreHardwareMonitorLib)
+
+Temperature, fan speed, voltage, and wattage have no reliable Windows API -
+WMI's `Win32_TemperatureProbe`/`MSAcpi_ThermalZoneTemperature` are
+unimplemented by most OEM firmware, which is why every other tab avoids
+them. This tab is the one place the app takes a third-party dependency for
+data: **LibreHardwareMonitorLib** (NuGet, MPL-2.0 licensed - a separate
+license family from the rest of this MIT-licensed project, worth knowing if
+distribution terms ever come up). `Services/SensorMonitorService.cs` wraps
+`LibreHardwareMonitor.Hardware.Computer` (Cpu/Gpu/Motherboard/Memory/Storage
+enabled), opens it in a try/catch that never throws past the class
+(`IsAvailable` goes `false` instead - driver load can fail under Smart App
+Control the same way CLAUDE.md already documents for unsigned local
+builds), and flattens `Sensors` from the whole hardware/sub-hardware tree
+into `List<SensorReading>` each poll.
+
+`EnergyThermalsViewModel` is the **one** tab-level ViewModel besides the
+original five (Processes/Performance/Services/Startup/SystemSpecs) that
+owns its own `DispatcherTimer` - unlike Cpu/Memory/Storage/Network, it's
+not derived from `HardwareMonitorService`'s data, so it doesn't fit the
+"share one sampler" pattern those four use. It polls at 1.5s (sensor
+enumeration is heavier than a flat `PerformanceCounter` read, so it
+shouldn't run faster than the other tabs' 1s), and clears+rebuilds its
+`Temperatures`/`Fans`/`Voltages`/`Wattages` collections each tick rather
+than merging in place - these are read-only display lists with no
+selection/scroll state to preserve, the same simpler pattern
+`SystemSpecsViewModel` already uses for its spec lists.
+
+Sensor names are **not standardized across CPU vendors** (Intel: "CPU
+Package"; AMD: "Core (Tctl/Tdie)"; varies further by model) - headline
+readings (`CpuPackageTempC`, `TotalPackagePowerW`) go through
+`FindByNameContains`, trying a few known name hints in order rather than
+one brittle exact-string lookup. Expect sparse or missing fan/voltage data
+on many systems (depends on motherboard Super I/O chip support) - the view
+renders empty sections gracefully rather than assuming every sensor type
+exists. Per-process power impact is **deliberately not shown** - there's
+no public, stable Windows API for it, and Task Manager's own figure comes
+from a private ETW heuristic; showing a fabricated per-process wattage
+would misrepresent real telemetry.
 
 ### CPU topology (NUMA node + P-core/E-core)
 

@@ -1,0 +1,122 @@
+<UserControl x:Class="TaskManagerPlus.Views.EnergyThermalsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:TaskManagerPlus.ViewModels"
+             xmlns:views="clr-namespace:TaskManagerPlus.Views"
+             xmlns:lvc="clr-namespace:LiveChartsCore.SkiaSharpView.WPF;assembly=LiveChartsCore.SkiaSharpView.WPF"
+             d:DataContext="{d:DesignInstance Type=vm:EnergyThermalsViewModel}"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d">
+    <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16">
+        <StackPanel>
+
+            <!-- "Sensors unavailable" banner - shown when the LibreHardwareMonitorLib driver
+                 couldn't open at all (Smart App Control, driver-signing policy, unsupported
+                 hardware, ...). Never an error dialog, just a quiet inline note. -->
+            <Border Background="{DynamicResource DangerMutedBrush}" BorderBrush="{DynamicResource DangerBrush}"
+                    BorderThickness="1" CornerRadius="8" Padding="14,10" Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding SensorsAvailable}" Value="False">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <TextBlock Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" FontSize="12.5"
+                           Text="Sensors unavailable — the hardware sensor driver couldn't be opened. This can happen under Smart App Control, a restrictive driver-signing policy, or on hardware LibreHardwareMonitor doesn't support." />
+            </Border>
+
+            <!-- Headline tiles -->
+            <UniformGrid Columns="2" Margin="0,0,0,16">
+                <views:VfdMeter Title="CPU Package" Glow="True" Margin="0,0,8,0"
+                                Percent="{Binding CpuPackageTempC, TargetNullValue=0}"
+                                ValueText="{Binding CpuPackageTempC, StringFormat={}{0:0.#}, TargetNullValue=–}" Unit="°C"
+                                SubText="Package temperature"
+                                AccentBrush="{Binding CpuPackageTempC, Converter={StaticResource TemperatureToBrushConverter}}" />
+                <views:VfdMeter Title="Power draw" Glow="True" Margin="8,0,0,0"
+                                ValueText="{Binding TotalPackagePowerW, StringFormat={}{0:0.#}, TargetNullValue=–}" Unit="W"
+                                SubText="CPU package"
+                                AccentBrush="{DynamicResource DangerBrush}" />
+            </UniformGrid>
+
+            <!-- Power trend -->
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel>
+                    <StackPanel Style="{StaticResource TitleRow}">
+                        <Border Style="{StaticResource ColorDot}" Background="{DynamicResource DangerBrush}" />
+                        <TextBlock Text="Power draw" Style="{StaticResource CardTitle}" Margin="0" />
+                    </StackPanel>
+                    <lvc:CartesianChart Series="{Binding PowerSeries}" XAxes="{Binding HiddenXAxes}" YAxes="{Binding PowerYAxes}"
+                                         Height="160" TooltipPosition="Hidden" LegendPosition="Hidden" Background="Transparent" />
+                </StackPanel>
+            </Border>
+
+            <!-- Temperatures -->
+            <TextBlock Text="Temperatures" Style="{StaticResource SubStat}" Margin="0,0,0,10" />
+            <ItemsControl ItemsSource="{Binding Temperatures}" Margin="0,0,0,16">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <views:VfdMeter Title="{Binding SensorName}" Glow="False" Width="140" Margin="0,0,8,8"
+                                        Percent="{Binding Value, TargetNullValue=0}"
+                                        ValueText="{Binding Value, StringFormat={}{0:0.#}, TargetNullValue=–}" Unit="°C"
+                                        SubText="{Binding HardwareName}"
+                                        AccentBrush="{Binding Value, Converter={StaticResource TemperatureToBrushConverter}}" />
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <!-- Fans -->
+            <TextBlock Text="Fans" Style="{StaticResource SubStat}" Margin="0,0,0,10" />
+            <ItemsControl ItemsSource="{Binding Fans}" Margin="0,0,0,16">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <views:VfdMeter Title="{Binding SensorName}" Glow="False" Width="140" Margin="0,0,8,8"
+                                        ValueText="{Binding Value, StringFormat={}{0:0}, TargetNullValue=–}" Unit="RPM"
+                                        SubText="{Binding HardwareName}" AccentBrush="{DynamicResource AccentBrush}" />
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <!-- Voltages -->
+            <TextBlock Text="Voltages" Style="{StaticResource SubStat}" Margin="0,0,0,10" />
+            <ItemsControl ItemsSource="{Binding Voltages}" Margin="0,0,0,16">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <views:VfdMeter Title="{Binding SensorName}" Glow="False" Width="140" Margin="0,0,8,8"
+                                        ValueText="{Binding Value, StringFormat={}{0:0.###}, TargetNullValue=–}" Unit="V"
+                                        SubText="{Binding HardwareName}" AccentBrush="{DynamicResource AccentBrush}" />
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <!-- Wattages -->
+            <TextBlock Text="Power rails" Style="{StaticResource SubStat}" Margin="0,0,0,10" />
+            <ItemsControl ItemsSource="{Binding Wattages}">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <views:VfdMeter Title="{Binding SensorName}" Glow="False" Width="140" Margin="0,0,8,8"
+                                        ValueText="{Binding Value, StringFormat={}{0:0.#}, TargetNullValue=–}" Unit="W"
+                                        SubText="{Binding HardwareName}" AccentBrush="{DynamicResource DangerBrush}" />
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

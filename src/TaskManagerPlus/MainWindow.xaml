@@ -172,6 +172,17 @@
                     <views:NetworkView DataContext="{Binding Network}" />
                 </TabItem>
 
+                <TabItem Header="Energy &amp; Thermals">
+                    <TabItem.Tag>
+                        <Viewbox Width="16" Height="16">
+                            <Canvas Width="16" Height="16">
+                                <Path Style="{StaticResource NavIconFill}" Data="M 8.8,0.8 L 3,9 L 7,9 L 6.2,15.2 L 13,6.2 L 8.6,6.2 Z" />
+                            </Canvas>
+                        </Viewbox>
+                    </TabItem.Tag>
+                    <views:EnergyThermalsView DataContext="{Binding EnergyThermals}" />
+                </TabItem>
+
                 <TabItem Header="Processes">
                     <TabItem.Tag>
                         <Viewbox Width="16" Height="16">
