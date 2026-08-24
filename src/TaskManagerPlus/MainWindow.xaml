@@ -10,10 +10,24 @@
         mc:Ignorable="d"
         Title="Task Manager Plus" Height="860" Width="1280" MinHeight="560" MinWidth="820"
         WindowStartupLocation="CenterScreen">
+    <Window.Resources>
+        <!-- Shared brush for every nav-rail icon: bound to the ancestor TabItem's Foreground so
+             icons recolor automatically with the existing selected/hover triggers. -->
+        <Style x:Key="NavIconStroke" TargetType="Shape">
+            <Setter Property="Stroke" Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType=TabItem}}" />
+            <Setter Property="StrokeThickness" Value="1.6" />
+            <Setter Property="StrokeStartLineCap" Value="Round" />
+            <Setter Property="StrokeEndLineCap" Value="Round" />
+        </Style>
+        <Style x:Key="NavIconFill" TargetType="Shape">
+            <Setter Property="Fill" Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType=TabItem}}" />
+        </Style>
+    </Window.Resources>
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
         <!-- Header -->
@@ -23,7 +37,6 @@
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
 
                 <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
@@ -32,7 +45,7 @@
                     <TextBlock Text="Task Manager Plus" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center" />
                 </StackPanel>
 
-                <TextBlock Grid.Column="2" VerticalAlignment="Center" Margin="0,0,16,0" Foreground="{StaticResource TextSecondaryBrush}">
+                <TextBlock Grid.Column="2" VerticalAlignment="Center" Foreground="{StaticResource TextSecondaryBrush}">
                     <TextBlock.Style>
                         <Style TargetType="TextBlock">
                             <Setter Property="Text" Value="Running as administrator" />
@@ -45,52 +58,122 @@
                         </Style>
                     </TextBlock.Style>
                 </TextBlock>
-
-                <Button Grid.Column="3" Command="{Binding ToggleSettingsCommand}"
-                        Width="34" Height="34" Cursor="Hand" ToolTip="Colors">
-                    <Button.Template>
-                        <ControlTemplate TargetType="Button">
-                            <Border x:Name="bg" CornerRadius="17" Background="{StaticResource BgElevatedBrush}"
-                                    BorderBrush="{StaticResource BorderBrush2}" BorderThickness="1">
-                                <Path Width="16" Height="16" Stretch="Uniform" Fill="{StaticResource TextPrimaryBrush}"
-                                      Data="M12,2 A10,10 0 1 0 12.01,2 Z M12,7 A5,5 0 1 1 11.99,7 Z" />
-                            </Border>
-                            <ControlTemplate.Triggers>
-                                <Trigger Property="IsMouseOver" Value="True">
-                                    <Setter TargetName="bg" Property="Background" Value="{StaticResource BgHoverBrush}" />
-                                </Trigger>
-                                <DataTrigger Binding="{Binding DataContext.IsSettingsOpen, RelativeSource={RelativeSource AncestorType=Window}}" Value="True">
-                                    <Setter TargetName="bg" Property="Background" Value="{DynamicResource AccentMutedBrush}" />
-                                    <Setter TargetName="bg" Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
-                                </DataTrigger>
-                            </ControlTemplate.Triggers>
-                        </ControlTemplate>
-                    </Button.Template>
-                </Button>
             </Grid>
         </Border>
 
-        <!-- Body: tabs + optional settings drawer -->
+        <!-- Body: nav rail + page content + optional settings drawer -->
         <Grid Grid.Row="1">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
 
-            <TabControl Grid.Column="0" Margin="8,4,8,8">
-                <TabItem Header="Processes">
-                    <views:ProcessesView DataContext="{Binding Processes}" />
+            <TabControl Grid.Column="0" TabStripPlacement="Left" SelectedIndex="0">
+                <!-- Footer entry pinned to the bottom of the nav rail (see the TabControl
+                     ControlTemplate in Dark.xaml, which docks Tag to the bottom). -->
+                <TabControl.Tag>
+                    <Button Command="{Binding ToggleSettingsCommand}" Cursor="Hand"
+                            HorizontalContentAlignment="Left" Margin="10,8,10,14" Padding="12,9"
+                            Background="Transparent" BorderThickness="0">
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <Border x:Name="bg" CornerRadius="8" Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Path Width="15" Height="15" Stretch="Uniform" Fill="{StaticResource TextSecondaryBrush}" Margin="0,0,10,0"
+                                              Data="M12,2 A10,10 0 1 0 12.01,2 Z M12,7 A5,5 0 1 1 11.99,7 Z" />
+                                        <TextBlock Text="Colors" Foreground="{StaticResource TextSecondaryBrush}" VerticalAlignment="Center" />
+                                    </StackPanel>
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter TargetName="bg" Property="Background" Value="{StaticResource BgHoverBrush}" />
+                                    </Trigger>
+                                    <DataTrigger Binding="{Binding DataContext.IsSettingsOpen, RelativeSource={RelativeSource AncestorType=Window}}" Value="True">
+                                        <Setter TargetName="bg" Property="Background" Value="{DynamicResource AccentMutedBrush}" />
+                                    </DataTrigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Button.Template>
+                    </Button>
+                </TabControl.Tag>
+
+                <TabItem Header="Summary">
+                    <TabItem.Tag>
+                        <Viewbox Width="16" Height="16">
+                            <Canvas Width="16" Height="16">
+                                <Rectangle Style="{StaticResource NavIconStroke}" Canvas.Left="1" Canvas.Top="1" Width="6" Height="6" RadiusX="1.5" RadiusY="1.5" />
+                                <Rectangle Style="{StaticResource NavIconStroke}" Canvas.Left="9" Canvas.Top="1" Width="6" Height="6" RadiusX="1.5" RadiusY="1.5" />
+                                <Rectangle Style="{StaticResource NavIconStroke}" Canvas.Left="1" Canvas.Top="9" Width="6" Height="6" RadiusX="1.5" RadiusY="1.5" />
+                                <Rectangle Style="{StaticResource NavIconStroke}" Canvas.Left="9" Canvas.Top="9" Width="6" Height="6" RadiusX="1.5" RadiusY="1.5" />
+                            </Canvas>
+                        </Viewbox>
+                    </TabItem.Tag>
+                    <views:SummaryView DataContext="{Binding Summary}" />
                 </TabItem>
+
                 <TabItem Header="Performance">
+                    <TabItem.Tag>
+                        <Viewbox Width="16" Height="16">
+                            <Canvas Width="16" Height="16">
+                                <Line Style="{StaticResource NavIconStroke}" StrokeThickness="2" X1="2.5" Y1="13" X2="2.5" Y2="9" />
+                                <Line Style="{StaticResource NavIconStroke}" StrokeThickness="2" X1="8" Y1="13" X2="8" Y2="4" />
+                                <Line Style="{StaticResource NavIconStroke}" StrokeThickness="2" X1="13.5" Y1="13" X2="13.5" Y2="7" />
+                            </Canvas>
+                        </Viewbox>
+                    </TabItem.Tag>
                     <views:PerformanceView DataContext="{Binding Performance}" />
                 </TabItem>
+
+                <TabItem Header="Processes">
+                    <TabItem.Tag>
+                        <Viewbox Width="16" Height="16">
+                            <Canvas Width="16" Height="16">
+                                <Line Style="{StaticResource NavIconStroke}" StrokeThickness="1.8" X1="2" Y1="4" X2="14" Y2="4" />
+                                <Line Style="{StaticResource NavIconStroke}" StrokeThickness="1.8" X1="2" Y1="8" X2="14" Y2="8" />
+                                <Line Style="{StaticResource NavIconStroke}" StrokeThickness="1.8" X1="2" Y1="12" X2="14" Y2="12" />
+                            </Canvas>
+                        </Viewbox>
+                    </TabItem.Tag>
+                    <views:ProcessesView DataContext="{Binding Processes}" />
+                </TabItem>
+
                 <TabItem Header="Services">
+                    <TabItem.Tag>
+                        <Viewbox Width="16" Height="16">
+                            <Canvas Width="16" Height="16">
+                                <Ellipse Style="{StaticResource NavIconStroke}" Canvas.Left="4" Canvas.Top="4" Width="8" Height="8" />
+                                <Line Style="{StaticResource NavIconStroke}" X1="8" Y1="0.5" X2="8" Y2="2.5" />
+                                <Line Style="{StaticResource NavIconStroke}" X1="8" Y1="13.5" X2="8" Y2="15.5" />
+                                <Line Style="{StaticResource NavIconStroke}" X1="0.5" Y1="8" X2="2.5" Y2="8" />
+                                <Line Style="{StaticResource NavIconStroke}" X1="13.5" Y1="8" X2="15.5" Y2="8" />
+                            </Canvas>
+                        </Viewbox>
+                    </TabItem.Tag>
                     <views:ServicesView DataContext="{Binding Services}" />
                 </TabItem>
+
                 <TabItem Header="Startup">
+                    <TabItem.Tag>
+                        <Viewbox Width="16" Height="16">
+                            <Canvas Width="16" Height="16">
+                                <Path Style="{StaticResource NavIconStroke}" Data="M 11.3,3.6 A 6,6 0 1 1 4.7,3.6" />
+                                <Line Style="{StaticResource NavIconStroke}" X1="8" Y1="1" X2="8" Y2="7" />
+                            </Canvas>
+                        </Viewbox>
+                    </TabItem.Tag>
                     <views:StartupView DataContext="{Binding Startup}" />
                 </TabItem>
+
                 <TabItem Header="System">
+                    <TabItem.Tag>
+                        <Viewbox Width="16" Height="16">
+                            <Canvas Width="16" Height="16">
+                                <Ellipse Style="{StaticResource NavIconStroke}" Canvas.Left="1" Canvas.Top="1" Width="14" Height="14" />
+                                <Ellipse Style="{StaticResource NavIconFill}" Canvas.Left="7.25" Canvas.Top="4" Width="1.5" Height="1.5" />
+                                <Line Style="{StaticResource NavIconStroke}" X1="8" Y1="7" X2="8" Y2="12" />
+                            </Canvas>
+                        </Viewbox>
+                    </TabItem.Tag>
                     <views:SystemSpecsView DataContext="{Binding SystemSpecs}" />
                 </TabItem>
             </TabControl>
@@ -108,5 +191,21 @@
                 </views:SettingsPanel.Style>
             </views:SettingsPanel>
         </Grid>
+
+        <!-- Footer status bar -->
+        <Border Grid.Row="2" Background="{StaticResource BgPanelBrush}" BorderBrush="{StaticResource BorderBrush2}" BorderThickness="0,1,0,0">
+            <Grid Margin="20,7">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0" Orientation="Horizontal">
+                    <Border Width="7" Height="7" CornerRadius="3.5" Margin="0,0,7,0" VerticalAlignment="Center" Background="{StaticResource SuccessBrush}" />
+                    <TextBlock Text="{Binding Processes.ProcessCount, StringFormat={}{0} processes}" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11.5" VerticalAlignment="Center" />
+                </StackPanel>
+                <TextBlock Grid.Column="2" Text="{Binding Performance.Uptime, StringFormat=Uptime {0}}" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11.5" VerticalAlignment="Center" />
+            </Grid>
+        </Border>
     </Grid>
 </Window>

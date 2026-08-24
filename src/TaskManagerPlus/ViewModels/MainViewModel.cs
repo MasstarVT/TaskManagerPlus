@@ -11,6 +11,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public ServicesViewModel Services { get; } = new();
     public StartupViewModel Startup { get; } = new();
     public SystemSpecsViewModel SystemSpecs { get; } = new();
+    public SummaryViewModel Summary { get; }
 
     public bool IsElevated { get; } = new WindowsPrincipal(WindowsIdentity.GetCurrent())
         .IsInRole(WindowsBuiltInRole.Administrator);
@@ -26,6 +27,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     public MainViewModel()
     {
+        Summary = new SummaryViewModel(Performance, Processes);
+
         ToggleSettingsCommand = new RelayCommand(_ => IsSettingsOpen = !IsSettingsOpen);
 
         ApplyThemeToPerformance();

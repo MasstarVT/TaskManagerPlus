@@ -207,7 +207,12 @@
     <!-- ============================= TabControl ============================= -->
     <!-- Custom template: the default Windows theme chrome hardcodes a light background for the
          tab strip and content host and ignores Background/BorderThickness setters, which is why
-         the row behind the tab headers rendered as a bright white bar. -->
+         the row behind the tab headers rendered as a bright white bar.
+         Laid out as a left icon+label nav rail (TabPanel stacks vertically for free once
+         TabStripPlacement="Left" is set on the TabControl) plus a content pane, instead of the
+         old top tab strip. TabControl.Tag is presented docked to the bottom of the rail so the
+         caller can supply a footer entry (the "Colors" button) without this template needing to
+         know about app-specific commands. -->
     <Style TargetType="{x:Type TabControl}">
         <Setter Property="Background" Value="{StaticResource BgBrush}" />
         <Setter Property="BorderThickness" Value="0" />
@@ -215,13 +220,23 @@
             <Setter.Value>
                 <ControlTemplate TargetType="{x:Type TabControl}">
                     <Grid KeyboardNavigation.TabNavigation="Local" Background="{TemplateBinding Background}">
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="*" />
-                        </Grid.RowDefinitions>
-                        <TabPanel x:Name="HeaderPanel" Grid.Row="0" Panel.ZIndex="1"
-                                  IsItemsHost="True" Background="Transparent" />
-                        <Border Grid.Row="1" Background="{TemplateBinding Background}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+
+                        <Border Grid.Column="0" Background="{StaticResource BgPanelBrush}"
+                                BorderBrush="{StaticResource BorderBrush2}" BorderThickness="0,0,1,0">
+                            <DockPanel>
+                                <ContentPresenter DockPanel.Dock="Bottom" Content="{TemplateBinding Tag}" />
+                                <ScrollViewer DockPanel.Dock="Top" VerticalScrollBarVisibility="Auto">
+                                    <TabPanel x:Name="HeaderPanel" Panel.ZIndex="1"
+                                              IsItemsHost="True" Background="Transparent" Margin="10,16,10,8" />
+                                </ScrollViewer>
+                            </DockPanel>
+                        </Border>
+
+                        <Border Grid.Column="1" Background="{TemplateBinding Background}">
                             <ContentPresenter x:Name="PART_SelectedContentHost" ContentSource="SelectedContent" />
                         </Border>
                     </Grid>
@@ -233,26 +248,28 @@
     <Style TargetType="{x:Type TabItem}">
         <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}" />
         <Setter Property="FontSize" Value="13.5" />
-        <Setter Property="Padding" Value="18,11" />
+        <Setter Property="Width" Value="192" />
+        <Setter Property="Height" Value="38" />
+        <Setter Property="Padding" Value="12,0" />
+        <Setter Property="Margin" Value="0,0,0,2" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="{x:Type TabItem}">
-                    <Border x:Name="border"
-                            Background="Transparent"
-                            Padding="{TemplateBinding Padding}"
-                            Margin="0,0,4,0">
-                        <StackPanel Orientation="Vertical">
-                            <ContentPresenter x:Name="content" ContentSource="Header" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                            <Border x:Name="indicator" Height="2.5" Margin="0,9,0,-11" CornerRadius="2" Background="{DynamicResource AccentBrush}" Opacity="0" />
-                        </StackPanel>
+                    <Border x:Name="border" CornerRadius="8" Padding="{TemplateBinding Padding}">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <ContentPresenter Grid.Column="0" Content="{TemplateBinding Tag}"
+                                               Width="16" Height="16" Margin="0,0,10,0" VerticalAlignment="Center" />
+                            <ContentPresenter Grid.Column="1" x:Name="content" ContentSource="Header" VerticalAlignment="Center" />
+                        </Grid>
                     </Border>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsSelected" Value="True">
                             <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
-                            <Setter TargetName="indicator" Property="Opacity" Value="1" />
-                        </Trigger>
-                        <Trigger Property="IsSelected" Value="False">
-                            <Setter TargetName="indicator" Property="Opacity" Value="0" />
+                            <Setter TargetName="border" Property="Background" Value="{DynamicResource AccentMutedBrush}" />
                         </Trigger>
                         <MultiTrigger>
                             <MultiTrigger.Conditions>
@@ -260,6 +277,7 @@
                                 <Condition Property="IsSelected" Value="False" />
                             </MultiTrigger.Conditions>
                             <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+                            <Setter TargetName="border" Property="Background" Value="{StaticResource BgHoverBrush}" />
                         </MultiTrigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>

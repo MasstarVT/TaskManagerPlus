@@ -26,11 +26,19 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
 
     public ObservableCollection<CoreUsage> Cores { get; } = new();
 
-    private readonly LineSeries<double> _cpuLine;
-    private readonly LineSeries<double> _ramLine;
-    private readonly LineSeries<double> _diskLine;
-    private readonly LineSeries<double> _netRecvLine;
-    private readonly LineSeries<double> _netSendLine;
+    // Each metric is drawn as a pair of series: a thick, translucent "glow" stroke behind a
+    // crisp core line, so the charts read closer to the softly-glowing lines in the reference
+    // design instead of a flat single stroke.
+    private readonly LineSeries<double> _cpuGlow;
+    private readonly LineSeries<double> _cpuCore;
+    private readonly LineSeries<double> _ramGlow;
+    private readonly LineSeries<double> _ramCore;
+    private readonly LineSeries<double> _diskGlow;
+    private readonly LineSeries<double> _diskCore;
+    private readonly LineSeries<double> _netRecvGlow;
+    private readonly LineSeries<double> _netRecvCore;
+    private readonly LineSeries<double> _netSendGlow;
+    private readonly LineSeries<double> _netSendCore;
 
     public ISeries[] CpuSeries { get; }
     public ISeries[] RamSeries { get; }
@@ -145,16 +153,16 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
             },
         };
 
-        _cpuLine = LineOf(CpuHistory, SKColors.DeepSkyBlue);
-        _ramLine = LineOf(RamHistory, SKColors.MediumPurple);
-        _diskLine = LineOf(DiskHistory, SKColors.Orange);
-        _netRecvLine = LineOf(NetworkReceiveHistory, SKColors.LimeGreen, "Receive");
-        _netSendLine = LineOf(NetworkSendHistory, SKColors.OrangeRed, "Send");
+        (_cpuGlow, _cpuCore) = LineOf(CpuHistory, SKColors.DeepSkyBlue);
+        (_ramGlow, _ramCore) = LineOf(RamHistory, SKColors.MediumPurple);
+        (_diskGlow, _diskCore) = LineOf(DiskHistory, SKColors.Orange);
+        (_netRecvGlow, _netRecvCore) = LineOf(NetworkReceiveHistory, SKColors.LimeGreen, "Receive");
+        (_netSendGlow, _netSendCore) = LineOf(NetworkSendHistory, SKColors.OrangeRed, "Send");
 
-        CpuSeries = new ISeries[] { _cpuLine };
-        RamSeries = new ISeries[] { _ramLine };
-        DiskSeries = new ISeries[] { _diskLine };
-        NetworkSeries = new ISeries[] { _netRecvLine, _netSendLine };
+        CpuSeries = new ISeries[] { _cpuGlow, _cpuCore };
+        RamSeries = new ISeries[] { _ramGlow, _ramCore };
+        DiskSeries = new ISeries[] { _diskGlow, _diskCore };
+        NetworkSeries = new ISeries[] { _netRecvGlow, _netRecvCore, _netSendGlow, _netSendCore };
 
         _timer = new DispatcherTimer(DispatcherPriority.Background)
         {
@@ -173,26 +181,49 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
         return col;
     }
 
-    private static LineSeries<double> LineOf(ObservableCollection<double> values, SKColor color, string? name = null)
-        => new()
+    private const float CoreStrokeWidth = 2f;
+    private const float GlowStrokeWidth = 7f;
+
+    private static (LineSeries<double> Glow, LineSeries<double> Core) LineOf(ObservableCollection<double> values, SKColor color, string? name = null)
+    {
+        // The glow series shares the same Values as its core line, is drawn first (so the core
+        // line renders crisply on top of it), and is hidden from tooltips/legends so it reads
+        // purely as a visual effect rather than a second data series.
+        var glow = new LineSeries<double>
+        {
+            Values = values,
+            Stroke = new SolidColorPaint(color.WithAlpha(70), GlowStrokeWidth),
+            Fill = null,
+            GeometryStroke = null,
+            GeometryFill = null,
+            LineSmoothness = 0.3,
+            IsHoverable = false,
+            IsVisibleAtLegend = false,
+        };
+        var core = new LineSeries<double>
         {
             Values = values,
             Name = name,
-            Stroke = new SolidColorPaint(color, 2),
-            Fill = new SolidColorPaint(color.WithAlpha(40)),
+            Stroke = new SolidColorPaint(color, CoreStrokeWidth),
+            Fill = GradientFillOf(color),
             GeometryStroke = null,
             GeometryFill = null,
             LineSmoothness = 0.3,
         };
+        return (glow, core);
+    }
+
+    private static LinearGradientPaint GradientFillOf(SKColor color)
+        => new(color.WithAlpha(90), color.WithAlpha(0), new SKPoint(0, 0), new SKPoint(0, 1));
 
     /// <summary>Recolors the charts to match user-chosen theme colors. Called once at startup and whenever the user changes a color.</summary>
     public void ApplyColors(Color cpu, Color ram, Color disk, Color networkReceive, Color networkSend)
     {
-        Recolor(_cpuLine, cpu);
-        Recolor(_ramLine, ram);
-        Recolor(_diskLine, disk);
-        Recolor(_netRecvLine, networkReceive);
-        Recolor(_netSendLine, networkSend);
+        Recolor(_cpuGlow, _cpuCore, cpu);
+        Recolor(_ramGlow, _ramCore, ram);
+        Recolor(_diskGlow, _diskCore, disk);
+        Recolor(_netRecvGlow, _netRecvCore, networkReceive);
+        Recolor(_netSendGlow, _netSendCore, networkSend);
 
         CpuColor = cpu;
         RamColor = ram;
@@ -200,11 +231,12 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
         NetworkColor = networkReceive;
     }
 
-    private static void Recolor(LineSeries<double> series, Color color)
+    private static void Recolor(LineSeries<double> glow, LineSeries<double> core, Color color)
     {
         var sk = new SKColor(color.R, color.G, color.B);
-        series.Stroke = new SolidColorPaint(sk, 2);
-        series.Fill = new SolidColorPaint(sk.WithAlpha(40));
+        glow.Stroke = new SolidColorPaint(sk.WithAlpha(70), GlowStrokeWidth);
+        core.Stroke = new SolidColorPaint(sk, CoreStrokeWidth);
+        core.Fill = GradientFillOf(sk);
     }
 
     private static void PushHistory(ObservableCollection<double> history, double value)
