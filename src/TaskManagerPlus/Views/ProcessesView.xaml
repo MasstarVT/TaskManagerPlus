@@ -60,8 +60,7 @@
         <!-- Grid -->
         <DataGrid Grid.Row="1"
                   ItemsSource="{Binding ProcessesView}"
-                  SelectedItem="{Binding SelectedProcess}"
-                  Style="{StaticResource {x:Type DataGrid}}">
+                  SelectedItem="{Binding SelectedProcess}">
             <DataGrid.Columns>
                 <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="2*" />
                 <DataGridTextColumn Header="PID" Binding="{Binding Pid}" Width="70" />

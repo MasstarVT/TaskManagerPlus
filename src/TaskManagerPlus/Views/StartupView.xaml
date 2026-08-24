@@ -26,8 +26,7 @@
 
         <DataGrid Grid.Row="1"
                   ItemsSource="{Binding Items}"
-                  SelectedItem="{Binding SelectedItem}"
-                  Style="{StaticResource {x:Type DataGrid}}">
+                  SelectedItem="{Binding SelectedItem}">
             <DataGrid.RowStyle>
                 <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
                     <Style.Triggers>
@@ -49,13 +48,18 @@
                                     CommandParameter="{Binding}"
                                     Padding="10,3">
                                 <Button.Style>
+                                    <!-- A Style can't swap its own element's Style via a Setter (WPF throws
+                                         "Style object is not allowed to affect the Style property of the object
+                                         to which it applies" the moment the row is virtualized/realized), so the
+                                         Danger/Success looks are inlined here instead of swapped in wholesale. -->
                                     <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                        <Setter Property="Background" Value="Transparent" />
+                                        <Setter Property="Foreground" Value="{StaticResource SuccessBrush}" />
+                                        <Setter Property="BorderBrush" Value="{StaticResource BorderBrush2}" />
                                         <Style.Triggers>
                                             <DataTrigger Binding="{Binding IsEnabled}" Value="True">
-                                                <Setter Property="Style" Value="{StaticResource DangerButton}" />
-                                            </DataTrigger>
-                                            <DataTrigger Binding="{Binding IsEnabled}" Value="False">
-                                                <Setter Property="Style" Value="{StaticResource SuccessButton}" />
+                                                <Setter Property="Foreground" Value="{StaticResource DangerBrush}" />
+                                                <Setter Property="BorderBrush" Value="{StaticResource DangerMutedBrush}" />
                                             </DataTrigger>
                                         </Style.Triggers>
                                     </Style>
