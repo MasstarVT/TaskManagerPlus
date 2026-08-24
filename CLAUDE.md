@@ -5,8 +5,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 Task Manager Plus — a Windows Task Manager replacement written in C# / WPF
-(.NET 8): Processes, Performance (live charts), Services, Startup manager,
-System specs, and a live color-theming system.
+(.NET 8): a Summary dashboard, Processes, Performance (live charts),
+Services, Startup manager, System specs, and a live color-theming system.
+Navigation is a left icon+label sidebar rail (styled after iStat Menus),
+not a top tab strip.
 
 ## Commands
 
@@ -50,11 +52,18 @@ container — everything is `new`'d directly). Layers:
 - **ViewModels/** — one per tab (`ProcessesViewModel`, `PerformanceViewModel`,
   `ServicesViewModel`, `StartupViewModel`, `SystemSpecsViewModel`,
   `ThemeViewModel`), each owns its own `DispatcherTimer` for polling and
-  disposes it in `Dispose()`. `MainViewModel` composes all of them plus
-  settings-drawer state (`IsSettingsOpen`) and elevation status
-  (`IsElevated`, checked once via `WindowsPrincipal`).
-- **Views/** — XAML + minimal code-behind per tab, under `MainWindow.xaml`'s
-  tab control.
+  disposes it in `Dispose()`. `SummaryViewModel` (Summary tab) is the one
+  exception — it's a thin composition over the existing `PerformanceViewModel`/
+  `ProcessesViewModel` instances (passed in), not a new polling source; keep
+  it that way rather than adding a second sampler for the same data.
+  `MainViewModel` composes all of them plus settings-drawer state
+  (`IsSettingsOpen`) and elevation status (`IsElevated`, checked once via
+  `WindowsPrincipal`).
+- **Views/** — XAML + minimal code-behind per tab, hosted in `MainWindow.xaml`'s
+  `TabControl` (see "UI shell" below). `MeterTile` is a small reusable
+  UserControl (colored dot/title, big value, colored bar) for gauge-style
+  tiles — used on the Summary page; reuse it instead of hand-rolling another
+  stat tile when adding one.
 - **Common/** — `ObservableObject` (minimal `INotifyPropertyChanged` base)
   and `RelayCommand` (`ICommand` implementation) — the entire "MVVM
   framework" for this project, intentionally hand-rolled rather than
@@ -74,6 +83,43 @@ Cross-tab coupling is deliberately thin: `MainViewModel` wires
 `ThemeViewModel.ColorsChanged` to `PerformanceViewModel.ApplyColors` so
 chart colors update live when the user changes them in the Colors panel;
 otherwise tabs don't know about each other.
+
+### UI shell (nav rail, icons, footer)
+
+`MainWindow.xaml`'s `TabControl` is re-templated (in `Themes/Dark.xaml`) as a
+left icon+label sidebar instead of a top tab strip — `TabStripPlacement="Left"`
+gets the vertical `TabPanel` layout for free, so no separate nav
+ViewModel/converters exist; page switching is still plain `TabItem` selection.
+
+- **Per-tab icons**: each `TabItem.Tag` in `MainWindow.xaml` holds a small
+  hand-drawn `Viewbox`/`Canvas` glyph (`Line`/`Ellipse`/`Rectangle`/`Path`),
+  styled via the `NavIconStroke`/`NavIconFill` styles declared in
+  `MainWindow.xaml`'s `Window.Resources`. Those styles bind `Stroke`/`Fill` to
+  `{RelativeSource AncestorType=TabItem}.Foreground`, so icons recolor
+  automatically with the existing selected/hover triggers in the `TabItem`
+  template — add new tabs the same way rather than hardcoding icon colors.
+- **Rail footer**: the "Colors" button lives in `TabControl.Tag`, which the
+  `TabControl` template docks to the bottom of the rail. This keeps
+  `Dark.xaml` generic (it doesn't know about `ToggleSettingsCommand`) while
+  letting `MainWindow.xaml` supply real app bindings. Add further footer
+  entries the same way (a `StackPanel` inside `TabControl.Tag`) rather than
+  editing the template.
+- **Footer status bar**: a slim bar under the tab body (`MainWindow.xaml`,
+  bottom `Grid.Row`) shows live process count / uptime, pulled straight from
+  `Processes`/`Performance` — no new state.
+
+### Chart styling (glow + gradient)
+
+`PerformanceViewModel.LineOf` builds each metric (CPU/RAM/Disk/Network
+receive/send) as a **pair** of `LineSeries<double>` sharing the same
+`ObservableCollection<double>`: a thick, translucent "glow" stroke
+(`IsHoverable=false`, `IsVisibleAtLegend=false`) drawn first, then a crisp
+2px "core" stroke on top with a top-to-bottom `LinearGradientPaint` area
+fill. `CpuSeries`/`RamSeries`/`DiskSeries` are therefore 2-element
+`ISeries[]` arrays and `NetworkSeries` is 4 elements
+(recv-glow, recv-core, send-glow, send-core) — `Recolor`/`ApplyColors` update
+both series of a pair together. `PerformanceView.xaml`/`SummaryView.xaml`
+just bind to the `ISeries[]` as before and don't need to know about the pair.
 
 ### Notable implementation details
 
