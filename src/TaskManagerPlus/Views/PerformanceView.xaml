@@ -85,7 +85,7 @@
                         <TextBlock Grid.Column="1" Text="{Binding CpuSpecs}" Style="{StaticResource SubStat}" VerticalAlignment="Center" />
                     </Grid>
                     <lvc:CartesianChart Series="{Binding CpuSeries}" XAxes="{Binding HiddenXAxes}" YAxes="{Binding PercentYAxes}"
-                                         Height="180" TooltipPosition="Hidden" LegendPosition="Hidden" />
+                                         Height="180" TooltipPosition="Hidden" LegendPosition="Hidden" Background="Transparent" />
                     <ItemsControl ItemsSource="{Binding Cores}" Margin="0,14,0,0">
                         <ItemsControl.ItemsPanel>
                             <ItemsPanelTemplate>
@@ -116,7 +116,7 @@
                         <TextBlock Text="Memory" Style="{StaticResource CardTitle}" Margin="0" />
                     </StackPanel>
                     <lvc:CartesianChart Series="{Binding RamSeries}" XAxes="{Binding HiddenXAxes}" YAxes="{Binding PercentYAxes}"
-                                         Height="140" TooltipPosition="Hidden" LegendPosition="Hidden" />
+                                         Height="140" TooltipPosition="Hidden" LegendPosition="Hidden" Background="Transparent" />
                 </StackPanel>
             </Border>
 
@@ -128,7 +128,7 @@
                         <TextBlock Text="Disk" Style="{StaticResource CardTitle}" Margin="0" />
                     </StackPanel>
                     <lvc:CartesianChart Series="{Binding DiskSeries}" XAxes="{Binding HiddenXAxes}" YAxes="{Binding PercentYAxes}"
-                                         Height="140" TooltipPosition="Hidden" LegendPosition="Hidden" />
+                                         Height="140" TooltipPosition="Hidden" LegendPosition="Hidden" Background="Transparent" />
                 </StackPanel>
             </Border>
 
@@ -140,7 +140,9 @@
                         <TextBlock Text="Network" Style="{StaticResource CardTitle}" Margin="0" />
                     </StackPanel>
                     <lvc:CartesianChart Series="{Binding NetworkSeries}" XAxes="{Binding HiddenXAxes}" YAxes="{Binding NetworkYAxes}"
-                                         Height="140" TooltipPosition="Top" LegendPosition="Bottom" />
+                                         Height="140" TooltipPosition="Top" LegendPosition="Bottom" Background="Transparent"
+                                         LegendTextPaint="{Binding LegendTextPaint}" LegendBackgroundPaint="{Binding LegendBackgroundPaint}"
+                                         TooltipTextPaint="{Binding TooltipTextPaint}" TooltipBackgroundPaint="{Binding TooltipBackgroundPaint}" />
                 </StackPanel>
             </Border>
 

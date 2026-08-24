@@ -40,6 +40,13 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
     public Axis[] HiddenXAxes { get; }
     public Axis[] NetworkYAxes { get; }
 
+    // Shared paints so the Network chart's legend/tooltip (the only ones left visible) render
+    // in the app's dark palette instead of LiveCharts' default light-theme black-on-white.
+    public SolidColorPaint LegendTextPaint { get; } = AxisTextPaint();
+    public SolidColorPaint LegendBackgroundPaint { get; } = new(new SKColor(0x26, 0x26, 0x2B));
+    public SolidColorPaint TooltipTextPaint { get; } = AxisTextPaint();
+    public SolidColorPaint TooltipBackgroundPaint { get; } = new(new SKColor(0x26, 0x26, 0x2B));
+
     private Color _cpuColor;
     public Color CpuColor { get => _cpuColor; private set => SetProperty(ref _cpuColor, value); }
 
@@ -94,19 +101,48 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
     private string _uptime = string.Empty;
     public string Uptime { get => _uptime; private set => SetProperty(ref _uptime, value); }
 
+    // Chart axes default to LiveCharts' light theme (dark text/gridlines meant for a white
+    // background), which is why charts rendered as bright white boxes against the dark app
+    // theme. Paint them explicitly to match the app's dark palette instead.
+    private static readonly SKColor AxisTextColor = new(0x9A, 0x9A, 0xA2);   // TextSecondaryColor
+    private static readonly SKColor AxisSeparatorColor = new(0x33, 0x33, 0x3A, 160); // BorderColor, translucent
+
+    private static SolidColorPaint AxisTextPaint() => new(AxisTextColor);
+    private static SolidColorPaint AxisSeparatorPaint() => new(AxisSeparatorColor) { StrokeThickness = 1 };
+
     public PerformanceViewModel()
     {
         HiddenXAxes = new[]
         {
-            new Axis { IsVisible = false, MinLimit = 0, MaxLimit = HistoryLength - 1 },
+            new Axis
+            {
+                IsVisible = false,
+                MinLimit = 0,
+                MaxLimit = HistoryLength - 1,
+                ShowSeparatorLines = false,
+            },
         };
         PercentYAxes = new[]
         {
-            new Axis { MinLimit = 0, MaxLimit = 100, MinStep = 25, Labeler = v => $"{v:0}%" },
+            new Axis
+            {
+                MinLimit = 0,
+                MaxLimit = 100,
+                MinStep = 25,
+                Labeler = v => $"{v:0}%",
+                LabelsPaint = AxisTextPaint(),
+                SeparatorsPaint = AxisSeparatorPaint(),
+            },
         };
         NetworkYAxes = new[]
         {
-            new Axis { MinLimit = 0, Labeler = v => FormatBytes(v) },
+            new Axis
+            {
+                MinLimit = 0,
+                Labeler = v => FormatBytes(v),
+                LabelsPaint = AxisTextPaint(),
+                SeparatorsPaint = AxisSeparatorPaint(),
+            },
         };
 
         _cpuLine = LineOf(CpuHistory, SKColors.DeepSkyBlue);
