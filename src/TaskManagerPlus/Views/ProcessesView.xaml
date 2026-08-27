@@ -9,18 +9,20 @@
     <Grid Margin="16">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <!-- Toolbar -->
-        <Grid Grid.Row="0" Margin="0,0,0,12">
+        <!-- Toolbar row 1: search/filters + destructive actions -->
+        <Grid Grid.Row="0" Margin="0,0,0,8">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="260" />
                 <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
@@ -55,20 +57,57 @@
                       IsChecked="{Binding RecentlyStartedOnly}"
                       ToolTip="Show only processes started in the last 5 minutes" />
 
-            <TextBlock Grid.Column="2" VerticalAlignment="Center" Margin="16,0,0,0"
+            <!-- Round 7 #1: process tree/hierarchy view toggle. -->
+            <CheckBox Grid.Column="2" Content="Tree view" VerticalAlignment="Center" Margin="16,0,0,0"
+                      IsChecked="{Binding ShowTree}"
+                      ToolTip="Show processes indented under their parent instead of a flat list" />
+
+            <TextBlock Grid.Column="3" VerticalAlignment="Center" Margin="16,0,0,0"
                        Foreground="{DynamicResource TextSecondaryBrush}">
                 <Run Text="{Binding ProcessCount, Mode=OneWay}" /><Run Text=" processes" />
             </TextBlock>
 
-            <Button Grid.Column="3" Content="View modules" Margin="0,0,8,0" Command="{Binding ViewModulesCommand}" />
             <Button Grid.Column="4" Content="End process tree" Margin="0,0,8,0" Command="{Binding EndProcessTreeCommand}" />
             <Button Grid.Column="5" Content="End task" Command="{Binding EndTaskCommand}" Style="{StaticResource DangerButton}" />
         </Grid>
 
-        <!-- Grid -->
-        <DataGrid Grid.Row="1"
+        <!-- Toolbar row 2: on-demand inspectors + process-control actions for the selected process. -->
+        <WrapPanel Grid.Row="1" Margin="0,0,0,12" VerticalAlignment="Center">
+            <Button Content="View modules" Margin="0,0,8,8" Command="{Binding ViewModulesCommand}" />
+            <!-- Round 7 #3 -->
+            <Button Content="View environment" Margin="0,0,8,8" Command="{Binding ViewEnvironmentCommand}" />
+            <!-- Round 7 #12 -->
+            <Button Content="View handle types" Margin="0,0,8,8" Command="{Binding ViewHandleTypesCommand}" />
+            <!-- Round 7 #17 - only meaningful for a svchost.exe row, see IsSvchostSelected. -->
+            <Button Content="Hosted services" Margin="0,0,8,8" Command="{Binding ViewHostedServicesCommand}"
+                    ToolTip="Which service names live inside this svchost.exe process" />
+            <!-- Round 7 #4 -->
+            <Button Content="Trim working set" Margin="0,0,8,8" Command="{Binding TrimWorkingSetCommand}"
+                    ToolTip="Ask Windows to release the process's resident memory back to the system (EmptyWorkingSet)" />
+            <!-- Round 7 #8 -->
+            <Button Content="Suspend" Margin="0,0,8,8" Command="{Binding SuspendCommand}" Style="{StaticResource DangerButton}" />
+            <Button Content="Resume" Margin="0,0,16,8" Command="{Binding ResumeCommand}" Style="{StaticResource SuccessButton}" />
+
+            <!-- Round 7 #6: priority class picker. -->
+            <TextBlock Text="Priority:" VerticalAlignment="Center" Margin="0,0,4,8" Foreground="{DynamicResource TextSecondaryBrush}" />
+            <ComboBox ItemsSource="{Binding PriorityOptionNames}" SelectedItem="{Binding SelectedPriorityName}"
+                      Width="120" Margin="0,0,4,8" />
+            <Button Content="Set priority" Margin="0,0,0,8" Command="{Binding SetPriorityCommand}" />
+        </WrapPanel>
+
+        <!-- Flat grid (default) -->
+        <DataGrid Grid.Row="2"
                   ItemsSource="{Binding ProcessesView}"
                   SelectedItem="{Binding SelectedProcess}">
+            <DataGrid.Style>
+                <Style TargetType="DataGrid" BasedOn="{StaticResource {x:Type DataGrid}}">
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding ShowTree}" Value="True">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </DataGrid.Style>
             <DataGrid.RowStyle>
                 <!-- High-privilege (SYSTEM/LOCAL SERVICE/NETWORK SERVICE) rows get a tinted
                      background so they stand out when scanning for something unexpected -
@@ -84,6 +123,15 @@
                              beyond a plain text flag, since window ghosting is easy to miss in a
                              long scrolling grid. -->
                         <DataTrigger Binding="{Binding Status}" Value="Not responding">
+                            <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
+                        </DataTrigger>
+                        <!-- Round 7 #8: a suspended process is dimmed, the same "faded, not hidden"
+                             treatment the CPU tab already gives a parked core tile. -->
+                        <DataTrigger Binding="{Binding IsSuspended}" Value="True">
+                            <Setter Property="Opacity" Value="0.55" />
+                        </DataTrigger>
+                        <!-- Round 7 #11: an exe path running an unusually high number of times. -->
+                        <DataTrigger Binding="{Binding IsDuplicateInstanceOutlier}" Value="True">
                             <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
                         </DataTrigger>
                     </Style.Triggers>
@@ -137,6 +185,33 @@
                 <DataGridTextColumn Header="Disk" Binding="{Binding DiskBytesPerSec, Converter={StaticResource BytesToReadableConverter}, ConverterParameter=rate}" Width="90" />
                 <DataGridTextColumn Header="Threads" Binding="{Binding ThreadCount}" Width="80" />
                 <DataGridTextColumn Header="Handles" Binding="{Binding HandleCount}" Width="80" />
+                <!-- Round 7 #7: GDI/USER object handle counts, matching Task Manager's optional
+                     Details columns - see ProcessControlService.ReadGuiResourceCounts. -->
+                <DataGridTextColumn Header="GDI" Binding="{Binding GdiHandleCount}" Width="60" />
+                <DataGridTextColumn Header="USER" Binding="{Binding UserHandleCount}" Width="60" />
+                <!-- Round 7 #6: scheduling priority class. -->
+                <DataGridTextColumn Header="Priority" Binding="{Binding PriorityClassName}" Width="100" />
+                <!-- Round 7 #2/#11: spawn-group size and duplicate-instance count badges. -->
+                <DataGridTemplateColumn Header="Group" Width="70" SortMemberPath="SpawnGroupSize">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <TextBlock VerticalAlignment="Center" FontSize="11"
+                                       ToolTip="Processes sharing the same parent and executable, spawned within a few seconds of each other - a best-effort proxy for job-object/process-group membership.">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="{Binding SpawnGroupSize, StringFormat=x{0}}" />
+                                        <Setter Property="Visibility" Value="Visible" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding SpawnGroupSize}" Value="0">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
                 <DataGridTemplateColumn Header="Status" Width="150" SortMemberPath="NotRespondingSeconds">
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate>
@@ -154,6 +229,11 @@
                                             <DataTrigger Binding="{Binding Status}" Value="Not responding">
                                                 <Setter Property="Text" Value="{Binding NotRespondingSeconds, StringFormat=Not responding ({0}s)}" />
                                                 <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                <Setter Property="FontWeight" Value="SemiBold" />
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding IsSuspended}" Value="True">
+                                                <Setter Property="Text" Value="Suspended" />
+                                                <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
                                                 <Setter Property="FontWeight" Value="SemiBold" />
                                             </DataTrigger>
                                         </Style.Triggers>
@@ -207,38 +287,226 @@
                 <ContextMenu>
                     <MenuItem Header="End task" Command="{Binding EndTaskCommand}" />
                     <MenuItem Header="End process tree" Command="{Binding EndProcessTreeCommand}" />
+                    <Separator />
+                    <MenuItem Header="Suspend" Command="{Binding SuspendCommand}" />
+                    <MenuItem Header="Resume" Command="{Binding ResumeCommand}" />
+                    <MenuItem Header="Trim working set" Command="{Binding TrimWorkingSetCommand}" />
+                    <Separator />
+                    <MenuItem Header="View modules" Command="{Binding ViewModulesCommand}" />
+                    <MenuItem Header="View environment" Command="{Binding ViewEnvironmentCommand}" />
+                    <MenuItem Header="View handle types" Command="{Binding ViewHandleTypesCommand}" />
+                    <MenuItem Header="Hosted services (svchost)" Command="{Binding ViewHostedServicesCommand}" />
                 </ContextMenu>
             </DataGrid.ContextMenu>
         </DataGrid>
 
-        <!-- #39: on-demand module/DLL list for the selected process - see
-             ProcessesViewModel.LoadSelectedProcessModules. -->
-        <Border Grid.Row="2" Margin="0,10,0,0" Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
-            <Border.Style>
-                <Style TargetType="Border">
-                    <Setter Property="Visibility" Value="Visible" />
+        <!-- Round 7 #1: tree view (only shown when ShowTree is on). Selection is wired in
+             ProcessesView.xaml.cs since TreeView has no built-in two-way SelectedItem binding. -->
+        <TreeView Grid.Row="2" x:Name="ProcessTreeView" ItemsSource="{Binding ProcessTree}"
+                  SelectedItemChanged="ProcessTreeView_SelectedItemChanged">
+            <TreeView.Style>
+                <Style TargetType="TreeView" BasedOn="{StaticResource {x:Type TreeView}}">
+                    <Setter Property="Visibility" Value="Collapsed" />
                     <Style.Triggers>
-                        <DataTrigger Binding="{Binding SelectedProcessModules.Count}" Value="0">
-                            <Setter Property="Visibility" Value="Collapsed" />
+                        <DataTrigger Binding="{Binding ShowTree}" Value="True">
+                            <Setter Property="Visibility" Value="Visible" />
                         </DataTrigger>
                     </Style.Triggers>
                 </Style>
-            </Border.Style>
-            <StackPanel>
-                <TextBlock Text="Loaded modules" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
-                <ScrollViewer MaxHeight="140" VerticalScrollBarVisibility="Auto">
-                    <ItemsControl ItemsSource="{Binding SelectedProcessModules}">
+            </TreeView.Style>
+            <TreeView.ItemTemplate>
+                <HierarchicalDataTemplate ItemsSource="{Binding Children}">
+                    <StackPanel Orientation="Horizontal" Margin="0,2">
+                        <TextBlock Text="{Binding Row.Name}" FontWeight="SemiBold" />
+                        <TextBlock Text="{Binding Row.Pid, StringFormat=  (PID {0})}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" Margin="10,0,0,0">
+                            <Run Text="{Binding Row.CpuPercent, Mode=OneWay, StringFormat={}{0:0.0}% CPU}" />
+                            <Run Text=" · " />
+                            <Run Text="{Binding Row.MemoryBytes, Mode=OneWay, Converter={StaticResource BytesToReadableConverter}}" />
+                        </TextBlock>
+                        <TextBlock Text="{Binding Row.SpawnGroupSize, StringFormat= · group of {0}}" Foreground="{DynamicResource WarningBrush}"
+                                   FontSize="11" VerticalAlignment="Center">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding Row.SpawnGroupSize}" Value="0">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </StackPanel>
+                </HierarchicalDataTemplate>
+            </TreeView.ItemTemplate>
+        </TreeView>
+
+        <!-- On-demand inspector results for the selected process (#39/#3/#12/#17) - each section
+             independently collapses when empty, the same pattern the original modules-only panel
+             established. -->
+        <StackPanel Grid.Row="3" Margin="0,10,0,0">
+            <Border Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Margin="0,0,0,6">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Visibility" Value="Visible" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding SelectedProcessModules.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Loaded modules" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                    <ScrollViewer MaxHeight="140" VerticalScrollBarVisibility="Auto">
+                        <ItemsControl ItemsSource="{Binding SelectedProcessModules}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding}" FontSize="11.5" TextTrimming="CharacterEllipsis" Margin="0,0,0,2" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                </StackPanel>
+            </Border>
+
+            <!-- Round 7 #3 -->
+            <Border Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Margin="0,0,0,6">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Visibility" Value="Visible" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding SelectedProcessEnvironment.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Environment variables" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                    <ScrollViewer MaxHeight="140" VerticalScrollBarVisibility="Auto">
+                        <ItemsControl ItemsSource="{Binding SelectedProcessEnvironment}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding}" FontSize="11.5" FontFamily="Consolas" TextTrimming="CharacterEllipsis" Margin="0,0,0,2" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                </StackPanel>
+            </Border>
+
+            <!-- Round 7 #12 -->
+            <Border Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Margin="0,0,0,6">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Visibility" Value="Visible" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding SelectedProcessHandleTypes.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Open handles by type (best-effort)" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                    <ItemsControl ItemsSource="{Binding SelectedProcessHandleTypes}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <TextBlock Text="{Binding}" FontSize="11.5" TextTrimming="CharacterEllipsis" Margin="0,0,0,2" />
+                                <TextBlock Text="{Binding}" FontSize="11.5" Margin="0,0,16,2" />
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
-                </ScrollViewer>
-            </StackPanel>
-        </Border>
+                </StackPanel>
+            </Border>
 
-        <TextBlock Grid.Row="3" Text="{Binding StatusMessage}" Margin="0,8,0,0"
+            <!-- Round 7 #17 -->
+            <Border Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Visibility" Value="Visible" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding SelectedProcessHostedServices.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Hosted services" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                    <ItemsControl ItemsSource="{Binding SelectedProcessHostedServices}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding}" FontSize="11.5" Margin="0,0,0,2" />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+        </StackPanel>
+
+        <!-- Round 7 #5/#9: CPU affinity editor + "what has this file open" lookup. -->
+        <Grid Grid.Row="4" Margin="0,10,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="16" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <Border Grid.Column="0" Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Visibility" Value="Visible" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding AffinityCores.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="CPU affinity" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                    <ItemsControl ItemsSource="{Binding AffinityCores}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <CheckBox Content="{Binding Index}" IsChecked="{Binding IsSelected}" Margin="0,0,10,4" />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <Button Content="Apply affinity" HorizontalAlignment="Left" Margin="0,6,0,0" Command="{Binding ApplyAffinityCommand}" />
+                </StackPanel>
+            </Border>
+
+            <Border Grid.Column="2" Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
+                <StackPanel>
+                    <TextBlock Text="What has this file open?" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                    <DockPanel>
+                        <Button DockPanel.Dock="Right" Content="Check" Margin="8,0,0,0" Command="{Binding LookupFileLockCommand}" />
+                        <TextBox Text="{Binding FileLockPath, UpdateSourceTrigger=PropertyChanged}" Height="28" VerticalContentAlignment="Center" />
+                    </DockPanel>
+                    <ItemsControl ItemsSource="{Binding FileLockResults}" Margin="0,6,0,0">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding}" FontSize="11.5" Margin="0,0,0,2" />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+        </Grid>
+
+        <TextBlock Grid.Row="5" Text="{Binding StatusMessage}" Margin="0,8,0,0"
                    Foreground="{DynamicResource TextSecondaryBrush}" />
     </Grid>
 </UserControl>

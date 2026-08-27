@@ -95,5 +95,41 @@ public sealed class ProcessRow : ObservableObject
     private double _gpuPercent;
     public double GpuPercent { get => _gpuPercent; set => SetProperty(ref _gpuPercent, value); }
 
+    /// <summary>Round 7 #2: a best-effort "spawned together" grouping - see
+    /// ProcessMonitorService.ComputeSpawnGroups for the exact heuristic (same parent pid + same
+    /// executable name + start times clustered within a short window). 1 (or 0 for an unresolved
+    /// parent) means "not part of a detected group"; a plain "quick flag, not a verdict" proxy for
+    /// actual job-object membership, which Windows exposes no per-process query for.</summary>
+    private int _spawnGroupSize;
+    public int SpawnGroupSize { get => _spawnGroupSize; set => SetProperty(ref _spawnGroupSize, value); }
+
+    /// <summary>Round 7 #11: how many currently-running processes share this exact executable path,
+    /// and whether that count is unusually high (a runaway-launcher-bug smell) - see
+    /// ProcessMonitorService.ComputeDuplicateInstances.</summary>
+    private int _duplicateInstanceCount;
+    public int DuplicateInstanceCount { get => _duplicateInstanceCount; set => SetProperty(ref _duplicateInstanceCount, value); }
+
+    private bool _isDuplicateInstanceOutlier;
+    public bool IsDuplicateInstanceOutlier { get => _isDuplicateInstanceOutlier; set => SetProperty(ref _isDuplicateInstanceOutlier, value); }
+
+    /// <summary>Round 7 #7: GDI/USER object handle counts, matching Task Manager's optional Details
+    /// columns - see ProcessControlService.ReadGuiResourceCounts (GetGuiResources).</summary>
+    private int _gdiHandleCount;
+    public int GdiHandleCount { get => _gdiHandleCount; set => SetProperty(ref _gdiHandleCount, value); }
+
+    private int _userHandleCount;
+    public int UserHandleCount { get => _userHandleCount; set => SetProperty(ref _userHandleCount, value); }
+
+    /// <summary>Round 7 #6: scheduling priority class (Process.PriorityClass), shown as a column and
+    /// changeable via a right-click submenu - see ProcessControlService.SetPriority.</summary>
+    private string _priorityClassName = string.Empty;
+    public string PriorityClassName { get => _priorityClassName; set => SetProperty(ref _priorityClassName, value); }
+
+    /// <summary>Round 7 #8: true when every thread in the process is currently parked in a
+    /// Suspended wait state - see ProcessControlService.IsSuspended for the exact check and its
+    /// limitation (no single "process state" flag exists on Windows, this infers it from threads).</summary>
+    private bool _isSuspended;
+    public bool IsSuspended { get => _isSuspended; set => SetProperty(ref _isSuspended, value); }
+
     public double MemoryMb => MemoryBytes / 1024.0 / 1024.0;
 }

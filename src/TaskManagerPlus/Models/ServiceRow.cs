@@ -60,6 +60,53 @@ public sealed class ServiceRow : ObservableObject
     private string _failureActionsText = string.Empty;
     public string FailureActionsText { get => _failureActionsText; set => SetProperty(ref _failureActionsText, value); }
 
+    /// <summary>Round 7 #14: the account this service logs on as (Win32_Service.StartName -
+    /// LocalSystem, a virtual per-service SID "NT SERVICE\...", a network service account, or a
+    /// real domain/local user for a small minority of services). See
+    /// ServiceControlService.ReadServiceAccounts.</summary>
+    private string _logOnAs = string.Empty;
+    public string LogOnAs
+    {
+        get => _logOnAs;
+        set { if (SetProperty(ref _logOnAs, value)) OnPropertyChanged(nameof(IsNonStandardAccount)); }
+    }
+
+    private static readonly string[] StandardAccounts =
+    {
+        "LocalSystem", "NT AUTHORITY\\LocalService", "NT AUTHORITY\\NetworkService",
+        "NT AUTHORITY\\LOCAL SERVICE", "NT AUTHORITY\\NETWORK SERVICE",
+    };
+
+    /// <summary>True when LogOnAs is neither empty (drivers) nor one of the four standard built-in
+    /// service accounts - worth a second look when auditing services for something unexpected, the
+    /// same "quick flag" spirit as Processes' IsHighPrivilege.</summary>
+    public bool IsNonStandardAccount =>
+        !string.IsNullOrEmpty(LogOnAs) &&
+        !StandardAccounts.Contains(LogOnAs, StringComparer.OrdinalIgnoreCase) &&
+        !LogOnAs.StartsWith("NT SERVICE\\", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Round 7 #13: an approximate measured start duration mined from Service Control
+    /// Manager 7036 event-log entries, loaded on demand via ServicesViewModel.LoadStartDurationsAsync -
+    /// see EventLogService.ReadServiceStartDurations for exactly what's measured and its
+    /// limitations. Empty until requested.</summary>
+    private string _startDurationText = string.Empty;
+    public string StartDurationText { get => _startDurationText; set => SetProperty(ref _startDurationText, value); }
+
+    /// <summary>Round 7 #16: set after comparing this row's StartType/LogOnAs against a saved
+    /// baseline snapshot (ServicesViewModel.CheckConfigDriftAsync) - empty/false until a baseline
+    /// has been loaded and compared.</summary>
+    private bool _hasConfigDrift;
+    public bool HasConfigDrift { get => _hasConfigDrift; set => SetProperty(ref _hasConfigDrift, value); }
+
+    private string _configDriftText = string.Empty;
+    public string ConfigDriftText { get => _configDriftText; set => SetProperty(ref _configDriftText, value); }
+
+    /// <summary>Round 7 #15: true for a row sourced from ServiceController.GetDevices() (kernel/
+    /// file-system drivers) rather than GetServices() - see ServiceControlService.SampleDrivers.
+    /// Drivers report a much narrower set of the fields above (no dependencies, often no logon
+    /// account), so the Services view hides those columns for driver rows.</summary>
+    public bool IsDriver { get; init; }
+
     public bool CanStart => Status is ServiceControllerStatus.Stopped;
     public bool CanStop => Status is ServiceControllerStatus.Running && ServiceName is not ("RpcSs" or "RpcEptMapper" or "DcomLaunch");
 }

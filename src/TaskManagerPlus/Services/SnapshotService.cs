@@ -25,6 +25,10 @@ public static class SnapshotService
             InstalledSoftware = ReadInstalledSoftwareNames(),
             Services = ReadServiceNames(),
             StartupItems = new StartupManagerService().Sample().Select(i => i.Name).ToList(),
+            // Round 7 #16: StartType/logon-account config per service, alongside the plain name
+            // list above - lets the Services tab's config-drift check reuse this same baseline
+            // file instead of inventing a second one.
+            ServiceConfigs = ServiceControlService.ReadServiceConfigs(),
         };
     }
 

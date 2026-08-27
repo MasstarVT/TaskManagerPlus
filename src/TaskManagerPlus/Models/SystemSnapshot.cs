@@ -10,6 +10,22 @@ public sealed class SystemSnapshot
     public List<string> InstalledSoftware { get; init; } = new();
     public List<string> Services { get; init; } = new();
     public List<string> StartupItems { get; init; } = new();
+
+    /// <summary>Round 7 #16: per-service StartType/logon-account config, captured alongside the
+    /// plain name list above - a new, additive field, so a snapshot JSON file saved by an earlier
+    /// round loads fine here too (System.Text.Json just leaves this list empty, the same
+    /// "missing field degrades gracefully" shape ThemeService already relies on for theme.json).
+    /// Used by the Services tab's config-drift check, distinct from the Summary tab's existing
+    /// software/service/startup added-removed diff.</summary>
+    public List<ServiceConfigSnapshot> ServiceConfigs { get; init; } = new();
+}
+
+/// <summary>One service's StartType + logon account at the moment a baseline was captured (Round 7 #16).</summary>
+public sealed class ServiceConfigSnapshot
+{
+    public string ServiceName { get; init; } = string.Empty;
+    public string StartType { get; init; } = string.Empty;
+    public string LogOnAs { get; init; } = string.Empty;
 }
 
 /// <summary>Result of comparing a saved baseline snapshot against the system's current state.</summary>

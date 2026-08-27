@@ -1017,6 +1017,129 @@ paths, no control actions) by design. Binds `http://+:port/` (all local interfac
 existing elevation requirement is what makes that binding succeed without a separate `netsh http
 add urlacl` reservation.
 
+### Round 7: process tree/control depth (affinity, suspend, environment, handle types) and
+service accountability (logon accounts, drivers, config drift, start duration)
+
+A seventh batch of `suggestions.md` items - 17 in total, closing out the Processes and Services
+categories. This round leans harder on raw native interop than any prior one (five new P/Invoke
+surfaces in one round), so each new `Services/*` file follows the same "wrap everything, degrade to
+0/Unknown/empty on failure" discipline `CpuTopologyService`/`NetworkConnectionsService` already
+established, rather than introducing a new risk tolerance.
+
+**Process tree + job-object/process-group heuristic**: `ProcessesViewModel.ShowTree` toggles a
+`TreeView` (bound to a fresh `ObservableCollection<ProcessTreeNode>`, `Models/ProcessTreeNode.cs`)
+alongside the existing flat `DataGrid`, rebuilt each tick from the already-sampled `Processes`
+collection (`BuildProcessTree`) rather than a second sampling source - a process whose parent isn't
+currently running becomes a root node, the same "orphan" treatment Task Manager's own Details-tab
+tree uses. `TreeView` has no built-in two-way `SelectedItem` binding, so `ProcessesView.xaml.cs`
+pushes the selection into the view model manually on `SelectedItemChanged`. Job-object/process-group
+detection (there is no per-process Windows API for job-object membership) is a heuristic proxy
+instead, computed in `ProcessMonitorService.ComputeSpawnGroups`: processes sharing the same parent
+pid and executable name, whose start times cluster within a 3-second window, are flagged with a
+shared `ProcessRow.SpawnGroupSize` - a "quick flag, not a verdict" in the same family as the CPU
+throttle heuristic, shown as a small "Group of N" badge in both the flat grid and the tree.
+
+**Process control actions (trim, suspend/resume, affinity, priority, GDI/USER handles)**: all five
+live in a new `Services/ProcessControlService.cs`, a sibling to `ProcessMonitorService` for
+one-shot commands rather than per-tick sampling. Trim working set is `EmptyWorkingSet` (psapi.dll).
+Suspend/Resume use `NtSuspendProcess`/`NtResumeProcess` (ntdll.dll) - undocumented but stable, the
+same two calls Task Manager's own "Suspend process" Details-tab action and Sysinternals tooling are
+built on; there is no documented Win32 equivalent for suspending every thread in a process
+atomically. Priority class and CPU affinity turned out to need **no** raw interop at all -
+`Process.PriorityClass`/`Process.ProcessorAffinity` are plain managed wrappers already in the BCL -
+so `ProcessControlService.SetPriority`/`GetAffinity`/`SetAffinity` are thin wrappers with try/catch
+around them. GDI/USER handle counts (matching Task Manager's optional Details columns) come from
+`GetGuiResources` (user32.dll), sampled every tick per process alongside the existing handle count -
+denied for a handful of protected processes even while elevated, degrading to 0 rather than
+throwing. The CPU affinity editor (`ProcessesViewModel.AffinityCores`, one `CpuAffinityOption` per
+logical processor) loads automatically on selection (a plain read), but only *applies* on an
+explicit "Apply affinity" button click - the same "view now, commit explicitly" split the
+modules/environment viewers below use for anything heavier than a read. "Suspended" also gets a
+best-effort `ProcessControlService.IsSuspended` heuristic (every thread parked in a `Wait`/
+`Suspended` state) feeding a dimmed row + "Suspended" status text, since Windows has no single
+"process state" flag to query directly.
+
+**Environment variables viewer**: `Services/ProcessEnvironmentService.cs` is the highest-risk
+interop in this round - .NET's `Process` class only exposes environment variables for a child
+process this app itself launched, not an arbitrary existing pid, so the only way to read one is a
+PEB memory walk: open the process, `NtQueryInformationProcess` for its PEB address, read the
+`ProcessParameters` pointer out of the PEB, then the `Environment` pointer out of that, and parse
+the double-null-terminated block - exactly what Process Explorer's own Environment tab does under
+the hood. Deliberately narrow: the offsets used (PEB.ProcessParameters at 0x20,
+RTL_USER_PROCESS_PARAMETERS.Environment at 0x80) are only valid for a same-bitness 64-bit target
+read from this (64-bit) app - a 32-bit/WOW64 target has a separate PEB at different offsets
+(`ProcessWow64Information`, not implemented here) and degrades to an explanatory placeholder line
+rather than risk reading garbage across that boundary.
+
+**Open-handle-by-type breakdown**: `Services/HandleInspectionService.cs` answers "what kinds of
+handles does this process hold" (File, Key, Event, Section, Mutant, ...) by walking the
+system-wide handle table (`NtQuerySystemInformation`, `SystemHandleInformation`), filtering to the
+target pid, then duplicating each handle into this process and asking `NtQueryObject` for its type
+name. `NtQueryObject` is well known to occasionally hang forever on certain handle types (a named
+pipe with no listener is the classic case), so every single per-handle query runs on its own
+short-lived, abandoned-not-joined background `Thread` with a strict 120ms timeout - the same
+defensive technique Process Explorer/System Informer use for this exact hazard - rather than risk
+blocking the UI. Both the per-handle count (400) and overall wall time (6s) are capped, since this
+is an on-demand, button-triggered inspector for one process, not a promise of full coverage on a
+system service holding tens of thousands of handles.
+
+**"What has this file open"**: rather than a second raw handle-table walk (fragile, and exactly the
+hazard the paragraph above works around), `Services/FileLockLookupService.cs` uses the Restart
+Manager API (`RmStartSession`/`RmRegisterResources`/`RmGetList`/`RmEndSession`, rstrtmgr.dll) - the
+same documented, purpose-built Windows facility behind Explorer's own "this file is open in another
+program" dialog and every installer's "close these programs first" prompt. A real, supported API
+for exactly this question, not a repurposed diagnostic trick - and correspondingly the lowest-risk
+new interop in this round. An empty result means "Restart Manager found nothing," not a guarantee
+the file is free (a memory-mapped section with no remaining file handle wouldn't be reported).
+
+**Duplicate-instance detector**: `ProcessMonitorService.ComputeDuplicateInstances` groups running
+processes by resolved `FilePath` and flags a count past a deliberately generous threshold (20) as
+`ProcessRow.IsDuplicateInstanceOutlier`. The threshold is tuned generous specifically because a
+legitimate multi-process Chromium-family browser (Chrome/Edge/many Electron apps) routinely runs a
+few dozen renderer/GPU/utility processes sharing one exe path - a real, documented false-positive
+source that a tighter bar would trip on every single machine running one; a genuine runaway-launcher
+crash loop tends to blow well past even this generous bar.
+
+**Reverse svchost lookup**: `ServiceControlService.ReadServicesByPid` groups the same
+`Win32_Service.ProcessId` column `ReadServicePids` already reads the other direction (by pid instead
+of by name), exposed via a "Hosted services" button on the Processes tab (enabled only when the
+selected row is actually named svchost) rather than a Services-tab feature, since the question
+("what's inside *this* process") starts from a process row.
+
+**Service logon accounts + config drift**: `ServiceControlService` reads `Win32_Service.StartName`
+(`ReadServiceAccounts`) alongside the existing PID/exit-code queries, feeding `ServiceRow.LogOnAs` +
+`IsNonStandardAccount` (flagged whenever it's neither empty, a standard built-in account, nor an
+`NT SERVICE\...` virtual per-service account) - tinted in the grid the same way `IsHighPrivilege`
+already tints a Processes row. Config drift reuses Round 6's `SnapshotService`/`SystemSnapshot`
+baseline mechanism rather than inventing a second file format: `SystemSnapshot.ServiceConfigs`
+(a new, purely additive field - an older snapshot JSON just loads with an empty list, the same
+graceful-degradation shape `ThemeService` already relies on for a missing `theme.json` field) stores
+each service's `StartType` + `LogOnAs` at capture time. "Capture config baseline" /
+"Check config drift" on the Services toolbar call the same `SnapshotService.Save`/`Load` the Summary
+tab's existing baseline/diff feature uses, just comparing `StartType`/`LogOnAs` per service instead
+of the add/removed name-list diff Summary already shows - `ServiceRow.HasConfigDrift` tints a row
+and its tooltip lists exactly what changed.
+
+**Driver sub-view**: `ServiceControlService.SampleDrivers` is `ServiceController.GetDevices()` -
+already available in .NET, no WMI needed - covering the kernel/file-system driver "services" the
+ordinary Services tab never surfaces. A "Show drivers" toggle swaps the grid to a separate
+`ServicesViewModel.Drivers` collection, sampled only while the toggle is on (an otherwise-idle
+enumeration a user who never opens it shouldn't pay for); drivers carry a much narrower set of
+meaningful columns (no dependencies, rarely a logon account) so `ServiceRow.IsDriver` rows just
+leave those fields at their defaults rather than querying data that's rarely populated for a driver.
+
+**Service start-duration history**: extends `EventLogService` (rather than a new class) with
+`ReadServiceStartDurations`, mining the System log's own Service Control Manager event 7036
+("service entered the running/stopped state") - the only service-lifecycle event Windows logs by
+default. There's no explicit "start requested at" timestamp in default logging (that needs Verbose
+SCM ETW tracing, a materially heavier ask), so this approximates a start duration as the time
+between a service's most recent "stopped" 7036 entry and the following "running" 7036 entry for
+that service - a real, if approximate, measurement, discarding any stopped-to-running gap wider
+than 3 minutes as "sat stopped for a while, then happened to start" rather than reporting a wildly
+inflated duration. On-demand only ("Load start-time history" button), the same shape
+`StabilityViewModel`'s own on-demand event-log query already uses, since a 30-day scan isn't cheap
+enough to repeat on a timer tick.
+
 ### Notable implementation details
 
 - **CPU clock speed**: not directly exposed by Windows. Computed the same

@@ -196,4 +196,82 @@ public sealed class EventLogService
 
     private static string Truncate(string s, int maxLen)
         => s.Length <= maxLen ? s : s[..maxLen] + "…";
+
+    // Round 7 #13: how long a service "took to start", mined from the System log's own Service
+    // Control Manager event 7036 ("service entered the running/stopped state") - the only
+    // service-lifecycle event Windows logs by default. There is no explicit "start requested at"
+    // timestamp in default logging (that needs Verbose SCM ETW tracing, a much heavier ask than
+    // this app's other event-log reads), so this approximates duration as the time between a
+    // service's most recent "stopped" 7036 entry and the following "running" 7036 entry for the
+    // same service - a real, if approximate, measurement of the same shape EventLogService's
+    // WasLastShutdownUnexpected correlation already uses elsewhere. A stopped-to-running gap wider
+    // than StartDurationCeiling is treated as "the service just sat stopped for a while, then
+    // happened to start" rather than a real start latency, and discarded rather than reported as a
+    // wildly inflated duration.
+    private static readonly TimeSpan StartDurationCeiling = TimeSpan.FromMinutes(3);
+
+    public List<ServiceStartDuration> ReadServiceStartDurations()
+    {
+        var byService = new Dictionary<string, List<(DateTime Time, bool Running)>>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            long maxAgeMs = LookbackDays * 24L * 60 * 60 * 1000;
+            var query = new EventLogQuery("System", PathType.LogName,
+                $"*[System[Provider[@Name='Service Control Manager'] and (EventID=7036) and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]");
+
+            using var reader = new EventLogReader(query);
+            int count = 0;
+            const int maxEvents = 4000; // generous - the SCM can log thousands of these over 30 days on a busy machine
+            while (count < maxEvents && reader.ReadEvent() is { } record)
+            {
+                using (record)
+                {
+                    count++;
+                    try
+                    {
+                        if (record.Properties.Count < 2) continue;
+                        string? name = record.Properties[0].Value as string;
+                        string? state = record.Properties[1].Value as string;
+                        if (string.IsNullOrEmpty(name) || string.IsNullOrEmpty(state) || record.TimeCreated is null) continue;
+
+                        bool running = state.Equals("running", StringComparison.OrdinalIgnoreCase);
+                        if (!running && !state.Equals("stopped", StringComparison.OrdinalIgnoreCase)) continue;
+
+                        if (!byService.TryGetValue(name, out var list))
+                            byService[name] = list = new List<(DateTime, bool)>();
+                        list.Add((record.TimeCreated.Value, running));
+                    }
+                    catch { /* one malformed entry shouldn't stop the rest of the scan */ }
+                }
+            }
+        }
+        catch
+        {
+            // Log unavailable/access denied - degrade to "no start-duration data".
+        }
+
+        var result = new List<ServiceStartDuration>();
+        foreach (var (name, transitions) in byService)
+        {
+            var ordered = transitions.OrderBy(t => t.Time).ToList();
+            var durations = new List<double>();
+            for (int i = 1; i < ordered.Count; i++)
+            {
+                if (!ordered[i].Running || ordered[i - 1].Running) continue; // only a stopped -> running pair
+                var gap = ordered[i].Time - ordered[i - 1].Time;
+                if (gap > TimeSpan.Zero && gap <= StartDurationCeiling)
+                    durations.Add(gap.TotalMilliseconds);
+            }
+            if (durations.Count == 0) continue;
+
+            result.Add(new ServiceStartDuration
+            {
+                ServiceName = name,
+                LastStartDurationMs = durations[^1],
+                AvgStartDurationMs = durations.Average(),
+                SampleCount = durations.Count,
+            });
+        }
+        return result;
+    }
 }

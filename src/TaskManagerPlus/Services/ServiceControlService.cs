@@ -14,6 +14,7 @@ public sealed class ServiceControlService
     {
         var pids = ReadServicePids();
         var exitCodes = ReadServiceExitCodes();
+        var accounts = ReadServiceAccounts();
         var rows = new List<ServiceRow>();
 
         foreach (var sc in ServiceController.GetServices())
@@ -32,6 +33,8 @@ public sealed class ServiceControlService
                     row.ProcessId = pid;
                 if (exitCodes.TryGetValue(sc.ServiceName, out var exitCode))
                     row.ExitCode = exitCode;
+                if (accounts.TryGetValue(sc.ServiceName, out var account))
+                    row.LogOnAs = account;
 
                 // #37: dependency graph - so a user understands the blast radius before stopping
                 // a service. Read fresh every tick, the same "no per-row caching" tradeoff
@@ -55,6 +58,125 @@ public sealed class ServiceControlService
         }
 
         return rows.OrderBy(r => r.DisplayName, StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    /// <summary>Round 7 #15: kernel/file-system driver "services" - ServiceController.GetDevices()
+    /// is a distinct, already-available .NET API from GetServices() (no WMI needed), covering the
+    /// SERVICE_KERNEL_DRIVER/SERVICE_FILE_SYSTEM_DRIVER entries the ordinary Services tab never
+    /// shows. Drivers rarely have a meaningful logon account or dependency graph the way a Win32
+    /// service does, so those fields are simply left at their defaults here rather than queried.</summary>
+    public List<ServiceRow> SampleDrivers()
+    {
+        var rows = new List<ServiceRow>();
+        try
+        {
+            foreach (var sc in ServiceController.GetDevices())
+            {
+                try
+                {
+                    var row = new ServiceRow
+                    {
+                        ServiceName = sc.ServiceName,
+                        DisplayName = sc.DisplayName,
+                        Status = sc.Status,
+                        Description = ReadDescriptionFromRegistry(sc.ServiceName),
+                        IsDriver = true,
+                    };
+                    try { row.StartType = sc.StartType; } catch { row.StartType = ServiceStartMode.Manual; }
+                    rows.Add(row);
+                }
+                catch
+                {
+                    // Driver query failed - skip it.
+                }
+                finally
+                {
+                    sc.Dispose();
+                }
+            }
+        }
+        catch
+        {
+            // GetDevices() itself unavailable - degrade to an empty driver list.
+        }
+        return rows.OrderBy(r => r.DisplayName, StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    /// <summary>Round 7 #17: reverse lookup for a host process pid (almost always svchost.exe, but
+    /// also e.g. dllhost.exe/some driver-hosting processes) - which service names currently live
+    /// inside it. Reuses the same Win32_Service ProcessId column ReadServicePids already reads,
+    /// just grouped the other direction.</summary>
+    public static Dictionary<int, List<string>> ReadServicesByPid()
+    {
+        var result = new Dictionary<int, List<string>>();
+        try
+        {
+            using var searcher = new ManagementObjectSearcher("SELECT Name, DisplayName, ProcessId FROM Win32_Service WHERE ProcessId <> 0");
+            foreach (ManagementObject mo in searcher.Get())
+            {
+                var displayName = mo["DisplayName"] as string ?? mo["Name"] as string;
+                if (displayName is null) continue;
+                int pid = Convert.ToInt32(mo["ProcessId"]);
+                if (!result.TryGetValue(pid, out var list))
+                    result[pid] = list = new List<string>();
+                list.Add(displayName);
+            }
+        }
+        catch
+        {
+            // WMI unavailable - callers just see no hosted services for any pid.
+        }
+        return result;
+    }
+
+    /// <summary>Round 7 #16: current StartType + logon account per service, in the shape
+    /// SnapshotService needs to extend its baseline capture with service config drift detection.</summary>
+    public static List<Models.ServiceConfigSnapshot> ReadServiceConfigs()
+    {
+        var accounts = ReadServiceAccounts();
+        var result = new List<Models.ServiceConfigSnapshot>();
+        foreach (var sc in ServiceController.GetServices())
+        {
+            try
+            {
+                string startType;
+                try { startType = sc.StartType.ToString(); } catch { startType = "Unknown"; }
+                accounts.TryGetValue(sc.ServiceName, out var account);
+                result.Add(new Models.ServiceConfigSnapshot
+                {
+                    ServiceName = sc.ServiceName,
+                    StartType = startType,
+                    LogOnAs = account ?? string.Empty,
+                });
+            }
+            catch { /* skip */ }
+            finally { sc.Dispose(); }
+        }
+        return result;
+    }
+
+    /// <summary>Round 7 #14: Win32_Service.StartName - the account a service logs on as. Empty for
+    /// most drivers (they have no meaningful logon account); LocalSystem/NT AUTHORITY\...  for
+    /// built-ins; a real account name for the minority of services configured to run as something
+    /// else, which is exactly the "worth a second look" case ServiceRow.IsNonStandardAccount flags.</summary>
+    private static Dictionary<string, string> ReadServiceAccounts()
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            using var searcher = new ManagementObjectSearcher("SELECT Name, StartName FROM Win32_Service");
+            foreach (ManagementObject mo in searcher.Get())
+            {
+                var name = mo["Name"] as string;
+                if (name is null) continue;
+                result[name] = mo["StartName"] as string ?? string.Empty;
+            }
+        }
+        catch
+        {
+            // WMI unavailable - LogOnAs stays empty for every row.
+        }
+        return result;
     }
 
     private static Dictionary<string, int> ReadServicePids()

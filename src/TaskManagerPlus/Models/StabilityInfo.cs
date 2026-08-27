@@ -69,3 +69,15 @@ public sealed class StabilitySnapshot
     /// its events counted, the same tradeoff RecentEvents itself already makes).</summary>
     public List<DailyEventCount> DailyCounts { get; init; } = new();
 }
+
+/// <summary>Round 7 #13: an approximate measured service start duration, mined from Service
+/// Control Manager 7036 event-log entries - see EventLogService.ReadServiceStartDurations for
+/// exactly how this is derived and its limitations (an approximation of "time between a stop and
+/// the following running state," not a true measured start latency).</summary>
+public sealed class ServiceStartDuration
+{
+    public string ServiceName { get; init; } = string.Empty;
+    public double LastStartDurationMs { get; init; }
+    public double AvgStartDurationMs { get; init; }
+    public int SampleCount { get; init; }
+}

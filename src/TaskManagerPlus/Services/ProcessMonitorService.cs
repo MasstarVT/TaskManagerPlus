@@ -114,6 +114,18 @@ public sealed class ProcessMonitorService : IDisposable
                 try { startTime = proc.StartTime; } catch { /* ignore, protected process */ }
                 try { filePath = proc.MainModule?.FileName; } catch { /* ignore, protected/x-bit mismatch */ }
 
+                // Round 7 #6/#7/#8: priority class name, GDI/USER handle counts, and best-effort
+                // suspended state - all cheap reads piggybacked onto this same per-process pass
+                // rather than a second sweep.
+                string priorityClassName = "Unknown";
+                try { priorityClassName = proc.PriorityClass.ToString(); } catch { /* protected process */ }
+
+                int gdiHandles = 0, userHandles = 0;
+                try { (gdiHandles, userHandles) = ProcessControlService.ReadGuiResourceCounts(proc.Handle); } catch { /* ignore */ }
+
+                bool isSuspended = false;
+                try { isSuspended = ProcessControlService.IsSuspended(proc); } catch { /* ignore */ }
+
                 string status = "Running";
                 int notRespondingSeconds = 0;
                 try
@@ -157,6 +169,10 @@ public sealed class ProcessMonitorService : IDisposable
                     IsLeakSuspect = ComputeLeakSuspect(pid, memoryBytes),
                     GpuPercent = gpuUsageByPid.TryGetValue(pid, out var gpu) ? Math.Round(Math.Min(gpu, 100.0), 1) : 0,
                     CpuPercent10sAvg = ComputeCpuAverage(pid, cpuPercentClamped),
+                    PriorityClassName = priorityClassName,
+                    GdiHandleCount = gdiHandles,
+                    UserHandleCount = userHandles,
+                    IsSuspended = isSuspended,
                 });
             }
             catch (Exception)
@@ -180,6 +196,9 @@ public sealed class ProcessMonitorService : IDisposable
                 : "(exited)";
         }
 
+        ComputeSpawnGroups(rows);
+        ComputeDuplicateInstances(rows);
+
         // Drop cached samples/owners/command lines for processes that no longer exist. The
         // signature cache is keyed by file path, not pid, so it isn't pruned here - it's small
         // (one entry per distinct executable seen) and a stale entry just saves a re-check if
@@ -194,6 +213,70 @@ public sealed class ProcessMonitorService : IDisposable
 
         _lastGlobalSampleUtc = now;
         return rows;
+    }
+
+    // Round 7 #2: job-object/process-group detection has no direct Windows API a per-process
+    // sampler can query (a process's job-object membership isn't exposed the way its parent pid
+    // is) - this is a heuristic proxy instead: processes sharing the same parent pid and the same
+    // executable name, whose start times cluster within a short window of each other, are almost
+    // always the result of one spawn event (a launcher fanning out several worker/helper
+    // processes at once), whether or not Windows actually put them in a shared job object. A
+    // "quick flag, not a verdict" in the same family as the CPU throttle heuristic and the
+    // process signature check - a coincidental unrelated launch that happens to land in the same
+    // window would also match.
+    private static readonly TimeSpan SpawnClusterWindow = TimeSpan.FromSeconds(3);
+
+    private static void ComputeSpawnGroups(List<ProcessRow> rows)
+    {
+        var groups = rows.Where(r => r.ParentPid > 0 && r.StartTime.HasValue)
+            .GroupBy(r => (r.ParentPid, r.Name));
+
+        foreach (var group in groups)
+        {
+            var ordered = group.OrderBy(r => r.StartTime!.Value).ToList();
+            int i = 0;
+            while (i < ordered.Count)
+            {
+                int j = i;
+                while (j + 1 < ordered.Count && (ordered[j + 1].StartTime!.Value - ordered[j].StartTime!.Value) <= SpawnClusterWindow)
+                    j++;
+
+                int clusterSize = j - i + 1;
+                if (clusterSize >= 2)
+                {
+                    for (int k = i; k <= j; k++)
+                        ordered[k].SpawnGroupSize = clusterSize;
+                }
+                i = j + 1;
+            }
+        }
+    }
+
+    // Round 7 #11: "unusually high" is deliberately generous - a legitimate multi-process
+    // Chromium-family browser (Chrome/Edge/many Electron apps) routinely runs a few dozen
+    // renderer/GPU/utility processes that all share one exe path, which would otherwise dominate
+    // this flag with false positives. A real runaway-launcher bug (a script or updater re-spawning
+    // itself in a crash loop) tends to blow well past even this generous bar, so the threshold is
+    // tuned to catch that case rather than tuned tight - a real, documented limitation, not a
+    // guarantee every outlier is actually a bug.
+    private const int DuplicateInstanceOutlierThreshold = 20;
+
+    private static void ComputeDuplicateInstances(List<ProcessRow> rows)
+    {
+        var groups = rows.Where(r => !string.IsNullOrEmpty(r.FilePath))
+            .GroupBy(r => r.FilePath!, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var group in groups)
+        {
+            int count = group.Count();
+            if (count < 2) continue;
+            bool outlier = count >= DuplicateInstanceOutlierThreshold;
+            foreach (var row in group)
+            {
+                row.DuplicateInstanceCount = count;
+                row.IsDuplicateInstanceOutlier = outlier;
+            }
+        }
     }
 
     private const int CpuHistoryWindow = 10; // ~10s of samples at the ~1s poll tick
