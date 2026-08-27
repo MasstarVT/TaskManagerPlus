@@ -30,6 +30,19 @@ public sealed class VolumeRow
 
     /// <summary>True when the file system dirty bit is set (#29) - needs a chkdsk pass.</summary>
     public bool IsDirty { get; init; }
+
+    // Round 9, #37/#40/#42/#44 - four more per-volume facts, see VolumeDiagnosticsService.
+    public string BitLockerStatus { get; init; } = "Unknown";
+    public bool BitLockerOn { get; init; }
+    public string RecycleBinText { get; init; } = string.Empty;
+    public string ShadowCopyText { get; init; } = string.Empty;
+    public string TrimText { get; init; } = string.Empty;
+    public bool TrimWarning { get; init; }
+
+    /// <summary>RecycleBinText/ShadowCopyText/TrimText pre-joined (blank ones dropped) - simpler
+    /// for the view to bind to than a WPF MultiBinding/converter for three optional strings.</summary>
+    public string ExtraFactsText => string.Join("  •  ",
+        new[] { RecycleBinText, ShadowCopyText, TrimText }.Where(s => !string.IsNullOrEmpty(s)));
 }
 
 public sealed class SystemSpecsViewModel : ObservableObject
@@ -242,6 +255,19 @@ public sealed class SystemSpecsViewModel : ObservableObject
                 SizeText = $"{Formatting.FormatBytes(v.FreeBytes)} free of {Formatting.FormatBytes(v.TotalBytes)}",
                 PercentUsed = v.PercentUsed,
                 IsDirty = v.IsDirty == true,
+                // #37: BitLocker - "Not applicable"/"Unknown" both render as the neutral (non-on)
+                // badge state; only a confirmed "On" gets the encrypted badge.
+                BitLockerStatus = v.BitLockerStatus,
+                BitLockerOn = v.BitLockerStatus.StartsWith("On", StringComparison.OrdinalIgnoreCase),
+                // #40: Recycle Bin size - blank (hidden) rather than "0 B" when the check itself
+                // couldn't run, distinct from a genuinely empty bin.
+                RecycleBinText = v.RecycleBinBytes is { } rb ? $"Recycle Bin: {Formatting.FormatBytes(rb)}" : string.Empty,
+                // #42: shadow copy usage - blank when VSS isn't configured on this volume at all
+                // (the common case), not shown as a false "0 B".
+                ShadowCopyText = v.ShadowCopyBytes is { } sc ? $"Shadow copies: {Formatting.FormatBytes(sc)}" : string.Empty,
+                // #44: TRIM - only meaningful (and only populated) for SSD volumes.
+                TrimText = v.TrimEnabled switch { true => "TRIM: enabled", false => "TRIM: disabled", null => string.Empty },
+                TrimWarning = v.TrimEnabled == false,
             });
         }
 

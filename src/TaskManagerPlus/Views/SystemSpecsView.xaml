@@ -85,6 +85,7 @@
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
                 <StackPanel Grid.Row="0" Grid.Column="0" Margin="0,0,12,0">
                     <StackPanel Orientation="Horizontal">
@@ -104,6 +105,22 @@
                             </Border.Style>
                             <TextBlock Text="Needs chkdsk" FontSize="10" FontWeight="SemiBold" Foreground="White" />
                         </Border>
+                        <!-- Round 9, #37: BitLocker badge - only shown for a confirmed "On" status,
+                             not "Off"/"Unknown"/"Not applicable" (a permission gap or an
+                             unencryptable volume isn't the same as a real finding). -->
+                        <Border Background="{DynamicResource SuccessBrush}" CornerRadius="3" Padding="5,1" Margin="8,0,0,0" VerticalAlignment="Center">
+                            <Border.Style>
+                                <Style TargetType="Border">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding BitLockerOn}" Value="True">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Border.Style>
+                            <TextBlock Text="BitLocker" FontSize="10" FontWeight="SemiBold" Foreground="White" />
+                        </Border>
                     </StackPanel>
                     <TextBlock Text="{Binding Secondary}" Style="{StaticResource SecondaryLine}" />
                 </StackPanel>
@@ -112,6 +129,23 @@
                 <ProgressBar Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,6,0,0" Height="6"
                              Value="{Binding PercentUsed, Mode=OneWay}" Maximum="100"
                              Foreground="{Binding PercentUsed, Converter={StaticResource PercentToBrushConverter}}" />
+                <!-- Round 9, #40/#42/#44: Recycle Bin size, VSS shadow copy usage, TRIM status -
+                     pre-joined into one line by SystemSpecsViewModel (ExtraFactsText is already
+                     blank-filtered), hidden entirely when none of the three have anything to show. -->
+                <TextBlock Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2" Text="{Binding ExtraFactsText}" Margin="0,4,0,0" Opacity="0.85">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding ExtraFactsText}" Value="">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding TrimWarning}" Value="True">
+                                    <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
             </Grid>
         </DataTemplate>
 

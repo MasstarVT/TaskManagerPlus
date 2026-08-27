@@ -1,6 +1,7 @@
 using System.IO;
 using System.Management;
 using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
 using Microsoft.Win32;
 using Microsoft.Win32.SafeHandles;
 using TaskManagerPlus.Models;
@@ -399,6 +400,7 @@ public sealed class SystemSpecsService
                     HealthStatus = health,
                     IsHealthWarning = warning,
                     WearPercent = diskIndex >= 0 && wearByIndex.TryGetValue(diskIndex, out var wear) ? wear : null,
+                    Index = diskIndex,
                 });
             }
         }
@@ -479,6 +481,89 @@ public sealed class SystemSpecsService
         }
         return result;
     }
+
+    // MSFT_StorageReliabilityCounter fields that are internal bookkeeping rather than something a
+    // user reading a SMART table would recognize/care about - dropped from the on-demand detail
+    // view below rather than shown as noise.
+    private static readonly HashSet<string> SmartDetailNoiseFields = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "DeviceId", "PSComputerName", "CimClass", "CimInstanceProperties", "CimSystemProperties",
+    };
+
+    /// <summary>Lightweight disk index+model list (round 9, #38) for populating the Storage tab's
+    /// on-demand SMART-details disk picker without pulling in the rest of Query()'s (much heavier)
+    /// full inventory read.</summary>
+    public static List<(int Index, string Model)> ListDisksForSmart()
+    {
+        var result = new List<(int, string)>();
+        try
+        {
+            using var searcher = new ManagementObjectSearcher("SELECT Index, Model FROM Win32_DiskDrive");
+            foreach (ManagementObject mo in searcher.Get())
+            {
+                int index = -1;
+                try { index = System.Convert.ToInt32(mo["Index"] ?? -1); } catch { /* skip */ }
+                if (index < 0) continue;
+                result.Add((index, (mo["Model"] as string ?? $"Disk {index}").Trim()));
+            }
+        }
+        catch
+        {
+            // return whatever was gathered before the failure
+        }
+        return result.OrderBy(d => d.Item1).ToList();
+    }
+
+    /// <summary>
+    /// On-demand full SMART attribute table (round 9, #38), extending ReadDiskWearByIndex above to
+    /// surface every other field MSFT_StorageReliabilityCounter reports for one disk (Temperature,
+    /// ReadErrorsTotal/Uncorrected, PowerOnHours, StartStopCycleCount, Wear, ...) instead of just
+    /// Wear alone. Rather than hardcode the exact property list (which varies by driver - some
+    /// report FlashEraseCount and LoadUnloadCycleCount, others don't), this enumerates whatever
+    /// non-null properties the instance actually carries, splitting each PascalCase name into
+    /// words for display - the same "adaptive, don't assume a fixed schema" tradeoff
+    /// BootPerformanceService's event-field scan already takes for a similarly loosely-documented
+    /// data source. Same index-based disk pairing and empty-list-on-failure degradation as
+    /// ReadDiskWearByIndex - deliberately on-demand (called from a button, not Query()) since it's
+    /// only useful when actively investigating one specific disk.
+    /// </summary>
+    public static List<(string Label, string Value)> ReadSmartDetails(int diskIndex)
+    {
+        var result = new List<(string, string)>();
+        if (diskIndex < 0) return result;
+
+        try
+        {
+            using var searcher = new ManagementObjectSearcher(
+                @"root\Microsoft\Windows\Storage",
+                $"SELECT * FROM MSFT_StorageReliabilityCounter WHERE DeviceId = '{diskIndex}'");
+            foreach (ManagementObject mo in searcher.Get())
+            {
+                foreach (var prop in mo.Properties)
+                {
+                    if (prop.Value is null) continue;
+                    if (SmartDetailNoiseFields.Contains(prop.Name)) continue;
+
+                    string valueText = prop.Value is Array arr
+                        ? string.Join(", ", arr.Cast<object>())
+                        : Convert.ToString(prop.Value, System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty;
+                    if (valueText.Length == 0) continue;
+
+                    result.Add((SplitPascalCase(prop.Name), valueText));
+                }
+                break; // DeviceId is unique per disk - only one instance expected.
+            }
+        }
+        catch
+        {
+            // Namespace/class unavailable, or this driver doesn't report reliability counters at
+            // all - an empty list, shown as "No SMART data available" by the caller.
+        }
+        return result;
+    }
+
+    private static readonly Regex PascalCaseSplitRegex = new(@"(?<!^)(?=[A-Z])", RegexOptions.Compiled);
+    private static string SplitPascalCase(string name) => PascalCaseSplitRegex.Replace(name, " ");
 
     // Publishers that are effectively OS/runtime components, not something a user "installed" in
     // the sense of "did this correlate with when my problem started" - filtered out the same way
@@ -685,10 +770,14 @@ public sealed class SystemSpecsService
     private static string EscapeWmiPath(string objectId) => objectId.Replace(@"\", @"\\").Replace("\"", "\\\"");
 
     /// <summary>Per-drive-letter free space, for a low-disk-space warning list. DriveInfo (not
-    /// WMI) since it already handles removable/unready drives cleanly via IsReady.</summary>
+    /// WMI) since it already handles removable/unready drives cleanly via IsReady. Round 9 adds
+    /// four more per-volume facts (BitLocker, Recycle Bin size, VSS usage, TRIM status) - see
+    /// VolumeDiagnosticsService for each one's own degradation story.</summary>
     private static List<VolumeInfo> ReadVolumes()
     {
         var volumes = new List<VolumeInfo>();
+        var shadowUsageByVolume = VolumeDiagnosticsService.ReadShadowCopyUsageByVolume();
+
         foreach (var drive in DriveInfo.GetDrives())
         {
             if (!drive.IsReady) continue;
@@ -696,6 +785,9 @@ public sealed class SystemSpecsService
 
             try
             {
+                string driveLetter = drive.Name.TrimEnd('\\'); // e.g. "C:"
+                string mediaType = drive.DriveType == DriveType.Fixed ? DiskFragmentationService.GetMediaType(driveLetter) : "Unknown";
+
                 volumes.Add(new VolumeInfo
                 {
                     Name = drive.Name,
@@ -703,6 +795,14 @@ public sealed class SystemSpecsService
                     TotalBytes = drive.TotalSize,
                     FreeBytes = drive.TotalFreeSpace,
                     IsDirty = ReadVolumeDirtyBit(drive.Name),
+                    MediaType = mediaType,
+                    BitLockerStatus = VolumeDiagnosticsService.ReadBitLockerStatus(driveLetter),
+                    RecycleBinBytes = VolumeDiagnosticsService.ReadRecycleBinBytes(drive.Name),
+                    ShadowCopyBytes = shadowUsageByVolume.TryGetValue(driveLetter.TrimEnd(':'), out var used) ? used : null,
+                    // TRIM is only a meaningful question for an SSD volume - same "hidden for the
+                    // media type it doesn't apply to" pattern HDD fragmentation already uses in
+                    // reverse.
+                    TrimEnabled = mediaType == "SSD" ? VolumeDiagnosticsService.ReadTrimStatus(driveLetter) : null,
                 });
             }
             catch

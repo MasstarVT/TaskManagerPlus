@@ -81,6 +81,24 @@
                 </views:VfdMeter.Style>
             </views:VfdMeter>
 
+            <!-- Round 9, #43: NVMe controller-vs-flash-die temperature split - only shown when a
+                 drive actually reports more than one temperature sensor (not every NVMe/driver
+                 combination does). -->
+            <views:VfdMeter Title="Storage ΔT" Glow="False" Margin="0,0,0,16"
+                            ValueText="{Binding StorageHotspotDeltaC, StringFormat={}{0:0.#}, TargetNullValue=–}" Unit="°C"
+                            SubText="{Binding StorageHotspotDriveName, StringFormat=Controller vs. flash die — {0}}"
+                            AccentBrush="{DynamicResource WarningBrush}">
+                <views:VfdMeter.Style>
+                    <Style TargetType="views:VfdMeter">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding StorageHotspotDeltaC}" Value="{x:Null}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </views:VfdMeter.Style>
+            </views:VfdMeter>
+
             <!-- Power trend -->
             <Border Style="{StaticResource CardStyle}">
                 <StackPanel>

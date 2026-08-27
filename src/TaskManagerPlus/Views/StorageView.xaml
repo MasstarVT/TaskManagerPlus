@@ -181,6 +181,79 @@
                 </StackPanel>
             </Border>
 
+            <!-- Round 9, #38: on-demand full SMART attribute table - a disk picker plus a button,
+                 since walking every reliability-counter field per disk is only useful when
+                 actively investigating one drive, not something to poll. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="SMART details" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Full MSFT_StorageReliabilityCounter attribute set for one disk, beyond the wear percentage shown on the System tab. Field availability varies by drive/driver."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <ComboBox Grid.Column="0" Margin="0,0,8,0" ItemsSource="{Binding SmartDiskOptions}"
+                                  SelectedItem="{Binding SelectedSmartDisk}" DisplayMemberPath="Display" />
+                        <Button Grid.Column="1" Content="Read SMART details" Padding="10,4" Command="{Binding ReadSmartDetailsCommand}" />
+                    </Grid>
+                    <TextBlock Text="{Binding SmartStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,8" />
+                    <DataGrid ItemsSource="{Binding SmartDetails}" IsReadOnly="True" MaxHeight="240" AutoGenerateColumns="False">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Attribute" Binding="{Binding Label}" Width="1.4*" />
+                            <DataGridTextColumn Header="Value" Binding="{Binding Value}" Width="*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- Round 9, #39: largest files/folders scanner - on-demand, depth-capped, for
+                 finding what's eating a nearly-full volume. Access-denied subtrees are skipped
+                 silently rather than failing the whole scan. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Largest files &amp; folders" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="On-demand, depth-capped scan (6 levels). Folder sizes are recursive totals; inaccessible subtrees are skipped rather than failing the scan."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBox Grid.Column="0" Margin="0,0,8,0" Text="{Binding LargestItemsRoot, UpdateSourceTrigger=PropertyChanged}" VerticalContentAlignment="Center" />
+                        <Button Grid.Column="1" Content="Scan" Padding="10,4" Command="{Binding ScanLargestItemsCommand}" />
+                    </Grid>
+                    <TextBlock Text="{Binding LargestItemsStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" />
+                    <DataGrid ItemsSource="{Binding LargestItems}" IsReadOnly="True" MaxHeight="280" AutoGenerateColumns="False">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Kind" Binding="{Binding Kind}" Width="70" />
+                            <DataGridTextColumn Header="Path" Binding="{Binding Path}" Width="2.2*" />
+                            <DataGridTextColumn Header="Size" Binding="{Binding SizeText}" Width="*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- Round 9, #41: on-demand simple sequential throughput test - clearly labeled as
+                 approximate, not a real benchmark (single-threaded sequential I/O only). -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Throughput test" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Approximate only - a single-threaded sequential write then read against a temp file, not a real benchmark (no queue-depth sweep, no random I/O)."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <ComboBox Grid.Column="0" Margin="0,0,8,0" ItemsSource="{Binding ThroughputDriveOptions}" SelectedItem="{Binding SelectedThroughputDrive}" />
+                        <Button Grid.Column="1" Content="Run test" Padding="10,4" Command="{Binding RunThroughputTestCommand}" />
+                    </Grid>
+                    <TextBlock Text="{Binding ThroughputResultText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+
         </StackPanel>
     </ScrollViewer>
 </UserControl>

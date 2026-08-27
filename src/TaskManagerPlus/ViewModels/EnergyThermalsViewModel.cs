@@ -136,6 +136,19 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
     private double? _gpuHotspotDeltaC;
     public double? GpuHotspotDeltaC { get => _gpuHotspotDeltaC; private set => SetProperty(ref _gpuHotspotDeltaC, value); }
 
+    /// <summary>NVMe controller-vs-flash-die temperature split (round 9, #43) - the same "more
+    /// than one temperature sensor on one hardware component" shape the GPU hotspot differential
+    /// above already handles, restricted to HardwareType.Storage instead. LibreHardwareMonitorLib
+    /// exposes this on some NVMe drives as two named sensors (commonly "Temperature"/"Controller"
+    /// for the controller die and "Composite"/"Sensor 1"/"Sensor 2" for the flash package) - not
+    /// every drive/driver reports more than one, so this is null (and the Storage tab hides the
+    /// readout) on the common single-sensor case.</summary>
+    private double? _storageHotspotDeltaC;
+    public double? StorageHotspotDeltaC { get => _storageHotspotDeltaC; private set => SetProperty(ref _storageHotspotDeltaC, value); }
+
+    private string _storageHotspotDriveName = string.Empty;
+    public string StorageHotspotDriveName { get => _storageHotspotDriveName; private set => SetProperty(ref _storageHotspotDriveName, value); }
+
     // #46: running min/max per sensor since launch, keyed by Identifier - see SensorReading's
     // remarks for why this lives here rather than on SensorMonitorService.
     private readonly Dictionary<string, (float Min, float Max)> _temperatureBaseline = new();
@@ -384,6 +397,23 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         var gpuHotspot = FindByNameContains(gpuTemps, "Hot Spot", "Junction");
         GpuHotspotDeltaC = gpuEdge.HasValue && gpuHotspot.HasValue && gpuHotspot > gpuEdge
             ? gpuHotspot - gpuEdge : null;
+
+        // #43: first Storage-hardware component that reports more than one temperature sensor -
+        // the differential between its hottest and coolest reading (controller vs. flash die).
+        var storageGroup = tempReadings
+            .Where(r => r.HardwareType == HardwareType.Storage)
+            .GroupBy(r => r.HardwareName)
+            .FirstOrDefault(g => g.Count() > 1);
+        if (storageGroup is not null)
+        {
+            StorageHotspotDeltaC = storageGroup.Max(r => r.Value!.Value) - storageGroup.Min(r => r.Value!.Value);
+            StorageHotspotDriveName = storageGroup.Key;
+        }
+        else
+        {
+            StorageHotspotDeltaC = null;
+            StorageHotspotDriveName = string.Empty;
+        }
 
         if (TotalPackagePowerW.HasValue)
         {

@@ -1305,6 +1305,137 @@ forced into a wrong guess, the same honestly-scoped-informational-only framing t
 (Round 6) and outdated-driver filtering (Round 3) already established for "worth knowing, not a
 verified fact" data.
 
+### Round 9: Storage volume diagnostics (BitLocker/SMART/scanner/throughput/VSS/TRIM) and
+Network deep-dive tools (history/proxy/driver/traceroute/jitter/captive-portal/metered)
+
+A ninth batch of `suggestions.md` items - 16 in total, closing out the Storage and Network
+categories. No new top-level tabs or ViewModels this round - everything extends `StorageViewModel`/
+`NetworkViewModel`/`SystemSpecsViewModel`/`EnergyThermalsViewModel` and their existing services,
+following each category's established patterns, most notably the "known Windows tool, not raw
+interop" tradeoff (`vssadmin.exe`, `fsutil.exe`, `tracert.exe` all shelled out to, joining
+`defrag.exe`/`schtasks.exe`/`sc.exe` from earlier rounds) and the "degrade to Unknown/hidden rather
+than fabricate" honesty rule that runs through this whole app.
+
+**Four per-volume facts bundled into one service**: `Services/VolumeDiagnosticsService.cs` answers
+BitLocker status, Recycle Bin size, VSS shadow-copy usage, and TRIM status - one file because each
+is a small, independent, gracefully-degrading read, the same "bundled because they answer one
+question together" shape `SystemSpecsService.ReadSecurityInfo` already uses for TPM/Secure
+Boot/VBS. BitLocker reads `Win32_EncryptableVolume` in
+`root\CIMV2\Security\MicrosoftVolumeEncryption` (`GetConversionStatus`/`GetProtectionStatus`),
+wrapped to degrade to "Unknown" rather than a false "Off" - both the namespace and its methods can
+be denied even to this app's elevated process on non-Enterprise/Pro editions or under a stricter
+policy, the same tier of failure `ReadTpmStatus` already documents for a neighboring security
+namespace. Recycle Bin size is the native `SHQueryRecycleBinW` call (no managed .NET API exists for
+it - the same interop-risk tier as `CpuTopologyService`'s native calls). TRIM status shells to
+`fsutil behavior query DisableDeleteNotify <drive>` and is only read (and only shown) for volumes
+`DiskFragmentationService.GetMediaType` reports as SSD - the mirror image of how HDD fragmentation
+is hidden for SSDs. Shadow copy usage shells to `vssadmin list shadowstorage` once for the whole
+system (not once per volume, since the command already reports every volume in one pass) and parses
+its "For volume" / "Used Shadow Copy Storage space" text blocks. All four are read eagerly inside
+`SystemSpecsService.ReadVolumes` (already running off the UI thread via `SystemSpecsViewModel`'s
+existing `Task.Run`) and rendered on the System tab's existing Volumes card - a BitLocker badge
+next to the drive letter (mirroring the dirty-bit badge), and a second line joining whichever of
+Recycle Bin/shadow-copy/TRIM text actually has something to show (`VolumeRow.ExtraFactsText`, a
+plain pre-joined string property rather than a WPF `MultiBinding`/converter for three optional
+strings).
+
+**On-demand full SMART attribute table**: `SystemSpecsService.ReadSmartDetails(diskIndex)` extends
+Round 5's `ReadDiskWearByIndex` (which only ever surfaced `MSFT_StorageReliabilityCounter.Wear`) to
+enumerate every non-null property that WMI instance actually carries - Temperature,
+ReadErrorsTotal/Uncorrected, PowerOnHours, StartStopCycleCount, and others that vary by
+drive/driver, so rather than hardcode an exact field list this adaptively reads whatever properties
+are present and splits each PascalCase name into words for display, the same "adaptive, don't
+assume a fixed schema" tradeoff `BootPerformanceService`'s event-field scan already established for
+a similarly loosely-documented data source. Shown on the Storage tab as a disk picker (populated
+from a new lightweight `SystemSpecsService.ListDisksForSmart()` query, kept separate from the much
+heavier full `Query()` so the picker doesn't wait on the whole System tab's inventory read) plus a
+"Read SMART details" button and a table - on-demand only, the same "expensive, so make it explicit"
+tradeoff the modules list and event-log queries already take.
+
+**Largest files/folders scanner**: `Services/LargestItemsService.cs` is a depth-capped
+(6 directory levels for enumeration; folder totals themselves are summed slightly deeper, capped
+independently, so a folder's reported size is a safety-bounded best effort rather than
+unbounded on a pathologically deep tree), on-demand-only recursive walk from a user-entered root
+path, returning the largest 30 files/folders found. Every subtree is enumerated independently with
+its own try/catch, so one inaccessible folder (System Volume Information, another user's profile,
+...) is skipped rather than failing the whole scan - the same graceful per-subtree degradation
+`ReadRecentlyInstalledSoftware`'s per-registry-key loop already uses. Never runs automatically or
+on a timer, the same "expensive, so make it explicit" tradeoff as the SMART table and HDD
+fragmentation analysis above/before it.
+
+**Throughput test, clearly labeled as approximate**: `Services/StorageThroughputService.cs` writes
+then reads a temp file (capped to the smaller of 256 MB or available free space minus a 64 MB
+safety margin, always deleted afterward even on failure) on a user-chosen volume, timing each pass
+with a `Stopwatch`. Deliberately a single-threaded sequential pass only - no queue-depth sweep, no
+random I/O pattern, no full cache-bypass beyond `FileOptions.WriteThrough`/`SequentialScan` - and
+both the result message and the Storage tab's own UI text say so explicitly in-line, the same
+"quick sanity check, not a verdict" honesty this app already applies to its other heuristic checks.
+
+**NVMe controller-vs-flash-die temperature split**: `EnergyThermalsViewModel` gains
+`StorageHotspotDeltaC`, following the exact same shape as Round 4's GPU hotspot-vs-edge
+differential and Round 5's motherboard/VRM lookup - restricted to `HardwareType.Storage` sensor
+readings, grouped by hardware name, and only populated (the Energy & Thermals tab tile hides
+itself otherwise) when a single drive reports more than one temperature sensor, which
+LibreHardwareMonitorLib exposes on some but not all NVMe drives/drivers.
+
+**Historical connection-count totals, honestly scoped**: `Services/NetworkHistoryService.cs`
+persists daily per-process connection-count totals to
+`%AppData%\TaskManagerPlus\network-history.json` (same shape as `boot-history.json`/`alerts.json`,
+trimmed to the most recent 180 days), aggregated into "today" and "this month" views on the Network
+tab. This is deliberately **not** byte-level bandwidth history - Round 6's Network section already
+documents that Windows exposes no public API for true per-process byte attribution (Task Manager's
+own network column is built on an undocumented NSI call this app has consistently declined to
+depend on), so a persisted *historical* figure built from an unmeasurable quantity would just be a
+fabrication with better production values. Instead this persists the same honest connection-count
+proxy `NetworkConnectionsService.SummarizeByProcess` already provides live, just accumulated over
+time - "which process held the most simultaneous connections today/this month," not "which process
+used the most data," documented as such in the code and the UI alike.
+
+**Hosts file shortcut, proxy display, adapter driver version**: the hosts-file button
+(`NetworkViewModel.OpenHostsFileCommand`) explicitly launches `notepad.exe` with the file's path
+rather than `ShellExecute`-ing the bare path, since a file with no extension has no reliably
+registered default handler to fall back to. Proxy configuration
+(`NetworkDiagnosticsService.ReadProxyConfig`) is a plain, read-only registry read of the per-user
+`Internet Settings` key (`ProxyEnable`/`ProxyServer`/`AutoConfigURL`) - the same source
+`netsh winhttp show proxy`/Internet Options itself reads from, never written to by this app.
+Adapter driver version/date (`ReadAdapterDriverInfo`) queries the same `Win32_PnPSignedDriver`
+class `SystemSpecsService.ReadOutdatedDrivers` already uses, filtered to `DeviceClass = 'NET'` and
+excluding virtual/tunnel adapter noise, applying the identical 2-year/2006-placeholder-date
+heuristic - deliberately **not** a claim that a newer driver is actually known to exist anywhere;
+this round makes no online lookup, and both the code comment and the UI are explicit that
+`LooksOld` means "worth a manual check," nothing more, the same honesty tradeoff the BIOS-age hint
+and outdated-driver list already established.
+
+**On-demand traceroute and jitter/packet-loss test**: `Services/TracerouteService.cs` shells to
+`tracert.exe -d -h 20 -w 1000 <host>` (a basic host-shape regex guards against passing arbitrary
+user input to a shelled-out process; a 30s watchdog kills a run that's still going, since a lossy
+path can make even a capped 20-hop trace run long) and returns its raw text output as-is rather
+than attempting to parse per-hop structure - the same "known tool, not raw ICMP/TTL interop"
+tradeoff as `defrag.exe`/`schtasks.exe` elsewhere in this app. The jitter/packet-loss quick test
+(`NetworkDiagnosticsService.RunJitterTestAsync`) is ten sequential pings 200ms apart, reporting
+min/max/avg round-trip and loss percentage plus a mean-consecutive-deviation jitter figure
+(a simple, standard approximation - not a formal RFC 3550 jitter calculation). Both are on-demand
+only (a host field plus a button each), never riding the existing 15s connectivity timer, since
+either can take several seconds and is only useful when actively diagnosing a specific problem.
+
+**Captive portal detection and metered-connection flag, both riding the existing 15s timer**:
+captive portal detection (`CheckCaptivePortalAsync`) is the same NCSI-style check Windows itself
+uses - an HTTP GET (redirects disabled, so a portal's redirect-to-login-page behavior itself
+becomes the signal rather than being silently followed) to
+`http://www.msftconnecttest.com/connecttest.txt`, expecting the literal body `"Microsoft Connect
+Test"`; anything else (a redirect, different body, or an outright failure while otherwise
+connected) means a portal is likely intercepting traffic. Folded into the existing
+`ConnectivityResult`/15s timer per this round's assignment guidance, since it's the same class of
+"real network I/O, not a local counter read" exception that timer already exists for. Metered
+status (`Services/MeteredConnectionService.cs`) reads the per-network-profile
+`DefaultMediaCost\{GUID}\Cost` registry values DUSM (the service behind Settings' own "Set as
+metered connection" toggle) itself writes - not a documented public API, so this is the same
+best-effort tier as the SecurityCenter2 AV `productState` bitmask read, wrapped to degrade to an
+empty (hidden) list on any failure. Deliberately reads the registry directly rather than taking a
+`Windows.Networking.Connectivity` WinRT/UWP-contracts package dependency, which would be a real
+target-framework-shaped risk for one flag in a classic WPF exe that takes no other WinRT
+dependency anywhere else in the app.
+
 ### Notable implementation details
 
 - **CPU clock speed**: not directly exposed by Windows. Computed the same

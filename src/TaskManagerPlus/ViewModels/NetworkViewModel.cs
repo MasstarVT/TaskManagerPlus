@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.Windows.Threading;
 using TaskManagerPlus.Common;
 using TaskManagerPlus.Services;
@@ -70,8 +71,67 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
     private string _publicIpStatusText = "Not checked";
     public string PublicIpStatusText { get => _publicIpStatusText; private set => SetProperty(ref _publicIpStatusText, value); }
 
+    // Round 9, #51: captive portal detection - distinct from a plain no-internet result. Null
+    // means "couldn't tell" (see NetworkDiagnosticsService.CheckCaptivePortalAsync's remarks).
+    private bool? _captivePortalDetected;
+    public bool? CaptivePortalDetected { get => _captivePortalDetected; private set => SetProperty(ref _captivePortalDetected, value); }
+
+    public string CaptivePortalStatusText => CaptivePortalDetected switch
+    {
+        true => "Detected — a login page is likely intercepting requests",
+        false => "Not detected",
+        null => "Unknown",
+    };
+
+    // Round 9, #47: read-only WinHTTP/IE proxy configuration - refreshed on the same slow timer.
+    private string _proxyStatusText = "Checking...";
+    public string ProxyStatusText { get => _proxyStatusText; private set => SetProperty(ref _proxyStatusText, value); }
+
+    // Round 9, #48: network adapter driver version/date - queried once (like StorageSpacesService's
+    // pool query), since a driver can't change without a reinstall/reboot this app would need a
+    // restart to see anyway.
+    public ObservableCollection<AdapterDriverInfo> AdapterDrivers { get; } = new();
+
+    // Round 9, #52: metered-connection flag per network profile - refreshed on the slow timer
+    // (cheap registry reads).
+    public ObservableCollection<MeteredAdapterInfo> MeteredAdapters { get; } = new();
+
+    // Round 9, #45: historical (daily/monthly) connection-count totals by process - see
+    // NetworkHistoryService's remarks for why this is a connection-count history, not real
+    // byte-level bandwidth history.
+    public ObservableCollection<NetworkHistoryEntry> HistoryToday { get; } = new();
+    public ObservableCollection<NetworkHistoryEntry> HistoryThisMonth { get; } = new();
+
+    // Round 9, #49: on-demand traceroute.
+    private string _tracerouteHost = string.Empty;
+    public string TracerouteHost { get => _tracerouteHost; set => SetProperty(ref _tracerouteHost, value); }
+
+    private string _tracerouteOutput = string.Empty;
+    public string TracerouteOutput { get => _tracerouteOutput; private set => SetProperty(ref _tracerouteOutput, value); }
+
+    private bool _isTracerouting;
+    public bool IsTracerouting { get => _isTracerouting; private set => SetProperty(ref _isTracerouting, value); }
+
+    public AsyncRelayCommand RunTracerouteCommand { get; }
+
+    // Round 9, #50: on-demand jitter/packet-loss quick test, alongside the existing single-shot
+    // gateway/DNS latency reading above.
+    private string _jitterTestHost = "1.1.1.1";
+    public string JitterTestHost { get => _jitterTestHost; set => SetProperty(ref _jitterTestHost, value); }
+
+    private string _jitterTestResultText = "Not tested";
+    public string JitterTestResultText { get => _jitterTestResultText; private set => SetProperty(ref _jitterTestResultText, value); }
+
+    private bool _isJitterTesting;
+    public bool IsJitterTesting { get => _isJitterTesting; private set => SetProperty(ref _isJitterTesting, value); }
+
+    public AsyncRelayCommand RunJitterTestCommand { get; }
+
     public RelayCommand CheckConnectivityCommand { get; }
     public AsyncRelayCommand LookupPublicIpCommand { get; }
+
+    // Round 9, #46: hosts-file quick-open shortcut for DNS override troubleshooting.
+    public RelayCommand OpenHostsFileCommand { get; }
 
     public NetworkViewModel(PerformanceViewModel performance)
     {
@@ -79,12 +139,25 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
 
         CheckConnectivityCommand = new RelayCommand(_ => _ = CheckConnectivityAsync());
         LookupPublicIpCommand = new AsyncRelayCommand(LookupPublicIpAsync);
+        OpenHostsFileCommand = new RelayCommand(_ => OpenHostsFile());
+        RunTracerouteCommand = new AsyncRelayCommand(RunTracerouteAsync, () => !IsTracerouting && !string.IsNullOrWhiteSpace(TracerouteHost));
+        RunJitterTestCommand = new AsyncRelayCommand(RunJitterTestAsync, () => !IsJitterTesting && !string.IsNullOrWhiteSpace(JitterTestHost));
 
         _timer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(15) };
         _timer.Tick += async (_, _) => await CheckConnectivityAsync();
         _timer.Start();
 
         _ = CheckConnectivityAsync();
+
+        // #48: one-time driver read - see AdapterDrivers' remarks.
+        _ = Task.Run(() =>
+        {
+            var drivers = NetworkDiagnosticsService.ReadAdapterDriverInfo();
+            System.Windows.Application.Current?.Dispatcher.Invoke(() =>
+            {
+                foreach (var d in drivers) AdapterDrivers.Add(d);
+            });
+        });
     }
 
     private async Task CheckConnectivityAsync()
@@ -113,6 +186,21 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
 
             DnsLookupText = result.DnsLookupMs is { } lookupMs ? $"{lookupMs} ms" : "Failed";
 
+            // #51: captive portal - a distinct signal from plain gateway/DNS unreachability.
+            CaptivePortalDetected = result.CaptivePortalDetected;
+            OnPropertyChanged(nameof(CaptivePortalStatusText));
+
+            // #47: read-only proxy configuration.
+            var proxy = NetworkDiagnosticsService.ReadProxyConfig();
+            ProxyStatusText = proxy.Enabled
+                ? $"Enabled — {(string.IsNullOrEmpty(proxy.ProxyServer) ? "(no server configured)" : proxy.ProxyServer)}"
+                : string.IsNullOrEmpty(proxy.AutoConfigUrl) ? "Disabled" : $"Disabled (auto-config script set: {proxy.AutoConfigUrl})";
+
+            // #52: metered-connection flag per network profile.
+            var metered = await Task.Run(MeteredConnectionService.ReadMeteredStatus);
+            MeteredAdapters.Clear();
+            foreach (var m in metered) MeteredAdapters.Add(m);
+
             var links = NetworkDiagnosticsService.ReadAdapterLinks();
             AdapterLinks.Clear();
             foreach (var link in links) AdapterLinks.Add(link);
@@ -126,9 +214,21 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
             foreach (var c in connections.OrderByDescending(c => c.State == "ESTABLISHED").ThenBy(c => c.ProcessName, StringComparer.OrdinalIgnoreCase))
                 Connections.Add(c);
 
+            var topProcesses = NetworkConnectionsService.SummarizeByProcess(connections);
             TopNetworkProcesses.Clear();
-            foreach (var u in NetworkConnectionsService.SummarizeByProcess(connections).Take(8))
+            foreach (var u in topProcesses.Take(8))
                 TopNetworkProcesses.Add(u);
+
+            // #45: persist this sample into the daily/monthly connection-count history - see
+            // NetworkHistoryService's remarks for why this is a connection-count history, not
+            // real byte-level bandwidth history.
+            await Task.Run(() => NetworkHistoryService.RecordSample(topProcesses));
+            var todayTotals = await Task.Run(() => NetworkHistoryService.GetDayTotals());
+            var monthTotals = await Task.Run(NetworkHistoryService.GetMonthTotals);
+            HistoryToday.Clear();
+            foreach (var e in todayTotals.Take(8)) HistoryToday.Add(e);
+            HistoryThisMonth.Clear();
+            foreach (var e in monthTotals.Take(8)) HistoryThisMonth.Add(e);
 
             Wifi = await Task.Run(WifiDiagnosticsService.ReadCurrentWifi);
         }
@@ -139,6 +239,58 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         finally
         {
             _isChecking = false;
+        }
+    }
+
+    /// <summary>#46: opens the hosts file in Notepad for DNS override troubleshooting - explicitly
+    /// launches notepad.exe rather than ShellExecute-ing the bare path, since the hosts file has
+    /// no extension and so no reliably-registered default handler to fall back to.</summary>
+    private static void OpenHostsFile()
+    {
+        try
+        {
+            string hostsPath = System.IO.Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.System), @"drivers\etc\hosts");
+            Process.Start(new ProcessStartInfo("notepad.exe", $"\"{hostsPath}\"") { UseShellExecute = true });
+        }
+        catch
+        {
+            // Best-effort - if Notepad can't launch there's nothing more useful this app can do here.
+        }
+    }
+
+    /// <summary>#49: on-demand traceroute - see TracerouteService's remarks for why this shells
+    /// out to tracert.exe rather than reimplementing it.</summary>
+    private async Task RunTracerouteAsync()
+    {
+        if (IsTracerouting) return;
+        IsTracerouting = true;
+        TracerouteOutput = "Running traceroute (up to 20 hops, this can take several seconds)...";
+        try
+        {
+            TracerouteOutput = await TracerouteService.RunAsync(TracerouteHost);
+        }
+        finally
+        {
+            IsTracerouting = false;
+        }
+    }
+
+    /// <summary>#50: on-demand jitter/packet-loss quick test - see
+    /// NetworkDiagnosticsService.RunJitterTestAsync's remarks.</summary>
+    private async Task RunJitterTestAsync()
+    {
+        if (IsJitterTesting) return;
+        IsJitterTesting = true;
+        JitterTestResultText = "Testing (10 pings, ~2 seconds)...";
+        try
+        {
+            var result = await NetworkDiagnosticsService.RunJitterTestAsync(JitterTestHost);
+            JitterTestResultText = result.Message;
+        }
+        finally
+        {
+            IsJitterTesting = false;
         }
     }
 

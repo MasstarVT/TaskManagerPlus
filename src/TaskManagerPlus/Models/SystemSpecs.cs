@@ -210,6 +210,12 @@ public sealed class DiskInfo
     /// this degrades to "not shown" rather than a false reading, the same tier as the SMART
     /// failure-prediction flag above.</summary>
     public int? WearPercent { get; init; }
+
+    /// <summary>Win32_DiskDrive.Index (#38/round 9) - the same small integer
+    /// MSFT_StorageReliabilityCounter.DeviceId is paired against for WearPercent above. Kept here
+    /// so the Storage tab's on-demand full-SMART-table lookup can address a disk without a second
+    /// WMI round trip to re-discover it.</summary>
+    public int Index { get; init; } = -1;
 }
 
 /// <summary>A single mounted volume (drive letter), for the free-space warning list.</summary>
@@ -226,4 +232,30 @@ public sealed class VolumeInfo
     /// run (needs a handle to the raw volume - can fail even elevated on some configurations) -
     /// "Unknown", not "clean".</summary>
     public bool? IsDirty { get; init; }
+
+    /// <summary>"HDD"/"SSD"/"SCM"/"Unknown" (round 9, #44) - reused from DiskFragmentationService's
+    /// media-type associator chain to decide which volumes TRIM status is even meaningful for.</summary>
+    public string MediaType { get; init; } = "Unknown";
+
+    /// <summary>BitLocker conversion/protection status (round 9, #37), from Win32_EncryptableVolume
+    /// in root\CIMV2\Security\MicrosoftVolumeEncryption - see VolumeDiagnosticsService.ReadBitLockerStatus
+    /// for why this degrades to "Unknown" rather than a false "Off" on several legitimate failure
+    /// paths (namespace/method access can be denied even elevated on some Windows SKUs/policies,
+    /// the same honesty tradeoff the TPM/VBS reads in this file already take).</summary>
+    public string BitLockerStatus { get; init; } = "Unknown";
+
+    /// <summary>Recycle Bin size on this volume (round 9, #40), via the native SHQueryRecycleBinW
+    /// call - null on any failure (e.g. no Recycle Bin folder on a removable/network volume).</summary>
+    public long? RecycleBinBytes { get; init; }
+
+    /// <summary>Shadow copy (VSS) storage currently used on this volume (round 9, #42), via
+    /// `vssadmin list shadowstorage` - null when VSS isn't configured for this volume at all (the
+    /// common case unless System Restore/File History is enabled), not an error.</summary>
+    public long? ShadowCopyBytes { get; init; }
+
+    /// <summary>TRIM (delete notify) status (round 9, #44), via `fsutil behavior query
+    /// DisableDeleteNotify` - true means TRIM is enabled. Only meaningful for SSD volumes; null on
+    /// an HDD volume (mirrors how HDD fragmentation is hidden for SSDs) or when the check itself
+    /// couldn't run.</summary>
+    public bool? TrimEnabled { get; init; }
 }
