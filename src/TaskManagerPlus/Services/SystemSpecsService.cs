@@ -29,6 +29,7 @@ public sealed class SystemSpecsService
         var memoryModules = ReadMemoryModules();
         long ramTotal = memoryModules.Sum(m => m.CapacityBytes);
         var totalMemorySlots = ReadTotalMemorySlots();
+        var hwIds = ReadHardwareIdentifiers();
 
         return new SystemSpecs
         {
@@ -69,6 +70,15 @@ public sealed class SystemSpecsService
             RecentlyInstalledSoftware = ReadRecentlyInstalledSoftware(),
             UsbDevices = ReadUsbDevices(),
             PageFileLocation = ReadPageFileLocation(),
+
+            ChassisType = ReadChassisType(),
+            ActivationStatus = ReadActivationStatus(),
+            DotNetRuntimes = ReadDotNetRuntimes(),
+            Monitors = ReadMonitors(),
+            ChipsetDriverText = ReadChipsetDriverInfo(),
+            DefenderExclusions = ReadDefenderExclusions(),
+            SystemUuid = hwIds.Uuid,
+            CpuIdentifier = hwIds.CpuId,
         };
     }
 
@@ -1110,5 +1120,345 @@ public sealed class SystemSpecsService
             // (e.g. a removable/network drive) - "Unknown" rather than a false "clean".
             return null;
         }
+    }
+
+    /// <summary>#57: chassis/form-factor readout, via Win32_SystemEnclosure.ChassisTypes - a real,
+    /// documented SMBIOS-backed enum (the first reported code is used; a chassis rarely reports more
+    /// than one meaningful type). Unrecognized/unlisted codes fall back to "Unknown" rather than a
+    /// guess.</summary>
+    private static string ReadChassisType()
+    {
+        try
+        {
+            using var searcher = new ManagementObjectSearcher("SELECT ChassisTypes FROM Win32_SystemEnclosure");
+            foreach (ManagementObject mo in searcher.Get())
+            {
+                if (mo["ChassisTypes"] is ushort[] { Length: > 0 } types)
+                    return ChassisTypeName(types[0]);
+            }
+        }
+        catch
+        {
+            // WMI class unavailable - "Unknown".
+        }
+        return "Unknown";
+    }
+
+    private static string ChassisTypeName(int code) => code switch
+    {
+        3 => "Desktop",
+        4 => "Low Profile Desktop",
+        5 => "Pizza Box",
+        6 => "Mini Tower",
+        7 => "Tower",
+        8 => "Portable",
+        9 => "Laptop",
+        10 => "Notebook",
+        11 => "Hand Held",
+        12 => "Docking Station",
+        13 => "All in One",
+        14 => "Sub Notebook",
+        15 => "Space-saving",
+        16 => "Lunch Box",
+        17 => "Main System Chassis",
+        18 => "Expansion Chassis",
+        21 => "Peripheral Chassis",
+        23 => "Rack Mount Chassis",
+        30 => "Tablet",
+        31 => "Convertible",
+        32 => "Detachable",
+        _ => "Unknown",
+    };
+
+    /// <summary>#58: Windows edition (already surfaced via OsName's Caption) plus activation status,
+    /// via the SoftwareLicensingProduct WMI class filtered to the Windows edition's ApplicationID -
+    /// LicenseStatus 1 means "Licensed"/activated. Informational text only - no product key is ever
+    /// read from this or any other class.</summary>
+    private static string ReadActivationStatus()
+    {
+        try
+        {
+            using var searcher = new ManagementObjectSearcher(
+                "SELECT LicenseStatus FROM SoftwareLicensingProduct WHERE ApplicationID='55c92734-d682-4d71-983e-d6ec3f16059f' AND PartialProductKey IS NOT NULL");
+            foreach (ManagementObject mo in searcher.Get())
+            {
+                int status = Convert.ToInt32(mo["LicenseStatus"] ?? -1);
+                return status switch
+                {
+                    1 => "Activated",
+                    0 => "Not activated (unlicensed)",
+                    _ => "Not activated",
+                };
+            }
+        }
+        catch
+        {
+            // SoftwareLicensingProduct can be restricted by policy on some editions - "Unknown".
+        }
+        return "Unknown";
+    }
+
+    /// <summary>#59: installed .NET runtime versions, via the shared-framework directory layout
+    /// dotnet.exe itself uses (dotnet\shared\&lt;RuntimeName&gt;\&lt;Version&gt;) rather than a
+    /// registry/WMI read - this is the same folder structure `dotnet --list-runtimes` reads. Checks
+    /// both Program Files and Program Files (x86), since a 32-bit runtime install lands in the
+    /// latter.</summary>
+    private static List<string> ReadDotNetRuntimes()
+    {
+        var result = new List<string>();
+        try
+        {
+            var roots = new[]
+            {
+                Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+                Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
+            }.Where(r => !string.IsNullOrWhiteSpace(r)).Distinct();
+
+            foreach (var root in roots)
+            {
+                var sharedDir = Path.Combine(root, "dotnet", "shared");
+                if (!Directory.Exists(sharedDir)) continue;
+
+                foreach (var runtimeDir in Directory.GetDirectories(sharedDir))
+                {
+                    string runtimeName = Path.GetFileName(runtimeDir);
+                    foreach (var versionDir in Directory.GetDirectories(runtimeDir))
+                        result.Add($"{runtimeName} {Path.GetFileName(versionDir)}");
+                }
+            }
+        }
+        catch
+        {
+            // Best-effort filesystem scan - a permission issue just means an incomplete list.
+        }
+        return result.Distinct().OrderBy(s => s, StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    /// <summary>#60: active display inventory. Resolution/refresh rate come from
+    /// Win32_VideoController's current-mode fields (CurrentHorizontalResolution/
+    /// CurrentVerticalResolution/CurrentRefreshRate) - a simpler, WMI-only source than parsing EDID
+    /// or calling EnumDisplaySettings, at the cost of describing "the adapter's current output mode"
+    /// rather than a true per-monitor EDID record. Connection type is a second, independent
+    /// WMI source - root\wmi's WmiMonitorConnectionParams, which reports the documented
+    /// D3DKMDT_VIDEO_OUTPUT_TECHNOLOGY enum per physical monitor. There is no public API mapping one
+    /// source's rows to the other's, so - the same "only pair when the counts match, otherwise don't
+    /// guess" rule GpuMonitorService uses for LUID-to-adapter pairing - resolution is only attached
+    /// to a connection-type row when both lists report the same count; otherwise whichever source is
+    /// available is still shown, just without the other's detail. HDR support has no reliable
+    /// enumeration source short of DXGI/IDXGIOutput6 COM interop, so it's deliberately not
+    /// included rather than guessed.</summary>
+    private static List<MonitorInfo> ReadMonitors()
+    {
+        var connectionTypes = new List<string>();
+        try
+        {
+            using var searcher = new ManagementObjectSearcher(@"root\wmi", "SELECT VideoOutputTechnology FROM WmiMonitorConnectionParams");
+            foreach (ManagementObject mo in searcher.Get())
+            {
+                int tech = 0;
+                try { tech = Convert.ToInt32(mo["VideoOutputTechnology"] ?? 0); } catch { /* leave 0 -> "VGA" bucket avoided below via Other fallback */ }
+                connectionTypes.Add(VideoOutputTechnologyName(tech));
+            }
+        }
+        catch
+        {
+            // root\wmi monitor classes unavailable (some VM/RDP configurations, or a locked-down
+            // policy) - fall through to whatever Win32_VideoController resolution data can still be
+            // shown below, just without a connection type.
+        }
+
+        var resolutions = new List<(int W, int H, int Hz)>();
+        try
+        {
+            using var searcher = new ManagementObjectSearcher(
+                "SELECT CurrentHorizontalResolution, CurrentVerticalResolution, CurrentRefreshRate FROM Win32_VideoController WHERE CurrentHorizontalResolution IS NOT NULL");
+            foreach (ManagementObject mo in searcher.Get())
+            {
+                int w = Convert.ToInt32(mo["CurrentHorizontalResolution"] ?? 0);
+                int h = Convert.ToInt32(mo["CurrentVerticalResolution"] ?? 0);
+                int hz = Convert.ToInt32(mo["CurrentRefreshRate"] ?? 0);
+                if (w > 0 && h > 0) resolutions.Add((w, h, hz));
+            }
+        }
+        catch
+        {
+            // fall through - connectionTypes alone can still produce rows below
+        }
+
+        var result = new List<MonitorInfo>();
+        bool canPairResolution = connectionTypes.Count > 0 && connectionTypes.Count == resolutions.Count;
+
+        if (connectionTypes.Count > 0)
+        {
+            for (int i = 0; i < connectionTypes.Count; i++)
+            {
+                var res = canPairResolution ? resolutions[i] : ((int W, int H, int Hz)?)null;
+                result.Add(new MonitorInfo
+                {
+                    Name = $"Display {i + 1}",
+                    WidthPx = res?.W ?? 0,
+                    HeightPx = res?.H ?? 0,
+                    RefreshHz = res?.Hz ?? 0,
+                    ConnectionType = connectionTypes[i],
+                });
+            }
+        }
+        else
+        {
+            for (int i = 0; i < resolutions.Count; i++)
+            {
+                result.Add(new MonitorInfo
+                {
+                    Name = $"Display {i + 1}",
+                    WidthPx = resolutions[i].W,
+                    HeightPx = resolutions[i].H,
+                    RefreshHz = resolutions[i].Hz,
+                    ConnectionType = "Unknown",
+                });
+            }
+        }
+        return result;
+    }
+
+    // D3DKMDT_VIDEO_OUTPUT_TECHNOLOGY - a documented Microsoft enum (d3dkmdt.h), not a guess.
+    private static string VideoOutputTechnologyName(int code) => code switch
+    {
+        0 => "VGA",
+        1 => "S-Video",
+        2 => "Composite",
+        3 => "Component",
+        4 => "DVI",
+        5 => "HDMI",
+        6 => "LVDS (internal)",
+        8 => "D-JPN",
+        9 => "SDI",
+        10 => "DisplayPort",
+        11 => "DisplayPort (embedded)",
+        12 => "UDI",
+        13 => "UDI (embedded)",
+        14 => "SDTV dongle",
+        15 => "Miracast",
+        16 => "Indirect (wired)",
+        17 => "Indirect (virtual)",
+        -1 => "Other",
+        int.MinValue => "Internal", // 0x80000000
+        _ => "Unknown",
+    };
+
+    /// <summary>#61: motherboard chipset driver version. There is no single canonical "chipset
+    /// driver" WMI class, so this searches Win32_PnPSignedDriver for System/SMBus-class devices
+    /// whose name mentions "Chipset"/"SMBus"/"PCI Express Root" (the way Intel/AMD chipset INF
+    /// packages typically name their entries) and reports the newest one found by driver date -
+    /// best-effort, the same tier as the outdated-driver date filtering, degrading to "Unknown"
+    /// rather than a guess when nothing matches.</summary>
+    private static string ReadChipsetDriverInfo()
+    {
+        try
+        {
+            using var searcher = new ManagementObjectSearcher(
+                "SELECT DeviceName, Manufacturer, DriverVersion, DriverDate, DeviceClass FROM Win32_PnPSignedDriver WHERE DeviceClass='System' OR DeviceClass='SMBus' OR DeviceClass='HDC'");
+
+            DriverInfo? best = null;
+            foreach (ManagementObject mo in searcher.Get())
+            {
+                string deviceName = (mo["DeviceName"] as string ?? string.Empty).Trim();
+                if (deviceName.Length == 0) continue;
+                bool looksLikeChipset =
+                    deviceName.Contains("Chipset", StringComparison.OrdinalIgnoreCase) ||
+                    deviceName.Contains("SMBus", StringComparison.OrdinalIgnoreCase) ||
+                    deviceName.Contains("PCI Express Root", StringComparison.OrdinalIgnoreCase);
+                if (!looksLikeChipset) continue;
+
+                DateTime? date = null;
+                if (mo["DriverDate"] is string wmiDate)
+                {
+                    try { date = ManagementDateTimeConverter.ToDateTime(wmiDate); } catch { /* leave null */ }
+                }
+
+                var candidate = new DriverInfo
+                {
+                    DeviceName = deviceName,
+                    Manufacturer = (mo["Manufacturer"] as string ?? string.Empty).Trim(),
+                    DriverVersion = (mo["DriverVersion"] as string ?? string.Empty).Trim(),
+                    DriverDate = date,
+                };
+                if (best is null || (candidate.DriverDate ?? DateTime.MinValue) > (best.DriverDate ?? DateTime.MinValue))
+                    best = candidate;
+            }
+
+            if (best is not null)
+            {
+                string dateText = best.DriverDate is { } d ? $" ({d:yyyy-MM-dd})" : string.Empty;
+                return $"{best.DeviceName} — {(best.DriverVersion.Length > 0 ? best.DriverVersion : "Unknown version")}{dateText}";
+            }
+        }
+        catch
+        {
+            // WMI query failed outright - "Unknown".
+        }
+        return "Unknown";
+    }
+
+    /// <summary>#63: Windows Defender exclusion list (Paths/Extensions/Processes/IpAddresses), a
+    /// direct read-only registry read - the same key the Defender Security Center UI itself edits.
+    /// Returns null (rendered as "Unknown/inaccessible") when the key can't be opened or enumerated
+    /// at all - Tamper Protection can legitimately deny this even to this app's elevated process,
+    /// and that's a materially different situation from "read successfully, found nothing".</summary>
+    private static IReadOnlyList<string>? ReadDefenderExclusions()
+    {
+        try
+        {
+            using var root = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows Defender\Exclusions");
+            if (root is null) return null;
+
+            var result = new List<string>();
+            foreach (var subKeyName in new[] { "Paths", "Extensions", "Processes", "IpAddresses" })
+            {
+                using var sub = root.OpenSubKey(subKeyName);
+                if (sub is null) continue;
+                foreach (var valueName in sub.GetValueNames())
+                    if (!string.IsNullOrWhiteSpace(valueName))
+                        result.Add($"{subKeyName.TrimEnd('s')}: {valueName}");
+            }
+            return result;
+        }
+        catch
+        {
+            // Access denied (Tamper Protection / policy), even though this process is elevated -
+            // "Unknown", not a false "no exclusions configured".
+            return null;
+        }
+    }
+
+    /// <summary>#64: identifiers for a "copy hardware IDs" support-ticket helper - system product
+    /// UUID (Win32_ComputerSystemProduct.UUID) and CPU ID (Win32_Processor.ProcessorId). Both are
+    /// already-standard WMI fields with no personal/account data in them (unlike a Windows product
+    /// key, which this app never reads anywhere).</summary>
+    private static (string Uuid, string CpuId) ReadHardwareIdentifiers()
+    {
+        string uuid = string.Empty, cpuId = string.Empty;
+        try
+        {
+            using var searcher = new ManagementObjectSearcher("SELECT UUID FROM Win32_ComputerSystemProduct");
+            foreach (ManagementObject mo in searcher.Get())
+            {
+                uuid = (mo["UUID"] as string ?? string.Empty).Trim();
+                break;
+            }
+        }
+        catch { /* leave blank */ }
+
+        try
+        {
+            using var searcher = new ManagementObjectSearcher("SELECT ProcessorId FROM Win32_Processor");
+            foreach (ManagementObject mo in searcher.Get())
+            {
+                cpuId = (mo["ProcessorId"] as string ?? string.Empty).Trim();
+                break;
+            }
+        }
+        catch { /* leave blank */ }
+
+        return (uuid, cpuId);
     }
 }

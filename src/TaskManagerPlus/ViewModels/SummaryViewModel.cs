@@ -29,6 +29,12 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
     private readonly StabilityViewModel _stability;
     private readonly DispatcherTimer _healthTimer;
 
+    /// <summary>Round 10, #67: exposed publicly (the field above stays for this class's own
+    /// existing internal use) so the Summary tab's XAML can bind "time since last crash" and the
+    /// #68 stability index directly, without SummaryViewModel needing to re-expose each one as its
+    /// own wrapper property.</summary>
+    public StabilityViewModel Stability => _stability;
+
     public PerformanceViewModel Performance { get; }
     public ProcessesViewModel Processes { get; }
 

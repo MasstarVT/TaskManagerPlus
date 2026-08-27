@@ -123,11 +123,49 @@ public sealed class SystemSpecsViewModel : ObservableObject
     private string _vbsText = "Unknown";
     public string VbsText { get => _vbsText; private set => SetProperty(ref _vbsText, value); }
 
+    // Round 10, #57/#58/#61: chassis form factor, Windows edition & activation, chipset driver.
+    private string _chassisType = "Unknown";
+    public string ChassisType { get => _chassisType; private set => SetProperty(ref _chassisType, value); }
+
+    private string _activationStatus = "Unknown";
+    public string ActivationStatus { get => _activationStatus; private set => SetProperty(ref _activationStatus, value); }
+
+    private string _chipsetDriverText = "Unknown";
+    public string ChipsetDriverText { get => _chipsetDriverText; private set => SetProperty(ref _chipsetDriverText, value); }
+
+    // Round 10, #59: installed .NET runtime versions.
+    public ObservableCollection<string> DotNetRuntimes { get; } = new();
+
+    // Round 10, #60: active display inventory.
+    public ObservableCollection<SpecRow> Monitors { get; } = new();
+
+    // Round 10, #62: longest-uptime records, derived from the existing boot-history.json.
+    private string _longestUptimeThisMonthText = "Not enough boot history yet";
+    public string LongestUptimeThisMonthText { get => _longestUptimeThisMonthText; private set => SetProperty(ref _longestUptimeThisMonthText, value); }
+
+    private string _longestUptimeThisYearText = "Not enough boot history yet";
+    public string LongestUptimeThisYearText { get => _longestUptimeThisYearText; private set => SetProperty(ref _longestUptimeThisYearText, value); }
+
+    // Round 10, #63: Windows Defender exclusion list - read-only viewer.
+    public ObservableCollection<string> DefenderExclusions { get; } = new();
+
+    private string _defenderExclusionsStatusText = "Unknown";
+    public string DefenderExclusionsStatusText { get => _defenderExclusionsStatusText; private set => SetProperty(ref _defenderExclusionsStatusText, value); }
+
+    // Round 10, #64: one-click "copy hardware IDs" for support tickets.
+    private string _hardwareIdsText = string.Empty;
+    public RelayCommand CopyHardwareIdsCommand { get; }
+
     public AsyncRelayCommand RefreshCommand { get; }
 
     public SystemSpecsViewModel()
     {
         RefreshCommand = new AsyncRelayCommand(RefreshAsync);
+        CopyHardwareIdsCommand = new RelayCommand(_ =>
+        {
+            try { if (_hardwareIdsText.Length > 0) System.Windows.Clipboard.SetText(_hardwareIdsText); }
+            catch { /* clipboard can be held by another app - best-effort */ }
+        }, _ => _hardwareIdsText.Length > 0);
         _ = RefreshAsync();
     }
 
@@ -137,13 +175,19 @@ public sealed class SystemSpecsViewModel : ObservableObject
         try
         {
             var specs = await Task.Run(() => _service.Query());
+            var (uptimeMonth, uptimeYear) = await Task.Run(() => BootPerformanceService.ComputeLongestUptimeRecords());
             Apply(specs);
+            LongestUptimeThisMonthText = uptimeMonth is { } m ? FormatUptime(m) : "Not enough boot history yet";
+            LongestUptimeThisYearText = uptimeYear is { } y ? FormatUptime(y) : "Not enough boot history yet";
         }
         finally
         {
             IsLoading = false;
         }
     }
+
+    private static string FormatUptime(TimeSpan span)
+        => span.TotalDays >= 1 ? $"{(int)span.TotalDays}d {span.Hours}h" : $"{span.Hours}h {span.Minutes}m";
 
     private void Apply(SystemSpecs specs)
     {
@@ -368,5 +412,55 @@ public sealed class SystemSpecsViewModel : ObservableObject
             PageFileLocationText = "Unknown";
             PageFileLocationWarning = false;
         }
+
+        // #57/#58/#61: chassis form factor, Windows edition & activation, chipset driver.
+        ChassisType = specs.ChassisType;
+        ActivationStatus = specs.ActivationStatus;
+        ChipsetDriverText = specs.ChipsetDriverText;
+
+        // #59: installed .NET runtime versions - a plain filesystem scan, empty when no .NET
+        // shared-framework install is found at all (this app's own runtime is self-contained-agnostic
+        // here; this just reports whatever's actually on disk).
+        DotNetRuntimes.Clear();
+        foreach (var r in specs.DotNetRuntimes) DotNetRuntimes.Add(r);
+
+        // #60: active display inventory - reuses SpecRow/SpecRowTemplate like Memory/Graphics/Storage.
+        Monitors.Clear();
+        foreach (var m in specs.Monitors)
+        {
+            Monitors.Add(new SpecRow
+            {
+                Primary = m.Name,
+                Secondary = m.ConnectionType,
+                SizeText = m.WidthPx > 0 && m.HeightPx > 0
+                    ? $"{m.WidthPx}×{m.HeightPx}" + (m.RefreshHz > 0 ? $" @ {m.RefreshHz} Hz" : string.Empty)
+                    : "Unknown",
+            });
+        }
+
+        // #63: Defender exclusions - null (inaccessible/Tamper-Protection-blocked) is distinct from
+        // an empty (successfully read, genuinely none configured) list.
+        DefenderExclusions.Clear();
+        if (specs.DefenderExclusions is null)
+        {
+            DefenderExclusionsStatusText = "Unknown - inaccessible (Tamper Protection or policy may be blocking this even elevated).";
+        }
+        else if (specs.DefenderExclusions.Count == 0)
+        {
+            DefenderExclusionsStatusText = "No exclusions configured.";
+        }
+        else
+        {
+            DefenderExclusionsStatusText = $"{specs.DefenderExclusions.Count} exclusion(s) configured:";
+            foreach (var e in specs.DefenderExclusions) DefenderExclusions.Add(e);
+        }
+
+        // #64: "copy hardware IDs" - system product + CPU + GPU identifiers, for a support ticket.
+        _hardwareIdsText = string.Join(Environment.NewLine, new[]
+        {
+            $"System: {SystemModel}" + (string.IsNullOrWhiteSpace(specs.SystemUuid) ? string.Empty : $" (UUID {specs.SystemUuid})"),
+            $"CPU: {CpuName}" + (string.IsNullOrWhiteSpace(specs.CpuIdentifier) ? string.Empty : $" (ID {specs.CpuIdentifier})"),
+            "GPU: " + (specs.Gpus.Count > 0 ? string.Join("; ", specs.Gpus.Select(g => g.Name)) : "Unknown"),
+        });
     }
 }

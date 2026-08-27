@@ -78,6 +78,18 @@ public sealed class StabilitySnapshot
     public DateTime? LastLowMemoryEvent { get; init; }
 }
 
+/// <summary>#66 (Round 10): repeated application crashes grouped by faulting module, with a count -
+/// the same StabilityEvent.FaultingModule extraction the flat "Recent critical / error events" grid
+/// already carries, just aggregated here so "outlook.exe keeps crashing on ntdll.dll" reads as one
+/// row with a count instead of forcing a scroll through a dozen near-identical entries. A pure
+/// derived read over the already-loaded event list - no new event-log query.</summary>
+public sealed class FaultingModuleSummary
+{
+    public string Module { get; init; } = string.Empty;
+    public int Count { get; init; }
+    public DateTime LastSeen { get; init; }
+}
+
 /// <summary>Round 7 #13: an approximate measured service start duration, mined from Service
 /// Control Manager 7036 event-log entries - see EventLogService.ReadServiceStartDurations for
 /// exactly how this is derived and its limitations (an approximation of "time between a stop and

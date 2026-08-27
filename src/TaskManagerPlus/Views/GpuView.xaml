@@ -1,0 +1,207 @@
+<UserControl x:Class="TaskManagerPlus.Views.GpuView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:TaskManagerPlus.ViewModels"
+             xmlns:views="clr-namespace:TaskManagerPlus.Views"
+             d:DataContext="{d:DesignInstance Type=vm:GpuViewModel}"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d">
+    <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16">
+        <StackPanel>
+
+            <!-- Shown only when no GPU adapter and no "GPU Engine" counter category could be found
+                 at all (a headless/basic-display-only VM being the realistic case) - degrade to an
+                 explicit "unavailable" state rather than a permanently-empty tab that looks broken. -->
+            <Border Background="{DynamicResource BgElevatedBrush}" BorderBrush="{DynamicResource BorderBrush2}"
+                    BorderThickness="1" CornerRadius="8" Padding="14,10" Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsAvailable}" Value="False">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" FontSize="12.5"
+                           Text="No GPU adapter or GPU perf-counter data could be found on this system." />
+            </Border>
+
+            <!-- #55/#56: installed adapters - driver version/date, best-effort WDDM version, and
+                 whether it looks integrated vs. discrete. Always shows every adapter Windows knows
+                 about, independent of whether live utilization data below could be paired with it. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Installed adapters" Style="{StaticResource CardTitle}" />
+                    <ItemsControl ItemsSource="{Binding InstalledAdapters}" Margin="0,8,0,0">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0" Margin="0,0,12,0">
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                            <Border Background="{DynamicResource AccentMutedBrush}" CornerRadius="3" Padding="5,1" Margin="8,0,0,0" VerticalAlignment="Center">
+                                                <Border.Style>
+                                                    <Style TargetType="Border">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsIntegrated}" Value="True">
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Border.Style>
+                                                <TextBlock Text="Integrated" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource AccentBrush}" />
+                                            </Border>
+                                        </StackPanel>
+                                        <TextBlock Style="{StaticResource SubStat}" Margin="0,2,0,0">
+                                            <Run Text="Driver " /><Run Text="{Binding DriverVersion, TargetNullValue=Unknown}" />
+                                            <Run Text=" (" /><Run Text="{Binding DriverDate, TargetNullValue=Unknown}" /><Run Text=")" />
+                                            <Run Text=" · WDDM " /><Run Text="{Binding WddmVersion}" />
+                                        </TextBlock>
+                                    </StackPanel>
+                                    <TextBlock Grid.Column="1" VerticalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}"
+                                               Text="{Binding AdapterRamBytes, Converter={StaticResource BytesToReadableConverter}}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="No GPU adapters reported by Windows.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding InstalledAdapters.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- #53/#54: live per-engine utilization + VRAM usage, one section per detected LUID.
+                 The name is only the real adapter name when it could be confidently paired (see
+                 GpuMonitorService's remarks) - otherwise a generic "GPU N" label, deliberately not
+                 guessed. -->
+            <ItemsControl ItemsSource="{Binding LiveAdapters}">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                            <StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="{Binding Name}" Style="{StaticResource CardTitle}" Margin="0" />
+                                    <TextBlock Text="(adapter identity couldn't be confidently matched)" FontSize="10.5" Margin="8,0,0,0" VerticalAlignment="Center"
+                                               Foreground="{DynamicResource TextTertiaryBrush}">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding NameIsExact}" Value="False">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </StackPanel>
+                                <TextBlock Text="{Binding TotalUtilizationPercent, StringFormat={}Overall: {0:0.0}% busy}" Style="{StaticResource SubStat}" Margin="0,2,0,10" />
+
+                                <!-- Per-engine utilization (3D/Copy/Video Decode/Video Encode/...). -->
+                                <ItemsControl ItemsSource="{Binding Engines}">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <views:VfdMeter Title="{Binding EngineType}" Glow="False" Width="160" Margin="0,0,8,8"
+                                                             Percent="{Binding Percent}"
+                                                             ValueText="{Binding Percent, StringFormat={}{0:0.0}}" Unit="%"
+                                                             SubText="Engine utilization" AccentBrush="{DynamicResource AccentBrush}" />
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <TextBlock Text="No engine activity detected right now.">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Engines.Count}" Value="0">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+
+                                <!-- #54: dedicated + shared VRAM, from "GPU Adapter Memory". -->
+                                <UniformGrid Columns="2" Margin="0,10,0,0">
+                                    <views:VfdMeter Title="Dedicated VRAM" Glow="False" Margin="0,0,4,0"
+                                                     Percent="{Binding DedicatedVramPercent}"
+                                                     ValueText="{Binding DedicatedVramUsedBytes, Converter={StaticResource BytesToReadableConverter}}"
+                                                     SubText="{Binding DedicatedVramTotalBytes, Converter={StaticResource BytesToReadableConverter}, StringFormat=of {0}}"
+                                                     AccentBrush="{DynamicResource AccentBrush}" />
+                                    <views:VfdMeter Title="Shared VRAM" Glow="False" Margin="4,0,0,0"
+                                                     ValueText="{Binding SharedVramUsedBytes, Converter={StaticResource BytesToReadableConverter}}"
+                                                     SubText="From system memory" AccentBrush="{DynamicResource AccentBrush}" />
+                                </UniformGrid>
+                            </StackPanel>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+            <TextBlock Text="No live GPU utilization data yet - this needs at least one process actively using the GPU.">
+                <TextBlock.Style>
+                    <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <MultiDataTrigger>
+                                <MultiDataTrigger.Conditions>
+                                    <Condition Binding="{Binding LiveAdapters.Count}" Value="0" />
+                                    <Condition Binding="{Binding IsAvailable}" Value="True" />
+                                </MultiDataTrigger.Conditions>
+                                <Setter Property="Visibility" Value="Visible" />
+                            </MultiDataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </TextBlock.Style>
+            </TextBlock>
+
+            <!-- #56: "which app is using it" - re-presents the Processes tab's already-polling
+                 GPU% column, live-sorted here instead of sampled again. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <TextBlock Text="Top GPU processes" Style="{StaticResource CardTitle}" />
+                    <ItemsControl ItemsSource="{Binding TopGpuProcesses}" MaxHeight="260">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                                        <TextBlock Text="{Binding Name}" FontSize="12.5" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Style="{StaticResource SubStat}" FontSize="10.5">
+                                            <Run Text="PID " /><Run Text="{Binding Pid, Mode=OneWay}" />
+                                        </TextBlock>
+                                    </StackPanel>
+                                    <TextBlock Grid.Column="1" Text="{Binding GpuPercent, StringFormat={}{0:0.0}%}"
+                                               FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

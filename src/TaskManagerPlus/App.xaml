@@ -24,6 +24,8 @@
             <conv:NullToVisibilityConverter x:Key="NullToVisibilityConverter" />
             <conv:PercentToWidthConverter x:Key="PercentToWidthConverter" />
             <conv:PercentToStarWidthConverter x:Key="PercentToStarWidthConverter" />
+            <conv:BugcheckCodeToDescriptionConverter x:Key="BugcheckCodeToDescriptionConverter" />
+            <conv:StabilityIndexToBrushConverter x:Key="StabilityIndexToBrushConverter" />
         </ResourceDictionary>
     </Application.Resources>
 </Application>

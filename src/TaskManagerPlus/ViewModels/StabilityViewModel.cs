@@ -23,6 +23,10 @@ public sealed class StabilityViewModel : ObservableObject
     public ObservableCollection<StabilityEvent> RecentEvents { get; } = new();
     public ObservableCollection<MinidumpInfo> Minidumps { get; } = new();
 
+    // Round 10, #66: repeated crashes grouped by faulting module, most frequent first - see
+    // FaultingModuleSummary's remarks. Pure derived aggregation over RecentEvents, no new query.
+    public ObservableCollection<FaultingModuleSummary> CrashesByModule { get; } = new();
+
     private bool _isLoading;
     public bool IsLoading { get => _isLoading; private set => SetProperty(ref _isLoading, value); }
 
@@ -47,6 +51,11 @@ public sealed class StabilityViewModel : ObservableObject
 
     private string _lastLowMemoryEventText = "None in the last 30 days";
     public string LastLowMemoryEventText { get => _lastLowMemoryEventText; private set => SetProperty(ref _lastLowMemoryEventText, value); }
+
+    // Round 10, #68: single 0-10 stability index - see ComputeStabilityIndex for the documented
+    // weighted formula.
+    private double _stabilityIndex = 10.0;
+    public double StabilityIndex { get => _stabilityIndex; private set => SetProperty(ref _stabilityIndex, value); }
 
     public AsyncRelayCommand RefreshCommand { get; }
 
@@ -155,6 +164,57 @@ public sealed class StabilityViewModel : ObservableObject
         DailyEventXAxes[0].Labels = snapshot.DailyCounts
             .Select((d, i) => i % 5 == 0 ? d.Date.ToString("M/d") : string.Empty)
             .ToArray();
+
+        // #66: repeated application crashes grouped by faulting module, most frequent first - a
+        // pure re-grouping of the same RecentEvents list above, no new query.
+        CrashesByModule.Clear();
+        foreach (var g in snapshot.RecentEvents
+            .Where(e => !string.IsNullOrWhiteSpace(e.FaultingModule))
+            .GroupBy(e => e.FaultingModule!, StringComparer.OrdinalIgnoreCase)
+            .Select(g => new FaultingModuleSummary { Module = g.Key, Count = g.Count(), LastSeen = g.Max(e => e.TimeCreated) })
+            .OrderByDescending(s => s.Count))
+        {
+            CrashesByModule.Add(g);
+        }
+
+        StabilityIndex = ComputeStabilityIndex(snapshot);
+    }
+
+    /// <summary>
+    /// #68: single 0-10 stability index - a simple, documented weighted formula (not a black box),
+    /// entirely over data this tab already reads (no new event-log query). Starts at a perfect 10
+    /// and subtracts:
+    ///  1. Recent daily Critical/Error density - the average of the last 7 days' counts, up to 4
+    ///     points off (0.5 points per average daily event).
+    ///  2. An unexpected shutdown detected for the current boot - 1.5 points flat.
+    ///  3. TDR (GPU driver reset) events in the 30-day lookback window - 0.3 points each, up to 2.
+    ///  4. Low-memory resource-exhaustion events in the same window - 0.1 points each, up to 1.
+    ///  5. How recently the last crash happened - 2 points off if within the last 24 hours, 1 point
+    ///     if within the last 7 days, none otherwise.
+    /// Clamped to [0, 10] and rounded to one decimal - a rough, at-a-glance complement to the daily
+    /// bar chart above, not a scientific reliability metric.
+    /// </summary>
+    private static double ComputeStabilityIndex(StabilitySnapshot snapshot)
+    {
+        double score = 10.0;
+
+        double avgLast7 = snapshot.DailyCounts.Count == 0 ? 0 : snapshot.DailyCounts.TakeLast(7).Average(d => d.Count);
+        score -= Math.Min(avgLast7 * 0.5, 4.0);
+
+        if (snapshot.WasLastShutdownUnexpected) score -= 1.5;
+
+        score -= Math.Min(snapshot.TdrEventCount * 0.3, 2.0);
+
+        score -= Math.Min(snapshot.LowMemoryEventCount * 0.1, 1.0);
+
+        if (snapshot.LastCrashTime is { } crash)
+        {
+            var since = DateTime.Now - crash;
+            if (since.TotalHours < 24) score -= 2.0;
+            else if (since.TotalDays < 7) score -= 1.0;
+        }
+
+        return Math.Round(Math.Clamp(score, 0, 10), 1);
     }
 
     private static string FormatSince(TimeSpan since)

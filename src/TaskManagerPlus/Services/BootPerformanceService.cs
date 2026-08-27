@@ -119,7 +119,36 @@ public static class BootPerformanceService
         return history;
     }
 
-    private static List<BootHistoryEntry> LoadHistory()
+    /// <summary>#62 (System Specs): longest continuous-uptime record this month/this year - a pure
+    /// derived read over this same persisted boot-history.json, no new sampling. A completed
+    /// session's uptime is approximated as the gap between one recorded boot timestamp and the
+    /// next (i.e. "the machine presumably stayed up in between", the same approximation
+    /// EventLogService's own boot-time correlation already relies on elsewhere in this app); the
+    /// most recent boot's still-ongoing session is measured against DateTime.Now instead, since
+    /// there isn't a following boot yet. Returns (null, null) when there's fewer than one recorded
+    /// boot to compare against.</summary>
+    public static (TimeSpan? ThisMonth, TimeSpan? ThisYear) ComputeLongestUptimeRecords()
+    {
+        var history = LoadHistory().OrderBy(h => h.Timestamp).ToList();
+        if (history.Count == 0) return (null, null);
+
+        var sessions = new List<(DateTime Start, TimeSpan Duration)>();
+        for (int i = 0; i < history.Count; i++)
+        {
+            var start = history[i].Timestamp;
+            var end = i + 1 < history.Count ? history[i + 1].Timestamp : DateTime.Now;
+            if (end > start) sessions.Add((start, end - start));
+        }
+
+        var now = DateTime.Now;
+        TimeSpan? thisMonth = sessions.Where(s => s.Start.Year == now.Year && s.Start.Month == now.Month)
+            .Select(s => (TimeSpan?)s.Duration).OrderByDescending(d => d).FirstOrDefault();
+        TimeSpan? thisYear = sessions.Where(s => s.Start.Year == now.Year)
+            .Select(s => (TimeSpan?)s.Duration).OrderByDescending(d => d).FirstOrDefault();
+        return (thisMonth, thisYear);
+    }
+
+    public static List<BootHistoryEntry> LoadHistory()
     {
         try
         {

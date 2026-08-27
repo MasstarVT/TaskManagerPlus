@@ -41,9 +41,10 @@
                 <Button Grid.Column="1" Content="Refresh" Command="{Binding RefreshCommand}" Padding="10,4" />
             </Grid>
 
-            <!-- #6/#5/#40: uptime-since-last-crash, TDR (GPU driver timeout/reset) count, and
-                 low-memory resource-exhaustion events - all computed from event-log queries. -->
-            <UniformGrid Columns="4" Margin="0,0,0,16">
+            <!-- #6/#5/#40/#68: uptime-since-last-crash, TDR (GPU driver timeout/reset) count,
+                 low-memory resource-exhaustion events, minidumps, and (Round 10) the 0-10 stability
+                 index - see ComputeStabilityIndex for the documented weighted formula. -->
+            <UniformGrid Columns="5" Margin="0,0,0,16">
                 <views:VfdMeter Title="Since last crash" Glow="False" Margin="0,0,6,0"
                                 ValueText="{Binding TimeSinceLastCrashText}"
                                 SubText="Unexpected shutdown or BSOD" AccentBrush="{DynamicResource AccentBrush}" />
@@ -56,10 +57,15 @@
                                 SubText="%SystemRoot%\Minidump" AccentBrush="{DynamicResource AccentBrush}" />
                 <!-- #40: low-memory resource-exhaustion events (Warning-level, a separate targeted
                      query - see EventLogService.ReadLowMemoryEvents). -->
-                <views:VfdMeter Title="Low-memory events" Glow="False" Margin="6,0,0,0"
+                <views:VfdMeter Title="Low-memory events" Glow="False" Margin="3,0,3,0"
                                 ValueText="{Binding LowMemoryEventCount}"
                                 SubText="{Binding LastLowMemoryEventText}"
                                 AccentBrush="{DynamicResource WarningBrush}" />
+                <!-- Round 10, #68: single 0-10 stability index - see StabilityViewModel.ComputeStabilityIndex. -->
+                <views:VfdMeter Title="Stability index" Glow="False" Margin="6,0,0,0"
+                                ValueText="{Binding StabilityIndex, StringFormat={}{0:0.0}}" Unit="/ 10"
+                                SubText="Weighted from recent crash/error density"
+                                AccentBrush="{Binding StabilityIndex, Converter={StaticResource StabilityIndexToBrushConverter}}" />
             </UniformGrid>
 
             <!-- #1: Reliability History - daily Critical/Error counts over the lookback window,
@@ -90,7 +96,8 @@
                                     <TextBlock Grid.Column="0" Text="{Binding FileName}" FontSize="12.5" TextTrimming="CharacterEllipsis" />
                                     <TextBlock Grid.Column="1" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}">
                                         <Run Text="{Binding Timestamp, StringFormat={}{0:g}, Mode=OneWay}" />
-                                        <Run Text=" · " /><Run Text="{Binding BugcheckCode, TargetNullValue=Unknown, Mode=OneWay}" />
+                                        <!-- #65: bugcheck-code-to-plain-English lookup, instead of a bare hex code. -->
+                                        <Run Text=" · " /><Run Text="{Binding BugcheckCode, Converter={StaticResource BugcheckCodeToDescriptionConverter}, Mode=OneWay}" />
                                     </TextBlock>
                                 </Grid>
                             </DataTemplate>
@@ -108,6 +115,49 @@
                             </Style>
                         </TextBlock.Style>
                     </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- Round 10, #66: repeated application crashes grouped by faulting module, with a
+                 count - see FaultingModuleSummary's remarks. A different lens on the same events
+                 the flat grid below shows, purpose-built for "which module keeps crashing" instead
+                 of scrolling a dozen near-identical rows. Collapsed entirely when nothing has a
+                 faulting module (the common case for a quiet system). -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding CrashesByModule.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Crashes by faulting module" Style="{StaticResource CardTitle}" />
+                    <ItemsControl ItemsSource="{Binding CrashesByModule}" Margin="0,8,0,0">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock Text="{Binding Module}" FontSize="12.5" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Style="{StaticResource SubStat}">
+                                            <Run Text="Last seen " /><Run Text="{Binding LastSeen, StringFormat={}{0:g}, Mode=OneWay}" />
+                                        </TextBlock>
+                                    </StackPanel>
+                                    <Border Grid.Column="1" Background="{DynamicResource DangerMutedBrush}" CornerRadius="10" Padding="8,2" VerticalAlignment="Center">
+                                        <TextBlock Foreground="{DynamicResource DangerBrush}" FontSize="11.5" FontWeight="SemiBold">
+                                            <Run Text="{Binding Count, Mode=OneWay}" /><Run Text="×" />
+                                        </TextBlock>
+                                    </Border>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
                 </StackPanel>
             </Border>
 

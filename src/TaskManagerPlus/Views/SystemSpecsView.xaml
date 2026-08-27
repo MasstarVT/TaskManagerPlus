@@ -168,8 +168,13 @@
                 <TextBlock Grid.Column="0" VerticalAlignment="Center"
                            Text="Hardware and software detected on this PC."
                            Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,16" />
-                <Button Grid.Column="1" Content="Refresh" Command="{Binding RefreshCommand}"
-                        Style="{StaticResource PrimaryButton}" Margin="0,0,0,16" />
+                <StackPanel Grid.Column="1" Orientation="Horizontal">
+                    <!-- #64: one-click "copy hardware IDs" (system product + CPU + GPU
+                         identifiers) for pasting into a support ticket. -->
+                    <Button Content="Copy hardware IDs" Command="{Binding CopyHardwareIdsCommand}" Padding="10,4" Margin="0,0,8,16" />
+                    <Button Content="Refresh" Command="{Binding RefreshCommand}"
+                            Style="{StaticResource PrimaryButton}" Margin="0,0,0,16" />
+                </StackPanel>
             </Grid>
 
             <!-- Summary tiles -->
@@ -201,7 +206,7 @@
             <Border Style="{StaticResource CardStyle}">
                 <StackPanel>
                     <TextBlock Text="System" Style="{StaticResource CardTitle}" />
-                    <UniformGrid Columns="2" Rows="2">
+                    <UniformGrid Columns="2" Rows="4">
                         <StackPanel Margin="0,0,12,14">
                             <TextBlock Text="Computer name" Style="{StaticResource SpecLabel}" />
                             <TextBlock Text="{Binding ComputerName}" Style="{StaticResource SpecValue}" />
@@ -210,11 +215,22 @@
                             <TextBlock Text="Model" Style="{StaticResource SpecLabel}" />
                             <TextBlock Text="{Binding SystemModel}" Style="{StaticResource SpecValue}" />
                         </StackPanel>
-                        <StackPanel Margin="0,0,12,0">
+                        <!-- #57: chassis/form-factor readout. -->
+                        <StackPanel Margin="0,0,12,14">
+                            <TextBlock Text="Chassis" Style="{StaticResource SpecLabel}" />
+                            <TextBlock Text="{Binding ChassisType}" Style="{StaticResource SpecValue}" />
+                        </StackPanel>
+                        <!-- #58: Windows edition (see OsName above) & activation status - informational
+                             only, no product key is ever read or shown. -->
+                        <StackPanel Margin="0,0,0,14">
+                            <TextBlock Text="Activation" Style="{StaticResource SpecLabel}" />
+                            <TextBlock Text="{Binding ActivationStatus}" Style="{StaticResource SpecValue}" />
+                        </StackPanel>
+                        <StackPanel Margin="0,0,12,14">
                             <TextBlock Text="Motherboard" Style="{StaticResource SpecLabel}" />
                             <TextBlock Text="{Binding Motherboard}" Style="{StaticResource SpecValue}" />
                         </StackPanel>
-                        <StackPanel>
+                        <StackPanel Margin="0,0,0,14">
                             <TextBlock Text="BIOS version" Style="{StaticResource SpecLabel}" />
                             <TextBlock Text="{Binding BiosVersion}" TextWrapping="Wrap">
                                 <TextBlock.Style>
@@ -226,6 +242,22 @@
                                         </Style.Triggers>
                                     </Style>
                                 </TextBlock.Style>
+                            </TextBlock>
+                        </StackPanel>
+                        <!-- #61: motherboard chipset driver version - best-effort, see
+                             SystemSpecsService.ReadChipsetDriverInfo. -->
+                        <StackPanel Margin="0,0,12,0">
+                            <TextBlock Text="Chipset driver" Style="{StaticResource SpecLabel}" />
+                            <TextBlock Text="{Binding ChipsetDriverText}" Style="{StaticResource SpecValue}" TextWrapping="Wrap" />
+                        </StackPanel>
+                        <!-- #62: longest-uptime records this month/year, derived from the boot-history
+                             trend the Startup tab already persists - no new sampling. -->
+                        <StackPanel Margin="0,0,0,0">
+                            <TextBlock Text="Longest uptime (month / year)" Style="{StaticResource SpecLabel}" />
+                            <TextBlock Style="{StaticResource SpecValue}">
+                                <Run Text="{Binding LongestUptimeThisMonthText, Mode=OneWay}" />
+                                <Run Text=" / " />
+                                <Run Text="{Binding LongestUptimeThisYearText, Mode=OneWay}" />
                             </TextBlock>
                         </StackPanel>
                     </UniformGrid>
@@ -310,6 +342,77 @@
                             </TextBlock>
                         </StackPanel>
                     </Border>
+                </StackPanel>
+            </Border>
+
+            <!-- #60: active display inventory - resolution/refresh rate from the GPU's current
+                 output mode, connection type (best-effort) from root\wmi's monitor classes. HDR
+                 support is deliberately not shown - see MonitorInfo's remarks for why. -->
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel>
+                    <TextBlock Text="Displays" Style="{StaticResource CardTitle}" />
+                    <ItemsControl ItemsSource="{Binding Monitors}" ItemTemplate="{StaticResource SpecRowTemplate}" />
+                    <TextBlock Text="No displays detected.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding Monitors.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- #59: installed .NET runtime versions, from the shared-framework directory layout
+                 dotnet.exe itself uses. -->
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel>
+                    <TextBlock Text="Installed .NET runtimes" Style="{StaticResource CardTitle}" />
+                    <ItemsControl ItemsSource="{Binding DotNetRuntimes}" Margin="0,8,0,0">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="4" Padding="8,4" Margin="0,0,8,8">
+                                    <TextBlock Text="{Binding}" FontSize="12" />
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="No .NET shared-framework installation found on this PC.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding DotNetRuntimes.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- #63: Windows Defender exclusion list, read-only - "Unknown/inaccessible" (Tamper
+                 Protection can deny this even elevated) is shown distinctly from a confirmed empty
+                 list. -->
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel>
+                    <TextBlock Text="Windows Defender exclusions" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="{Binding DefenderExclusionsStatusText}" Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+                    <ItemsControl ItemsSource="{Binding DefenderExclusions}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding}" FontSize="12.5" Margin="0,0,0,6" TextTrimming="CharacterEllipsis" />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
                 </StackPanel>
             </Border>
 

@@ -26,6 +26,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public StorageViewModel Storage { get; }
     public NetworkViewModel Network { get; }
 
+    // Round 10: dedicated GPU tab (#53-56). Owns its own timer/sampler (dynamic "GPU Engine"/
+    // "GPU Adapter Memory" perf-counter enumeration), unlike the four above - see GpuViewModel's
+    // remarks, the same "doesn't fit the shared sampler" reasoning EnergyThermalsViewModel already
+    // documents.
+    public GpuViewModel Gpu { get; }
+
     // Owns its own timer/sampler (LibreHardwareMonitorLib), unlike the four above - see
     // EnergyThermalsViewModel's remarks.
     public EnergyThermalsViewModel EnergyThermals { get; }
@@ -97,6 +103,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Memory = new MemoryViewModel(Performance, Processes);
         Storage = new StorageViewModel(Performance, EnergyThermals);
         Network = new NetworkViewModel(Performance);
+        Gpu = new GpuViewModel(Processes);
         Logging = new LoggingViewModel(Performance, EnergyThermals);
         Summary = new SummaryViewModel(Performance, Processes, Services, EnergyThermals, SystemSpecs, Network, Stability);
         Search = new GlobalSearchViewModel(Processes, Services, Startup, SystemSpecs);
@@ -243,6 +250,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         EnergyThermals.Dispose();
         Cpu.Dispose();
         Network.Dispose();
+        Gpu.Dispose();
         Logging.Dispose();
         Summary.Dispose();
         _miniDashboard?.Close();

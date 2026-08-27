@@ -87,6 +87,37 @@ public sealed class SystemSpecs
     /// file left on a slower secondary HDD (or vice versa, an SSD's page file effectively wasted
     /// on a system that boots from HDD) is a common, silent slowdown cause on multi-drive systems.</summary>
     public PageFileLocationInfo? PageFileLocation { get; init; }
+
+    // Round 10 additions (#57-64) - see each field's own remarks below.
+    public string ChassisType { get; init; } = "Unknown";
+    public string ActivationStatus { get; init; } = "Unknown";
+    public IReadOnlyList<string> DotNetRuntimes { get; init; } = Array.Empty<string>();
+    public IReadOnlyList<MonitorInfo> Monitors { get; init; } = Array.Empty<MonitorInfo>();
+    public string ChipsetDriverText { get; init; } = "Unknown";
+
+    /// <summary>Defender exclusion list (#63) - null means the registry key itself couldn't be read
+    /// (Tamper Protection or policy can deny this even elevated), an empty (non-null) list means it
+    /// was read and genuinely has nothing configured. Kept distinct so the UI can show "Unknown/
+    /// inaccessible" rather than a false "no exclusions".</summary>
+    public IReadOnlyList<string>? DefenderExclusions { get; init; }
+
+    public string SystemUuid { get; init; } = string.Empty;
+    public string CpuIdentifier { get; init; } = string.Empty;
+}
+
+/// <summary>One active display (#60) - resolution/refresh rate from Win32_VideoController's current
+/// mode fields, connection type (best-effort) from the root\wmi WmiMonitorConnectionParams class -
+/// see SystemSpecsService.ReadMonitors for exactly how (and when) these two sources are paired.
+/// HDR support has no reliable enumeration source short of DXGI/IDXGIOutput6 COM interop (a
+/// materially higher risk tier than anything else this app takes on), so it's deliberately left out
+/// rather than guessed.</summary>
+public sealed class MonitorInfo
+{
+    public string Name { get; init; } = "Display";
+    public int WidthPx { get; init; }
+    public int HeightPx { get; init; }
+    public int RefreshHz { get; init; }
+    public string ConnectionType { get; init; } = "Unknown";
 }
 
 /// <summary>One entry from the Uninstall registry keys with a parsed install date (#68).</summary>

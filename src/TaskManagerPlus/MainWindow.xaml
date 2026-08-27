@@ -221,6 +221,26 @@
                     <views:NetworkView DataContext="{Binding Network}" />
                 </TabItem>
 
+                <!-- Round 10: dedicated GPU tab (#53-56) - a small card body with a fan/PCIe-pin
+                     glyph, distinct from the CPU tab's chip-with-legs icon above. -->
+                <TabItem Header="GPU">
+                    <TabItem.Tag>
+                        <Viewbox Width="16" Height="16">
+                            <Canvas Width="16" Height="16">
+                                <Rectangle Style="{StaticResource NavIconStroke}" Canvas.Left="1.5" Canvas.Top="3" Width="13" Height="9" RadiusX="1.5" RadiusY="1.5" />
+                                <Ellipse Style="{StaticResource NavIconStroke}" Canvas.Left="4" Canvas.Top="5.5" Width="4" Height="4" />
+                                <Line Style="{StaticResource NavIconStroke}" StrokeThickness="1.2" X1="10.5" Y1="6" X2="13" Y2="6" />
+                                <Line Style="{StaticResource NavIconStroke}" StrokeThickness="1.2" X1="10.5" Y1="8.5" X2="13" Y2="8.5" />
+                                <Line Style="{StaticResource NavIconStroke}" StrokeThickness="1.4" X1="3" Y1="12" X2="3" Y2="14.5" />
+                                <Line Style="{StaticResource NavIconStroke}" StrokeThickness="1.4" X1="6" Y1="12" X2="6" Y2="14.5" />
+                                <Line Style="{StaticResource NavIconStroke}" StrokeThickness="1.4" X1="9" Y1="12" X2="9" Y2="14.5" />
+                                <Line Style="{StaticResource NavIconStroke}" StrokeThickness="1.4" X1="12" Y1="12" X2="12" Y2="14.5" />
+                            </Canvas>
+                        </Viewbox>
+                    </TabItem.Tag>
+                    <views:GpuView DataContext="{Binding Gpu}" />
+                </TabItem>
+
                 <TabItem Header="Energy &amp; Thermals">
                     <TabItem.Tag>
                         <Viewbox Width="16" Height="16">

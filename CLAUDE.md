@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 Task Manager Plus — a Windows Task Manager replacement written in C# / WPF
-(.NET 8): a Summary dashboard, per-subsystem CPU/Memory/Storage/Network/
+(.NET 8): a Summary dashboard, per-subsystem CPU/Memory/Storage/Network/GPU/
 Energy & Thermals tabs (live charts, real sensors), Processes, Services,
 Startup manager, System specs, a Stability tab (event-log-based crash/
 TDR/minidump diagnostics), and a live color-theming system. Navigation
@@ -82,9 +82,15 @@ container — everything is `new`'d directly). Layers:
   `EnergyThermals.Temperatures` down to Storage hardware, no new polling.
   `StabilityViewModel` follows `SystemSpecsViewModel`'s on-demand pattern
   instead (an initial load plus a manual Refresh command, no timer) since an
-  event-log query isn't cheap enough to repeat on a tick. `MainViewModel`
-  composes all of them plus settings-drawer state (`IsSettingsOpen`) and
-  elevation status (`IsElevated`, checked once via `WindowsPrincipal`).
+  event-log query isn't cheap enough to repeat on a tick. `GpuViewModel`
+  (Round 10, the GPU tab) is the newest exception to the "thin wrapper"
+  shape — like `EnergyThermalsViewModel`, it owns its own `GpuMonitorService`
+  and `DispatcherTimer` rather than riding `PerformanceViewModel`'s shared
+  sampler, since "GPU Engine"/"GPU Adapter Memory" perf-counter instance
+  enumeration is a genuinely separate, heavier data source than a fixed
+  counter array. `MainViewModel` composes all of them plus settings-drawer
+  state (`IsSettingsOpen`) and elevation status (`IsElevated`, checked once
+  via `WindowsPrincipal`).
 - **Views/** — XAML + minimal code-behind per tab, hosted in `MainWindow.xaml`'s
   `TabControl` (see "UI shell" below). `CpuView`/`MemoryView`/`StorageView`/
   `NetworkView` replace the old single `PerformanceView` (deleted). `MeterTile`
@@ -124,9 +130,10 @@ family; otherwise tabs don't know about each other.
 `MainWindow.xaml`'s `TabControl` is re-templated (in `Themes/Dark.xaml`) as a
 TMOG-style top icon+label tab strip — `TabStripPlacement="Top"` gets the
 horizontal `TabPanel` layout for free, and the strip's `ScrollViewer` scrolls
-horizontally so all 11 tabs stay reachable at narrower window widths instead
-of wrapping/clipping. No separate nav ViewModel/converters exist; page
-switching is still plain `TabItem` selection.
+horizontally so all 12 tabs (11 plus Round 10's new GPU tab) stay reachable
+at narrower window widths instead of wrapping/clipping. No separate nav
+ViewModel/converters exist; page switching is still plain `TabItem`
+selection.
 
 - **Per-tab icons**: each `TabItem.Tag` in `MainWindow.xaml` holds a small
   hand-drawn `Viewbox`/`Canvas` glyph (`Line`/`Ellipse`/`Rectangle`/`Path`),
@@ -1435,6 +1442,119 @@ empty (hidden) list on any failure. Deliberately reads the registry directly rat
 `Windows.Networking.Connectivity` WinRT/UWP-contracts package dependency, which would be a real
 target-framework-shaped risk for one flag in a classic WPF exe that takes no other WinRT
 dependency anywhere else in the app.
+
+### Round 10: new GPU tab, System Specs depth (chassis/edition/monitors/Defender
+exclusions/hardware IDs), and Stability polish (bugcheck lookup, crash grouping,
+stability index)
+
+A tenth batch of `suggestions.md` items - 16 in total, closing out the GPU (new
+tab), System Specs, and Stability categories. The one new top-level tab in this
+round is GPU; everything else extends `SystemSpecsViewModel`/`StabilityViewModel`/
+`SummaryViewModel` and their existing services, following each category's
+established patterns.
+
+**GPU tab (per-engine utilization, VRAM, driver/WDDM version, multi-GPU list)**:
+the new top-level tab follows the exact "UI shell" pattern every prior tab used -
+a `TabItem` in `MainWindow.xaml` with a hand-drawn `Viewbox`/`Canvas` glyph (a
+card body + fan + PCIe-pin lines, distinct from the CPU tab's chip-with-legs
+icon) styled via the existing `NavIconStroke` style. `GpuViewModel` is the
+newest addition to the small set of tab view-models that own their own
+`DispatcherTimer` instead of riding `PerformanceViewModel`'s shared sampler
+(joining `EnergyThermalsViewModel`) - `Services/GpuMonitorService.cs` reads the
+`"GPU Engine"`/`"GPU Adapter Memory"` perf-counter categories (the same `"GPU
+Engine"` category Round 4's per-process GPU column already reads via
+`ProcessMonitorService.ReadGpuUsageByPid`, aggregated per-adapter here instead
+of per-process) plus a one-time static `Win32_VideoController` + registry read
+for driver version/date and a best-effort WDDM version (a `"WddmVersion"`
+REG_DWORD under the display driver's Class subkey - not a documented Microsoft
+contract, so a value outside the plausible 10-39 range degrades to "Unknown").
+Both perf-counter categories key their instances by a LUID with no public API
+mapping it back to a `Win32_VideoController` row, so `GpuMonitorService.Sample`
+only *pairs* a live LUID group with a static adapter identity when the live
+LUID count matches the static adapter count exactly (the common single-GPU
+case, paired ordinally); when the counts don't match (a hybrid laptop whose
+integrated GPU has no live counter data until something renders on it, ...)
+this deliberately does not guess - the live row falls back to a generic
+"GPU N" label with blank identity fields rather than risk showing one
+adapter's driver info next to another's utilization. The "Installed adapters"
+card always lists every adapter from the static read regardless of pairing
+success, so the multi-GPU list is honestly complete even when live pairing
+isn't. "Which app is using it" reuses the Processes tab's already-polling
+`GpuPercent` column, live-sorted here rather than sampled a second time - the
+same "second `ICollectionView` over one shared collection" pattern
+`MemoryViewModel.TopMemoryProcesses` already established.
+
+**System Specs: chassis, Windows edition/activation, .NET runtimes, monitors,
+chipset driver, longest uptime, Defender exclusions, copy hardware IDs**: eight
+more `SystemSpecsService` reads, each following an existing tradeoff family
+rather than a new one. Chassis/form-factor (`Win32_SystemEnclosure.ChassisTypes`)
+and Windows edition/activation (`SoftwareLicensingProduct.LicenseStatus`,
+filtered to the Windows edition's `ApplicationID` - informational text only,
+no product key ever read) are both plain WMI reads. Installed .NET runtimes
+walk the `dotnet\shared\<RuntimeName>\<Version>` directory layout `dotnet
+--list-runtimes` itself reads, across both Program Files and Program Files
+(x86). Monitor/display inventory pairs two independent WMI sources the same
+"only pair when counts match, don't guess" way the GPU tab pairs LUIDs to
+adapters: resolution/refresh rate from `Win32_VideoController`'s current-mode
+fields, and connection type from `root\wmi`'s `WmiMonitorConnectionParams`
+(`VideoOutputTechnology`, a documented `D3DKMDT_VIDEO_OUTPUT_TECHNOLOGY` enum,
+not a guessed mapping) - HDR support has no reliable enumeration source short
+of DXGI/`IDXGIOutput6` COM interop, a materially higher risk tier than
+anything else this app takes on, so it's left out of `MonitorInfo` entirely
+rather than shown as a fake "Unknown" field. Motherboard chipset driver
+version is best-effort: there's no single canonical "chipset driver" WMI
+class, so `ReadChipsetDriverInfo` searches `Win32_PnPSignedDriver`'s
+System/SMBus-class rows for a device name mentioning "Chipset"/"SMBus"/"PCI
+Express Root" and reports the newest match by driver date, degrading to
+"Unknown" when nothing matches - the same tier as the BIOS-age hint and
+outdated-driver filtering. Longest-uptime-this-month/year is a pure derived
+read over the existing `boot-history.json` (`BootPerformanceService.
+ComputeLongestUptimeRecords`, no new sampling) - a completed session's uptime
+is approximated as the gap between one recorded boot timestamp and the next,
+the same approximation this app's boot-time correlation already relies on
+elsewhere. Defender exclusions read the `HKLM\SOFTWARE\Microsoft\Windows
+Defender\Exclusions\*` subkeys directly - the key can legitimately be denied
+by Tamper Protection even to this app's elevated process, so a failed read
+returns `null` ("Unknown/inaccessible"), kept distinct from a successful read
+that finds zero exclusions, the same "don't collapse two different
+situations into one value" discipline `VolumeInfo`'s optional fields already
+follow. "Copy hardware IDs" bundles the system product UUID
+(`Win32_ComputerSystemProduct.UUID`), CPU ID (`Win32_Processor.ProcessorId`),
+and GPU names onto the clipboard via a new `CopyHardwareIdsCommand` - plain
+WMI identifiers with no personal/account data, unlike a Windows product key
+(never read anywhere in this app).
+
+**Stability: bugcheck lookup table, crash grouping by module, stability
+index**: `Services/BugcheckCodeLookup.cs` is a small, explicitly
+non-exhaustive table (~35 entries) of the most common Windows STOP codes,
+appending a plain-English name onto the existing hex `BugcheckCode` string
+(via a new `Converters/BugcheckCodeToDescriptionConverter`) rather than
+replacing it - an unmatched code still shows the real hex value, the same
+"informational, never replace the real value with a guess" tradeoff
+`JedecManufacturerLookup` already established for RAM manufacturer codes.
+Repeated-crash grouping (`StabilityViewModel.CrashesByModule`) is a pure
+re-aggregation of the same `RecentEvents` list already loaded - grouped by
+`FaultingModule`, sorted by count descending - shown as its own "Crashes by
+faulting module" card (collapsed when empty) alongside the existing flat
+event grid rather than replacing it, since the flat grid still serves every
+other event type this tab shows, not just app crashes. The 0-10 stability
+index (`StabilityViewModel.ComputeStabilityIndex`) is a documented, simple
+weighted formula, not a black box: starts at a perfect 10 and subtracts up to
+4 points for recent daily Critical/Error density (0.5 points per average
+daily event over the last 7 days), 1.5 points flat for an unexpected shutdown
+on the current boot, up to 2 points for TDR events (0.3 each), up to 1 point
+for low-memory resource-exhaustion events (0.1 each), and 2 or 1 points for a
+crash within the last 24 hours or 7 days respectively - clamped to [0, 10],
+entirely derived from data this tab already reads (no new event-log query).
+Shown as a fifth `VfdMeter` tile on the Stability tab (color-coded by a new
+`StabilityIndexToBrushConverter`, the inverse direction of the existing
+`PercentToBrushConverter` since a higher stability index is better) and,
+alongside `TimeSinceLastCrashText` (#67 - already computed by
+`StabilityViewModel`, just not previously surfaced on the Summary tab), as
+two new tiles on the Summary tab's existing "System" card -
+`SummaryViewModel` now exposes its already-held `StabilityViewModel`
+reference publicly (`Stability`) rather than adding wrapper properties for
+each figure.
 
 ### Notable implementation details
 

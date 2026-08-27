@@ -348,7 +348,7 @@
                 <Border Style="{StaticResource CardStyle}" Margin="0">
                     <StackPanel>
                         <TextBlock Text="System" Style="{StaticResource CardTitle}" />
-                        <UniformGrid Columns="2" Rows="2">
+                        <UniformGrid Columns="2" Rows="3">
                             <StackPanel Margin="0,0,8,10">
                                 <TextBlock Text="Processes" Style="{StaticResource SubStat}" />
                                 <TextBlock Text="{Binding Performance.ProcessCount}" FontSize="16" />
@@ -357,13 +357,26 @@
                                 <TextBlock Text="Threads" Style="{StaticResource SubStat}" />
                                 <TextBlock Text="{Binding Performance.ThreadCount}" FontSize="16" />
                             </StackPanel>
-                            <StackPanel Margin="0,0,8,0">
+                            <StackPanel Margin="0,0,8,10">
                                 <TextBlock Text="Handles" Style="{StaticResource SubStat}" />
                                 <TextBlock Text="{Binding Performance.HandleCount}" FontSize="16" />
                             </StackPanel>
-                            <StackPanel Margin="8,0,0,0">
+                            <StackPanel Margin="8,0,0,10">
                                 <TextBlock Text="Uptime" Style="{StaticResource SubStat}" />
                                 <TextBlock Text="{Binding Performance.Uptime}" FontSize="16" />
+                            </StackPanel>
+                            <!-- #67: "time since last crash" headline stat, pulled from the
+                                 Stability tab's already-computed figure - no new event-log query. -->
+                            <StackPanel Margin="0,0,8,0">
+                                <TextBlock Text="Since last crash" Style="{StaticResource SubStat}" />
+                                <TextBlock Text="{Binding Stability.TimeSinceLastCrashText}" FontSize="16" TextWrapping="Wrap" />
+                            </StackPanel>
+                            <!-- #68: single 0-10 stability index - see StabilityViewModel.ComputeStabilityIndex. -->
+                            <StackPanel Margin="8,0,0,0">
+                                <TextBlock Text="Stability index" Style="{StaticResource SubStat}" />
+                                <TextBlock FontSize="16" FontWeight="SemiBold"
+                                           Text="{Binding Stability.StabilityIndex, StringFormat={}{0:0.0} / 10}"
+                                           Foreground="{Binding Stability.StabilityIndex, Converter={StaticResource StabilityIndexToBrushConverter}}" />
                             </StackPanel>
                         </UniformGrid>
                     </StackPanel>
