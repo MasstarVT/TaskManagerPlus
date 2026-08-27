@@ -29,11 +29,16 @@ public sealed class HardwareMonitorService : IDisposable
     private readonly PerformanceCounter _committedBytesCounter;
     private readonly PerformanceCounter _commitLimitCounter;
     private readonly PerformanceCounter _cacheBytesCounter;
+    private readonly PerformanceCounter _pageFileUsageCounter;
 
     private readonly string _cpuName;
     private readonly double _cpuBaseClockGhz;
     private readonly int _logicalProcessors;
     private readonly int _physicalCores;
+
+    // Total page file size (MB), read once via WMI - it only changes if the page file is
+    // resized (rare, needs a reboot), unlike the counter above which is genuinely live.
+    private readonly long _pageFileTotalMb;
 
     // Network counters use System.Net.NetworkInformation instead of perf counters:
     // interface instance names in the "Network Interface" perf category are unstable
@@ -92,6 +97,12 @@ public sealed class HardwareMonitorService : IDisposable
         _committedBytesCounter = new PerformanceCounter("Memory", "Committed Bytes", readOnly: true);
         _commitLimitCounter = new PerformanceCounter("Memory", "Commit Limit", readOnly: true);
         _cacheBytesCounter = new PerformanceCounter("Memory", "Cache Bytes", readOnly: true);
+        // "Paging File\% Usage\_Total" is Windows' own live figure for how full the page file
+        // currently is - paired with the WMI-read total size below to get an actual MB-used value,
+        // the same "WMI for the rarely-changing total, PerformanceCounter for the live rate/percent"
+        // split ReadCpuInfoFromWmi + "% Processor Performance" already uses for clock speed.
+        _pageFileUsageCounter = new PerformanceCounter("Paging File", "% Usage", "_Total", readOnly: true);
+        _pageFileTotalMb = ReadPageFileTotalMb();
 
         // Rate counters return 0 on their first read; prime them now so the
         // very first UI sample isn't a meaningless zero.
@@ -104,6 +115,7 @@ public sealed class HardwareMonitorService : IDisposable
         _ = _diskQueueLengthCounter.NextValue();
         _ = _diskReadLatencyCounter.NextValue();
         _ = _diskWriteLatencyCounter.NextValue();
+        _ = _pageFileUsageCounter.NextValue();
 
         (_lastBytesReceived, _lastBytesSent) = ReadTotalNetworkBytes();
         _lastNetSampleUtc = DateTime.UtcNow;
@@ -131,6 +143,7 @@ public sealed class HardwareMonitorService : IDisposable
         double diskWriteLatencyMs = Math.Max(0, _diskWriteLatencyCounter.NextValue() * 1000.0);
 
         var (bytesReceived, bytesSent) = ReadTotalNetworkBytes();
+        var (netInErrors, netInDiscards, netOutErrors, netOutDiscards) = ReadNetworkErrorCounters();
         var elapsedSec = Math.Max(0.001, (now - _lastNetSampleUtc).TotalSeconds);
         double netRecvRate = Math.Max(0, (bytesReceived - _lastBytesReceived) / elapsedSec);
         double netSendRate = Math.Max(0, (bytesSent - _lastBytesSent) / elapsedSec);
@@ -157,6 +170,8 @@ public sealed class HardwareMonitorService : IDisposable
             CommittedBytes = (long)_committedBytesCounter.NextValue(),
             CommitLimitBytes = (long)_commitLimitCounter.NextValue(),
             CacheBytes = (long)_cacheBytesCounter.NextValue(),
+            PageFileTotalBytes = _pageFileTotalMb * 1024L * 1024L,
+            PageFileUsedBytes = (long)(_pageFileTotalMb * 1024L * 1024L * (Clamp(_pageFileUsageCounter.NextValue()) / 100.0)),
 
             DiskActivePercent = Math.Round(diskPercent, 1),
             DiskReadBytesPerSec = diskRead,
@@ -167,6 +182,10 @@ public sealed class HardwareMonitorService : IDisposable
 
             NetworkReceiveBytesPerSec = netRecvRate,
             NetworkSendBytesPerSec = netSendRate,
+            NetworkInErrors = netInErrors,
+            NetworkInDiscards = netInDiscards,
+            NetworkOutErrors = netOutErrors,
+            NetworkOutDiscards = netOutDiscards,
 
             ProcessCount = (int)_processCountCounter.NextValue(),
             ThreadCount = (int)_threadCountCounter.NextValue(),
@@ -200,6 +219,49 @@ public sealed class HardwareMonitorService : IDisposable
             sent += stats.BytesSent;
         }
         return (received, sent);
+    }
+
+    /// <summary>
+    /// Sums CRC/framing errors and dropped packets across every active adapter, since NIC/driver
+    /// boot (these are cumulative counters, not rates - a nonzero total after any meaningful
+    /// uptime already flags a problem, so there's no need to compute a per-second delta the way
+    /// throughput does). A failing NIC or a bad cable shows up here well before it's obvious from
+    /// throughput graphs alone.
+    /// </summary>
+    private static (long InErrors, long InDiscards, long OutErrors, long OutDiscards) ReadNetworkErrorCounters()
+    {
+        long inErrors = 0, inDiscards = 0, outErrors = 0, outDiscards = 0;
+        foreach (var ni in NetworkInterface.GetAllNetworkInterfaces())
+        {
+            if (ni.OperationalStatus != OperationalStatus.Up) continue;
+            if (ni.NetworkInterfaceType is NetworkInterfaceType.Loopback or NetworkInterfaceType.Tunnel) continue;
+
+            var stats = ni.GetIPStatistics();
+            inErrors += stats.IncomingPacketsWithErrors;
+            inDiscards += stats.IncomingPacketsDiscarded;
+            outErrors += stats.OutgoingPacketsWithErrors;
+            outDiscards += stats.OutgoingPacketsDiscarded;
+        }
+        return (inErrors, inDiscards, outErrors, outDiscards);
+    }
+
+    /// <summary>Sums Win32_PageFileUsage.AllocatedBaseSize (MB) across every page file - almost
+    /// always just one (C:\pagefile.sys), but a system can have more than one configured across
+    /// multiple drives.</summary>
+    private static long ReadPageFileTotalMb()
+    {
+        try
+        {
+            using var searcher = new ManagementObjectSearcher("SELECT AllocatedBaseSize FROM Win32_PageFileUsage");
+            long total = 0;
+            foreach (ManagementObject mo in searcher.Get())
+                total += Convert.ToInt64(mo["AllocatedBaseSize"] ?? 0L);
+            return total;
+        }
+        catch
+        {
+            return 0;
+        }
     }
 
     private static (string Name, double BaseClockGhz, int PhysicalCores) ReadCpuInfoFromWmi()
@@ -273,5 +335,6 @@ public sealed class HardwareMonitorService : IDisposable
         _committedBytesCounter.Dispose();
         _commitLimitCounter.Dispose();
         _cacheBytesCounter.Dispose();
+        _pageFileUsageCounter.Dispose();
     }
 }

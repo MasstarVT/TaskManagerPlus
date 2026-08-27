@@ -29,6 +29,15 @@ public sealed class HardwareSnapshot
     /// <summary>System file cache / standby memory (Memory\Cache Bytes).</summary>
     public long CacheBytes { get; init; }
 
+    /// <summary>Total configured page file size across all page files (Win32_PageFileUsage,
+    /// read once - only changes if the page file is resized).</summary>
+    public long PageFileTotalBytes { get; init; }
+
+    /// <summary>Current page file usage, derived from Paging File\% Usage\_Total times the total
+    /// above. A page file that's nearly full is a real memory-pressure signal independent of
+    /// physical RAM usage.</summary>
+    public long PageFileUsedBytes { get; init; }
+
     public double DiskActivePercent { get; init; }
     public double DiskReadBytesPerSec { get; init; }
     public double DiskWriteBytesPerSec { get; init; }
@@ -44,6 +53,14 @@ public sealed class HardwareSnapshot
 
     public double NetworkReceiveBytesPerSec { get; init; }
     public double NetworkSendBytesPerSec { get; init; }
+
+    /// <summary>Cumulative CRC/framing error and dropped-packet counts across all active adapters
+    /// since NIC/driver load - not per-second rates. A nonzero value flags a failing NIC or bad
+    /// cable earlier than throughput graphs alone would.</summary>
+    public long NetworkInErrors { get; init; }
+    public long NetworkInDiscards { get; init; }
+    public long NetworkOutErrors { get; init; }
+    public long NetworkOutDiscards { get; init; }
 
     public int ProcessCount { get; init; }
     public int ThreadCount { get; init; }

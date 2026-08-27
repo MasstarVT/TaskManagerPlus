@@ -36,6 +36,17 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
         }
     }
 
+    private bool _failedToStartOnly;
+    public bool FailedToStartOnly
+    {
+        get => _failedToStartOnly;
+        set
+        {
+            if (SetProperty(ref _failedToStartOnly, value))
+                ServicesView.Refresh();
+        }
+    }
+
     private string? _statusMessage;
     public string? StatusMessage { get => _statusMessage; set => SetProperty(ref _statusMessage, value); }
 
@@ -71,10 +82,13 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
 
     private bool FilterPredicate(object obj)
     {
+        if (obj is not ServiceRow row) return false;
+
+        if (FailedToStartOnly && !row.HasFailedToStart) return false;
+
         if (string.IsNullOrWhiteSpace(FilterText)) return true;
-        return obj is ServiceRow row &&
-               (row.DisplayName.Contains(FilterText, StringComparison.OrdinalIgnoreCase) ||
-                row.ServiceName.Contains(FilterText, StringComparison.OrdinalIgnoreCase));
+        return row.DisplayName.Contains(FilterText, StringComparison.OrdinalIgnoreCase) ||
+               row.ServiceName.Contains(FilterText, StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task RefreshAsync()
@@ -108,6 +122,7 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
                 existing.Status = fresh.Status;
                 existing.StartType = fresh.StartType;
                 existing.ProcessId = fresh.ProcessId;
+                existing.ExitCode = fresh.ExitCode;
                 latestByName.Remove(existing.ServiceName);
             }
             else

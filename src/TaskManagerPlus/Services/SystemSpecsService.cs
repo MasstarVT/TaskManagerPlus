@@ -18,7 +18,7 @@ public sealed class SystemSpecsService
 
     public SystemSpecs Query()
     {
-        var (osName, osVersion, osArch, osInstallDate) = ReadOperatingSystem();
+        var (osName, osVersion, osArch, osInstallDate, osInstallAgeDays) = ReadOperatingSystem();
         var (manufacturer, model, systemType) = ReadComputerSystem();
         var (boardManufacturer, boardProduct) = ReadBaseBoard();
         var biosVersion = ReadBios();
@@ -32,6 +32,7 @@ public sealed class SystemSpecsService
             OsVersion = osVersion,
             OsArchitecture = osArch,
             OsInstallDate = osInstallDate,
+            OsInstallAgeDays = osInstallAgeDays,
 
             ComputerName = Environment.MachineName,
             Manufacturer = manufacturer,
@@ -53,10 +54,13 @@ public sealed class SystemSpecsService
             Gpus = ReadGpus(),
             Disks = ReadDisks(),
             Volumes = ReadVolumes(),
+
+            Security = ReadSecurityInfo(),
+            OutdatedDrivers = ReadOutdatedDrivers(),
         };
     }
 
-    private static (string Name, string Version, string Architecture, string InstallDate) ReadOperatingSystem()
+    private static (string Name, string Version, string Architecture, string InstallDate, int? InstallAgeDays) ReadOperatingSystem()
     {
         try
         {
@@ -68,19 +72,25 @@ public sealed class SystemSpecsService
                 string version = (mo["Version"] as string ?? string.Empty).Trim();
                 string arch = (mo["OSArchitecture"] as string ?? string.Empty).Trim();
                 string installDate = string.Empty;
+                int? installAgeDays = null;
                 if (mo["InstallDate"] is string wmiDate)
                 {
-                    try { installDate = ManagementDateTimeConverter.ToDateTime(wmiDate).ToShortDateString(); }
+                    try
+                    {
+                        var parsed = ManagementDateTimeConverter.ToDateTime(wmiDate);
+                        installDate = parsed.ToShortDateString();
+                        installAgeDays = Math.Max(0, (int)(DateTime.Now - parsed).TotalDays);
+                    }
                     catch { /* leave blank */ }
                 }
-                return (name, version, arch, installDate);
+                return (name, version, arch, installDate, installAgeDays);
             }
         }
         catch
         {
             // fall through to defaults
         }
-        return ("Unknown OS", string.Empty, string.Empty, string.Empty);
+        return ("Unknown OS", string.Empty, string.Empty, string.Empty, null);
     }
 
     private static (string Manufacturer, string Model, string SystemType) ReadComputerSystem()
@@ -400,5 +410,171 @@ public sealed class SystemSpecsService
             }
         }
         return volumes;
+    }
+
+    /// <summary>
+    /// TPM / Secure Boot / VBS posture - three unrelated data sources bundled into one card
+    /// because together they answer one question: "is this PC's security baseline configured the
+    /// way Windows 11 expects." Each is wrapped independently since they fail differently: Secure
+    /// Boot's registry key is readable unelevated; Win32_Tpm (root\cimv2\security\microsofttpm)
+    /// needs the elevation this app already runs with, and can still be denied by a stricter local
+    /// policy; Win32_DeviceGuard (root\Microsoft\Windows\DeviceGuard) is unelevated-readable but
+    /// simply doesn't exist pre-Windows 10 1607.
+    /// </summary>
+    private static SecurityInfo ReadSecurityInfo() => new()
+    {
+        SecureBootEnabled = ReadSecureBootEnabled(),
+        TpmPresent = ReadTpmStatus(out var tpmReady, out var tpmVersion),
+        TpmReady = tpmReady,
+        TpmVersion = tpmVersion,
+        VbsRunning = ReadVbsStatus(out var vbsServices),
+        VbsServicesRunning = vbsServices,
+    };
+
+    private static bool? ReadSecureBootEnabled()
+    {
+        try
+        {
+            using var key = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Control\SecureBoot\State");
+            var raw = key?.GetValue("UEFISecureBootEnabled");
+            if (raw is int i) return i != 0;
+        }
+        catch
+        {
+            // Key absent (legacy BIOS boot, or the value simply isn't there) - "Unknown", not "off".
+        }
+        return null;
+    }
+
+    private static bool? ReadTpmStatus(out bool? ready, out string version)
+    {
+        ready = null;
+        version = string.Empty;
+        try
+        {
+            using var searcher = new ManagementObjectSearcher(
+                @"root\cimv2\security\microsofttpm",
+                "SELECT IsActivated_InitialValue, IsEnabled_InitialValue, IsOwned_InitialValue, SpecVersion FROM Win32_Tpm");
+            foreach (ManagementObject mo in searcher.Get())
+            {
+                bool activated = mo["IsActivated_InitialValue"] is bool a && a;
+                bool enabled = mo["IsEnabled_InitialValue"] is bool e && e;
+                bool owned = mo["IsOwned_InitialValue"] is bool o && o;
+                ready = activated && enabled && owned;
+                version = (mo["SpecVersion"] as string ?? string.Empty).Trim();
+                return true; // A Win32_Tpm instance exists at all, i.e. a TPM chip is present.
+            }
+            return false; // Query succeeded but returned no instance - no TPM.
+        }
+        catch
+        {
+            // Most common cause: the querying process isn't elevated enough / a local policy
+            // denies WMI access to this namespace even when elevated - "Unknown", not "absent".
+            return null;
+        }
+    }
+
+    private static bool? ReadVbsStatus(out IReadOnlyList<string> servicesRunning)
+    {
+        servicesRunning = Array.Empty<string>();
+        try
+        {
+            using var searcher = new ManagementObjectSearcher(
+                @"root\Microsoft\Windows\DeviceGuard",
+                "SELECT VirtualizationBasedSecurityStatus, SecurityServicesRunning FROM Win32_DeviceGuard");
+            foreach (ManagementObject mo in searcher.Get())
+            {
+                int status = Convert.ToInt32(mo["VirtualizationBasedSecurityStatus"] ?? 0);
+                if (mo["SecurityServicesRunning"] is uint[] running)
+                    servicesRunning = running.Select(SecurityServiceName).Where(n => n.Length > 0).ToList();
+                return status == 2; // 0=Off, 1=Configured but not running, 2=Running
+            }
+        }
+        catch
+        {
+            // Class doesn't exist on this OS build, or WMI is unavailable - "Unknown".
+        }
+        return null;
+    }
+
+    // Win32_DeviceGuard.SecurityServicesRunning value -> display name (documented enum, not every
+    // value is user-relevant - unlisted values are simply dropped rather than shown as a number).
+    private static string SecurityServiceName(uint code) => code switch
+    {
+        1 => "Credential Guard",
+        2 => "Memory Integrity (HVCI)",
+        3 => "System Guard Secure Launch",
+        4 => "SMM Firmware Measurement",
+        _ => string.Empty,
+    };
+
+    // The device classes where a stale third-party driver is actually a plausible troubleshooting
+    // lead (GPU, network, storage controller, audio/webcam peripherals, ...) - deliberately not
+    // "every PnP driver on the system", which is dominated by generic in-box Windows class drivers.
+    private static readonly HashSet<string> InterestingDriverClasses = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Display", "Net", "HDC", "SCSIAdapter", "Media", "Monitor", "USB", "Bluetooth", "Image", "Printer",
+    };
+
+    /// <summary>
+    /// Flags third-party drivers old enough to be worth checking for an update. Two false-positive
+    /// traps found while building this against Win32_PnPSignedDriver on a real machine, both
+    /// filtered out here rather than shown: (1) most in-box/class drivers report a DriverVersion
+    /// tied to the current OS build but a DriverDate frozen at the classic Windows placeholder
+    /// (2006-06-21) even when they're perfectly current - filtering to non-generic manufacturers in
+    /// InterestingDriverClasses removes nearly all of these; (2) filtering by DeviceClass alone
+    /// still let a few "Generic ..." / "Standard ..." manufacturer entries with that same 2006
+    /// placeholder date through, so those are excluded explicitly too, on top of an outright
+    /// exclusion of that exact placeholder year. What's left is real vendor drivers (GPU, NIC,
+    /// audio/webcam peripherals, ...) with real dates - flagged when older than 2 years, a
+    /// deliberately conservative bar to keep this list short and trustworthy rather than noisy.
+    /// </summary>
+    private static List<DriverInfo> ReadOutdatedDrivers()
+    {
+        var drivers = new List<DriverInfo>();
+        try
+        {
+            var cutoff = DateTime.Now.AddYears(-2);
+
+            using var searcher = new ManagementObjectSearcher(
+                "SELECT DeviceName, Manufacturer, DriverVersion, DriverDate, DeviceClass FROM Win32_PnPSignedDriver");
+            foreach (ManagementObject mo in searcher.Get())
+            {
+                string deviceClass = (mo["DeviceClass"] as string ?? string.Empty).Trim();
+                if (!InterestingDriverClasses.Contains(deviceClass)) continue;
+
+                string manufacturer = (mo["Manufacturer"] as string ?? string.Empty).Trim();
+                if (manufacturer.Length == 0 ||
+                    manufacturer.Contains("Microsoft", StringComparison.OrdinalIgnoreCase) ||
+                    manufacturer.Contains("Generic", StringComparison.OrdinalIgnoreCase) ||
+                    manufacturer.Contains("Standard", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                string deviceName = (mo["DeviceName"] as string ?? string.Empty).Trim();
+                if (deviceName.Length == 0) continue;
+
+                DateTime? driverDate = null;
+                if (mo["DriverDate"] is string wmiDate)
+                {
+                    try { driverDate = ManagementDateTimeConverter.ToDateTime(wmiDate); } catch { /* leave null */ }
+                }
+                // The classic in-box-driver placeholder date - never a real vendor release date.
+                if (driverDate is null || driverDate.Value.Year <= 2006) continue;
+                if (driverDate.Value > cutoff) continue;
+
+                drivers.Add(new DriverInfo
+                {
+                    DeviceName = deviceName,
+                    Manufacturer = manufacturer,
+                    DriverVersion = (mo["DriverVersion"] as string ?? string.Empty).Trim(),
+                    DriverDate = driverDate,
+                });
+            }
+        }
+        catch
+        {
+            // return whatever was gathered before the failure
+        }
+        return drivers.OrderBy(d => d.DriverDate).Take(20).ToList();
     }
 }

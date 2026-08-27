@@ -37,6 +37,7 @@ public sealed class SystemSpecsViewModel : ObservableObject
     public ObservableCollection<SpecRow> Gpus { get; } = new();
     public ObservableCollection<SpecRow> Disks { get; } = new();
     public ObservableCollection<VolumeRow> Volumes { get; } = new();
+    public ObservableCollection<SpecRow> OutdatedDrivers { get; } = new();
 
     private bool _isLoading;
     public bool IsLoading { get => _isLoading; private set => SetProperty(ref _isLoading, value); }
@@ -74,6 +75,21 @@ public sealed class SystemSpecsViewModel : ObservableObject
     private string _ramDetails = string.Empty;
     public string RamDetails { get => _ramDetails; private set => SetProperty(ref _ramDetails, value); }
 
+    private string _secureBootText = "Unknown";
+    public string SecureBootText { get => _secureBootText; private set => SetProperty(ref _secureBootText, value); }
+
+    private bool _secureBootWarning;
+    public bool SecureBootWarning { get => _secureBootWarning; private set => SetProperty(ref _secureBootWarning, value); }
+
+    private string _tpmText = "Unknown";
+    public string TpmText { get => _tpmText; private set => SetProperty(ref _tpmText, value); }
+
+    private bool _tpmWarning;
+    public bool TpmWarning { get => _tpmWarning; private set => SetProperty(ref _tpmWarning, value); }
+
+    private string _vbsText = "Unknown";
+    public string VbsText { get => _vbsText; private set => SetProperty(ref _vbsText, value); }
+
     public AsyncRelayCommand RefreshCommand { get; }
 
     public SystemSpecsViewModel()
@@ -103,7 +119,8 @@ public sealed class SystemSpecsViewModel : ObservableObject
         {
             string.IsNullOrWhiteSpace(specs.OsVersion) ? null : $"Version {specs.OsVersion}",
             string.IsNullOrWhiteSpace(specs.OsArchitecture) ? null : specs.OsArchitecture,
-            string.IsNullOrWhiteSpace(specs.OsInstallDate) ? null : $"Installed {specs.OsInstallDate}",
+            string.IsNullOrWhiteSpace(specs.OsInstallDate) ? null
+                : specs.OsInstallAgeDays is { } days ? $"Installed {specs.OsInstallDate} ({days:N0} days ago)" : $"Installed {specs.OsInstallDate}",
         }.Where(s => s is not null));
 
         ComputerName = specs.ComputerName;
@@ -175,6 +192,39 @@ public sealed class SystemSpecsViewModel : ObservableObject
                 Secondary = v.Label,
                 SizeText = $"{Formatting.FormatBytes(v.FreeBytes)} free of {Formatting.FormatBytes(v.TotalBytes)}",
                 PercentUsed = v.PercentUsed,
+            });
+        }
+
+        var security = specs.Security;
+        (SecureBootText, SecureBootWarning) = security.SecureBootEnabled switch
+        {
+            true => ("On", false),
+            false => ("Off", true),
+            null => ("Unknown", false),
+        };
+        (TpmText, TpmWarning) = (security.TpmPresent, security.TpmReady) switch
+        {
+            (false, _) => ("Not present", true),
+            (true, true) => (string.IsNullOrEmpty(security.TpmVersion) ? "Ready" : $"Ready (v{security.TpmVersion})", false),
+            (true, false) => ("Present, not ready", true),
+            (true, null) => (string.IsNullOrEmpty(security.TpmVersion) ? "Present" : $"Present (v{security.TpmVersion})", false),
+            (null, _) => ("Unknown", false),
+        };
+        VbsText = security.VbsRunning switch
+        {
+            true => security.VbsServicesRunning.Count > 0 ? $"Running ({string.Join(", ", security.VbsServicesRunning)})" : "Running",
+            false => "Off",
+            null => "Unknown",
+        };
+
+        OutdatedDrivers.Clear();
+        foreach (var d in specs.OutdatedDrivers)
+        {
+            OutdatedDrivers.Add(new SpecRow
+            {
+                Primary = d.DeviceName,
+                Secondary = string.Join(" ", new[] { d.Manufacturer, d.DriverVersion }.Where(s => !string.IsNullOrWhiteSpace(s))),
+                SizeText = d.DriverDate is { } date ? date.ToShortDateString() : string.Empty,
             });
         }
     }

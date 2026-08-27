@@ -22,7 +22,7 @@
             </Border>
 
             <!-- Network chart -->
-            <Border Style="{StaticResource CardStyle}">
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
                 <StackPanel>
                     <StackPanel Style="{StaticResource TitleRow}">
                         <Border Style="{StaticResource ColorDot}" Background="{Binding Performance.NetworkColor, Converter={StaticResource ColorToBrushConverter}}" />
@@ -32,6 +32,92 @@
                                          Height="200" TooltipPosition="Top" LegendPosition="Bottom" Background="Transparent"
                                          LegendTextPaint="{Binding Performance.LegendTextPaint}" LegendBackgroundPaint="{Binding Performance.LegendBackgroundPaint}"
                                          TooltipTextPaint="{Binding Performance.TooltipTextPaint}" TooltipBackgroundPaint="{Binding Performance.TooltipBackgroundPaint}" />
+                </StackPanel>
+            </Border>
+
+            <!-- Connectivity: on-demand/periodic gateway + DNS reachability, since it needs
+                 actual network I/O rather than a local counter read - see NetworkViewModel's
+                 remarks for why this is the one thing on this tab with its own (slow) timer. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Connectivity" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Check now" Command="{Binding CheckConnectivityCommand}" Padding="10,4" />
+                    </Grid>
+                    <UniformGrid Columns="2">
+                        <StackPanel Margin="0,0,8,0">
+                            <StackPanel Orientation="Horizontal">
+                                <Border Width="8" Height="8" CornerRadius="4" Margin="0,0,7,0" VerticalAlignment="Center">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Setter Property="Background" Value="{DynamicResource TextSecondaryBrush}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding GatewayReachable}" Value="True">
+                                                    <Setter Property="Background" Value="{DynamicResource SuccessBrush}" />
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding GatewayReachable}" Value="False">
+                                                    <Setter Property="Background" Value="{DynamicResource DangerBrush}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
+                                </Border>
+                                <TextBlock Text="Gateway" Style="{StaticResource CardTitle}" Margin="0" />
+                            </StackPanel>
+                            <TextBlock Text="{Binding GatewayStatusText}" Style="{StaticResource SubStat}" Margin="0,4,0,0" />
+                        </StackPanel>
+                        <StackPanel Margin="8,0,0,0">
+                            <StackPanel Orientation="Horizontal">
+                                <Border Width="8" Height="8" CornerRadius="4" Margin="0,0,7,0" VerticalAlignment="Center">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Setter Property="Background" Value="{DynamicResource TextSecondaryBrush}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding DnsReachable}" Value="True">
+                                                    <Setter Property="Background" Value="{DynamicResource SuccessBrush}" />
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding DnsReachable}" Value="False">
+                                                    <Setter Property="Background" Value="{DynamicResource DangerBrush}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
+                                </Border>
+                                <TextBlock Text="Internet DNS" Style="{StaticResource CardTitle}" Margin="0" />
+                            </StackPanel>
+                            <TextBlock Text="{Binding DnsStatusText}" Style="{StaticResource SubStat}" Margin="0,4,0,0" />
+                        </StackPanel>
+                    </UniformGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- Adapter errors: cumulative CRC/discard counters, not rates - see
+                 HardwareMonitorService.ReadNetworkErrorCounters. Any nonzero value turns the
+                 whole card the warning color; a healthy adapter shows all zeros. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding Performance.HasNetworkErrors}" Value="True">
+                                <Setter Property="BorderBrush" Value="{DynamicResource WarningBrush}" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Adapter errors" Style="{StaticResource CardTitle}" />
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,4,0,0" TextWrapping="Wrap">
+                        <Run Text="In: " /><Run Text="{Binding Performance.NetworkInErrors, Mode=OneWay}" /><Run Text=" errors, " />
+                        <Run Text="{Binding Performance.NetworkInDiscards, Mode=OneWay}" /><Run Text=" discarded  •  Out: " />
+                        <Run Text="{Binding Performance.NetworkOutErrors, Mode=OneWay}" /><Run Text=" errors, " />
+                        <Run Text="{Binding Performance.NetworkOutDiscards, Mode=OneWay}" /><Run Text=" discarded" />
+                    </TextBlock>
+                    <TextBlock Text="Cumulative since the adapter/driver last loaded, not a rate - any nonzero count can flag a failing NIC or a bad cable."
+                               Style="{StaticResource SubStat}" Margin="0,6,0,0" TextWrapping="Wrap" Opacity="0.7" />
                 </StackPanel>
             </Border>
 

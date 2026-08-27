@@ -52,24 +52,33 @@
                  concept, so these use Windows' own terms - Available (physical free), Committed
                  (Task Manager's own overall memory-pressure figure), Cached (system file cache). -->
             <TextBlock Text="Breakdown" Style="{StaticResource SubStat}" Margin="0,0,0,10" />
-            <UniformGrid Columns="3" Margin="0,0,0,16">
-                <views:VfdMeter Title="Available" Glow="False" Margin="0,0,8,0"
+            <UniformGrid Columns="4" Margin="0,0,0,16">
+                <views:VfdMeter Title="Available" Glow="False" Margin="0,0,6,0"
                                 Percent="{Binding Performance.RamAvailablePercent}"
                                 ValueText="{Binding Performance.RamAvailableGb, StringFormat={}{0:0.0}}" Unit="GB"
                                 SubText="Physical free" AccentBrush="{Binding Performance.RamColor, Converter={StaticResource ColorToBrushConverter}}" />
-                <views:VfdMeter Title="Committed" Glow="False" Margin="4,0,4,0"
+                <views:VfdMeter Title="Committed" Glow="False" Margin="3,0,3,0"
                                 Percent="{Binding Performance.CommittedPercent}"
                                 ValueText="{Binding Performance.CommittedGb, StringFormat={}{0:0.0}}" Unit="GB"
                                 SubText="{Binding Performance.CommitLimitGb, StringFormat={}of {0:0.0} GB limit}"
                                 AccentBrush="{Binding Performance.RamColor, Converter={StaticResource ColorToBrushConverter}}" />
-                <views:VfdMeter Title="Cached" Glow="False" Margin="8,0,0,0"
+                <views:VfdMeter Title="Cached" Glow="False" Margin="3,0,3,0"
                                 Percent="{Binding Performance.CachedPercent}"
                                 ValueText="{Binding Performance.CachedGb, StringFormat={}{0:0.0}}" Unit="GB"
                                 SubText="System file cache" AccentBrush="{Binding Performance.RamColor, Converter={StaticResource ColorToBrushConverter}}" />
+                <!-- Page file: AccentBrush deliberately uses PercentToBrushConverter (green/amber/
+                     red) instead of the fixed RAM accent color the other three tiles use - a nearly-
+                     full page file is a real memory-pressure warning worth calling out visually,
+                     independent of whether physical RAM itself looks fine. -->
+                <views:VfdMeter Title="Page file" Glow="False" Margin="6,0,0,0"
+                                Percent="{Binding Performance.PageFilePercent}"
+                                ValueText="{Binding Performance.PageFileUsedGb, StringFormat={}{0:0.0}}" Unit="GB"
+                                SubText="{Binding Performance.PageFileTotalGb, StringFormat={}of {0:0.0} GB total}"
+                                AccentBrush="{Binding Performance.PageFilePercent, Converter={StaticResource PercentToBrushConverter}}" />
             </UniformGrid>
 
             <!-- Committed trend -->
-            <Border Style="{StaticResource CardStyle}">
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
                 <StackPanel>
                     <StackPanel Style="{StaticResource TitleRow}">
                         <Border Style="{StaticResource ColorDot}" Background="{Binding Performance.RamColor, Converter={StaticResource ColorToBrushConverter}}" />
@@ -77,6 +86,35 @@
                     </StackPanel>
                     <lvc:CartesianChart Series="{Binding Performance.CommittedSeries}" XAxes="{Binding Performance.HiddenXAxes}" YAxes="{Binding Performance.MemoryBytesYAxes}"
                                          Height="180" TooltipPosition="Hidden" LegendPosition="Hidden" Background="Transparent" />
+                </StackPanel>
+            </Border>
+
+            <!-- Top memory consumers: re-presents the already-polling Processes tab's collection,
+                 live-sorted by memory instead of CPU - see MemoryViewModel. -->
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel>
+                    <TextBlock Text="Top memory consumers" Style="{StaticResource CardTitle}" />
+                    <ItemsControl ItemsSource="{Binding TopMemoryProcesses}" MaxHeight="240">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                                        <TextBlock Text="{Binding Name}" FontSize="12.5" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Style="{StaticResource SubStat}" FontSize="10.5">
+                                            <Run Text="PID " /><Run Text="{Binding Pid, Mode=OneWay}" />
+                                            <Run Text=" · " /><Run Text="{Binding CpuPercent, StringFormat={}{0:0.0}% CPU, Mode=OneWay}" />
+                                        </TextBlock>
+                                    </StackPanel>
+                                    <TextBlock Grid.Column="1" Text="{Binding MemoryMb, StringFormat={}{0:0} MB}"
+                                               FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
                 </StackPanel>
             </Border>
 

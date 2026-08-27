@@ -139,6 +139,15 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
     private double _cachedPercent;
     public double CachedPercent { get => _cachedPercent; private set => SetProperty(ref _cachedPercent, value); }
 
+    private double _pageFileUsedGb;
+    public double PageFileUsedGb { get => _pageFileUsedGb; private set => SetProperty(ref _pageFileUsedGb, value); }
+
+    private double _pageFileTotalGb;
+    public double PageFileTotalGb { get => _pageFileTotalGb; private set => SetProperty(ref _pageFileTotalGb, value); }
+
+    private double _pageFilePercent;
+    public double PageFilePercent { get => _pageFilePercent; private set => SetProperty(ref _pageFilePercent, value); }
+
     private double _diskPercent;
     public double DiskPercent { get => _diskPercent; private set => SetProperty(ref _diskPercent, value); }
 
@@ -171,6 +180,20 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
 
     private double _networkSendBps;
     public double NetworkSendBps { get => _networkSendBps; private set => SetProperty(ref _networkSendBps, value); }
+
+    private long _networkInErrors;
+    public long NetworkInErrors { get => _networkInErrors; private set => SetProperty(ref _networkInErrors, value); }
+
+    private long _networkInDiscards;
+    public long NetworkInDiscards { get => _networkInDiscards; private set => SetProperty(ref _networkInDiscards, value); }
+
+    private long _networkOutErrors;
+    public long NetworkOutErrors { get => _networkOutErrors; private set => SetProperty(ref _networkOutErrors, value); }
+
+    private long _networkOutDiscards;
+    public long NetworkOutDiscards { get => _networkOutDiscards; private set => SetProperty(ref _networkOutDiscards, value); }
+
+    public bool HasNetworkErrors => NetworkInErrors > 0 || NetworkInDiscards > 0 || NetworkOutErrors > 0 || NetworkOutDiscards > 0;
 
     private int _processCount;
     public int ProcessCount { get => _processCount; private set => SetProperty(ref _processCount, value); }
@@ -400,6 +423,10 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
         CachedGb = snapshot.CacheBytes / 1024.0 / 1024.0 / 1024.0;
         CachedPercent = snapshot.RamTotalBytes == 0 ? 0 : (double)snapshot.CacheBytes / snapshot.RamTotalBytes * 100.0;
 
+        PageFileUsedGb = snapshot.PageFileUsedBytes / 1024.0 / 1024.0 / 1024.0;
+        PageFileTotalGb = snapshot.PageFileTotalBytes / 1024.0 / 1024.0 / 1024.0;
+        PageFilePercent = snapshot.PageFileTotalBytes == 0 ? 0 : (double)snapshot.PageFileUsedBytes / snapshot.PageFileTotalBytes * 100.0;
+
         DiskPercent = snapshot.DiskActivePercent;
         DiskReadBps = snapshot.DiskReadBytesPerSec;
         DiskWriteBps = snapshot.DiskWriteBytesPerSec;
@@ -409,6 +436,11 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
 
         NetworkReceiveBps = snapshot.NetworkReceiveBytesPerSec;
         NetworkSendBps = snapshot.NetworkSendBytesPerSec;
+        NetworkInErrors = snapshot.NetworkInErrors;
+        NetworkInDiscards = snapshot.NetworkInDiscards;
+        NetworkOutErrors = snapshot.NetworkOutErrors;
+        NetworkOutDiscards = snapshot.NetworkOutDiscards;
+        OnPropertyChanged(nameof(HasNetworkErrors));
 
         ProcessCount = snapshot.ProcessCount;
         ThreadCount = snapshot.ThreadCount;

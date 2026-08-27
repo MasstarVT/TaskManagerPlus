@@ -364,6 +364,141 @@ block for nearly every gauge across Summary/CPU/Memory/Storage/Network/
 Energy & Thermals, this one addition covers pasting any reading into a
 forum post or support ticket app-wide, with no per-tab wiring needed.
 
+### Memory diagnostics (page file, top consumers)
+
+`HardwareMonitorService` adds a page file gauge alongside the existing
+Committed/Cache counters: total size comes from WMI
+`Win32_PageFileUsage.AllocatedBaseSize` (summed across all configured page
+files, read once — it only changes on a resize) and live usage from
+`Paging File\% Usage\_Total` (a live PerformanceCounter, multiplied back
+into bytes), the same "WMI for the rarely-changing total, PerformanceCounter
+for the live rate/percent" split the CPU clock speed calculation already
+uses. The Memory tab's "Page file" tile deliberately binds its
+`AccentBrush` to `PercentToBrushConverter` instead of the fixed RAM accent
+color the other three breakdown tiles use — a nearly-full page file is a
+real, distinct memory-pressure warning worth calling out visually. "Top
+memory consumers" re-presents the Processes tab's already-polling
+`ObservableCollection` — `MemoryViewModel` now takes `ProcessesViewModel` in
+its constructor (mirroring `SummaryViewModel`'s existing "Top CPU
+processes" card) and exposes a second `ICollectionView` over the same
+`Processes` collection, live-sorted by `MemoryBytes` instead of
+`CpuPercent`. No new process sampling.
+
+### Network diagnostics (adapter errors, gateway/DNS reachability)
+
+`HardwareMonitorService.ReadNetworkErrorCounters` sums each active
+adapter's `IPInterfaceStatistics` CRC/framing-error and dropped-packet
+counts (`IncomingPacketsWithErrors`, `IncomingPacketsDiscarded`, and their
+Outgoing counterparts) the same way `ReadTotalNetworkBytes` already sums
+throughput — these are cumulative counters since the adapter/driver last
+loaded, not per-second rates, so no delta math is needed; any nonzero total
+already flags a problem. The Network tab's "Adapter errors" card tints
+itself the warning color when `PerformanceViewModel.HasNetworkErrors` is
+true, otherwise renders as a normal card.
+
+Gateway/DNS reachability is the one deliberate exception to "Network tab
+is a thin PerformanceViewModel wrapper": answering it needs actual ICMP
+ping I/O (up to ~1.2s per check), unlike every other figure on the tab
+which is a local counter read, so it doesn't belong on the 1s shared
+sampler tick. `Services/NetworkDiagnosticsService.cs` pings the first
+active adapter's default gateway and a fixed public DNS resolver
+(1.1.1.1); `NetworkViewModel` now owns its own slow (15s) `DispatcherTimer`
+for this alone plus a manual "Check now" button — the same kind of
+narrow, documented exception `EnergyThermalsViewModel` already carries for
+LibreHardwareMonitorLib. `NetworkViewModel` is `IDisposable` now (stops
+that timer); `MainViewModel.Dispose()` calls it. A `false` result means
+"didn't respond to ping", not definitively "unreachable" — ICMP being
+blocked by a firewall is a known, real limitation, not a bug.
+
+### Services diagnostics ("failed to start" — a false-positive lesson)
+
+The obvious first implementation of "flag services that should be running
+but aren't" — `StartMode == Automatic && State != Running` — was tried
+against a real machine and rejected: delayed-auto-start and "Automatic
+(Trigger Start)" services (`WbioSrvc`, `MapsBroker`, most vendor updater
+services, ...) are legitimately stopped most of the time by design, and
+dominated the result with false positives. `Win32_Service.ExitCode` from
+each service's last start attempt is the actually-reliable signal instead
+— a delayed/trigger-start service that simply hasn't started yet reports
+`ExitCode 0`, identical to a normal clean stop, so a *nonzero* exit code
+means an automatic service genuinely tried to start and failed.
+`ServiceControlService.ReadServiceExitCodes` reads this via WMI alongside
+the existing PID lookup; `ServiceRow.HasFailedToStart` combines it with
+`StartType == Automatic`. The Services tab tints a failed row and adds a
+"Failed to start only" filter checkbox, following the same
+`DataGrid.RowStyle` + `ICollectionView.Filter` patterns already used
+elsewhere (Processes tab's high-privilege tint and "Recently started"
+toggle).
+
+### System Specs: security posture, install age, outdated drivers
+
+Three more `SystemSpecsService` reads, all optional/nullable by design
+since each data source can legitimately be unavailable:
+
+- **Secure Boot**: read straight from the registry
+  (`HKLM\SYSTEM\CurrentControlSet\Control\SecureBoot\State\UEFISecureBootEnabled`)
+  rather than calling the `Confirm-SecureBootUEFI`-equivalent native API,
+  which needs elevation this app's own process doesn't always satisfy for
+  that specific check.
+- **TPM**: `Win32_Tpm` in the `root\cimv2\security\microsofttpm` WMI
+  namespace (present/enabled/owned/activated → a single `TpmReady` bool,
+  plus `SpecVersion`). This one genuinely does need this app's existing
+  elevation, and can still be denied by a stricter local policy even
+  elevated — wrapped to return "Unknown" rather than a false "absent".
+- **VBS (Core Isolation / Memory Integrity)**: `Win32_DeviceGuard` in
+  `root\Microsoft\Windows\DeviceGuard`
+  (`VirtualizationBasedSecurityStatus == 2` means running;
+  `SecurityServicesRunning` is decoded against the documented enum —
+  Credential Guard, HVCI, System Guard Secure Launch, SMM Firmware
+  Measurement).
+
+**OS install age**: `ReadOperatingSystem` already parsed
+`Win32_OperatingSystem.InstallDate` to a `DateTime` before formatting it
+down to a display string — `OsInstallAgeDays` just keeps that `DateTime`
+around one extra step to compute `(DateTime.Now - installDate).TotalDays`
+before it's discarded, appended to the existing OS details line as
+"(412 days ago)".
+
+**Outdated third-party drivers** (`ReadOutdatedDrivers`, `Win32_PnPSignedDriver`)
+went through two rounds of false-positive filtering discovered by querying
+a real machine, both documented in the method's own comment: (1) most
+in-box/class drivers report a `DriverVersion` tied to the current OS build
+but a `DriverDate` frozen at the classic Windows placeholder date
+(2006-06-21) even when perfectly current, so `DeviceClass` is restricted
+to an allowlist of categories where a stale *third-party* driver is a
+plausible troubleshooting lead (`Display`, `Net`, `HDC`, `SCSIAdapter`,
+`Media`, `Monitor`, `USB`, `Bluetooth`, `Image`, `Printer`); (2) that alone
+still let some "Generic ..."/"Standard ..." manufacturer entries with that
+same 2006 date through, so `Manufacturer` excludes anything containing
+"Microsoft", "Generic", or "Standard", on top of an outright exclusion of
+`DriverDate.Year <= 2006`. What's left is flagged only past a 2-year-old
+bar and capped at 20 rows, oldest first — deliberately conservative to
+keep the list short and trustworthy. The System tab collapses this card
+entirely when the list is empty (the common, expected case), unlike
+Memory/Graphics/Storage which show a "none detected" line — an empty
+outdated-driver list isn't noteworthy the way an empty disk list would be.
+
+### Battery health (Energy & Thermals)
+
+`SensorMonitorService` now also enables `IsBatteryEnabled` on the
+LibreHardwareMonitorLib `Computer` object — on any desktop this simply
+reports no Battery hardware, so the whole "Battery" section on the Energy
+& Thermals tab collapses itself via a `Battery.Count == 0` trigger, the
+same pattern the System tab uses for its outdated-drivers card.
+`EnergyThermalsViewModel.Battery` buckets by `HardwareType.Battery`
+instead of a single `SensorType` the way Temperatures/Fans/Voltages/
+Wattages do, because battery sensors mix several types (`Level` for
+charge %, `Level` again for "Degradation Level" — LibreHardwareMonitorLib's
+own full-vs-design-capacity wear calculation and the closest thing to a
+real battery-health figure this app can show without a laptop-vendor API,
+`Voltage`, `Power` for charge/discharge rate) — a new
+`Converters/SensorTypeToUnitConverter.cs` maps each tile's `SensorType` to
+its display unit at bind time instead. Also not zero-filtered like the
+other four sections: 0% charge or 0 W (idle, on AC) are normal battery
+readings, unlike a temperature/voltage/wattage sensor reading exactly 0
+(which usually means "unsupported" — see the zero-filtering comment in
+`EnergyThermalsViewModel.RefreshAsync`).
+
 ### Notable implementation details
 
 - **CPU clock speed**: not directly exposed by Windows. Computed the same

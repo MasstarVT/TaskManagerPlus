@@ -19,6 +19,7 @@
             <conv:SegmentedMeterBrushConverter x:Key="SegmentedMeterBrushConverter" />
             <conv:ThemeModeSelectedBrushConverter x:Key="ThemeModeSelectedBrushConverter" />
             <conv:TemperatureToBrushConverter x:Key="TemperatureToBrushConverter" />
+            <conv:SensorTypeToUnitConverter x:Key="SensorTypeToUnitConverter" />
         </ResourceDictionary>
     </Application.Resources>
 </Application>

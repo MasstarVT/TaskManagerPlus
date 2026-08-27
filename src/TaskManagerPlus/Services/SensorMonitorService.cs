@@ -32,6 +32,7 @@ public sealed class SensorMonitorService : IDisposable
             IsMotherboardEnabled = true,
             IsMemoryEnabled = true,
             IsStorageEnabled = true,
+            IsBatteryEnabled = true,
         };
 
         try

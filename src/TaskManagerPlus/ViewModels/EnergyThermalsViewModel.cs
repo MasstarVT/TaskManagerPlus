@@ -36,6 +36,14 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
     public ObservableCollection<SensorReading> Voltages { get; } = new();
     public ObservableCollection<SensorReading> Wattages { get; } = new();
 
+    /// <summary>Battery sensors (charge level, degradation/wear level, voltage, charge/discharge
+    /// rate) - empty on any desktop, since LibreHardwareMonitorLib simply reports no Battery
+    /// hardware when there isn't one. "Degradation Level" is the closest thing to a real battery
+    /// health report this app can show without a laptop-vendor-specific API: it's LibreHardwareMonitorLib's
+    /// own (full charge capacity vs. design capacity) calculation, the same figure a "battery
+    /// health" report from any other tool is ultimately built from.</summary>
+    public ObservableCollection<SensorReading> Battery { get; } = new();
+
     public ObservableCollection<double> PowerHistory { get; } = NewHistory();
     private readonly LineSeries<double> _powerGlow;
     private readonly LineSeries<double> _powerCore;
@@ -135,6 +143,12 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         Replace(Fans, readings.Where(r => r.Type == SensorType.Fan && r.Value.HasValue));
         Replace(Voltages, readings.Where(r => r.Type == SensorType.Voltage && HasNonZeroReading(r)));
         Replace(Wattages, readings.Where(r => r.Type == SensorType.Power && HasNonZeroReading(r)));
+        // Battery sensors mix several SensorTypes (Level for charge %/degradation %, Voltage,
+        // Power for charge/discharge rate) - bucketed by HardwareType instead of SensorType, and
+        // not zero-filtered like the others: 0% charge or 0W (fully idle, on AC) are both real,
+        // normal readings for a battery, unlike a temperature/voltage/wattage sensor reading
+        // exactly 0 (which usually means "unsupported", per the comment above).
+        Replace(Battery, readings.Where(r => r.HardwareType == HardwareType.Battery && r.Value.HasValue));
 
         // Sensor names aren't standardized across CPU vendors (Intel: "CPU Package"; AMD:
         // "Core (Tctl/Tdie)"; varies further by model), so try a few known hints in order

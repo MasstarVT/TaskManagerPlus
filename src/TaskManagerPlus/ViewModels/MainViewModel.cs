@@ -45,7 +45,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     {
         Summary = new SummaryViewModel(Performance, Processes);
         Cpu = new CpuViewModel(Performance);
-        Memory = new MemoryViewModel(Performance);
+        Memory = new MemoryViewModel(Performance, Processes);
         Storage = new StorageViewModel(Performance);
         Network = new NetworkViewModel(Performance);
         Logging = new LoggingViewModel(Performance, EnergyThermals);
@@ -97,6 +97,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Performance.Dispose();
         Services.Dispose();
         EnergyThermals.Dispose();
+        Network.Dispose();
         Logging.Dispose();
     }
 }

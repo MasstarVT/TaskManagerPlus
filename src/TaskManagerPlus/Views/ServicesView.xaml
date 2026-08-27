@@ -42,6 +42,7 @@
         <Grid Grid.Row="0" Margin="0,0,0,12">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="260" />
+                <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
@@ -51,14 +52,31 @@
             <TextBox Grid.Column="0" Text="{Binding FilterText, UpdateSourceTrigger=PropertyChanged}"
                      VerticalContentAlignment="Center" Height="32" />
 
-            <Button Grid.Column="2" Content="Start" Margin="0,0,8,0" Command="{Binding StartCommand}" Style="{StaticResource SuccessButton}" />
-            <Button Grid.Column="3" Content="Stop" Margin="0,0,8,0" Command="{Binding StopCommand}" Style="{StaticResource DangerButton}" />
-            <Button Grid.Column="4" Content="Restart" Command="{Binding RestartCommand}" Style="{StaticResource PrimaryButton}" />
+            <CheckBox Grid.Column="1" Content="Failed to start only" VerticalAlignment="Center" Margin="16,0,0,0"
+                      IsChecked="{Binding FailedToStartOnly}"
+                      ToolTip="Show only Automatic services whose last start attempt reported an error" />
+
+            <Button Grid.Column="3" Content="Start" Margin="0,0,8,0" Command="{Binding StartCommand}" Style="{StaticResource SuccessButton}" />
+            <Button Grid.Column="4" Content="Stop" Margin="0,0,8,0" Command="{Binding StopCommand}" Style="{StaticResource DangerButton}" />
+            <Button Grid.Column="5" Content="Restart" Command="{Binding RestartCommand}" Style="{StaticResource PrimaryButton}" />
         </Grid>
 
         <DataGrid Grid.Row="1"
                   ItemsSource="{Binding ServicesView}"
                   SelectedItem="{Binding SelectedService}">
+            <DataGrid.RowStyle>
+                <!-- A service whose last start attempt returned a real Win32 error code (not just
+                     "currently stopped" - see ServiceRow.HasFailedToStart for why that alone is
+                     too noisy a signal) gets tinted and a tooltip explaining the exit code. -->
+                <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding HasFailedToStart}" Value="True">
+                            <Setter Property="Background" Value="#1AE81123" />
+                            <Setter Property="ToolTip" Value="{Binding ExitCode, StringFormat=Last start attempt failed (exit code {0})}" />
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </DataGrid.RowStyle>
             <DataGrid.Columns>
                 <DataGridTextColumn Header="Name" Binding="{Binding DisplayName}" Width="2.5*" />
                 <DataGridTextColumn Header="Service name" Binding="{Binding ServiceName}" Width="1.5*" />

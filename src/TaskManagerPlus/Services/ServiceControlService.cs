@@ -12,6 +12,7 @@ public sealed class ServiceControlService
     public List<ServiceRow> Sample()
     {
         var pids = ReadServicePids();
+        var exitCodes = ReadServiceExitCodes();
         var rows = new List<ServiceRow>();
 
         foreach (var sc in ServiceController.GetServices())
@@ -28,6 +29,8 @@ public sealed class ServiceControlService
                 try { row.StartType = sc.StartType; } catch { row.StartType = ServiceStartMode.Manual; }
                 if (pids.TryGetValue(sc.ServiceName, out var pid))
                     row.ProcessId = pid;
+                if (exitCodes.TryGetValue(sc.ServiceName, out var exitCode))
+                    row.ExitCode = exitCode;
 
                 rows.Add(row);
             }
@@ -60,6 +63,35 @@ public sealed class ServiceControlService
         catch
         {
             // WMI unavailable - PID column will just show 0.
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Win32_Service.ExitCode from each service's last start attempt. Deliberately not filtered
+    /// to Automatic-and-not-running services here (that heuristic was tried and is too noisy in
+    /// practice - most Windows systems have several Automatic services that are legitimately
+    /// stopped most of the time: delayed-auto-start, or "Automatic (Trigger Start)" services that
+    /// only run when triggered, e.g. WbioSrvc, MapsBroker. Both report ExitCode 0 when simply not
+    /// started yet, same as a real clean stop - so a nonzero ExitCode is the actually-reliable
+    /// "this service tried to start and failed" signal, computed per-row in ServiceRow.HasFailedToStart).
+    /// </summary>
+    private static Dictionary<string, uint> ReadServiceExitCodes()
+    {
+        var result = new Dictionary<string, uint>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            using var searcher = new ManagementObjectSearcher("SELECT Name, ExitCode FROM Win32_Service");
+            foreach (ManagementObject mo in searcher.Get())
+            {
+                var name = mo["Name"] as string;
+                if (name is null) continue;
+                result[name] = Convert.ToUInt32(mo["ExitCode"] ?? 0u);
+            }
+        }
+        catch
+        {
+            // WMI unavailable - every row falls back to ExitCode 0 (never flagged as failed).
         }
         return result;
     }

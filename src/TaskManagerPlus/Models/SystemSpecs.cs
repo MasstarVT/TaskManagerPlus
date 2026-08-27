@@ -12,6 +12,10 @@ public sealed class SystemSpecs
     public string OsArchitecture { get; init; } = string.Empty;
     public string OsInstallDate { get; init; } = string.Empty;
 
+    /// <summary>Days since Windows install, computed alongside OsInstallDate (which only keeps
+    /// the display string) - null when the install date couldn't be read.</summary>
+    public int? OsInstallAgeDays { get; init; }
+
     // System / chassis
     public string ComputerName { get; init; } = string.Empty;
     public string Manufacturer { get; init; } = string.Empty;
@@ -39,6 +43,37 @@ public sealed class SystemSpecs
     // Storage
     public IReadOnlyList<DiskInfo> Disks { get; init; } = Array.Empty<DiskInfo>();
     public IReadOnlyList<VolumeInfo> Volumes { get; init; } = Array.Empty<VolumeInfo>();
+
+    // Security posture (TPM / Secure Boot / VBS)
+    public SecurityInfo Security { get; init; } = new();
+
+    // Third-party drivers old enough to be worth a "check for an update" nudge.
+    public IReadOnlyList<DriverInfo> OutdatedDrivers { get; init; } = Array.Empty<DriverInfo>();
+}
+
+/// <summary>TPM / Secure Boot / VBS (Core Isolation) posture, for the System tab's security card.
+/// Every field is nullable/"Unknown" by design - each comes from a WMI class or registry key that
+/// can legitimately be unavailable (older hardware, a locked-down environment, or - for TPM
+/// specifically - a permission that even this app's elevation doesn't always satisfy), and
+/// "Unknown" needs to render distinctly from "confirmed off".</summary>
+public sealed class SecurityInfo
+{
+    public bool? SecureBootEnabled { get; init; }
+    public bool? TpmPresent { get; init; }
+    public bool? TpmReady { get; init; }
+    public string TpmVersion { get; init; } = string.Empty;
+    public bool? VbsRunning { get; init; }
+    public IReadOnlyList<string> VbsServicesRunning { get; init; } = Array.Empty<string>();
+}
+
+/// <summary>One third-party driver flagged as old enough to be worth checking for an update -
+/// see SystemSpecsService.ReadOutdatedDrivers for the filtering rules and why they exist.</summary>
+public sealed class DriverInfo
+{
+    public string DeviceName { get; init; } = string.Empty;
+    public string Manufacturer { get; init; } = string.Empty;
+    public string DriverVersion { get; init; } = string.Empty;
+    public DateTime? DriverDate { get; init; }
 }
 
 /// <summary>A single installed RAM stick, as reported by Win32_PhysicalMemory.</summary>

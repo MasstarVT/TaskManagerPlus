@@ -233,7 +233,7 @@
 
             <!-- Volumes: per-drive-letter free space, color-coded so a nearly-full volume - a
                  common, easy-to-miss slowdown/crash cause - stands out at a glance. -->
-            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,16">
                 <StackPanel>
                     <TextBlock Text="Volumes" Style="{StaticResource CardTitle}" />
                     <ItemsControl ItemsSource="{Binding Volumes}" ItemTemplate="{StaticResource VolumeRowTemplate}" />
@@ -249,6 +249,72 @@
                             </Style>
                         </TextBlock.Style>
                     </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- Security posture: Secure Boot / TPM / VBS - each individually nullable (see
+                 SecurityInfo's remarks), rendered as a warning color only on a confirmed "off"/
+                 "not present", never on "Unknown" (a permission gap isn't the same as a real
+                 finding). -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Security" Style="{StaticResource CardTitle}" />
+                    <UniformGrid Columns="3">
+                        <StackPanel Margin="0,0,8,0">
+                            <TextBlock Text="Secure Boot" Style="{StaticResource SpecLabel}" />
+                            <TextBlock Text="{Binding SecureBootText}">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource SpecValue}">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding SecureBootWarning}" Value="True">
+                                                <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </StackPanel>
+                        <StackPanel Margin="8,0,8,0">
+                            <TextBlock Text="TPM" Style="{StaticResource SpecLabel}" />
+                            <TextBlock Text="{Binding TpmText}">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource SpecValue}">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding TpmWarning}" Value="True">
+                                                <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </StackPanel>
+                        <StackPanel Margin="8,0,0,0">
+                            <TextBlock Text="Virtualization-based security" Style="{StaticResource SpecLabel}" />
+                            <TextBlock Text="{Binding VbsText}" Style="{StaticResource SpecValue}" TextWrapping="Wrap" />
+                        </StackPanel>
+                    </UniformGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- Outdated third-party drivers: a curated, conservative list - see
+                 SystemSpecsService.ReadOutdatedDrivers for the filtering rules. Collapsed entirely
+                 when empty rather than showing a "no drivers detected" line, since an empty list
+                 here (unlike Memory/Graphics/Storage) is the expected common case. -->
+            <Border>
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding OutdatedDrivers.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Drivers that may be worth updating" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Third-party drivers older than 2 years, in device categories where a stale driver commonly causes problems (display, network, storage, audio/video peripherals)."
+                               Style="{StaticResource SubStat}" Margin="0,-8,0,12" TextWrapping="Wrap" />
+                    <ItemsControl ItemsSource="{Binding OutdatedDrivers}" ItemTemplate="{StaticResource SpecRowTemplate}" />
                 </StackPanel>
             </Border>
 

@@ -104,7 +104,7 @@
 
             <!-- Wattages -->
             <TextBlock Text="Power rails" Style="{StaticResource SubStat}" Margin="0,0,0,10" />
-            <ItemsControl ItemsSource="{Binding Wattages}">
+            <ItemsControl ItemsSource="{Binding Wattages}" Margin="0,0,0,16">
                 <ItemsControl.ItemsPanel>
                     <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
                 </ItemsControl.ItemsPanel>
@@ -116,6 +116,36 @@
                     </DataTemplate>
                 </ItemsControl.ItemTemplate>
             </ItemsControl>
+
+            <!-- Battery: empty (and the whole section collapsed) on any desktop - see
+                 EnergyThermalsViewModel.Battery's remarks. "Degradation Level" is the closest
+                 thing to a real battery-health figure this app can show. -->
+            <StackPanel>
+                <StackPanel.Style>
+                    <Style TargetType="StackPanel">
+                        <Setter Property="Visibility" Value="Visible" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding Battery.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </StackPanel.Style>
+                <TextBlock Text="Battery" Style="{StaticResource SubStat}" Margin="0,0,0,10" />
+                <ItemsControl ItemsSource="{Binding Battery}">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <views:VfdMeter Title="{Binding SensorName}" Glow="False" Width="172" Margin="0,0,8,8"
+                                            ValueText="{Binding Value, StringFormat={}{0:0.#}, TargetNullValue=–}"
+                                            Unit="{Binding Type, Converter={StaticResource SensorTypeToUnitConverter}}"
+                                            SubText="{Binding HardwareName}" AccentBrush="{DynamicResource AccentBrush}" />
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
 
         </StackPanel>
     </ScrollViewer>
