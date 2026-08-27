@@ -21,6 +21,7 @@
             <conv:SensorTypeToUnitConverter x:Key="SensorTypeToUnitConverter" />
             <conv:StringListJoinConverter x:Key="StringListJoinConverter" />
             <conv:BootMsToSecondsConverter x:Key="BootMsToSecondsConverter" />
+            <conv:NullToVisibilityConverter x:Key="NullToVisibilityConverter" />
         </ResourceDictionary>
     </Application.Resources>
 </Application>

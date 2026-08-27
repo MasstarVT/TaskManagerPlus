@@ -79,6 +79,10 @@ public sealed class SystemSpecsViewModel : ObservableObject
     private string _biosVersion = string.Empty;
     public string BiosVersion { get => _biosVersion; private set => SetProperty(ref _biosVersion, value); }
 
+    // #92: BIOS age hint - "worth checking for an update", not a verified "update available" flag.
+    private bool _biosAgeWarning;
+    public bool BiosAgeWarning { get => _biosAgeWarning; private set => SetProperty(ref _biosAgeWarning, value); }
+
     private string _cpuName = string.Empty;
     public string CpuName { get => _cpuName; private set => SetProperty(ref _cpuName, value); }
 
@@ -146,7 +150,18 @@ public sealed class SystemSpecsViewModel : ObservableObject
 
         Motherboard = string.Join(" ", new[] { specs.MotherboardManufacturer, specs.MotherboardProduct }.Where(s => !string.IsNullOrWhiteSpace(s)));
         if (string.IsNullOrWhiteSpace(Motherboard)) Motherboard = "Unknown motherboard";
+        // #92: appended age hint - "worth checking for an update" past ~3 years, not a verified
+        // "an update exists" claim (Windows has no cross-vendor way to know that).
         BiosVersion = string.IsNullOrWhiteSpace(specs.BiosVersion) ? "Unknown" : specs.BiosVersion;
+        if (specs.BiosAgeDays is { } biosAge)
+        {
+            BiosVersion += $"  ({biosAge:N0} days old — check for updates on your motherboard/OEM support page)";
+            BiosAgeWarning = biosAge >= 3 * 365;
+        }
+        else
+        {
+            BiosAgeWarning = false;
+        }
 
         CpuName = string.IsNullOrWhiteSpace(specs.CpuName) ? "Unknown CPU" : specs.CpuName;
         CpuDetails = $"{specs.CpuPhysicalCores} cores, {specs.CpuLogicalProcessors} logical processors  •  Max speed {specs.CpuMaxClockGhz:0.00} GHz";

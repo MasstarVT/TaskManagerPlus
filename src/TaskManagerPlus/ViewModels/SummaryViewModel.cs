@@ -61,6 +61,18 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
     // snapshot, and top resource consumers into a single shareable markdown file.
     public RelayCommand GenerateReportCommand { get; }
 
+    // #93/#94: baseline capture + "what changed" comparison - one save/compare pair covers both
+    // suggestions, since a saved baseline IS the comparison point for a later diff. See
+    // SnapshotService's remarks.
+    public RelayCommand SaveSnapshotCommand { get; }
+    public RelayCommand CompareSnapshotCommand { get; }
+
+    private SnapshotDiff? _snapshotDiff;
+    public SnapshotDiff? SnapshotDiff { get => _snapshotDiff; private set => SetProperty(ref _snapshotDiff, value); }
+
+    private string _snapshotStatusText = string.Empty;
+    public string SnapshotStatusText { get => _snapshotStatusText; private set => SetProperty(ref _snapshotStatusText, value); }
+
     public SummaryViewModel(PerformanceViewModel performance, ProcessesViewModel processes,
         ServicesViewModel services, EnergyThermalsViewModel energyThermals,
         SystemSpecsViewModel systemSpecs, NetworkViewModel network, StabilityViewModel stability)
@@ -74,6 +86,8 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         _stability = stability;
 
         GenerateReportCommand = new RelayCommand(_ => GenerateReport());
+        SaveSnapshotCommand = new RelayCommand(_ => SaveSnapshot());
+        CompareSnapshotCommand = new RelayCommand(_ => CompareSnapshot());
 
         var view = new CollectionViewSource { Source = processes.Processes }.View;
         if (view is ICollectionViewLiveShaping liveShaping && liveShaping.CanChangeLiveSorting)
@@ -226,6 +240,61 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
             Line($"| {p.Name} | {p.Pid} | {Formatting.FormatBytes(p.MemoryBytes)} | {p.CpuPercent:0.0} |");
 
         return sb.ToString();
+    }
+
+    /// <summary>#93: "record how my PC looks when healthy" - captures installed software,
+    /// services, and startup items to a JSON file the user picks.</summary>
+    private void SaveSnapshot()
+    {
+        var snapshotsDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TaskManagerPlus", "Snapshots");
+        try { Directory.CreateDirectory(snapshotsDir); } catch { /* SaveFileDialog still works without a pre-created folder */ }
+
+        var dialog = new SaveFileDialog
+        {
+            Title = "Save system snapshot",
+            Filter = "Snapshot files (*.json)|*.json|All files (*.*)|*.*",
+            DefaultExt = ".json",
+            FileName = $"TaskManagerPlus-Snapshot-{DateTime.Now:yyyy-MM-dd_HH-mm-ss}.json",
+            InitialDirectory = snapshotsDir,
+        };
+        if (dialog.ShowDialog() != true) return;
+
+        try
+        {
+            SnapshotService.Save(SnapshotService.Capture(), dialog.FileName);
+            SnapshotStatusText = $"Snapshot saved: {Path.GetFileName(dialog.FileName)}";
+        }
+        catch (Exception ex)
+        {
+            SnapshotStatusText = $"Couldn't save snapshot: {ex.Message}";
+        }
+    }
+
+    /// <summary>#94: "what changed" - loads a previously saved baseline and diffs it against the
+    /// system's current state.</summary>
+    private void CompareSnapshot()
+    {
+        var dialog = new OpenFileDialog
+        {
+            Title = "Compare against a saved snapshot",
+            Filter = "Snapshot files (*.json)|*.json|All files (*.*)|*.*",
+            InitialDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TaskManagerPlus", "Snapshots"),
+        };
+        if (dialog.ShowDialog() != true) return;
+
+        var baseline = SnapshotService.Load(dialog.FileName);
+        if (baseline is null)
+        {
+            SnapshotStatusText = "Couldn't read that snapshot file.";
+            SnapshotDiff = null;
+            return;
+        }
+
+        var diff = SnapshotService.Diff(baseline, SnapshotService.Capture());
+        SnapshotDiff = diff;
+        SnapshotStatusText = diff.HasChanges
+            ? $"Compared against {baseline.CapturedAt:g} - changes found."
+            : $"Compared against {baseline.CapturedAt:g} - no changes found.";
     }
 
     /// <summary>CPU package temperature past this point reads as "running hot" for the Health

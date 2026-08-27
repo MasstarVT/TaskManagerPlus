@@ -27,6 +27,13 @@ public sealed class SystemSpecs
     public string MotherboardProduct { get; init; } = string.Empty;
     public string BiosVersion { get; init; } = string.Empty;
 
+    /// <summary>#92: BIOS/UEFI release date age, in days. Windows has no generic "is a newer BIOS
+    /// available" API (that's vendor-specific, e.g. Dell Command | Update / Lenovo Vantage), so
+    /// this is a proxy hint rather than a real "update available" flag - an old release date is
+    /// worth a manual check on the motherboard/OEM support page, framed exactly that way in the UI
+    /// rather than claiming to know an update actually exists.</summary>
+    public int? BiosAgeDays { get; init; }
+
     // CPU
     public string CpuName { get; init; } = string.Empty;
     public int CpuPhysicalCores { get; init; }

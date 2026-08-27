@@ -23,7 +23,7 @@ public sealed class SystemSpecsService
         var (osName, osVersion, osArch, osInstallDate, osInstallAgeDays) = ReadOperatingSystem();
         var (manufacturer, model, systemType) = ReadComputerSystem();
         var (boardManufacturer, boardProduct) = ReadBaseBoard();
-        var biosVersion = ReadBios();
+        var (biosVersion, biosAgeDays) = ReadBios();
         var (cpuName, physicalCores, logicalProcessors, maxClockGhz) = ReadCpu();
         var memoryModules = ReadMemoryModules();
         long ramTotal = memoryModules.Sum(m => m.CapacityBytes);
@@ -45,6 +45,7 @@ public sealed class SystemSpecsService
             MotherboardManufacturer = boardManufacturer,
             MotherboardProduct = boardProduct,
             BiosVersion = biosVersion,
+            BiosAgeDays = biosAgeDays,
 
             CpuName = cpuName,
             CpuPhysicalCores = physicalCores,
@@ -144,20 +145,41 @@ public sealed class SystemSpecsService
         return (string.Empty, string.Empty);
     }
 
-    private static string ReadBios()
+    /// <summary>
+    /// #92: BIOS version plus its release-date age. Windows has no cross-vendor "update
+    /// available" check for firmware - only OEM-specific tools (Dell Command | Update, Lenovo
+    /// Vantage, ...) know that - so this reads Win32_BIOS.ReleaseDate as a "worth a manual check"
+    /// proxy instead of a real update-available flag, the same honesty tradeoff
+    /// ReadOutdatedDrivers' date-based filtering already takes for third-party drivers.
+    /// </summary>
+    private static (string Version, int? AgeDays) ReadBios()
     {
         try
         {
             using var searcher = new ManagementObjectSearcher(
-                "SELECT SMBIOSBIOSVersion FROM Win32_BIOS");
+                "SELECT SMBIOSBIOSVersion, ReleaseDate FROM Win32_BIOS");
             foreach (ManagementObject mo in searcher.Get())
-                return (mo["SMBIOSBIOSVersion"] as string ?? string.Empty).Trim();
+            {
+                string version = (mo["SMBIOSBIOSVersion"] as string ?? string.Empty).Trim();
+
+                int? ageDays = null;
+                if (mo["ReleaseDate"] is string wmiDate)
+                {
+                    try
+                    {
+                        var released = ManagementDateTimeConverter.ToDateTime(wmiDate);
+                        ageDays = Math.Max(0, (int)(DateTime.Now - released).TotalDays);
+                    }
+                    catch { /* leave null */ }
+                }
+                return (version, ageDays);
+            }
         }
         catch
         {
             // fall through to default
         }
-        return string.Empty;
+        return (string.Empty, null);
     }
 
     private static (string Name, int PhysicalCores, int LogicalProcessors, double MaxClockGhz) ReadCpu()

@@ -182,7 +182,17 @@
                         </StackPanel>
                         <StackPanel>
                             <TextBlock Text="BIOS version" Style="{StaticResource SpecLabel}" />
-                            <TextBlock Text="{Binding BiosVersion}" Style="{StaticResource SpecValue}" />
+                            <TextBlock Text="{Binding BiosVersion}" TextWrapping="Wrap">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource SpecValue}">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding BiosAgeWarning}" Value="True">
+                                                <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
                         </StackPanel>
                     </UniformGrid>
                 </StackPanel>

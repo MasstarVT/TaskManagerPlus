@@ -98,6 +98,83 @@
                 </StackPanel>
             </Border>
 
+            <!-- #93/#94: baseline capture + "what changed" diff - one save/compare pair covers
+                 both suggestions, since a saved baseline IS the comparison point for a later
+                 diff. See SnapshotService's remarks. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="System snapshot" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Save snapshot" Command="{Binding SaveSnapshotCommand}" Margin="0,0,8,0" />
+                        <Button Grid.Column="2" Content="Compare to snapshot..." Command="{Binding CompareSnapshotCommand}" />
+                    </Grid>
+                    <TextBlock Text="Captures installed software, services, and startup items - save one now as a baseline, then compare against it later to see what changed."
+                               Style="{StaticResource SubStat}" Margin="0,-2,0,8" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding SnapshotStatusText}" Margin="0,0,0,8" TextWrapping="Wrap">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding SnapshotStatusText}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
+                    <StackPanel Visibility="{Binding SnapshotDiff, Converter={StaticResource NullToVisibilityConverter}}">
+                        <ItemsControl ItemsSource="{Binding SnapshotDiff.SoftwareAdded}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock FontSize="12" Foreground="{DynamicResource SuccessBrush}" Text="{Binding StringFormat=+ software: {0}}" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <ItemsControl ItemsSource="{Binding SnapshotDiff.SoftwareRemoved}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock FontSize="12" Foreground="{DynamicResource DangerBrush}" Text="{Binding StringFormat=- software: {0}}" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <ItemsControl ItemsSource="{Binding SnapshotDiff.ServicesAdded}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock FontSize="12" Foreground="{DynamicResource SuccessBrush}" Text="{Binding StringFormat=+ service: {0}}" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <ItemsControl ItemsSource="{Binding SnapshotDiff.ServicesRemoved}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock FontSize="12" Foreground="{DynamicResource DangerBrush}" Text="{Binding StringFormat=- service: {0}}" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <ItemsControl ItemsSource="{Binding SnapshotDiff.StartupAdded}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock FontSize="12" Foreground="{DynamicResource SuccessBrush}" Text="{Binding StringFormat=+ startup item: {0}}" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <ItemsControl ItemsSource="{Binding SnapshotDiff.StartupRemoved}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock FontSize="12" Foreground="{DynamicResource DangerBrush}" Text="{Binding StringFormat=- startup item: {0}}" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
         <Grid>
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
