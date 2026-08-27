@@ -35,4 +35,14 @@ public partial class MeterTile : UserControl
     {
         InitializeComponent();
     }
+
+    /// <summary>Copies "Title: ValueText (SubText)" to the clipboard, so a user troubleshooting
+    /// a PC can paste a reading straight into a forum post or support ticket without a
+    /// screenshot. Best-effort - Clipboard.SetText can throw if another app is holding the
+    /// clipboard open, which shouldn't crash the app over a convenience feature.</summary>
+    private void CopyValue_Click(object sender, RoutedEventArgs e)
+    {
+        var text = string.IsNullOrEmpty(SubText) ? $"{Title}: {ValueText}" : $"{Title}: {ValueText} ({SubText})";
+        try { Clipboard.SetText(text); } catch { /* ignore */ }
+    }
 }

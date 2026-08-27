@@ -2,6 +2,7 @@
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="clr-namespace:TaskManagerPlus.ViewModels"
+             xmlns:views="clr-namespace:TaskManagerPlus.Views"
              xmlns:lvc="clr-namespace:LiveChartsCore.SkiaSharpView.WPF;assembly=LiveChartsCore.SkiaSharpView.WPF"
              d:DataContext="{d:DesignInstance Type=vm:StorageViewModel}"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
@@ -22,7 +23,7 @@
             </Border>
 
             <!-- Disk chart -->
-            <Border Style="{StaticResource CardStyle}">
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
                 <StackPanel>
                     <StackPanel Style="{StaticResource TitleRow}">
                         <Border Style="{StaticResource ColorDot}" Background="{Binding Performance.DiskColor, Converter={StaticResource ColorToBrushConverter}}" />
@@ -32,6 +33,25 @@
                                          Height="200" TooltipPosition="Hidden" LegendPosition="Hidden" Background="Transparent" />
                 </StackPanel>
             </Border>
+
+            <!-- Bottleneck diagnostics: queue length (requests waiting, not just active) and
+                 per-I/O latency - both flag a saturated/failing drive earlier than raw
+                 throughput or %-active-time alone. -->
+            <TextBlock Text="Bottleneck diagnostics" Style="{StaticResource SubStat}" Margin="0,0,0,10" />
+            <UniformGrid Columns="3">
+                <views:VfdMeter Title="Queue length" Glow="False" Margin="0,0,8,0"
+                                Percent="{Binding Performance.DiskQueueLengthGaugePercent}"
+                                ValueText="{Binding Performance.DiskQueueLength, StringFormat={}{0:0.00}}"
+                                SubText="Requests waiting" AccentBrush="{Binding Performance.DiskColor, Converter={StaticResource ColorToBrushConverter}}" />
+                <views:VfdMeter Title="Read latency" Glow="False" Margin="4,0,4,0"
+                                Percent="{Binding Performance.DiskReadLatencyGaugePercent}"
+                                ValueText="{Binding Performance.DiskReadLatencyMs, StringFormat={}{0:0.0}}" Unit="ms"
+                                SubText="Avg. per read" AccentBrush="{Binding Performance.DiskColor, Converter={StaticResource ColorToBrushConverter}}" />
+                <views:VfdMeter Title="Write latency" Glow="False" Margin="8,0,0,0"
+                                Percent="{Binding Performance.DiskWriteLatencyGaugePercent}"
+                                ValueText="{Binding Performance.DiskWriteLatencyMs, StringFormat={}{0:0.0}}" Unit="ms"
+                                SubText="Avg. per write" AccentBrush="{Binding Performance.DiskColor, Converter={StaticResource ColorToBrushConverter}}" />
+            </UniformGrid>
 
         </StackPanel>
     </ScrollViewer>

@@ -53,6 +53,16 @@ public partial class VfdMeter : UserControl
         Loaded += (_, _) => UpdateGlow();
     }
 
+    /// <summary>Copies "Title: ValueText Unit (SubText)" to the clipboard - see MeterTile's
+    /// CopyValue_Click, which this mirrors (the two controls share the same DP surface but
+    /// aren't related by inheritance, so the handler is duplicated rather than shared).</summary>
+    private void CopyValue_Click(object sender, RoutedEventArgs e)
+    {
+        var valuePart = string.IsNullOrEmpty(Unit) ? ValueText : $"{ValueText} {Unit}";
+        var text = string.IsNullOrEmpty(SubText) ? $"{Title}: {valuePart}" : $"{Title}: {valuePart} ({SubText})";
+        try { Clipboard.SetText(text); } catch { /* ignore */ }
+    }
+
     private static void OnAccentBrushChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
         => ((VfdMeter)d).UpdateGlow();
 

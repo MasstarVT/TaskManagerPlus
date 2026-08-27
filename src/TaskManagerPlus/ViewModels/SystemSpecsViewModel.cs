@@ -11,6 +11,22 @@ public sealed class SpecRow
     public string Primary { get; init; } = string.Empty;
     public string Secondary { get; init; } = string.Empty;
     public string SizeText { get; init; } = string.Empty;
+
+    /// <summary>SMART/WMI health badge text, disk rows only ("OK", "Failure predicted", ...).
+    /// Empty for rows (memory/GPU) that don't have a health concept.</summary>
+    public string HealthText { get; init; } = string.Empty;
+
+    /// <summary>True when HealthText should render in the warning color.</summary>
+    public bool IsHealthWarning { get; init; }
+}
+
+/// <summary>Row shown in the per-volume free-space list.</summary>
+public sealed class VolumeRow
+{
+    public string Primary { get; init; } = string.Empty;
+    public string Secondary { get; init; } = string.Empty;
+    public string SizeText { get; init; } = string.Empty;
+    public double PercentUsed { get; init; }
 }
 
 public sealed class SystemSpecsViewModel : ObservableObject
@@ -20,6 +36,7 @@ public sealed class SystemSpecsViewModel : ObservableObject
     public ObservableCollection<SpecRow> MemoryModules { get; } = new();
     public ObservableCollection<SpecRow> Gpus { get; } = new();
     public ObservableCollection<SpecRow> Disks { get; } = new();
+    public ObservableCollection<VolumeRow> Volumes { get; } = new();
 
     private bool _isLoading;
     public bool IsLoading { get => _isLoading; private set => SetProperty(ref _isLoading, value); }
@@ -144,6 +161,20 @@ public sealed class SystemSpecsViewModel : ObservableObject
                 Primary = string.IsNullOrWhiteSpace(d.Model) ? "Unknown disk" : d.Model,
                 Secondary = string.Join(" ", new[] { d.MediaType, d.InterfaceType }.Where(s => !string.IsNullOrWhiteSpace(s))),
                 SizeText = Formatting.FormatBytes(d.SizeBytes),
+                HealthText = d.HealthStatus,
+                IsHealthWarning = d.IsHealthWarning,
+            });
+        }
+
+        Volumes.Clear();
+        foreach (var v in specs.Volumes)
+        {
+            Volumes.Add(new VolumeRow
+            {
+                Primary = v.Name,
+                Secondary = v.Label,
+                SizeText = $"{Formatting.FormatBytes(v.FreeBytes)} free of {Formatting.FormatBytes(v.TotalBytes)}",
+                PercentUsed = v.PercentUsed,
             });
         }
     }

@@ -36,6 +36,17 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
         }
     }
 
+    private bool _recentlyStartedOnly;
+    public bool RecentlyStartedOnly
+    {
+        get => _recentlyStartedOnly;
+        set
+        {
+            if (SetProperty(ref _recentlyStartedOnly, value))
+                ProcessesView.Refresh();
+        }
+    }
+
     private int _processCount;
     public int ProcessCount { get => _processCount; private set => SetProperty(ref _processCount, value); }
 
@@ -65,13 +76,23 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
         _ = RefreshAsync();
     }
 
+    /// <summary>How far back "Recently started" reaches - right after a slowdown or crash starts
+    /// is exactly when a user wants to see "what just launched" without hunting through the
+    /// full, mostly-idle process list.</summary>
+    private static readonly TimeSpan RecentlyStartedWindow = TimeSpan.FromMinutes(5);
+
     private bool FilterPredicate(object obj)
     {
+        if (obj is not ProcessRow row) return false;
+
+        if (RecentlyStartedOnly &&
+            (row.StartTime is null || DateTime.Now - row.StartTime.Value > RecentlyStartedWindow))
+            return false;
+
         if (string.IsNullOrWhiteSpace(FilterText)) return true;
-        return obj is ProcessRow row &&
-               (row.Name.Contains(FilterText, StringComparison.OrdinalIgnoreCase) ||
-                row.Pid.ToString().Contains(FilterText, StringComparison.OrdinalIgnoreCase) ||
-                row.User.Contains(FilterText, StringComparison.OrdinalIgnoreCase));
+        return row.Name.Contains(FilterText, StringComparison.OrdinalIgnoreCase) ||
+               row.Pid.ToString().Contains(FilterText, StringComparison.OrdinalIgnoreCase) ||
+               row.User.Contains(FilterText, StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task RefreshAsync()
@@ -83,6 +104,12 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
             var latest = await Task.Run(() => _monitor.Sample());
             MergeInto(latest);
             ProcessCount = Processes.Count;
+
+            // MergeInto() only implicitly re-filters on add/remove - re-evaluate explicitly so a
+            // row drops out of "Recently started" once it ages past the window, even if nothing
+            // else in the process list changed this tick.
+            if (RecentlyStartedOnly)
+                ProcessesView.Refresh();
         }
         catch
         {
@@ -108,6 +135,11 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
                 existing.MemoryBytes = fresh.MemoryBytes;
                 existing.Status = fresh.Status;
                 existing.ThreadCount = fresh.ThreadCount;
+                existing.HandleCount = fresh.HandleCount;
+                existing.SignatureStatus = fresh.SignatureStatus;
+                existing.IsHighPrivilege = fresh.IsHighPrivilege;
+                // CommandLine/FilePath/StartTime/User don't change for the lifetime of a pid -
+                // no need to reassign them every tick like the values above that actually vary.
                 latestByPid.Remove(existing.Pid);
             }
             else

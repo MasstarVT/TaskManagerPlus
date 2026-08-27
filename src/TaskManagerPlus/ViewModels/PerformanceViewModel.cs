@@ -148,6 +148,24 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
     private double _diskWriteBps;
     public double DiskWriteBps { get => _diskWriteBps; private set => SetProperty(ref _diskWriteBps, value); }
 
+    private double _diskQueueLength;
+    public double DiskQueueLength { get => _diskQueueLength; private set { if (SetProperty(ref _diskQueueLength, value)) OnPropertyChanged(nameof(DiskQueueLengthGaugePercent)); } }
+
+    private double _diskReadLatencyMs;
+    public double DiskReadLatencyMs { get => _diskReadLatencyMs; private set { if (SetProperty(ref _diskReadLatencyMs, value)) OnPropertyChanged(nameof(DiskReadLatencyGaugePercent)); } }
+
+    private double _diskWriteLatencyMs;
+    public double DiskWriteLatencyMs { get => _diskWriteLatencyMs; private set { if (SetProperty(ref _diskWriteLatencyMs, value)) OnPropertyChanged(nameof(DiskWriteLatencyGaugePercent)); } }
+
+    // Queue length and latency have no natural 0-100 range like a percentage does, but the VfdMeter/
+    // MeterTile segmented bar reads a Percent regardless - these give it a meaningful "how concerning
+    // is this reading" fill rather than leaving the bar always empty. Thresholds are rough diagnostic
+    // rules of thumb (a sustained queue length above ~8, or latency above ~50ms, indicates the disk is
+    // the bottleneck), not exact - the numeric readout next to them is still the real value.
+    public double DiskQueueLengthGaugePercent => Math.Clamp(DiskQueueLength / 8.0 * 100.0, 0, 100);
+    public double DiskReadLatencyGaugePercent => Math.Clamp(DiskReadLatencyMs / 50.0 * 100.0, 0, 100);
+    public double DiskWriteLatencyGaugePercent => Math.Clamp(DiskWriteLatencyMs / 50.0 * 100.0, 0, 100);
+
     private double _networkReceiveBps;
     public double NetworkReceiveBps { get => _networkReceiveBps; private set => SetProperty(ref _networkReceiveBps, value); }
 
@@ -385,6 +403,9 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
         DiskPercent = snapshot.DiskActivePercent;
         DiskReadBps = snapshot.DiskReadBytesPerSec;
         DiskWriteBps = snapshot.DiskWriteBytesPerSec;
+        DiskQueueLength = snapshot.DiskQueueLength;
+        DiskReadLatencyMs = snapshot.DiskReadLatencyMs;
+        DiskWriteLatencyMs = snapshot.DiskWriteLatencyMs;
 
         NetworkReceiveBps = snapshot.NetworkReceiveBytesPerSec;
         NetworkSendBps = snapshot.NetworkSendBytesPerSec;

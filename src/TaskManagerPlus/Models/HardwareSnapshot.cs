@@ -33,6 +33,15 @@ public sealed class HardwareSnapshot
     public double DiskReadBytesPerSec { get; init; }
     public double DiskWriteBytesPerSec { get; init; }
 
+    /// <summary>Avg. Disk Queue Length (_Total) - requests waiting, not just active; a classic
+    /// "is the disk actually the bottleneck" signal beyond raw throughput.</summary>
+    public double DiskQueueLength { get; init; }
+
+    /// <summary>Per-I/O read/write latency in milliseconds (Avg. Disk sec/Read|Write * 1000) -
+    /// latency spikes flag a failing/overloaded drive better than throughput alone.</summary>
+    public double DiskReadLatencyMs { get; init; }
+    public double DiskWriteLatencyMs { get; init; }
+
     public double NetworkReceiveBytesPerSec { get; init; }
     public double NetworkSendBytesPerSec { get; init; }
 

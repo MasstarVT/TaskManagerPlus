@@ -38,6 +38,7 @@ public sealed class SystemSpecs
 
     // Storage
     public IReadOnlyList<DiskInfo> Disks { get; init; } = Array.Empty<DiskInfo>();
+    public IReadOnlyList<VolumeInfo> Volumes { get; init; } = Array.Empty<VolumeInfo>();
 }
 
 /// <summary>A single installed RAM stick, as reported by Win32_PhysicalMemory.</summary>
@@ -65,4 +66,22 @@ public sealed class DiskInfo
     public long SizeBytes { get; init; }
     public string MediaType { get; init; } = string.Empty;
     public string InterfaceType { get; init; } = string.Empty;
+
+    /// <summary>"OK", "Failure predicted", or the raw Win32_DiskDrive.Status string - see
+    /// SystemSpecsService.ReadDisks for how this is derived.</summary>
+    public string HealthStatus { get; init; } = "Unknown";
+
+    /// <summary>True when the drive's SMART failure-prediction flag is set, or its WMI status
+    /// is anything other than "OK" - drives this app's UI as a warning color.</summary>
+    public bool IsHealthWarning { get; init; }
+}
+
+/// <summary>A single mounted volume (drive letter), for the free-space warning list.</summary>
+public sealed class VolumeInfo
+{
+    public string Name { get; init; } = string.Empty;
+    public string Label { get; init; } = string.Empty;
+    public long TotalBytes { get; init; }
+    public long FreeBytes { get; init; }
+    public double PercentUsed => TotalBytes <= 0 ? 0 : (double)(TotalBytes - FreeBytes) / TotalBytes * 100.0;
 }

@@ -20,6 +20,9 @@ public sealed class HardwareMonitorService : IDisposable
     private readonly PerformanceCounter _diskTimeCounter;
     private readonly PerformanceCounter _diskReadCounter;
     private readonly PerformanceCounter _diskWriteCounter;
+    private readonly PerformanceCounter _diskQueueLengthCounter;
+    private readonly PerformanceCounter _diskReadLatencyCounter;
+    private readonly PerformanceCounter _diskWriteLatencyCounter;
     private readonly PerformanceCounter _handleCountCounter;
     private readonly PerformanceCounter _threadCountCounter;
     private readonly PerformanceCounter _processCountCounter;
@@ -71,6 +74,12 @@ public sealed class HardwareMonitorService : IDisposable
         _diskTimeCounter = new PerformanceCounter("PhysicalDisk", "% Disk Time", "_Total", readOnly: true);
         _diskReadCounter = new PerformanceCounter("PhysicalDisk", "Disk Read Bytes/sec", "_Total", readOnly: true);
         _diskWriteCounter = new PerformanceCounter("PhysicalDisk", "Disk Write Bytes/sec", "_Total", readOnly: true);
+        // "Avg. Disk Queue Length" is a classic bottleneck signal (requests waiting, not just
+        // active) and "Avg. Disk sec/Read|Write" is per-I/O latency in seconds - both instantaneous
+        // gauges like the Memory ones above, not rates, so they need priming too (below).
+        _diskQueueLengthCounter = new PerformanceCounter("PhysicalDisk", "Avg. Disk Queue Length", "_Total", readOnly: true);
+        _diskReadLatencyCounter = new PerformanceCounter("PhysicalDisk", "Avg. Disk sec/Read", "_Total", readOnly: true);
+        _diskWriteLatencyCounter = new PerformanceCounter("PhysicalDisk", "Avg. Disk sec/Write", "_Total", readOnly: true);
 
         _handleCountCounter = new PerformanceCounter("Process", "Handle Count", "_Total", readOnly: true);
         _threadCountCounter = new PerformanceCounter("Process", "Thread Count", "_Total", readOnly: true);
@@ -92,6 +101,9 @@ public sealed class HardwareMonitorService : IDisposable
         _ = _diskTimeCounter.NextValue();
         _ = _diskReadCounter.NextValue();
         _ = _diskWriteCounter.NextValue();
+        _ = _diskQueueLengthCounter.NextValue();
+        _ = _diskReadLatencyCounter.NextValue();
+        _ = _diskWriteLatencyCounter.NextValue();
 
         (_lastBytesReceived, _lastBytesSent) = ReadTotalNetworkBytes();
         _lastNetSampleUtc = DateTime.UtcNow;
@@ -112,6 +124,11 @@ public sealed class HardwareMonitorService : IDisposable
         double diskPercent = Clamp(_diskTimeCounter.NextValue());
         double diskRead = _diskReadCounter.NextValue();
         double diskWrite = _diskWriteCounter.NextValue();
+        double diskQueueLength = Math.Max(0, _diskQueueLengthCounter.NextValue());
+        // Avg. Disk sec/Read|Write reports in seconds; ms is the unit anyone diagnosing
+        // "is my disk slow" actually thinks in.
+        double diskReadLatencyMs = Math.Max(0, _diskReadLatencyCounter.NextValue() * 1000.0);
+        double diskWriteLatencyMs = Math.Max(0, _diskWriteLatencyCounter.NextValue() * 1000.0);
 
         var (bytesReceived, bytesSent) = ReadTotalNetworkBytes();
         var elapsedSec = Math.Max(0.001, (now - _lastNetSampleUtc).TotalSeconds);
@@ -144,6 +161,9 @@ public sealed class HardwareMonitorService : IDisposable
             DiskActivePercent = Math.Round(diskPercent, 1),
             DiskReadBytesPerSec = diskRead,
             DiskWriteBytesPerSec = diskWrite,
+            DiskQueueLength = Math.Round(diskQueueLength, 2),
+            DiskReadLatencyMs = Math.Round(diskReadLatencyMs, 1),
+            DiskWriteLatencyMs = Math.Round(diskWriteLatencyMs, 1),
 
             NetworkReceiveBytesPerSec = netRecvRate,
             NetworkSendBytesPerSec = netSendRate,
@@ -244,6 +264,9 @@ public sealed class HardwareMonitorService : IDisposable
         _diskTimeCounter.Dispose();
         _diskReadCounter.Dispose();
         _diskWriteCounter.Dispose();
+        _diskQueueLengthCounter.Dispose();
+        _diskReadLatencyCounter.Dispose();
+        _diskWriteLatencyCounter.Dispose();
         _handleCountCounter.Dispose();
         _threadCountCounter.Dispose();
         _processCountCounter.Dispose();

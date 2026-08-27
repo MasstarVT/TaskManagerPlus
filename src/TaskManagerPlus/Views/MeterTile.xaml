@@ -8,6 +8,11 @@
     <!-- Small dashboard widget: colored dot + title, a big value, and a colored bar with a
          subtext underneath - the denser "gauge" tile style used on the Summary page. -->
     <Border Style="{StaticResource CardStyle}" Margin="0">
+        <Border.ContextMenu>
+            <ContextMenu>
+                <MenuItem Header="Copy value" Click="CopyValue_Click" />
+            </ContextMenu>
+        </Border.ContextMenu>
         <StackPanel>
             <Grid Margin="0,0,0,10">
                 <Grid.ColumnDefinitions>

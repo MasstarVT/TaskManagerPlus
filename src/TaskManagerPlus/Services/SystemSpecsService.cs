@@ -1,3 +1,4 @@
+using System.IO;
 using System.Management;
 using Microsoft.Win32;
 using TaskManagerPlus.Models;
@@ -51,6 +52,7 @@ public sealed class SystemSpecsService
 
             Gpus = ReadGpus(),
             Disks = ReadDisks(),
+            Volumes = ReadVolumes(),
         };
     }
 
@@ -279,12 +281,44 @@ public sealed class SystemSpecsService
         var disks = new List<DiskInfo>();
         try
         {
+            var failurePredictions = ReadFailurePredictStatus();
+
             using var searcher = new ManagementObjectSearcher(
-                "SELECT Model, Size, MediaType, InterfaceType FROM Win32_DiskDrive");
+                "SELECT Model, Size, MediaType, InterfaceType, Status, PNPDeviceID FROM Win32_DiskDrive");
             foreach (ManagementObject mo in searcher.Get())
             {
                 long size = 0;
                 try { size = System.Convert.ToInt64(mo["Size"] ?? 0L); } catch { /* leave 0 */ }
+
+                string wmiStatus = (mo["Status"] as string ?? string.Empty).Trim();
+                string pnpDeviceId = (mo["PNPDeviceID"] as string ?? string.Empty).Trim();
+
+                // MSStorageDriver_FailurePredictStatus (the SMART "is this drive about to die"
+                // flag) is keyed by an InstanceName that starts with the same PNPDeviceID Win32_
+                // DiskDrive reports, just normalized (spaces -> underscores, lowercased) - not an
+                // exact match, so this is a prefix search rather than a dictionary lookup.
+                bool? predictFailure = null;
+                if (pnpDeviceId.Length > 0)
+                {
+                    var needle = NormalizeForMatch(pnpDeviceId);
+                    foreach (var (instanceKey, value) in failurePredictions)
+                    {
+                        if (instanceKey.StartsWith(needle, StringComparison.Ordinal))
+                        {
+                            predictFailure = value;
+                            break;
+                        }
+                    }
+                }
+
+                string health = predictFailure switch
+                {
+                    true => "Failure predicted",
+                    false => "OK",
+                    null => wmiStatus.Length == 0 ? "Unknown" : wmiStatus,
+                };
+                bool warning = predictFailure == true ||
+                    (wmiStatus.Length > 0 && !wmiStatus.Equals("OK", StringComparison.OrdinalIgnoreCase));
 
                 disks.Add(new DiskInfo
                 {
@@ -292,6 +326,8 @@ public sealed class SystemSpecsService
                     SizeBytes = size,
                     MediaType = (mo["MediaType"] as string ?? string.Empty).Trim(),
                     InterfaceType = (mo["InterfaceType"] as string ?? string.Empty).Trim(),
+                    HealthStatus = health,
+                    IsHealthWarning = warning,
                 });
             }
         }
@@ -300,5 +336,69 @@ public sealed class SystemSpecsService
             // return whatever was gathered before the failure
         }
         return disks;
+    }
+
+    /// <summary>
+    /// Reads the SMART failure-prediction flag from the storage miniport driver, via the legacy
+    /// root\wmi MSStorageDriver_FailurePredictStatus class. Deliberately never throws past this
+    /// method - the class isn't implemented by every driver (NVMe and some AHCI/RAID drivers omit
+    /// it, and it can require running elevated, which this app already does), so disk health falls
+    /// back to Win32_DiskDrive.Status alone when it's unavailable, the same graceful-degradation
+    /// pattern SensorMonitorService uses for its own optional data source.
+    /// </summary>
+    private static List<(string InstanceKey, bool PredictFailure)> ReadFailurePredictStatus()
+    {
+        var result = new List<(string, bool)>();
+        try
+        {
+            using var searcher = new ManagementObjectSearcher(
+                @"root\wmi",
+                "SELECT InstanceName, PredictFailure FROM MSStorageDriver_FailurePredictStatus");
+            foreach (ManagementObject mo in searcher.Get())
+            {
+                string instanceName = (mo["InstanceName"] as string ?? string.Empty).Trim();
+                if (instanceName.Length == 0) continue;
+
+                bool predictFailure = false;
+                try { predictFailure = System.Convert.ToBoolean(mo["PredictFailure"] ?? false); } catch { /* leave false */ }
+
+                result.Add((NormalizeForMatch(instanceName), predictFailure));
+            }
+        }
+        catch
+        {
+            // Not available on this system/driver - callers treat an empty list as "unknown".
+        }
+        return result;
+    }
+
+    private static string NormalizeForMatch(string s) => s.Replace(' ', '_').ToLowerInvariant();
+
+    /// <summary>Per-drive-letter free space, for a low-disk-space warning list. DriveInfo (not
+    /// WMI) since it already handles removable/unready drives cleanly via IsReady.</summary>
+    private static List<VolumeInfo> ReadVolumes()
+    {
+        var volumes = new List<VolumeInfo>();
+        foreach (var drive in DriveInfo.GetDrives())
+        {
+            if (!drive.IsReady) continue;
+            if (drive.DriveType is not (DriveType.Fixed or DriveType.Removable)) continue;
+
+            try
+            {
+                volumes.Add(new VolumeInfo
+                {
+                    Name = drive.Name,
+                    Label = string.IsNullOrWhiteSpace(drive.VolumeLabel) ? drive.DriveType.ToString() : drive.VolumeLabel,
+                    TotalBytes = drive.TotalSize,
+                    FreeBytes = drive.TotalFreeSpace,
+                });
+            }
+            catch
+            {
+                // Drive became unready between IsReady check and property reads - skip it.
+            }
+        }
+        return volumes;
     }
 }

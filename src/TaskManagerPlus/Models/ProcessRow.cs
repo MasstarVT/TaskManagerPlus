@@ -46,5 +46,22 @@ public sealed class ProcessRow : ObservableObject
     private string? _filePath;
     public string? FilePath { get => _filePath; set => SetProperty(ref _filePath, value); }
 
+    private int _handleCount;
+    public int HandleCount { get => _handleCount; set => SetProperty(ref _handleCount, value); }
+
+    private string? _commandLine;
+    public string? CommandLine { get => _commandLine; set => SetProperty(ref _commandLine, value); }
+
+    /// <summary>"Signed", "Unsigned", or "Unknown" (couldn't be determined - e.g. file locked,
+    /// no access, or the process has already exited). See ProcessMonitorService.GetSignatureStatusCached.</summary>
+    private string _signatureStatus = "Unknown";
+    public string SignatureStatus { get => _signatureStatus; set => SetProperty(ref _signatureStatus, value); }
+
+    /// <summary>True when User is SYSTEM/LOCAL SERVICE/NETWORK SERVICE/an Administrators-group
+    /// account - i.e. running with more privilege than an ordinary signed-in user, worth calling
+    /// out when auditing for something unexpected among running processes.</summary>
+    private bool _isHighPrivilege;
+    public bool IsHighPrivilege { get => _isHighPrivilege; set => SetProperty(ref _isHighPrivilege, value); }
+
     public double MemoryMb => MemoryBytes / 1024.0 / 1024.0;
 }

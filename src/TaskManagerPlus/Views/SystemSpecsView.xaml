@@ -34,11 +34,67 @@
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <StackPanel Grid.Column="0" Margin="0,0,12,0">
-                    <TextBlock Text="{Binding Primary}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="{Binding Primary}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                        <!-- Disk health badge (SMART / WMI status) - empty and collapsed for
+                             rows that don't carry a health concept (memory, GPU). -->
+                        <Border CornerRadius="3" Padding="5,1" Margin="8,0,0,0" VerticalAlignment="Center">
+                            <Border.Style>
+                                <Style TargetType="Border">
+                                    <Setter Property="Background" Value="{DynamicResource SuccessBrush}" />
+                                    <Setter Property="Visibility" Value="Visible" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding HealthText}" Value="">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding IsHealthWarning}" Value="True">
+                                            <Setter Property="Background" Value="{DynamicResource DangerBrush}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Border.Style>
+                            <TextBlock Text="{Binding HealthText}" FontSize="10" FontWeight="SemiBold" Foreground="White">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding HealthText}" Value="">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Border>
+                    </StackPanel>
                     <TextBlock Text="{Binding Secondary}" Style="{StaticResource SecondaryLine}" />
                 </StackPanel>
                 <TextBlock Grid.Column="1" Text="{Binding SizeText}" VerticalAlignment="Center"
                            Foreground="{DynamicResource TextSecondaryBrush}" />
+            </Grid>
+        </DataTemplate>
+
+        <!-- One row in the Volumes list: drive letter + label on the left, free/total on the
+             right, with a thin percent-used bar underneath color-coded by PercentToBrushConverter
+             (the same green/amber/red thresholds used everywhere else in the app). -->
+        <DataTemplate x:Key="VolumeRowTemplate">
+            <Grid Margin="0,0,0,12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <StackPanel Grid.Row="0" Grid.Column="0" Margin="0,0,12,0">
+                    <TextBlock Text="{Binding Primary}" FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding Secondary}" Style="{StaticResource SecondaryLine}" />
+                </StackPanel>
+                <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding SizeText}" VerticalAlignment="Center"
+                           Foreground="{DynamicResource TextSecondaryBrush}" />
+                <ProgressBar Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,6,0,0" Height="6"
+                             Value="{Binding PercentUsed, Mode=OneWay}" Maximum="100"
+                             Foreground="{Binding PercentUsed, Converter={StaticResource PercentToBrushConverter}}" />
             </Grid>
         </DataTemplate>
 
@@ -166,6 +222,27 @@
                                 <Setter Property="Visibility" Value="Collapsed" />
                                 <Style.Triggers>
                                     <DataTrigger Binding="{Binding Disks.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- Volumes: per-drive-letter free space, color-coded so a nearly-full volume - a
+                 common, easy-to-miss slowdown/crash cause - stands out at a glance. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <TextBlock Text="Volumes" Style="{StaticResource CardTitle}" />
+                    <ItemsControl ItemsSource="{Binding Volumes}" ItemTemplate="{StaticResource VolumeRowTemplate}" />
+                    <TextBlock Text="No volumes detected.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding Volumes.Count}" Value="0">
                                         <Setter Property="Visibility" Value="Visible" />
                                     </DataTrigger>
                                 </Style.Triggers>

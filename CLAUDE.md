@@ -282,6 +282,88 @@ rather than silently reshaping the CSV's columns partway through. Values
 are culture-invariant (`CultureInfo.InvariantCulture`) so the CSV parses
 the same regardless of the machine's regional settings.
 
+### Process diagnostics (handles, signature, command line, high-privilege, recently-started)
+
+`ProcessMonitorService` samples a few more fields per process than raw
+CPU/memory, aimed specifically at "what's wrong with this PC" triage:
+**handle count** (`Process.HandleCount`, cheap, read every tick like thread
+count), **command line** (not exposed by `Process` at all — fetched via WMI
+`Win32_Process.CommandLine` and cached per-pid, since a running process's
+command line never changes after launch — same caching shape as the
+existing owner-name cache), and **signature status** ("Signed"/"Unsigned"/
+"Unknown", via `X509Certificate.CreateFromSignedFile`, cached per **file
+path** rather than per-pid since many processes share one executable). The
+signature check is a real, documented limitation: it only sees an embedded
+Authenticode signature, not a catalog signature, so a handful of legitimate
+Windows system binaries that rely on catalog signing will show as
+"Unsigned" — a full WinVerifyTrust check would need native interop this
+app doesn't otherwise take on, so this is a "quick visual flag, not a
+security verdict" tradeoff, the same kind CpuTopologyService documents for
+its native interop. **High-privilege** (`IsHighPrivilege`) just flags the
+three well-known service accounts (SYSTEM/LOCAL SERVICE/NETWORK SERVICE)
+rather than attempting real token/group inspection, and tints those rows in
+`ProcessesView`'s `DataGrid.RowStyle`. **Recently started** is a
+`ProcessesViewModel.RecentlyStartedOnly` toggle layered into the existing
+`ProcessesView.Filter` predicate (5-minute window); since `MergeInto` only
+implicitly re-filters on add/remove, `RefreshAsync` explicitly calls
+`ProcessesView.Refresh()` each tick while the toggle is on so rows still
+age back out of view even when nothing else in the process list changed.
+
+### Storage bottleneck diagnostics (queue length + latency)
+
+`HardwareMonitorService` adds three more `PhysicalDisk` counters alongside
+the existing `% Disk Time`/read/write-bytes ones: `Avg. Disk Queue Length`
+(requests waiting, not just active — a classic "is the disk really the
+bottleneck" signal beyond raw throughput) and `Avg. Disk sec/Read`/
+`Avg. Disk sec/Write` (per-I/O latency, converted from seconds to ms since
+that's the unit anyone diagnosing "is my disk slow" actually thinks in).
+All three are instantaneous gauges like the Memory tab's counters, so they
+get primed the same way. `PerformanceViewModel` derives a `...GaugePercent`
+for each (`DiskQueueLengthGaugePercent`, `DiskReadLatencyGaugePercent`,
+`DiskWriteLatencyGaugePercent`) — these have no natural 0–100 range the way
+a percentage does, so the percent is a rough "how concerning is this
+reading" fill for the `VfdMeter` segmented bar (queue length ≥8 or latency
+≥50ms = full bar), not an exact value; the numeric readout next to it is
+still the real number. Shown as a "Bottleneck diagnostics" `VfdMeter` row
+on the Storage tab, following the same pattern as the Memory tab's
+Available/Committed/Cached breakdown row.
+
+### Disk health + per-volume free space (System Specs tab)
+
+`SystemSpecsService.ReadDisks` now also reports a health badge per
+physical disk: primarily `Win32_DiskDrive.Status` ("OK" vs. anything else),
+cross-checked against the SMART failure-prediction flag from the legacy
+`root\wmi` `MSStorageDriver_FailurePredictStatus` class where available.
+That class is keyed by an `InstanceName` that's a normalized (lowercased,
+spaces→underscores) **prefix** of `Win32_DiskDrive.PNPDeviceID`, not an
+exact match, so matching is a prefix scan (`ReadFailurePredictStatus`
+returns a list, not a dictionary) — and the whole lookup is wrapped to
+degrade to "Unknown"/`Win32_DiskDrive.Status` alone when it fails, since
+NVMe and some AHCI/RAID drivers don't implement it at all (the same
+graceful-degradation shape `SensorMonitorService` uses for its LibreHardwareMonitor
+dependency). `SystemSpecsView`'s `SpecRowTemplate` renders this as a small
+colored badge next to the disk model name (green/OK vs. red/warning),
+reusing the existing green/amber/red visual language rather than adding a
+new one.
+
+A separate **Volumes** card lists per-drive-letter free space via
+`DriveInfo.GetDrives()` (not WMI — it already handles removable/unready
+drives cleanly through `IsReady`), with a thin progress bar per volume
+color-coded by the existing `PercentToBrushConverter` (turns red at ≥85%
+used) — a nearly-full system volume is an easy-to-miss, common slowdown/
+crash cause that the old Storage tab (which only ever showed *aggregate*
+disk activity, not free space) had no way to surface.
+
+### Copy value to clipboard (MeterTile / VfdMeter)
+
+Both shared tile controls (`Views/MeterTile.xaml(.cs)`,
+`Views/VfdMeter.xaml(.cs)`) now carry a right-click "Copy value" context
+menu that puts `"Title: ValueText (SubText)"` (VfdMeter also folds in
+`Unit`) on the clipboard — since the two controls are the shared building
+block for nearly every gauge across Summary/CPU/Memory/Storage/Network/
+Energy & Thermals, this one addition covers pasting any reading into a
+forum post or support ticket app-wide, with no per-tab wiring needed.
+
 ### Notable implementation details
 
 - **CPU clock speed**: not directly exposed by Windows. Computed the same
