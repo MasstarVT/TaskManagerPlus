@@ -45,6 +45,55 @@
                     <TextBlock Text="Task Manager Plus" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center" />
                 </StackPanel>
 
+                <!-- #100: cross-tab search - "find anything mentioning 'nvidia'" across
+                     Processes, Services, Startup, and the System tab's driver/software/USB lists
+                     at once, without hunting through each tab individually. -->
+                <Grid x:Name="SearchBoxGrid" Grid.Column="1" HorizontalAlignment="Center" Width="320">
+                    <TextBox Text="{Binding Search.SearchText, UpdateSourceTrigger=PropertyChanged}"
+                             ToolTip="Search processes, services, startup items, drivers, software, USB devices" Padding="10,6" />
+                    <Popup IsOpen="{Binding Search.HasQuery}" PlacementTarget="{Binding ElementName=SearchBoxGrid}"
+                           Placement="Bottom" StaysOpen="True" AllowsTransparency="True" Width="380">
+                        <Border Background="{DynamicResource BgElevatedBrush}" BorderBrush="{DynamicResource BorderBrush2}"
+                                BorderThickness="1" CornerRadius="8" Padding="4" Margin="0,4,0,0">
+                            <ScrollViewer MaxHeight="360" VerticalScrollBarVisibility="Auto">
+                                <StackPanel>
+                                    <ItemsControl ItemsSource="{Binding Search.Results}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Grid Margin="8,6">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="*" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <Border Grid.Column="0" Background="{DynamicResource AccentMutedBrush}" CornerRadius="4" Padding="6,2" Margin="0,0,8,0" VerticalAlignment="Top">
+                                                        <TextBlock Text="{Binding Category}" FontSize="10" Foreground="{DynamicResource AccentBrush}" />
+                                                    </Border>
+                                                    <StackPanel Grid.Column="1">
+                                                        <TextBlock Text="{Binding Name}" FontSize="12.5" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                                        <TextBlock Text="{Binding Detail}" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextTrimming="CharacterEllipsis" />
+                                                    </StackPanel>
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                    <TextBlock Text="No matches." Margin="8" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding Search.Results.Count}" Value="0">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </StackPanel>
+                            </ScrollViewer>
+                        </Border>
+                    </Popup>
+                </Grid>
+
                 <TextBlock Grid.Column="2" VerticalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}">
                     <TextBlock.Style>
                         <Style TargetType="TextBlock">
@@ -271,6 +320,7 @@
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <StackPanel Grid.Column="0" Orientation="Horizontal">
                     <Border Width="7" Height="7" CornerRadius="3.5" Margin="0,0,7,0" VerticalAlignment="Center" Background="{DynamicResource SuccessBrush}" />
@@ -343,7 +393,25 @@
                     <Button Content="Add marker" FontSize="11.5" Padding="8,4" Command="{Binding Logging.AddMarkerCommand}" />
                 </StackPanel>
 
-                <TextBlock Grid.Column="4" Text="{Binding Performance.Uptime, StringFormat=Uptime {0}}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5" VerticalAlignment="Center" />
+                <!-- #98/#99: pin-to-top compact overlay / second-monitor mini dashboard - see
+                     MainViewModel.ToggleMiniDashboardCommand. -->
+                <Button Grid.Column="4" Command="{Binding ToggleMiniDashboardCommand}" Cursor="Hand"
+                        Margin="0,0,16,0" Padding="10,5" Background="Transparent" BorderThickness="1" BorderBrush="{DynamicResource BorderBrush2}">
+                    <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Text" Value="Mini dashboard" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsMiniDashboardOpen}" Value="True">
+                                        <Setter Property="Text" Value="Close mini dashboard" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </Button>
+
+                <TextBlock Grid.Column="5" Text="{Binding Performance.Uptime, StringFormat=Uptime {0}}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5" VerticalAlignment="Center" />
             </Grid>
         </Border>
     </Grid>

@@ -886,6 +886,137 @@ after construction, since a real reading needs one full tick's elapsed time a on
 wait around for. The app's elevation requirement still applies to this path - launching with the
 flag still triggers the same UAC prompt as a normal launch.
 
+### Round 6: reliability history, per-tab depth across CPU/Storage/Network/Startup, snapshot
+diffing, log tooling, and cross-cutting UX (mini dashboard, search, remote monitoring)
+
+The sixth and, as of this round, final batch of `suggestions.md`'s original backlog - all 20
+remaining items, closing out every category the file originally listed. Same "established pattern,
+graceful degradation" ethos as every prior round; the more interesting tradeoffs are below.
+
+**Reliability History (Stability)**: `EventLogService.Query` now also buckets its already-read
+30-day event list into one Critical/Error count per calendar day (`BuildDailyCounts`), zero-filled
+for quiet days rather than only showing spikes - no second event-log query, just a different view
+of the same `events` list `RecentEvents`/`WasLastShutdownUnexpected`/etc. already derive from.
+Rendered as a `ColumnSeries<double>` bar chart, the one new LiveChartsCore series type this app
+uses (every prior chart is `LineSeries`/`ScatterSeries`) - a discrete daily count reads better as
+bars than a connected line.
+
+**CPU throttle-reason breakdown + C-state residency**: `CpuViewModel.ThrottleReason` is a pure
+readout, not a new signal - it collapses the existing `IsThrottling`/`IsPowerLimited` heuristics
+(Rounds 4/5) into one "Thermal"/"Power"/"None" string, since LibreHardwareMonitorLib still exposes
+no CPU limit-reason API to build a real third category from. C-state residency
+(`% Idle|C1|C2|C3 Time` on `"Processor Information"\_Total`) is a genuinely new `HardwareMonitorService`
+counter group, each tier constructed independently via a new `TryCreateCounter` helper since not
+every CPU/Windows generation reports all three tiers - `HardwareSnapshot.CStatesAvailable` lets the
+CPU tab hide the whole section rather than showing an all-zero row when none are exposed.
+
+**Storage Spaces/RAID rollup + HDD fragmentation (Storage)**: `StorageSpacesService` queries
+`MSFT_VirtualDisk`/`MSFT_StoragePoolToVirtualDisk` in the same `root\Microsoft\Windows\Storage`
+namespace the SSD-wear and page-file-location features already use - empty (card hidden) on the
+large majority of systems that never configure Storage Spaces, the same "hidden when not
+applicable" pattern the Battery section established. `DiskFragmentationService` reuses the
+MSFT_Volume→MSFT_Partition→MSFT_Disk→MSFT_PhysicalDisk media-type associator chain
+`SystemSpecsService.ReadPageFileLocation` introduced, generalized to any drive letter, to show the
+on-demand "Analyze" button only for actual HDD volumes (SSDs never appear in the list at all -
+fragmentation isn't a meaningful concept there). Analysis shells to `defrag.exe /A /V` (analyze
+only, never moves data) and regex-extracts the "Total/File fragmentation: N%" lines from its
+verbose report - the same "known Windows tool, not raw NTFS-bitmap interop" tradeoff
+ScheduledTaskService/ServiceControlService's recovery-actions reader already take.
+
+**Per-process network usage proxy (Network)**: `NetworkConnectionsService.SummarizeByProcess`
+groups the same TCP connection list `NetworkConnectionsService.Sample()` already reads for the
+"Active connections" grid by owning process, sorted by connection count. This is deliberately
+*not* presented as bandwidth - true per-process byte attribution needs either the undocumented NSI
+API Task Manager's own network column is built on, or enabling per-connection ETW stats
+system-wide, both a materially higher-risk interop tier than anything else in this app. A
+connection count is an honest, useful proxy instead (the process holding the most simultaneous
+connections is very often the one saturating the link) and is documented as such in both the code
+and the UI, rather than a byte-rate figure this app can't actually measure.
+
+**Battery drain rate (Energy & Thermals)**: pulled out of the generic Battery sensor tile list
+into its own headline `BatteryDrainRateW`/`BatteryIsCharging` readout, the same "find the one
+figure that matters" treatment `CpuPackageTempC`/`TotalPackagePowerW` already get.
+LibreHardwareMonitorLib doesn't standardize battery Power-sensor naming any more than it
+standardizes CPU sensor naming, so this tries name hints ("discharge rate", "charge rate") first
+and falls back to the sign of any nonzero Power reading (negative conventionally means charging)
+when no name match is found.
+
+**Boot time breakdown + measured startup delay + boot history trend (Startup)**: `BootPerformanceService`
+reads the Microsoft-Windows-Diagnostics-Performance/Operational log's event ID 100 ("Windows has
+started up") - but deliberately does *not* hardcode field names like "BootTime"/"MainPathBootTime",
+since that event's exact schema is not a documented, versioned Microsoft contract this app could
+rely on matching correctly across Windows builds. Instead it adaptively scans the event's rendered
+XML for any `<Data Name="...">` field whose name mentions both "Boot" and "Time" and whose value is
+a plausible millisecond duration, showing whatever it finds as-is (split into readable words) with
+the largest value standing in for "total boot time" - the same "adaptive, degrade gracefully rather
+than guess a wrong exact contract" tradeoff `EventLogService`'s bugcheck-code extraction already
+established for a different event. Boot history is a small self-recorded JSON log
+(`%AppData%\TaskManagerPlus\boot-history.json`, same persistence shape as `ThemeService`) appended
+to once per session, de-duplicated by boot timestamp. Startup delay is a genuinely different,
+independent measurement from the boot-breakdown event: `StartupDelayService` matches each startup
+item's executable name against `Process.GetProcesses()` and computes `Process.StartTime` minus the
+approximate boot time (`Environment.TickCount64`, same approximation `EventLogService` uses) - only
+works for an item whose process is still running, and takes the smallest plausible delay among
+same-named matches so a later user-relaunch of the same app doesn't get mistaken for its
+startup-triggered launch.
+
+**BIOS age hint (System Specs)**: `Win32_BIOS.ReleaseDate` age in days, appended to the existing
+BIOS version line and warning-colored past 3 years. Explicitly framed as "worth a manual check on
+the OEM support page," not a verified "update available" flag - Windows has no cross-vendor BIOS
+update-check API (that's OEM-tool territory, e.g. Dell Command | Update), the same honesty
+tradeoff `ReadOutdatedDrivers`' date-based filtering already takes for third-party drivers.
+
+**Baseline snapshot / "what changed" diff (Summary)**: one mechanism serves both original
+suggestions, since a saved baseline snapshot *is* the comparison point for a later diff.
+`SnapshotService.Capture()` reads its own independent data (Uninstall registry keys,
+`ServiceController.GetServices()`, a fresh `StartupManagerService` instance) rather than reusing
+the Processes/Services/Startup tabs' live collections, so a capture isn't affected by whatever
+filter/sort state those tabs currently have applied. Saved as plain JSON via `SaveFileDialog`/
+`OpenFileDialog`; `Diff()` is a simple case-insensitive set difference per category (added/removed),
+shown as a green/red line list on the Summary tab.
+
+**Log file viewer/replay + auto-start rolling buffer + HTML report (Logging)**: `LogReplayService`
+parses a previously-written CSV by header *name* (Timestamp/CPU Total (%)/RAM (%)/Disk Active (%))
+rather than fixed column indices, since this app's own log column set has changed release to
+release (Rounds 2-5 each added columns) and an older log file won't have every column a current
+one does - reuses the same quoted-CSV line parser `ScheduledTaskService` already has for schtasks'
+output, since this app's own `LoggingService.Escape` uses the identical quoting rule.
+`LoggingViewModel` was refactored so `BuildHeaders`/`BuildRow` take an explicit column-snapshot
+parameter instead of reading `_coreCountAtStart`/`_sensorColumnsAtStart` fields directly - needed
+so the new auto-start rolling buffer (`AutoStartRollingBufferEnabled`, persisted like every other
+settings toggle) can maintain its *own*, independent column snapshot and fixed-size in-memory
+`Queue<string>` (last N minutes, one row/sec) without interfering with a concurrent manual logging
+session; `LoggingViewModel.Tick` runs one or the other, never both, since manual logging always
+takes precedence. The rolling buffer flushes to one fixed file every 10 ticks (not every tick) - a
+crash mid-session still leaves a file at most ~10 seconds stale, without rewriting a small CSV to
+disk every single second for a background, always-on feature. The HTML report
+(`SummaryViewModel.GenerateHtmlReportCommand`) reuses the existing Markdown report's exact data
+sources but renders self-contained HTML with hand-built inline-SVG `<polyline>` sparklines for the
+CPU/RAM/Disk history buffers already kept for the live charts - deliberately no charting library
+dependency for three 60-point lines, and no external references at all so the file stays a single
+shareable artifact.
+
+**Mini dashboard, cross-tab search, remote monitoring (UX)**: the two "detach a few tiles"
+suggestions (pin-to-top overlay, second-monitor mini dashboard) collapsed into one feature -
+`MiniDashboardWindow`, a small borderless always-on-top window (same `WindowStyle="None"`/
+`AllowsTransparency`/`Topmost` shape `ToastWindow` already established) that binds directly to the
+existing `MainViewModel` instance, so it's a second *view* over already-ticking data, never a
+second poller; `MainViewModel.ToggleMiniDashboardCommand` opens/closes a single tracked instance.
+`GlobalSearchViewModel` is a pure live filter over Processes/Services/Startup/System-Specs'
+already-loaded collections (no new sampling), shown as a popup under a search box in the window
+header via the `{Binding DataContext.X, RelativeSource={RelativeSource AncestorType=Window}}`
+indirection the Settings drawer's cross-view-model bindings already use (SettingsPanel's own
+DataContext is `ThemeViewModel`, not `MainViewModel`, so reaching sibling view-models needs the
+same trick). `RemoteMonitorService` wraps `HttpListener` (no new package - it's in the BCL) serving
+one self-refreshing HTML page plus a `/metrics.json` endpoint, built from a `Func<RemoteMetricsSnapshot>`
+callback that reads already-polled `Performance`/`EnergyThermals` state - deliberately off by
+default and opt-in via the Settings drawer, with an explicit "unauthenticated, LAN-visible" warning
+in the UI, since `HttpListener` has no built-in auth and this app takes no dependency that would
+add one; the snapshot it serves is a small, fixed, read-only subset (no process list, no file
+paths, no control actions) by design. Binds `http://+:port/` (all local interfaces) - this app's
+existing elevation requirement is what makes that binding succeed without a separate `netsh http
+add urlacl` reservation.
+
 ### Notable implementation details
 
 - **CPU clock speed**: not directly exposed by Windows. Computed the same

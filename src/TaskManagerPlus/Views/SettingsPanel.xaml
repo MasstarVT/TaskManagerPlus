@@ -209,7 +209,19 @@
                 <CheckBox Content="Auto-start rolling log buffer on launch"
                           IsChecked="{Binding DataContext.Logging.AutoStartRollingBufferEnabled, RelativeSource={RelativeSource AncestorType=Window}}" />
                 <TextBlock Text="Keeps the last 15 minutes of every metric written to a fixed file, even if you never click Start Logging."
-                           Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,4,0,0" />
+                           Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,4,0,22" />
+
+                <TextBlock Text="REMOTE MONITORING" FontSize="10.5" FontWeight="Bold" Foreground="{DynamicResource TextTertiaryBrush}"
+                           Margin="0,0,0,14" />
+                <!-- #101: read-only metrics endpoint for a second device on the LAN - see
+                     RemoteMonitorService's remarks. Off by default; the warning below is
+                     deliberately blunt since HttpListener has no built-in authentication. -->
+                <CheckBox Content="Enable remote monitoring (LAN)"
+                          IsChecked="{Binding DataContext.IsRemoteMonitorEnabled, RelativeSource={RelativeSource AncestorType=Window}}" />
+                <TextBlock Text="Unauthenticated - anyone on your network can view (read-only) CPU/RAM/Disk/Network/temp while this is on. Only enable on a trusted network."
+                           Style="{StaticResource SubStat}" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" Margin="0,4,0,8" />
+                <TextBlock Text="{Binding DataContext.RemoteMonitorStatusText, RelativeSource={RelativeSource AncestorType=Window}}"
+                           Style="{StaticResource SubStat}" TextWrapping="Wrap" />
 
             </StackPanel>
         </ScrollViewer>

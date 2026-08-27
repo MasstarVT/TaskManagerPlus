@@ -2,6 +2,8 @@ using System.Security.Principal;
 using System.Windows;
 using System.Windows.Media;
 using TaskManagerPlus.Common;
+using TaskManagerPlus.Models;
+using TaskManagerPlus.Services;
 
 namespace TaskManagerPlus.ViewModels;
 
@@ -30,6 +32,42 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     public LoggingViewModel Logging { get; }
 
+    // #100: cross-tab search - see GlobalSearchViewModel's remarks.
+    public GlobalSearchViewModel Search { get; }
+
+    // #101: remote/read-only monitoring endpoint - see RemoteMonitorService's remarks. Off by
+    // default and opt-in via the Settings drawer; the sample delegate reads already-polled state
+    // off Performance/EnergyThermals rather than adding a second sampler.
+    private readonly RemoteMonitorSettings _remoteMonitorSettings = RemoteMonitorSettingsService.Load();
+    public RemoteMonitorService RemoteMonitor { get; }
+    public RelayCommand ToggleRemoteMonitorCommand { get; }
+    public int RemoteMonitorPort => _remoteMonitorSettings.Port;
+
+    public bool IsRemoteMonitorEnabled
+    {
+        get => _remoteMonitorSettings.Enabled;
+        set
+        {
+            if (_remoteMonitorSettings.Enabled == value) return;
+            _remoteMonitorSettings.Enabled = value;
+            RemoteMonitorSettingsService.Save(_remoteMonitorSettings);
+            OnPropertyChanged();
+            ApplyRemoteMonitorState();
+        }
+    }
+
+    public string RemoteMonitorStatusText
+    {
+        get
+        {
+            if (!RemoteMonitor.IsRunning) return "Not running.";
+            var addresses = RemoteMonitorService.LocalIPv4Addresses();
+            return addresses.Count == 0
+                ? $"Running on port {RemoteMonitor.Port}, but no LAN address was found."
+                : $"Open one of these from another device: {string.Join(", ", addresses.Select(a => $"http://{a}:{RemoteMonitor.Port}/"))}";
+        }
+    }
+
     public bool IsElevated { get; } = new WindowsPrincipal(WindowsIdentity.GetCurrent())
         .IsInRole(WindowsBuiltInRole.Administrator);
 
@@ -41,6 +79,13 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     }
 
     public RelayCommand ToggleSettingsCommand { get; }
+
+    // #98/#99: pin-to-top compact overlay / second-monitor mini dashboard - one window instance,
+    // toggled open/closed, rather than two separate features (a "pinned" main window and a
+    // "detached" second window are the same small always-on-top view in practice).
+    private Views.MiniDashboardWindow? _miniDashboard;
+    public bool IsMiniDashboardOpen => _miniDashboard is not null;
+    public RelayCommand ToggleMiniDashboardCommand { get; }
 
     public MainViewModel()
     {
@@ -54,8 +99,14 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Network = new NetworkViewModel(Performance);
         Logging = new LoggingViewModel(Performance, EnergyThermals);
         Summary = new SummaryViewModel(Performance, Processes, Services, EnergyThermals, SystemSpecs, Network, Stability);
+        Search = new GlobalSearchViewModel(Processes, Services, Startup, SystemSpecs);
+
+        RemoteMonitor = new RemoteMonitorService(BuildRemoteMetricsSnapshot);
+        ToggleRemoteMonitorCommand = new RelayCommand(_ => IsRemoteMonitorEnabled = !IsRemoteMonitorEnabled);
+        ApplyRemoteMonitorState();
 
         ToggleSettingsCommand = new RelayCommand(_ => IsSettingsOpen = !IsSettingsOpen);
+        ToggleMiniDashboardCommand = new RelayCommand(_ => ToggleMiniDashboard());
 
         ApplyThemeToPerformance();
         Theme.ColorsChanged += ApplyThemeToPerformance;
@@ -126,6 +177,58 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Logging.ApplyAxisTheme(TextOf("TextSecondaryBrush"), TextOf("BorderBrush2"));
     }
 
+    private RemoteMetricsSnapshot BuildRemoteMetricsSnapshot() => new()
+    {
+        MachineName = Environment.MachineName,
+        TimestampUtc = DateTime.UtcNow,
+        CpuPercent = Performance.CpuCurrentPercent,
+        HasCpuTemp = EnergyThermals.CpuPackageTempC.HasValue,
+        CpuTempC = EnergyThermals.CpuPackageTempC ?? 0,
+        RamPercent = Performance.RamPercent,
+        DiskPercent = Performance.DiskPercent,
+        NetworkReceiveBps = Performance.NetworkReceiveBps,
+        NetworkSendBps = Performance.NetworkSendBps,
+        Uptime = Performance.Uptime,
+    };
+
+    private void ApplyRemoteMonitorState()
+    {
+        if (IsRemoteMonitorEnabled)
+        {
+            var (success, error) = RemoteMonitor.Start(_remoteMonitorSettings.Port);
+            if (!success)
+            {
+                // Couldn't bind the port (already in use, blocked, ...) - don't silently claim
+                // it's running; leave the toggle on (so the user sees it's supposed to be) but
+                // the status text will show "Not running" since RemoteMonitor.IsRunning is false.
+                System.Diagnostics.Debug.WriteLine($"RemoteMonitorService failed to start: {error}");
+            }
+        }
+        else
+        {
+            RemoteMonitor.Stop();
+        }
+        OnPropertyChanged(nameof(RemoteMonitorStatusText));
+    }
+
+    private void ToggleMiniDashboard()
+    {
+        if (_miniDashboard is not null)
+        {
+            _miniDashboard.Close();
+            return;
+        }
+
+        _miniDashboard = new Views.MiniDashboardWindow(this);
+        _miniDashboard.Closed += (_, _) =>
+        {
+            _miniDashboard = null;
+            OnPropertyChanged(nameof(IsMiniDashboardOpen));
+        };
+        _miniDashboard.Show();
+        OnPropertyChanged(nameof(IsMiniDashboardOpen));
+    }
+
     public void Dispose()
     {
         Theme.ColorsChanged -= ApplyThemeToPerformance;
@@ -142,5 +245,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Network.Dispose();
         Logging.Dispose();
         Summary.Dispose();
+        _miniDashboard?.Close();
+        RemoteMonitor.Dispose();
     }
 }
