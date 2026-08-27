@@ -27,6 +27,7 @@ public sealed class SystemSpecsService
         var (cpuName, physicalCores, logicalProcessors, maxClockGhz) = ReadCpu();
         var memoryModules = ReadMemoryModules();
         long ramTotal = memoryModules.Sum(m => m.CapacityBytes);
+        var totalMemorySlots = ReadTotalMemorySlots();
 
         return new SystemSpecs
         {
@@ -52,6 +53,7 @@ public sealed class SystemSpecsService
 
             RamTotalBytes = ramTotal,
             MemoryModules = memoryModules,
+            TotalMemorySlots = totalMemorySlots,
 
             Gpus = ReadGpus(),
             Disks = ReadDisks(),
@@ -183,7 +185,7 @@ public sealed class SystemSpecsService
         try
         {
             using var searcher = new ManagementObjectSearcher(
-                "SELECT DeviceLocator, Capacity, Speed, Manufacturer, SMBIOSMemoryType FROM Win32_PhysicalMemory");
+                "SELECT DeviceLocator, Capacity, Speed, ConfiguredClockSpeed, Manufacturer, SMBIOSMemoryType FROM Win32_PhysicalMemory");
             foreach (ManagementObject mo in searcher.Get())
             {
                 long capacity = 0;
@@ -191,6 +193,11 @@ public sealed class SystemSpecsService
 
                 double speed = 0;
                 try { speed = System.Convert.ToDouble(mo["Speed"] ?? 0.0); } catch { /* leave 0 */ }
+
+                // #19: the speed Windows actually detected the module running at - lower than the
+                // rated Speed above means XMP/DOCP isn't enabled.
+                double configuredSpeed = 0;
+                try { configuredSpeed = System.Convert.ToDouble(mo["ConfiguredClockSpeed"] ?? 0.0); } catch { /* leave 0 */ }
 
                 int smBiosType = 0;
                 try { smBiosType = System.Convert.ToInt32(mo["SMBIOSMemoryType"] ?? 0); } catch { /* leave 0 */ }
@@ -200,6 +207,7 @@ public sealed class SystemSpecsService
                     Location = (mo["DeviceLocator"] as string ?? "RAM").Trim(),
                     CapacityBytes = capacity,
                     SpeedMhz = speed,
+                    ConfiguredSpeedMhz = configuredSpeed,
                     Manufacturer = (mo["Manufacturer"] as string ?? string.Empty).Trim(),
                     MemoryType = DdrGenerationName(smBiosType),
                 });
@@ -210,6 +218,24 @@ public sealed class SystemSpecsService
             // return whatever was gathered before the failure
         }
         return modules.OrderBy(m => m.Location, StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    /// <summary>Total physical RAM slots on the motherboard (#19), compared against the populated-
+    /// module count above to show "N of M slots populated" - a quick, otherwise invisible signal
+    /// that there's headroom to add more RAM without an upgrade.</summary>
+    private static int? ReadTotalMemorySlots()
+    {
+        try
+        {
+            using var searcher = new ManagementObjectSearcher("SELECT MemoryDevices FROM Win32_PhysicalMemoryArray");
+            foreach (ManagementObject mo in searcher.Get())
+                return System.Convert.ToInt32(mo["MemoryDevices"] ?? 0);
+        }
+        catch
+        {
+            // Class unavailable on this system - "N modules installed" alone, no slot count.
+        }
+        return null;
     }
 
     // SMBIOSMemoryType codes from the SMBIOS spec (DMTF), limited to the generations still in use.

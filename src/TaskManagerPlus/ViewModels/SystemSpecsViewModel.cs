@@ -144,25 +144,32 @@ public sealed class SystemSpecsViewModel : ObservableObject
         CpuDetails = $"{specs.CpuPhysicalCores} cores, {specs.CpuLogicalProcessors} logical processors  •  Max speed {specs.CpuMaxClockGhz:0.00} GHz";
 
         RamTotal = Formatting.FormatBytes(specs.RamTotalBytes);
-        RamDetails = specs.MemoryModules.Count switch
-        {
-            0 => "No modules detected",
-            1 => "1 module installed",
-            var n => $"{n} modules installed",
-        };
+        // #19: "N of M slots populated" when the slot count is known - a quick, otherwise
+        // invisible signal that there's room to add more RAM without an upgrade.
+        RamDetails = specs.TotalMemorySlots is { } slots && slots > 0
+            ? $"{specs.MemoryModules.Count} of {slots} slots populated"
+            : specs.MemoryModules.Count switch
+            {
+                0 => "No modules detected",
+                1 => "1 module installed",
+                var n => $"{n} modules installed",
+            };
 
         MemoryModules.Clear();
         foreach (var m in specs.MemoryModules)
         {
+            // #19: flag when the module is running below its own rated speed (XMP/DOCP not
+            // enabled) - a common, otherwise invisible "why is my PC slower than it should be" cause.
+            string? speedText = m.SpeedMhz > 0
+                ? (m.ConfiguredSpeedMhz > 0 && m.ConfiguredSpeedMhz < m.SpeedMhz
+                    ? $"{m.ConfiguredSpeedMhz:0} MHz running (rated {m.SpeedMhz:0})"
+                    : $"{m.SpeedMhz:0} MHz")
+                : null;
+
             MemoryModules.Add(new SpecRow
             {
                 Primary = m.Location,
-                Secondary = string.Join(" ", new[]
-                {
-                    m.MemoryType,
-                    m.SpeedMhz > 0 ? $"{m.SpeedMhz:0} MHz" : null,
-                    m.Manufacturer,
-                }.Where(s => !string.IsNullOrWhiteSpace(s))),
+                Secondary = string.Join(" ", new[] { m.MemoryType, speedText, m.Manufacturer }.Where(s => !string.IsNullOrWhiteSpace(s))),
                 SizeText = Formatting.FormatBytes(m.CapacityBytes),
             });
         }

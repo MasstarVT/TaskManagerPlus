@@ -145,6 +145,7 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
             if (latestByPid.TryGetValue(existing.Pid, out var fresh))
             {
                 existing.CpuPercent = fresh.CpuPercent;
+                existing.CpuPercent10sAvg = fresh.CpuPercent10sAvg;
                 existing.MemoryBytes = fresh.MemoryBytes;
                 existing.DiskBytesPerSec = fresh.DiskBytesPerSec;
                 existing.Status = fresh.Status;

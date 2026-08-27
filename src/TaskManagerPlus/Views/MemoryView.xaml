@@ -77,6 +77,13 @@
                                 AccentBrush="{Binding Performance.PageFilePercent, Converter={StaticResource PercentToBrushConverter}}" />
             </UniformGrid>
 
+            <!-- #15: Windows has no macOS-style "compressed memory" stat surfaced separately -
+                 the Committed % above (Memory\% Committed Bytes In Use) is Windows' own
+                 equivalent memory-pressure figure, and already folds compression in rather than
+                 needing a second number. -->
+            <TextBlock Text="Committed % above also reflects Windows' memory-compression pressure — there's no separate 'compressed memory' stat on Windows the way there is on macOS."
+                       Style="{StaticResource SubStat}" TextWrapping="Wrap" Opacity="0.7" Margin="0,-8,0,16" />
+
             <!-- Diagnostics: standby (reclaimable) list (#22, explains "why does Windows show
                  low free RAM when nothing is running" - this memory looks used but is instantly
                  reclaimable), kernel pool usage (#24, a slow sustained climb usually means a

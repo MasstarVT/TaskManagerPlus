@@ -152,6 +152,30 @@
                     </StackPanel>
                 </Border>
 
+                <!-- #11: "what's actually been eating CPU right now" - a rolling ~10s average,
+                     steadier than the instantaneous reading above for a bursty process. -->
+                <Border Style="{StaticResource CardStyle}">
+                    <StackPanel>
+                        <TextBlock Text="Top CPU (10s avg)" Style="{StaticResource CardTitle}" />
+                        <ItemsControl ItemsSource="{Binding TopProcesses10sAvg}" MaxHeight="150">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Margin="0,0,0,8">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="{Binding Name}" FontSize="12.5" TextTrimming="CharacterEllipsis" Margin="0,0,8,0" />
+                                        <TextBlock Grid.Column="1" Text="{Binding CpuPercent10sAvg, StringFormat={}{0:0.0}%}"
+                                                   FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center"
+                                                   Foreground="{Binding CpuPercent10sAvg, Converter={StaticResource PercentToBrushConverter}}" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </Border>
+
                 <views:VfdMeter Title="Disk" Percent="{Binding Performance.DiskPercent}"
                                 ValueText="{Binding Performance.DiskPercent, StringFormat={}{0:0.0}}" Unit="%"
                                 SubText="Active time" AccentBrush="{Binding Performance.DiskColor, Converter={StaticResource ColorToBrushConverter}}"

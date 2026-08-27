@@ -17,6 +17,12 @@ public sealed class ProcessRow : ObservableObject
     private double _cpuPercent;
     public double CpuPercent { get => _cpuPercent; set => SetProperty(ref _cpuPercent, value); }
 
+    /// <summary>Rolling ~10-sample average of CpuPercent (#11) - "what's actually been eating
+    /// CPU over the last several seconds", steadier than the instantaneous per-tick reading a
+    /// bursty process can otherwise hide behind. See ProcessMonitorService.ComputeCpuAverage.</summary>
+    private double _cpuPercent10sAvg;
+    public double CpuPercent10sAvg { get => _cpuPercent10sAvg; set => SetProperty(ref _cpuPercent10sAvg, value); }
+
     private long _memoryBytes;
     public long MemoryBytes
     {

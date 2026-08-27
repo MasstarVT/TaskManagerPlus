@@ -29,6 +29,8 @@ public sealed class ProcessMonitorService : IDisposable
     private readonly Dictionary<int, CpuSample> _lastSamples = new();
     // #21: rolling per-pid working-set history for the leak detector - see ComputeLeakSuspect.
     private readonly Dictionary<int, Queue<long>> _memoryHistory = new();
+    // #11: rolling ~10s CPU% window per-pid - see ComputeCpuAverage.
+    private readonly Dictionary<int, Queue<double>> _cpuHistory = new();
     private readonly Dictionary<int, string> _ownerCache = new();
     private readonly Dictionary<int, string?> _commandLineCache = new();
     // Parent process ID never changes after launch, same caching shape as command line (#52).
@@ -118,11 +120,13 @@ public sealed class ProcessMonitorService : IDisposable
 
                 string owner = GetOwnerCached(pid);
 
+                double cpuPercentClamped = Math.Round(Math.Min(cpuPercent, 100.0 * _logicalProcessors), 1);
+
                 rows.Add(new ProcessRow
                 {
                     Pid = pid,
                     Name = SafeName(proc),
-                    CpuPercent = Math.Round(Math.Min(cpuPercent, 100.0 * _logicalProcessors), 1),
+                    CpuPercent = cpuPercentClamped,
                     MemoryBytes = memoryBytes,
                     DiskBytesPerSec = Math.Round(diskBytesPerSec, 0),
                     Status = status,
@@ -137,6 +141,7 @@ public sealed class ProcessMonitorService : IDisposable
                     ParentPid = GetParentPidCached(pid),
                     IsLeakSuspect = ComputeLeakSuspect(pid, memoryBytes),
                     GpuPercent = gpuUsageByPid.TryGetValue(pid, out var gpu) ? Math.Round(Math.Min(gpu, 100.0), 1) : 0,
+                    CpuPercent10sAvg = ComputeCpuAverage(pid, cpuPercentClamped),
                 });
             }
             catch (Exception)
@@ -169,9 +174,28 @@ public sealed class ProcessMonitorService : IDisposable
         PruneStaleEntries(_commandLineCache, seenPids);
         PruneStaleEntries(_parentPidCache, seenPids);
         PruneStaleEntries(_memoryHistory, seenPids);
+        PruneStaleEntries(_cpuHistory, seenPids);
 
         _lastGlobalSampleUtc = now;
         return rows;
+    }
+
+    private const int CpuHistoryWindow = 10; // ~10s of samples at the ~1s poll tick
+
+    /// <summary>Rolling ~10s average CPU% per process (#11) - "what's actually been eating CPU
+    /// over the last several seconds", steadier than a single instantaneous tick that can catch a
+    /// bursty process mid-spike or mid-idle.</summary>
+    private double ComputeCpuAverage(int pid, double cpuPercent)
+    {
+        if (!_cpuHistory.TryGetValue(pid, out var history))
+        {
+            history = new Queue<double>();
+            _cpuHistory[pid] = history;
+        }
+        history.Enqueue(cpuPercent);
+        while (history.Count > CpuHistoryWindow) history.Dequeue();
+
+        return Math.Round(history.Average(), 1);
     }
 
     // #21: a rolling window's worth of samples (at the ~1s poll tick, ~2 minutes) - long enough

@@ -28,6 +28,11 @@ public sealed class SummaryViewModel : IDisposable
     /// <summary>All processes, live-sorted by CPU% descending, for the "Top processes" card.</summary>
     public ICollectionView TopProcesses { get; }
 
+    /// <summary>All processes, live-sorted by the rolling ~10s CPU average descending (#11) -
+    /// "what's actually been eating CPU over the last several seconds", a steadier answer than
+    /// TopProcesses' instantaneous per-tick reading for a bursty process.</summary>
+    public ICollectionView TopProcesses10sAvg { get; }
+
     public ObservableCollection<HealthIssue> HealthIssues { get; } = new();
 
     public SummaryViewModel(PerformanceViewModel performance, ProcessesViewModel processes,
@@ -49,6 +54,15 @@ public sealed class SummaryViewModel : IDisposable
         }
         view.SortDescriptions.Add(new SortDescription(nameof(ProcessRow.CpuPercent), ListSortDirection.Descending));
         TopProcesses = view;
+
+        var view10s = new CollectionViewSource { Source = processes.Processes }.View;
+        if (view10s is ICollectionViewLiveShaping liveShaping10s && liveShaping10s.CanChangeLiveSorting)
+        {
+            liveShaping10s.LiveSortingProperties.Add(nameof(ProcessRow.CpuPercent10sAvg));
+            liveShaping10s.IsLiveSorting = true;
+        }
+        view10s.SortDescriptions.Add(new SortDescription(nameof(ProcessRow.CpuPercent10sAvg), ListSortDirection.Descending));
+        TopProcesses10sAvg = view10s;
 
         _healthTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(2) };
         _healthTimer.Tick += (_, _) => RefreshHealthIssues();
