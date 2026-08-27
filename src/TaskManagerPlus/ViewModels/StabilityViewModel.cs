@@ -41,6 +41,13 @@ public sealed class StabilityViewModel : ObservableObject
     private string _timeSinceLastCrashText = "No crash found in the last 30 days";
     public string TimeSinceLastCrashText { get => _timeSinceLastCrashText; private set => SetProperty(ref _timeSinceLastCrashText, value); }
 
+    // Round 8 #40: low-memory resource-exhaustion events - see EventLogService.ReadLowMemoryEvents.
+    private int _lowMemoryEventCount;
+    public int LowMemoryEventCount { get => _lowMemoryEventCount; private set => SetProperty(ref _lowMemoryEventCount, value); }
+
+    private string _lastLowMemoryEventText = "None in the last 30 days";
+    public string LastLowMemoryEventText { get => _lastLowMemoryEventText; private set => SetProperty(ref _lastLowMemoryEventText, value); }
+
     public AsyncRelayCommand RefreshCommand { get; }
 
     // #1: Reliability History - daily Critical/Error counts over the lookback window, the same
@@ -138,6 +145,10 @@ public sealed class StabilityViewModel : ObservableObject
         TimeSinceLastCrashText = snapshot.LastCrashTime is { } crash
             ? FormatSince(DateTime.Now - crash)
             : "No crash found in the last 30 days";
+
+        LowMemoryEventCount = snapshot.LowMemoryEventCount;
+        LastLowMemoryEventText = snapshot.LastLowMemoryEvent is { } lowMem
+            ? $"Last: {lowMem:g}" : "None in the last 30 days";
 
         DailyEventCounts.Clear();
         foreach (var d in snapshot.DailyCounts) DailyEventCounts.Add(d.Count);

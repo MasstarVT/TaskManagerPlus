@@ -2,7 +2,6 @@ using System.Diagnostics;
 using System.IO;
 using System.Management;
 using System.Runtime.InteropServices;
-using System.Security.Cryptography.X509Certificates;
 using System.Text.RegularExpressions;
 using TaskManagerPlus.Models;
 
@@ -39,10 +38,6 @@ public sealed class ProcessMonitorService : IDisposable
     private readonly Dictionary<int, string?> _commandLineCache = new();
     // Parent process ID never changes after launch, same caching shape as command line (#52).
     private readonly Dictionary<int, int> _parentPidCache = new();
-    // Keyed by file path, not pid: many processes share the same executable (svchost.exe,
-    // browser renderer processes, ...), and a signature check reads the file from disk, so
-    // caching per-path avoids repeating that I/O for every process using the same binary.
-    private readonly Dictionary<string, string> _signatureCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly int _logicalProcessors = Environment.ProcessorCount;
     private DateTime _lastGlobalSampleUtc = DateTime.UtcNow;
 
@@ -108,7 +103,25 @@ public sealed class ProcessMonitorService : IDisposable
                 int handleCount = 0;
                 DateTime? startTime = null;
                 string? filePath = null;
+                // Round 8 #38: working set (already sampled above) vs. private bytes vs. virtual
+                // size, side by side - three genuinely distinct Process figures, all already
+                // exposed by .NET with no extra interop. Modern Windows doesn't expose a fourth,
+                // truly separate "commit charge" for a process beyond private bytes (Task
+                // Manager's own "Commit size" column reads the same underlying figure), so virtual
+                // size is shown as the third column instead of a redundant duplicate of private
+                // bytes.
+                long privateBytes = 0;
+                long virtualBytes = 0;
+                // Round 8 #39: per-process kernel pool usage - .NET's Process class already
+                // exposes these (PROCESS_MEMORY_COUNTERS' QuotaNonPagedPoolUsage/
+                // QuotaPagedPoolUsage under the hood), no native interop needed.
+                long nonpagedPoolBytes = 0;
+                long pagedPoolBytes = 0;
                 try { memoryBytes = proc.WorkingSet64; } catch { /* ignore */ }
+                try { privateBytes = proc.PrivateMemorySize64; } catch { /* ignore */ }
+                try { virtualBytes = proc.VirtualMemorySize64; } catch { /* ignore */ }
+                try { nonpagedPoolBytes = proc.NonpagedSystemMemorySize64; } catch { /* ignore */ }
+                try { pagedPoolBytes = proc.PagedSystemMemorySize64; } catch { /* ignore */ }
                 try { threadCount = proc.Threads.Count; } catch { /* ignore */ }
                 try { handleCount = proc.HandleCount; } catch { /* ignore */ }
                 try { startTime = proc.StartTime; } catch { /* ignore, protected process */ }
@@ -154,6 +167,10 @@ public sealed class ProcessMonitorService : IDisposable
                     Name = SafeName(proc),
                     CpuPercent = cpuPercentClamped,
                     MemoryBytes = memoryBytes,
+                    PrivateBytes = privateBytes,
+                    VirtualBytes = virtualBytes,
+                    NonpagedPoolBytes = nonpagedPoolBytes,
+                    PagedPoolBytes = pagedPoolBytes,
                     DiskBytesPerSec = Math.Round(diskBytesPerSec, 0),
                     Status = status,
                     NotRespondingSeconds = notRespondingSeconds,
@@ -163,7 +180,7 @@ public sealed class ProcessMonitorService : IDisposable
                     StartTime = startTime,
                     FilePath = filePath,
                     CommandLine = GetCommandLineCached(pid),
-                    SignatureStatus = GetSignatureStatusCached(filePath),
+                    SignatureStatus = SignatureCheckService.GetStatus(filePath),
                     IsHighPrivilege = HighPrivilegeAccounts.Contains(owner, StringComparer.OrdinalIgnoreCase),
                     ParentPid = GetParentPidCached(pid),
                     IsLeakSuspect = ComputeLeakSuspect(pid, memoryBytes),
@@ -515,46 +532,6 @@ public sealed class ProcessMonitorService : IDisposable
 
         _parentPidCache[pid] = parentPid;
         return parentPid;
-    }
-
-    /// <summary>
-    /// "Signed" / "Unsigned" / "Unknown", cached per file path. Uses the legacy
-    /// X509Certificate.CreateFromSignedFile check (embedded Authenticode signature only - it
-    /// does NOT verify the certificate chain or check revocation, and it can't see catalog
-    /// signatures, which many Windows system files rely on instead of an embedded one, so a
-    /// small number of legitimate system binaries will show as "Unsigned" here). That's a real
-    /// limitation, but a full WinVerifyTrust chain-and-catalog check needs native interop this
-    /// app doesn't otherwise take on - this is the same "good enough for a quick visual flag,
-    /// not a security verdict" tradeoff as the rest of this tab's process list.
-    /// </summary>
-    private string GetSignatureStatusCached(string? filePath)
-    {
-        if (string.IsNullOrEmpty(filePath)) return "Unknown";
-        if (_signatureCache.TryGetValue(filePath, out var cached)) return cached;
-
-        string status;
-        try
-        {
-            using var cert = X509Certificate.CreateFromSignedFile(filePath);
-            status = cert is not null ? "Signed" : "Unsigned";
-        }
-        catch (FileNotFoundException)
-        {
-            status = "Unknown";
-        }
-        catch (UnauthorizedAccessException)
-        {
-            status = "Unknown";
-        }
-        catch
-        {
-            // CreateFromSignedFile throws CryptographicException for a file with no embedded
-            // signature at all - the expected, common case for an unsigned binary.
-            status = "Unsigned";
-        }
-
-        _signatureCache[filePath] = status;
-        return status;
     }
 
     /// <summary>Ends a single process.</summary>

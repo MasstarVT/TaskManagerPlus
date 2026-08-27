@@ -25,4 +25,11 @@ public sealed class ScheduledTaskRow : ObservableObject
     /// every row up front.</summary>
     private string _delayText = string.Empty;
     public string DelayText { get => _delayText; set => SetProperty(ref _delayText, value); }
+
+    /// <summary>Round 8 #23: "Only when user is logged on" vs. "Whether or not user is logged on",
+    /// populated on demand alongside DelayText via CheckLogonDelayCommand - see
+    /// ScheduledTaskService.ReadLogonTriggerInfo. A "whether or not logged on" task is a distinct,
+    /// often-overlooked startup-impact category since it can run work even at the lock screen.</summary>
+    private string _runModeText = string.Empty;
+    public string RunModeText { get => _runModeText; set => SetProperty(ref _runModeText, value); }
 }

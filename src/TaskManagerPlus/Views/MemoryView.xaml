@@ -77,6 +77,39 @@
                                 AccentBrush="{Binding Performance.PageFilePercent, Converter={StaticResource PercentToBrushConverter}}" />
             </UniformGrid>
 
+            <!-- Round 8 #37: "memory in use by category" stacked bar, built purely from figures
+                 already read above (In Use / Standby / Free - matches Windows' own Resource
+                 Monitor split) - see PerformanceViewModel's MemoryInUsePercent remarks. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Memory in use by category" Style="{StaticResource CardTitle}" Margin="0,0,0,10" />
+                    <Grid Height="22">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="{Binding Performance.MemoryInUsePercent, Converter={StaticResource PercentToStarWidthConverter}}" />
+                            <ColumnDefinition Width="{Binding Performance.MemoryStandbyPercent, Converter={StaticResource PercentToStarWidthConverter}}" />
+                            <ColumnDefinition Width="{Binding Performance.MemoryFreePercent, Converter={StaticResource PercentToStarWidthConverter}}" />
+                        </Grid.ColumnDefinitions>
+                        <Border Grid.Column="0" Background="{Binding Performance.RamColor, Converter={StaticResource ColorToBrushConverter}}" CornerRadius="4,0,0,4" Margin="0,0,1,0" />
+                        <Border Grid.Column="1" Background="{DynamicResource WarningBrush}" Opacity="0.55" Margin="0,0,1,0" />
+                        <Border Grid.Column="2" Background="{DynamicResource SuccessBrush}" Opacity="0.45" CornerRadius="0,4,4,0" />
+                    </Grid>
+                    <UniformGrid Columns="3" Margin="0,8,0,0">
+                        <StackPanel Orientation="Horizontal">
+                            <Border Width="9" Height="9" CornerRadius="2" Margin="0,0,6,0" Background="{Binding Performance.RamColor, Converter={StaticResource ColorToBrushConverter}}" />
+                            <TextBlock Text="{Binding Performance.MemoryInUsePercent, StringFormat={}In use {0:0}%}" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <Border Width="9" Height="9" CornerRadius="2" Margin="0,0,6,0" Background="{DynamicResource WarningBrush}" />
+                            <TextBlock Text="{Binding Performance.MemoryStandbyPercent, StringFormat={}Standby {0:0}%}" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <Border Width="9" Height="9" CornerRadius="2" Margin="0,0,6,0" Background="{DynamicResource SuccessBrush}" />
+                            <TextBlock Text="{Binding Performance.MemoryFreePercent, StringFormat={}Free {0:0}%}" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        </StackPanel>
+                    </UniformGrid>
+                </StackPanel>
+            </Border>
+
             <!-- #15: Windows has no macOS-style "compressed memory" stat surfaced separately -
                  the Committed % above (Memory\% Committed Bytes In Use) is Windows' own
                  equivalent memory-pressure figure, and already folds compression in rather than
@@ -140,6 +173,38 @@
                                         </TextBlock>
                                     </StackPanel>
                                     <TextBlock Grid.Column="1" Text="{Binding MemoryMb, StringFormat={}{0:0} MB}"
+                                               FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- Round 8 #32: top nonpaged/paged-pool consumers - re-presents the Processes tab's
+                 already-polling collection re-sorted by kernel-pool usage, same pattern as "Top
+                 memory consumers" above, no new process sampling. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <TextBlock Text="Top kernel-pool consumers" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="A slow, sustained climb here (rather than a stable baseline) usually points to a leaking driver, not an app."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+                    <ItemsControl ItemsSource="{Binding TopPoolProcesses}" MaxHeight="240">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                                        <TextBlock Text="{Binding Name}" FontSize="12.5" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Style="{StaticResource SubStat}" FontSize="10.5">
+                                            <Run Text="PID " /><Run Text="{Binding Pid, Mode=OneWay}" />
+                                            <Run Text=" · paged " /><Run Text="{Binding PagedPoolBytes, Converter={StaticResource BytesToReadableConverter}, Mode=OneWay}" />
+                                        </TextBlock>
+                                    </StackPanel>
+                                    <TextBlock Grid.Column="1" Text="{Binding NonpagedPoolBytes, Converter={StaticResource BytesToReadableConverter}}"
                                                FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center" />
                                 </Grid>
                             </DataTemplate>

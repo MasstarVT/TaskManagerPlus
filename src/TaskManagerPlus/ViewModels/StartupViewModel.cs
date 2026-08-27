@@ -46,13 +46,31 @@ public sealed class StartupViewModel : ObservableObject
         {
             var previous = _selectedScheduledTask;
             if (SetProperty(ref _selectedScheduledTask, value) && previous is not null)
-                previous.DelayText = string.Empty; // stale delay from a previous selection would be misleading
+            {
+                // Stale delay/run-mode text from a previous selection would be misleading.
+                previous.DelayText = string.Empty;
+                previous.RunModeText = string.Empty;
+            }
         }
     }
 
     public AsyncRelayCommand LoadScheduledTasksCommand { get; }
     public RelayCommand ToggleScheduledTaskCommand { get; }
     public AsyncRelayCommand CheckLogonDelayCommand { get; }
+
+    // #19/#20: browser extension inventory and registered shell extensions - both loaded on
+    // demand (a couple of hundred filesystem/registry reads apiece is more I/O than this tab's
+    // live-polled sections do), the same "expensive, so make it explicit" tradeoff as Scheduled
+    // Tasks above.
+    public ObservableCollection<BrowserExtensionInfo> BrowserExtensions { get; } = new();
+    private bool _isLoadingBrowserExtensions;
+    public bool IsLoadingBrowserExtensions { get => _isLoadingBrowserExtensions; private set => SetProperty(ref _isLoadingBrowserExtensions, value); }
+    public AsyncRelayCommand LoadBrowserExtensionsCommand { get; }
+
+    public ObservableCollection<ShellExtensionInfo> ShellExtensions { get; } = new();
+    private bool _isLoadingShellExtensions;
+    public bool IsLoadingShellExtensions { get => _isLoadingShellExtensions; private set => SetProperty(ref _isLoadingShellExtensions, value); }
+    public AsyncRelayCommand LoadShellExtensionsCommand { get; }
 
     // #89/#90: boot time breakdown for the most recent boot, plus a small self-recorded trend
     // across sessions - see BootPerformanceService's remarks on why the breakdown is an adaptive
@@ -96,8 +114,41 @@ public sealed class StartupViewModel : ObservableObject
         ToggleScheduledTaskCommand = new RelayCommand(param => ToggleScheduledTask(param as ScheduledTaskRow ?? SelectedScheduledTask));
         CheckLogonDelayCommand = new AsyncRelayCommand(CheckLogonDelayAsync, () => SelectedScheduledTask is not null);
 
+        LoadBrowserExtensionsCommand = new AsyncRelayCommand(LoadBrowserExtensionsAsync);
+        LoadShellExtensionsCommand = new AsyncRelayCommand(LoadShellExtensionsAsync);
+
         Refresh();
         LoadBootPerformance();
+    }
+
+    private async Task LoadBrowserExtensionsAsync()
+    {
+        IsLoadingBrowserExtensions = true;
+        try
+        {
+            var extensions = await Task.Run(BrowserExtensionService.List);
+            BrowserExtensions.Clear();
+            foreach (var e in extensions) BrowserExtensions.Add(e);
+        }
+        finally
+        {
+            IsLoadingBrowserExtensions = false;
+        }
+    }
+
+    private async Task LoadShellExtensionsAsync()
+    {
+        IsLoadingShellExtensions = true;
+        try
+        {
+            var extensions = await Task.Run(ShellExtensionService.List);
+            ShellExtensions.Clear();
+            foreach (var e in extensions) ShellExtensions.Add(e);
+        }
+        finally
+        {
+            IsLoadingShellExtensions = false;
+        }
     }
 
     public void ApplyAxisTheme(System.Windows.Media.Color text, System.Windows.Media.Color separator)
@@ -161,7 +212,9 @@ public sealed class StartupViewModel : ObservableObject
         var target = SelectedScheduledTask;
         if (target is null) return;
 
-        target.DelayText = await Task.Run(() => ScheduledTaskService.ReadLogonDelay(target.Name));
+        var (delayText, runModeText) = await Task.Run(() => ScheduledTaskService.ReadLogonTriggerInfo(target.Name));
+        target.DelayText = delayText;
+        target.RunModeText = runModeText;
     }
 
     private void Refresh()
@@ -171,15 +224,32 @@ public sealed class StartupViewModel : ObservableObject
         foreach (var item in items)
             Items.Add(item);
 
-        // #91: measured startup delay, off the UI thread (Process enumeration + per-process
-        // StartTime reads) - applied back via Dispatcher, the same pattern StorageViewModel's
-        // background WMI queries use.
+        // #91/#22: measured startup delay + combined impact score, off the UI thread (Process
+        // enumeration + per-process StartTime/CPU/memory reads) - applied back via Dispatcher, the
+        // same pattern StorageViewModel's background WMI queries use.
         _ = Task.Run(() =>
         {
-            var delays = StartupDelayService.ComputeDelays(items);
+            var measurements = StartupDelayService.ComputeDelays(items);
             System.Windows.Application.Current?.Dispatcher.Invoke(() =>
             {
-                foreach (var (item, text) in delays) item.MeasuredDelayText = text;
+                foreach (var (item, measurement) in measurements)
+                {
+                    item.MeasuredDelayText = measurement.DelayText;
+                    item.ImpactText = measurement.ImpactText;
+                    item.ImpactDetailText = measurement.ImpactDetailText;
+                }
+            });
+        });
+
+        // #18: signed/unsigned trust badge, reusing SignatureCheckService's shared per-path cache
+        // (extracted from ProcessMonitorService in Round 2) rather than a duplicate check - also
+        // off the UI thread, since a first-time signature check reads the file from disk.
+        _ = Task.Run(() =>
+        {
+            var statuses = items.ToDictionary(item => item, item => SignatureCheckService.GetStatus(StartupManagerService.ExtractPath(item.Command)));
+            System.Windows.Application.Current?.Dispatcher.Invoke(() =>
+            {
+                foreach (var (item, status) in statuses) item.SignatureStatus = status;
             });
         });
     }

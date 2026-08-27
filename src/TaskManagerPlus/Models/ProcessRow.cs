@@ -131,5 +131,26 @@ public sealed class ProcessRow : ObservableObject
     private bool _isSuspended;
     public bool IsSuspended { get => _isSuspended; set => SetProperty(ref _isSuspended, value); }
 
+    /// <summary>Round 8 #38: private bytes (Process.PrivateMemorySize64) and virtual size
+    /// (Process.VirtualMemorySize64), shown alongside MemoryBytes (working set) above - three
+    /// genuinely distinct figures, all already exposed by .NET with no extra interop. Modern
+    /// Windows doesn't expose a separate "commit charge" for a process beyond private bytes (Task
+    /// Manager's own "Commit size" column reads the same underlying figure), so virtual size fills
+    /// the third slot instead of a redundant duplicate.</summary>
+    private long _privateBytes;
+    public long PrivateBytes { get => _privateBytes; set => SetProperty(ref _privateBytes, value); }
+
+    private long _virtualBytes;
+    public long VirtualBytes { get => _virtualBytes; set => SetProperty(ref _virtualBytes, value); }
+
+    /// <summary>Round 8 #39: per-process kernel pool usage (Process.NonpagedSystemMemorySize64/
+    /// PagedSystemMemorySize64 - already exposed by .NET, no native interop needed) - feeds the
+    /// Memory tab's "Top kernel-pool consumers" card.</summary>
+    private long _nonpagedPoolBytes;
+    public long NonpagedPoolBytes { get => _nonpagedPoolBytes; set => SetProperty(ref _nonpagedPoolBytes, value); }
+
+    private long _pagedPoolBytes;
+    public long PagedPoolBytes { get => _pagedPoolBytes; set => SetProperty(ref _pagedPoolBytes, value); }
+
     public double MemoryMb => MemoryBytes / 1024.0 / 1024.0;
 }

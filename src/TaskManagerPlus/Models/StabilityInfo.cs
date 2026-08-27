@@ -68,6 +68,14 @@ public sealed class StabilitySnapshot
     /// already read above (best-effort: a day busier than the per-log cap won't have every one of
     /// its events counted, the same tradeoff RecentEvents itself already makes).</summary>
     public List<DailyEventCount> DailyCounts { get; init; } = new();
+
+    /// <summary>Round 8 #40: count and most recent occurrence of a low-memory resource-exhaustion
+    /// event (Microsoft-Windows-Resource-Exhaustion-Detector, typically event ID 2004/2005) within
+    /// the lookback window - see EventLogService.ReadLowMemoryEvents. These are logged at Warning
+    /// level, not Critical/Error, so this is a second, separate targeted query rather than a
+    /// bucket of RecentEvents above.</summary>
+    public int LowMemoryEventCount { get; init; }
+    public DateTime? LastLowMemoryEvent { get; init; }
 }
 
 /// <summary>Round 7 #13: an approximate measured service start duration, mined from Service

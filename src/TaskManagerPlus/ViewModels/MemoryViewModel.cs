@@ -19,6 +19,12 @@ public sealed class MemoryViewModel
     /// consumers" card.</summary>
     public ICollectionView TopMemoryProcesses { get; }
 
+    /// <summary>Round 8 #32: all processes, live-sorted by nonpaged-pool usage descending (paged
+    /// pool is shown alongside each row rather than as a second sort key) for the "Top
+    /// kernel-pool consumers" card - same "re-sort the already-polling collection" pattern as
+    /// TopMemoryProcesses above, no new process sampling.</summary>
+    public ICollectionView TopPoolProcesses { get; }
+
     public MemoryViewModel(PerformanceViewModel performance, ProcessesViewModel processes)
     {
         Performance = performance;
@@ -31,5 +37,15 @@ public sealed class MemoryViewModel
         }
         view.SortDescriptions.Add(new SortDescription(nameof(ProcessRow.MemoryBytes), ListSortDirection.Descending));
         TopMemoryProcesses = view;
+
+        var poolView = new CollectionViewSource { Source = processes.Processes }.View;
+        if (poolView is ICollectionViewLiveShaping poolLiveShaping && poolLiveShaping.CanChangeLiveSorting)
+        {
+            poolLiveShaping.LiveSortingProperties.Add(nameof(ProcessRow.NonpagedPoolBytes));
+            poolLiveShaping.LiveSortingProperties.Add(nameof(ProcessRow.PagedPoolBytes));
+            poolLiveShaping.IsLiveSorting = true;
+        }
+        poolView.SortDescriptions.Add(new SortDescription(nameof(ProcessRow.NonpagedPoolBytes), ListSortDirection.Descending));
+        TopPoolProcesses = poolView;
     }
 }

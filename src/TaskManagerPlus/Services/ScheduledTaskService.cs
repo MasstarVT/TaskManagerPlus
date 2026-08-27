@@ -86,27 +86,48 @@ public static class ScheduledTaskService
     /// <summary>
     /// The logon-trigger delay ("Trigger: At log on, delay task for...") for a task - #80's
     /// actual measured value for a delayed-start app, as opposed to Task Manager's own estimated
-    /// "startup impact" rating. Not exposed by `schtasks /query`'s CSV/table output at all - only
-    /// the per-task XML export includes it, as an undocumented but stable
-    /// &lt;Delay&gt;PT30S&lt;/Delay&gt; ISO-8601 duration inside the LogonTrigger element - so this
-    /// is a second, on-demand call per task (like Processes' module list or Services' recovery
-    /// actions) rather than something fetched for every row up front.
+    /// "startup impact" rating - plus (#23, Round 8) whether the task's Principal is configured to
+    /// run whether the user is logged on or not, a distinct startup-impact category from an
+    /// ordinary "only while I'm signed in" logon trigger since it can launch work even at the lock
+    /// screen. Neither is exposed by `schtasks /query`'s CSV/table output at all - only the
+    /// per-task XML export includes them, as an undocumented but stable
+    /// &lt;Delay&gt;PT30S&lt;/Delay&gt; duration and &lt;LogonType&gt; element - so both are read
+    /// together from one on-demand XML fetch per task (like Processes' module list or Services'
+    /// recovery actions) rather than fetched for every row up front.
     /// </summary>
-    public static string ReadLogonDelay(string taskName)
+    public static (string DelayText, string RunModeText) ReadLogonTriggerInfo(string taskName)
     {
         try
         {
             string xml = RunCaptured("schtasks.exe", $"/query /tn \"{taskName}\" /xml").Output;
-            var match = Regex.Match(xml, @"<LogonTrigger>.*?<Delay>(P[^<]+)</Delay>", RegexOptions.Singleline);
-            return match.Success
-                ? $"Delay: {FormatIso8601Duration(match.Groups[1].Value)}"
+
+            var delayMatch = Regex.Match(xml, @"<LogonTrigger>.*?<Delay>(P[^<]+)</Delay>", RegexOptions.Singleline);
+            string delayText = delayMatch.Success
+                ? $"Delay: {FormatIso8601Duration(delayMatch.Groups[1].Value)}"
                 : "No logon-trigger delay configured.";
+
+            var logonTypeMatch = Regex.Match(xml, @"<LogonType>([^<]+)</LogonType>");
+            string runModeText = logonTypeMatch.Success ? DescribeLogonType(logonTypeMatch.Groups[1].Value) : "Unknown";
+
+            return (delayText, runModeText);
         }
         catch (Exception ex)
         {
-            return $"(couldn't read delay: {ex.Message})";
+            return ($"(couldn't read delay: {ex.Message})", "Unknown");
         }
     }
+
+    /// <summary>Maps Task Scheduler's &lt;LogonType&gt; values to the same "only when logged on"
+    /// vs. "whether or not logged on" distinction the Task Scheduler UI itself shows on a task's
+    /// General tab - InteractiveToken is the "only when logged on" case; Password/S4U/
+    /// ServiceAccount/Group all run independent of an interactive session.</summary>
+    private static string DescribeLogonType(string logonType) => logonType switch
+    {
+        "InteractiveToken" => "Only when user is logged on",
+        "InteractiveTokenOrPassword" => "Whether or not user is logged on",
+        "Password" or "S4U" or "ServiceAccount" or "Group" => "Whether or not user is logged on",
+        _ => $"Logon type: {logonType}",
+    };
 
     /// <summary>Formats the simple PT#H#M#S shape Task Scheduler actually writes for a logon
     /// delay - not a general-purpose ISO-8601 duration parser.</summary>

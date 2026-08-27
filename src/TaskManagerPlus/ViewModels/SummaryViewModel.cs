@@ -441,6 +441,17 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         if (Performance.PageFilePercent >= 90)
             issues.Add(new HealthIssue { Message = $"Page file is {Performance.PageFilePercent:0}% full", IsCritical = false });
 
+        // Round 8 #41: swap-thrash - sustained heavy paging (hard faults) together with very
+        // little free RAM is a much stronger "the system is thrashing" signal than either figure
+        // alone; either one by itself happens routinely under ordinary load (a hard-fault burst
+        // during a big file load, or briefly low available RAM after opening several apps).
+        if (Performance.HardFaultsPerSec >= 500 && Performance.RamAvailablePercent < 10)
+            issues.Add(new HealthIssue
+            {
+                Message = $"Possible memory thrashing: {Performance.HardFaultsPerSec:0} hard faults/sec with only {Performance.RamAvailablePercent:0}% RAM available",
+                IsCritical = true,
+            });
+
         if (Performance.HasNetworkErrors)
             issues.Add(new HealthIssue { Message = "Network adapter errors detected", IsCritical = false });
 

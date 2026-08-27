@@ -108,6 +108,7 @@ public static class CpuTopologyService
             byte maxEfficiency = coreMasks.Max(c => c.EfficiencyClass);
 
             var cores = new List<CoreTopologyInfo>(logicalCount);
+            bool anySmtGroup = false;
             for (int i = 0; i < logicalCount; i++)
             {
                 // Bits beyond 63 (>64 logical processors) fall back to defaults below - see the
@@ -115,9 +116,17 @@ public static class CpuTopologyService
                 ulong bit = i < 64 ? 1UL << i : 0UL;
 
                 byte efficiencyClass = 0;
-                foreach (var (mask, ec) in coreMasks)
+                // #26: each coreMasks entry (index = physical-core group id) represents exactly
+                // one physical core - a group whose mask sets more than one bit is an SMT/
+                // Hyper-Threading pair sharing that one physical core.
+                int physicalCoreGroup = i;
+                for (int g = 0; g < coreMasks.Count; g++)
                 {
-                    if ((mask & bit) != 0) { efficiencyClass = ec; break; }
+                    if ((coreMasks[g].Mask & bit) == 0) continue;
+                    efficiencyClass = coreMasks[g].EfficiencyClass;
+                    physicalCoreGroup = g;
+                    if (System.Numerics.BitOperations.PopCount(coreMasks[g].Mask) > 1) anySmtGroup = true;
+                    break;
                 }
 
                 int numaNode = 0;
@@ -132,13 +141,14 @@ public static class CpuTopologyService
                     NumaNode = numaNode,
                     EfficiencyClass = efficiencyClass,
                     IsPCore = efficiencyClass >= maxEfficiency,
+                    PhysicalCoreGroup = physicalCoreGroup,
                 });
             }
 
             bool hybrid = coreMasks.Select(c => c.EfficiencyClass).Distinct().Count() > 1;
             bool multiNuma = numaMasks.Select(n => n.NodeNumber).Distinct().Count() > 1;
 
-            return new CpuTopologySnapshot { Cores = cores, HasHybridTopology = hybrid, HasMultipleNumaNodes = multiNuma };
+            return new CpuTopologySnapshot { Cores = cores, HasHybridTopology = hybrid, HasMultipleNumaNodes = multiNuma, HasSmt = anySmtGroup };
         }
         finally
         {

@@ -226,6 +226,10 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
                 existing.CpuPercent = fresh.CpuPercent;
                 existing.CpuPercent10sAvg = fresh.CpuPercent10sAvg;
                 existing.MemoryBytes = fresh.MemoryBytes;
+                existing.PrivateBytes = fresh.PrivateBytes;
+                existing.VirtualBytes = fresh.VirtualBytes;
+                existing.NonpagedPoolBytes = fresh.NonpagedPoolBytes;
+                existing.PagedPoolBytes = fresh.PagedPoolBytes;
                 existing.DiskBytesPerSec = fresh.DiskBytesPerSec;
                 existing.Status = fresh.Status;
                 existing.NotRespondingSeconds = fresh.NotRespondingSeconds;

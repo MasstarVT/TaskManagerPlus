@@ -30,6 +30,10 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
     /// a single flat core grid (no "NUMA Node N" group headers) when this is false.</summary>
     public bool HasMultipleNumaNodes => _topology.HasMultipleNumaNodes;
 
+    /// <summary>Round 8 #26: true when at least one physical core hosts more than one logical
+    /// processor (SMT/Hyper-Threading) - see CpuTopologySnapshot.HasSmt.</summary>
+    public bool HasSmt => _topology.HasSmt;
+
     public ObservableCollection<double> CpuHistory { get; } = NewHistory();
     public ObservableCollection<double> RamHistory { get; } = NewHistory();
     public ObservableCollection<double> DiskHistory { get; } = NewHistory();
@@ -128,6 +132,17 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
     /// scenarios) reads as "stuck at base clock".</summary>
     private double _cpuVsBasePercent;
     public double CpuVsBasePercent { get => _cpuVsBasePercent; private set => SetProperty(ref _cpuVsBasePercent, value); }
+
+    // Round 8 #27: turbo-boost time-at-frequency histogram, accumulated across the whole session -
+    // bucketed by CpuVsBasePercent (the base-vs-current comparison already computed each tick)
+    // rather than raw GHz, so the buckets stay meaningful across different CPU models instead of
+    // needing per-model frequency ranges. Six fixed buckets, updated in place each tick (no
+    // Add/Remove) so the CPU tab's bar row doesn't flicker.
+    private static readonly string[] TurboHistogramLabels = { "Below base", "At base", "Light turbo", "Turbo", "High turbo", "Max turbo" };
+    private readonly long[] _turboBucketCounts = new long[TurboHistogramLabels.Length];
+    private long _turboTotalSamples;
+    public ObservableCollection<TurboHistogramBucket> TurboHistogram { get; } = new(
+        TurboHistogramLabels.Select(l => new TurboHistogramBucket { Label = l }));
 
     private double _cpuInterruptPercent;
     public double CpuInterruptPercent { get => _cpuInterruptPercent; private set => SetProperty(ref _cpuInterruptPercent, value); }
@@ -230,6 +245,16 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
 
     private double _poolPagedGb;
     public double PoolPagedGb { get => _poolPagedGb; private set => SetProperty(ref _poolPagedGb, value); }
+
+    // Round 8 #35: "memory in use by category" stacked-bar breakdown, built purely from figures
+    // already read above (RamTotalGb/RamAvailableGb/StandbyGb) - no new signal. Matches the same
+    // In Use / Standby / Free split Windows' own Resource Monitor shows: GlobalMemoryStatusEx's
+    // "available" figure already folds the standby (reclaimable cache) list in, so "in use" here
+    // is Total minus Available (excludes standby), Standby is its own slice, and Free is whatever
+    // of Available isn't standby - the three sum back to the total.
+    public double MemoryInUsePercent => RamTotalGb <= 0 ? 0 : Math.Clamp((RamTotalGb - RamAvailableGb) / RamTotalGb * 100.0, 0, 100);
+    public double MemoryStandbyPercent => RamTotalGb <= 0 ? 0 : Math.Clamp(StandbyGb / RamTotalGb * 100.0, 0, 100);
+    public double MemoryFreePercent => Math.Clamp(100.0 - MemoryInUsePercent - MemoryStandbyPercent, 0, 100);
 
     private double _diskPercent;
     public double DiskPercent { get => _diskPercent; private set => SetProperty(ref _diskPercent, value); }
@@ -509,6 +534,24 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
         }
         CpuVsBasePercent = snapshot.CpuBaseClockGhz <= 0 ? 0 : (snapshot.CpuCurrentClockGhz - snapshot.CpuBaseClockGhz) / snapshot.CpuBaseClockGhz * 100.0;
 
+        // #27: bucket this tick's base-vs-current reading into the session-long turbo histogram.
+        if (snapshot.CpuBaseClockGhz > 0)
+        {
+            int bucket = CpuVsBasePercent switch
+            {
+                < 0 => 0,
+                < 5 => 1,
+                < 15 => 2,
+                < 30 => 3,
+                < 50 => 4,
+                _ => 5,
+            };
+            _turboBucketCounts[bucket]++;
+            _turboTotalSamples++;
+            for (int i = 0; i < _turboBucketCounts.Length; i++)
+                TurboHistogram[i].Percent = Math.Round(_turboBucketCounts[i] / (double)_turboTotalSamples * 100.0, 1);
+        }
+
         CpuInterruptPercent = snapshot.CpuInterruptPercent;
         CpuDpcPercent = snapshot.CpuDpcPercent;
         ContextSwitchesPerSec = snapshot.ContextSwitchesPerSec;
@@ -543,6 +586,9 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
         StandbyPercent = snapshot.RamTotalBytes == 0 ? 0 : (double)snapshot.StandbyListBytes / snapshot.RamTotalBytes * 100.0;
         PoolNonpagedGb = snapshot.PoolNonpagedBytes / 1024.0 / 1024.0 / 1024.0;
         PoolPagedGb = snapshot.PoolPagedBytes / 1024.0 / 1024.0 / 1024.0;
+        OnPropertyChanged(nameof(MemoryInUsePercent));
+        OnPropertyChanged(nameof(MemoryStandbyPercent));
+        OnPropertyChanged(nameof(MemoryFreePercent));
 
         DiskPercent = snapshot.DiskActivePercent;
         DiskReadBps = snapshot.DiskReadBytesPerSec;
@@ -575,12 +621,22 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
         if (Cores.Count != percentages.Length)
         {
             Cores.Clear();
+            // #26: group lookup for SMT/Hyper-Threading sibling pairing - only computed here (on
+            // an actual core-count change), not per tick, same as the rest of this rebuild branch.
+            var byGroup = _topology.Cores.GroupBy(c => c.PhysicalCoreGroup)
+                .ToDictionary(g => g.Key, g => g.Select(c => c.LogicalIndex).ToList());
+
             for (int i = 0; i < percentages.Length; i++)
             {
                 // Topology is indexed by logical processor number; percentages[] is expected to
                 // line up 1:1 with it (see HardwareMonitorService's numeric node/core sort), but
                 // guard the lookup anyway in case core counts ever disagree.
                 var topo = i < _topology.Cores.Count ? _topology.Cores[i] : null;
+
+                int sibling = -1;
+                if (topo is not null && byGroup.TryGetValue(topo.PhysicalCoreGroup, out var siblings) && siblings.Count > 1)
+                    sibling = siblings.First(idx => idx != i);
+
                 Cores.Add(new CoreUsage
                 {
                     Index = i,
@@ -588,6 +644,7 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
                     NumaNode = topo?.NumaNode ?? 0,
                     IsPCore = topo?.IsPCore ?? true,
                     IsParked = ParkedAt(i),
+                    SiblingIndex = sibling,
                 });
             }
             ParkedCoreCount = parkedFlags.Count(p => p);

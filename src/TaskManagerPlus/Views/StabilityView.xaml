@@ -41,9 +41,9 @@
                 <Button Grid.Column="1" Content="Refresh" Command="{Binding RefreshCommand}" Padding="10,4" />
             </Grid>
 
-            <!-- #6/#5: uptime-since-last-crash and TDR (GPU driver timeout/reset) count - both
-                 computed from the same event-log query as everything else on this tab. -->
-            <UniformGrid Columns="3" Margin="0,0,0,16">
+            <!-- #6/#5/#40: uptime-since-last-crash, TDR (GPU driver timeout/reset) count, and
+                 low-memory resource-exhaustion events - all computed from event-log queries. -->
+            <UniformGrid Columns="4" Margin="0,0,0,16">
                 <views:VfdMeter Title="Since last crash" Glow="False" Margin="0,0,6,0"
                                 ValueText="{Binding TimeSinceLastCrashText}"
                                 SubText="Unexpected shutdown or BSOD" AccentBrush="{DynamicResource AccentBrush}" />
@@ -51,9 +51,15 @@
                                 ValueText="{Binding TdrEventCount}"
                                 SubText="{Binding LastTdrEventText}"
                                 AccentBrush="{DynamicResource WarningBrush}" />
-                <views:VfdMeter Title="Minidumps" Glow="False" Margin="6,0,0,0"
+                <views:VfdMeter Title="Minidumps" Glow="False" Margin="3,0,3,0"
                                 ValueText="{Binding Minidumps.Count}"
                                 SubText="%SystemRoot%\Minidump" AccentBrush="{DynamicResource AccentBrush}" />
+                <!-- #40: low-memory resource-exhaustion events (Warning-level, a separate targeted
+                     query - see EventLogService.ReadLowMemoryEvents). -->
+                <views:VfdMeter Title="Low-memory events" Glow="False" Margin="6,0,0,0"
+                                ValueText="{Binding LowMemoryEventCount}"
+                                SubText="{Binding LastLowMemoryEventText}"
+                                AccentBrush="{DynamicResource WarningBrush}" />
             </UniformGrid>
 
             <!-- #1: Reliability History - daily Critical/Error counts over the lookback window,

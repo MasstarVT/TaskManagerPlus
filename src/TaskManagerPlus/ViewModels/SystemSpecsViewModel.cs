@@ -189,10 +189,16 @@ public sealed class SystemSpecsViewModel : ObservableObject
                     : $"{m.SpeedMhz:0} MHz")
                 : null;
 
+            // #36: resolve a raw JEDEC manufacturer code to a friendly name where this app's small
+            // known-code table has a match - see JedecManufacturerLookup's remarks. A value that's
+            // already a readable brand name (the common case on modern firmware) passes through
+            // unchanged.
+            string manufacturerText = JedecManufacturerLookup.Resolve(m.Manufacturer);
+
             MemoryModules.Add(new SpecRow
             {
                 Primary = m.Location,
-                Secondary = string.Join(" ", new[] { m.MemoryType, speedText, m.Manufacturer }.Where(s => !string.IsNullOrWhiteSpace(s))),
+                Secondary = string.Join(" ", new[] { m.MemoryType, speedText, manufacturerText }.Where(s => !string.IsNullOrWhiteSpace(s))),
                 SizeText = Formatting.FormatBytes(m.CapacityBytes),
             });
         }

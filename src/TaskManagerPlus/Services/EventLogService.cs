@@ -53,6 +53,8 @@ public sealed class EventLogService
         var crashLikeIds = new HashSet<int> { KernelPowerEventId, LegacyUncleanShutdownEventId, BlueScreenEventId };
         var lastCrash = events.Where(e => crashLikeIds.Contains(e.EventId)).OrderByDescending(e => e.TimeCreated).FirstOrDefault();
 
+        var (lowMemCount, lowMemLast) = ReadLowMemoryEvents();
+
         return new StabilitySnapshot
         {
             RecentEvents = events.Take(MaxEventsPerLog).ToList(),
@@ -63,7 +65,48 @@ public sealed class EventLogService
             LastCrashTime = lastCrash?.TimeCreated,
             Minidumps = ReadMinidumps(shutdownEvents),
             DailyCounts = BuildDailyCounts(events),
+            LowMemoryEventCount = lowMemCount,
+            LastLowMemoryEvent = lowMemLast,
         };
+    }
+
+    // Round 8 #40: low-memory resource-exhaustion events are logged by a dedicated Windows
+    // component at Warning level, not Critical/Error - outside the Level=1|2 filter the main scan
+    // above uses - so this is a second, separately targeted query for just this one provider,
+    // the same shape ReadServiceStartDurations below already uses for a different provider/event.
+    private const string ResourceExhaustionProvider = "Microsoft-Windows-Resource-Exhaustion-Detector";
+
+    private static (int Count, DateTime? Last) ReadLowMemoryEvents()
+    {
+        try
+        {
+            long maxAgeMs = LookbackDays * 24L * 60 * 60 * 1000;
+            var query = new EventLogQuery("System", PathType.LogName,
+                $"*[System[Provider[@Name='{ResourceExhaustionProvider}'] and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]")
+            {
+                ReverseDirection = true,
+            };
+
+            using var reader = new EventLogReader(query);
+            int count = 0;
+            DateTime? last = null;
+            const int maxEvents = 200;
+            while (count < maxEvents && reader.ReadEvent() is { } record)
+            {
+                using (record)
+                {
+                    count++;
+                    last ??= record.TimeCreated;
+                }
+            }
+            return (count, last);
+        }
+        catch
+        {
+            // Provider/log unavailable - degrade to "none found", same as every other event-log
+            // read in this service.
+            return (0, null);
+        }
     }
 
     /// <summary>#1: Reliability History - buckets the same events already read into one count per

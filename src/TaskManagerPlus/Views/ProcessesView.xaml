@@ -150,6 +150,11 @@
                     </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>
                 <DataGridTextColumn Header="Memory" Binding="{Binding MemoryBytes, Converter={StaticResource BytesToReadableConverter}}" Width="100" />
+                <!-- Round 8 #38: working set (above) vs. private bytes vs. virtual size, side by
+                     side - see ProcessRow's remarks for why virtual size fills the third slot
+                     instead of a redundant "commit" duplicate of private bytes. -->
+                <DataGridTextColumn Header="Private bytes" Binding="{Binding PrivateBytes, Converter={StaticResource BytesToReadableConverter}}" Width="100" />
+                <DataGridTextColumn Header="Virtual size" Binding="{Binding VirtualBytes, Converter={StaticResource BytesToReadableConverter}}" Width="100" />
                 <!-- #14: possible memory leak - working set has grown without ever giving memory
                      back over the whole tracked history window. See ProcessMonitorService.ComputeLeakSuspect. -->
                 <DataGridTemplateColumn Header="Mem trend" Width="90" SortMemberPath="IsLeakSuspect">

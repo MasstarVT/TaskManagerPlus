@@ -93,7 +93,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         // to it - Cpu for its thermal-throttle flag, Storage for its per-drive temperature list -
         // see each view-model's remarks) and before Summary as before (#64's Health Check card).
         EnergyThermals = new EnergyThermalsViewModel(Performance);
-        Cpu = new CpuViewModel(Performance, EnergyThermals);
+        Cpu = new CpuViewModel(Performance, EnergyThermals, Processes);
         Memory = new MemoryViewModel(Performance, Processes);
         Storage = new StorageViewModel(Performance, EnergyThermals);
         Network = new NetworkViewModel(Performance);

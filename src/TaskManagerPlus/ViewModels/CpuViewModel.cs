@@ -3,6 +3,7 @@ using System.Collections.Specialized;
 using System.Windows.Threading;
 using TaskManagerPlus.Common;
 using TaskManagerPlus.Models;
+using TaskManagerPlus.Services;
 
 namespace TaskManagerPlus.ViewModels;
 
@@ -26,9 +27,23 @@ public sealed class CoreGroup
 public sealed class CpuViewModel : ObservableObject, IDisposable
 {
     private readonly EnergyThermalsViewModel _energyThermals;
+    private readonly ProcessesViewModel _processes;
     private readonly DispatcherTimer _throttleTimer;
+    private bool _affinityRefreshInFlight;
 
     public PerformanceViewModel Performance { get; }
+
+    /// <summary>Round 8 #25/#28/#29/#30: static CPU identification readouts (microcode,
+    /// mitigation override status, instruction-set support, cache sizes) - queried once in the
+    /// constructor via CpuFeatureService, not per tick, since none of it changes at runtime.</summary>
+    private CpuFeatureInfo _features = new();
+    public CpuFeatureInfo Features { get => _features; private set => SetProperty(ref _features, value); }
+
+    /// <summary>Round 8 #24: best-effort core-affinity heatmap for the current top-CPU processes -
+    /// see CoreAffinityService's remarks for why this is framed as "preferred/ideal core", not a
+    /// live trace of actual scheduling. Refreshed on the same 2s cadence as the throttle flag,
+    /// off the UI thread since it walks native per-thread calls.</summary>
+    public ObservableCollection<CoreAffinityCell> CoreAffinity { get; } = new();
 
     /// <summary>
     /// Best-effort "is the CPU thermal-throttling right now" flag (#9) - true only when the CPU
@@ -92,17 +107,81 @@ public sealed class CpuViewModel : ObservableObject, IDisposable
     /// </summary>
     public ObservableCollection<CoreGroup> CoreGroups { get; } = new();
 
-    public CpuViewModel(PerformanceViewModel performance, EnergyThermalsViewModel energyThermals)
+    public CpuViewModel(PerformanceViewModel performance, EnergyThermalsViewModel energyThermals, ProcessesViewModel processes)
     {
         Performance = performance;
         _energyThermals = energyThermals;
+        _processes = processes;
         performance.Cores.CollectionChanged += OnCoresCollectionChanged;
         RebuildGroups();
 
         _throttleTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(2) };
-        _throttleTimer.Tick += (_, _) => RefreshThrottleStatus();
+        _throttleTimer.Tick += (_, _) => { RefreshThrottleStatus(); _ = RefreshCoreAffinityAsync(); };
         _throttleTimer.Start();
         RefreshThrottleStatus();
+
+        // #25/#28/#29/#30: static, so read once in the background rather than adding this to the
+        // per-tick timer above.
+        _ = Task.Run(() =>
+        {
+            var features = CpuFeatureService.Read();
+            System.Windows.Application.Current?.Dispatcher.Invoke(() => Features = features);
+        });
+    }
+
+    /// <summary>#24: samples the current top-few CPU processes' threads' ideal processors and
+    /// rebuilds the per-core heatmap. Guarded against overlap - the native per-thread scan can
+    /// legitimately take longer than 2s on a very busy system, and this must never stack calls.</summary>
+    private async Task RefreshCoreAffinityAsync()
+    {
+        if (_affinityRefreshInFlight) return;
+        _affinityRefreshInFlight = true;
+        try
+        {
+            var topPids = _processes.Processes.OrderByDescending(p => p.CpuPercent).Take(6).Select(p => p.Pid).ToList();
+            int logicalCount = Performance.Cores.Count;
+
+            var cells = await Task.Run(() =>
+            {
+                var procs = new List<System.Diagnostics.Process>();
+                foreach (var pid in topPids)
+                {
+                    try { procs.Add(System.Diagnostics.Process.GetProcessById(pid)); }
+                    catch { /* process exited between the snapshot above and here - skip it */ }
+                }
+
+                try
+                {
+                    var byCore = CoreAffinityService.ComputeIdealProcessorLoad(procs);
+                    var list = new List<CoreAffinityCell>(logicalCount);
+                    for (int i = 0; i < logicalCount; i++)
+                    {
+                        var entries = byCore.TryGetValue(i, out var e) ? e : new List<(string ProcessName, int Pid)>();
+                        list.Add(new CoreAffinityCell
+                        {
+                            CoreIndex = i,
+                            ProcessCount = entries.Count,
+                            ProcessNames = entries.Count == 0 ? string.Empty : string.Join(", ", entries.Select(x => x.ProcessName).Distinct()),
+                        });
+                    }
+                    return list;
+                }
+                finally
+                {
+                    foreach (var p in procs)
+                    {
+                        try { p.Dispose(); } catch { /* best-effort */ }
+                    }
+                }
+            });
+
+            CoreAffinity.Clear();
+            foreach (var c in cells) CoreAffinity.Add(c);
+        }
+        finally
+        {
+            _affinityRefreshInFlight = false;
+        }
     }
 
     private void RefreshThrottleStatus()

@@ -51,12 +51,15 @@ public sealed class StartupManagerService
                 if (approvedKey?.GetValue(valueName) is byte[] flag && flag.Length > 0)
                     enabled = flag[0] == 0x02;
 
+                var (size, modified) = ReadFileInfo(ExtractPath(command));
                 items.Add(new StartupItem
                 {
                     Name = valueName,
                     Command = command,
                     Source = source,
                     IsEnabled = enabled,
+                    FileSizeBytes = size,
+                    LastModifiedUtc = modified,
                 });
             }
         }
@@ -83,12 +86,15 @@ public sealed class StartupManagerService
                 if (approvedKey?.GetValue(fileName) is byte[] flag && flag.Length > 0)
                     enabled = flag[0] == 0x02;
 
+                var (size, modified) = ReadFileInfo(file);
                 items.Add(new StartupItem
                 {
                     Name = Path.GetFileNameWithoutExtension(fileName),
                     Command = file,
                     Source = source,
                     IsEnabled = enabled,
+                    FileSizeBytes = size,
+                    LastModifiedUtc = modified,
                 });
             }
         }
@@ -96,6 +102,45 @@ public sealed class StartupManagerService
         {
             // Folder inaccessible - skip it.
         }
+    }
+
+    /// <summary>Round 8 #21: file size and last-modified time for a startup item's target
+    /// executable, if it can be resolved and still exists - best-effort, degrades to null
+    /// ("Unknown") for a missing file, an unresolvable command string, or an access-denied path.</summary>
+    private static (long? SizeBytes, DateTime? LastModifiedUtc) ReadFileInfo(string path)
+    {
+        try
+        {
+            if (path.Length == 0 || !File.Exists(path)) return (null, null);
+            var info = new FileInfo(path);
+            return (info.Length, info.LastWriteTimeUtc);
+        }
+        catch
+        {
+            return (null, null);
+        }
+    }
+
+    /// <summary>
+    /// Extracts a bare file path (no arguments) from a startup entry's raw Command string, which
+    /// may be a bare path, a quoted path, or a path followed by arguments. Shared with
+    /// StartupDelayService (which further reduces this to just the executable name) and
+    /// StartupViewModel's signature-badge check (#18), so this parsing rule lives in exactly one
+    /// place rather than being duplicated per caller.
+    /// </summary>
+    public static string ExtractPath(string command)
+    {
+        var trimmed = command.Trim();
+        if (trimmed.Length == 0) return string.Empty;
+
+        if (trimmed[0] == '"')
+        {
+            int end = trimmed.IndexOf('"', 1);
+            return end > 0 ? trimmed[1..end] : trimmed.Trim('"');
+        }
+
+        int space = trimmed.IndexOf(' ');
+        return space > 0 ? trimmed[..space] : trimmed;
     }
 
     /// <summary>Flips the enabled/disabled flag for a startup item. Requires admin for HKLM/all-users entries.</summary>

@@ -1140,6 +1140,171 @@ inflated duration. On-demand only ("Load start-time history" button), the same s
 `StabilityViewModel`'s own on-demand event-log query already uses, since a 30-day scan isn't cheap
 enough to repeat on a timer tick.
 
+### Round 8: startup inventory/impact depth, CPU identification (SMT, cache, CPUID-via-.NET,
+turbo histogram), and per-process/kernel memory diagnostics
+
+An eighth batch of `suggestions.md` items - 19 in total, closing out the Startup, CPU, and Memory
+categories. No new top-level tabs or ViewModels this round - everything extends `StartupViewModel`/
+`CpuViewModel`/`MemoryViewModel`/`StabilityViewModel`/`SummaryViewModel` and their existing
+services, following each category's established patterns.
+
+**Signature check extracted into a shared service**: `Services/SignatureCheckService.cs` pulls
+`ProcessMonitorService`'s Round 2 per-file-path signature cache out into a static, thread-safe
+(`ConcurrentDictionary`) helper - `ProcessMonitorService` now calls it instead of keeping its own
+private cache, and `StartupViewModel` reuses the exact same check/cache for the Startup tab's new
+signed/unsigned badge rather than duplicating the `X509Certificate.CreateFromSignedFile` logic (and
+its documented "no catalog signature" limitation) a second time.
+
+**Startup item file size/last-modified + signature badge**: `StartupManagerService.Sample()` now
+also resolves each item's target executable (`ExtractPath`, a small path-parsing helper extracted
+out to be shared - `StartupDelayService` reduces its result further to a bare exe name, and
+`StartupViewModel`'s signature check uses it directly) and reads `FileInfo` for size/last-write
+time, degrading to null ("Unknown") for an unresolvable command or missing file. The signature
+badge is computed in a background `Task.Run` alongside the existing measured-delay scan in
+`StartupViewModel.Refresh`, applied back via `Dispatcher.Invoke` the same way.
+
+**Browser extension inventory**: `Services/BrowserExtensionService.cs` reads Chrome/Edge's shared
+`User Data\<Profile>\Extensions\<id>\<version>\manifest.json` layout (every profile folder, not
+just Default, deduplicated by extension id) and Firefox's `<profile>\extensions.json` (`"addons"`
+array, filtered to active, non-built-in entries). A manifest name like `"__MSG_extName__"` points at
+a `_locales` message file this app doesn't resolve, so that case falls back to the raw extension id
+rather than showing the unresolved placeholder. Loaded on demand (a "Load browser extensions"
+button) - walking every profile's Extensions folder and parsing a manifest per extension is more
+I/O than this tab's live-polled sections do, the same "expensive, so make it explicit" tradeoff
+Round 5's Scheduled Tasks section already established.
+
+**Registered shell extensions**: `Services/ShellExtensionService.cs` reads the CLSIDs registered
+under `ShellIconOverlayIdentifiers` and the three `shellex\ContextMenuHandlers` locations
+(`*`, `AllFilesystemObjects`, `Directory\Background`), resolves each CLSID's friendly name and
+`InprocServer32` DLL path from `HKEY_CLASSES_ROOT\CLSID\{guid}`, and cross-references the
+`Shell Extensions\Approved` list Windows itself uses to allow a handler to load without a warning
+prompt. Also on-demand (a "Load shell extensions" button), same tradeoff as browser extensions
+above - this walks several registry trees per call.
+
+**Startup impact score**: `StartupDelayService.ComputeDelays` (Round 6's measured-logon-delay scan)
+now also returns a combined Low/Medium/High `StartupMeasurement.ImpactText` per item, blending the
+measured delay with a quick CPU/memory footprint sample of the matched running process - two
+`TotalProcessorTime` reads separated by one **shared** 250ms wait (taken once per scan, not once
+per item, so a long startup list doesn't stack into a multi-second delay) the same "two samples,
+one elapsed window" technique `ProcessMonitorService`'s own per-tick CPU% calculation already uses.
+A weighted point score (delay/CPU%/memory MB, each contributing 0-2 points) buckets into
+Low/Medium/High rather than claiming false precision - explicitly documented as a brief snapshot of
+whatever the process happens to be doing right now, not a true measurement of its actual startup-
+time footprint (which would need continuous tracking from the moment it launched).
+
+**Scheduled-task logon-trigger run mode**: `ScheduledTaskService.ReadLogonDelay` became
+`ReadLogonTriggerInfo`, reading both the existing `<Delay>` duration and a new `<LogonType>` value
+from the same per-task XML export in one call rather than two - `InteractiveToken` means "only
+while signed in", every other value (`Password`/`S4U`/`ServiceAccount`/`Group`) means "whether or
+not logged on", a distinct and easy-to-miss startup-impact category since it can run work even at
+the lock screen. Surfaced as a new "Runs" column next to "Logon delay", populated by the same
+"Check logon delay" button click.
+
+**SMT/Hyper-Threading sibling pairing**: `CpuTopologyService` already parses one
+`RelationProcessorCore` entry per *physical* core out of `GetLogicalProcessorInformationEx`'s
+buffer (Round 1) - this round just keeps more of what's already being decoded instead of discarding
+it: each logical core's `CoreTopologyInfo.PhysicalCoreGroup` is now the index of the physical-core
+entry it came from, and `CpuTopologySnapshot.HasSmt` is true when any entry's `GroupMask` has more
+than one bit set (an SMT pair sharing one physical core). `PerformanceViewModel.SyncCores` looks up
+each core's sibling index from this grouping (only on an actual core-count change, not per tick) and
+folds it directly into `CoreUsage.Label` ("CPU 0 ↔4") rather than a separate tile field, since the
+tile's `SubText` slot is already spoken for by the Parked/P-core/E-core tags.
+
+**Turbo-boost histogram**: `PerformanceViewModel` accumulates a six-bucket, session-long histogram
+(Below base / At base / Light-Turbo / Turbo / High turbo / Max turbo) from the same
+`CpuVsBasePercent` figure already computed each tick (Round 3) - bucketed by percent above/below
+base clock rather than raw GHz, so it stays meaningful across different CPU models without a
+per-model frequency table. Rendered as a small labeled-bar list (a `PercentToWidthConverter` inside
+a fixed-width container) on the CPU tab rather than a `ColumnSeries` chart - simpler than wiring a
+new chart series for six static rows that only ever grow monotonically over a session.
+
+**Core-affinity heatmap**: `Services/CoreAffinityService.cs` walks the threads of the current top
+few CPU-consuming processes and calls `GetThreadIdealProcessorEx` (kernel32) on each - the closest
+proxy available to "which cores is this process's work landing on" without taking on ETW
+context-switch tracing (a materially higher risk tier this app doesn't otherwise reach for
+anywhere). Framed explicitly in the UI and code as the scheduler's *preferred* core per thread, not
+a live trace of the core it's actually running on this instant - the same "quick flag, not a
+verdict" tier as the CPU throttle heuristic. `CpuViewModel` now also takes a `ProcessesViewModel`
+reference (constructed before `Cpu` in `MainViewModel`, same reordering trick prior rounds have used
+for a new cross-VM dependency) and refreshes the heatmap on its existing 2s throttle timer, guarded
+against overlap since the native per-thread scan can occasionally run long on a busy system.
+
+**CPU identification card (microcode, mitigations, instruction sets, cache)**: all four queried
+once via `Services/CpuFeatureService.cs` in `CpuViewModel`'s constructor (static data, same
+treatment `CpuTopologyService`'s own one-time query gets). Microcode revision reads the same
+`HKLM\HARDWARE\DESCRIPTION\System\CentralProcessor\0\"Update Revision"` registry value tools like
+CPU-Z read (an 8-byte value, revision in the last 4 bytes little-endian) - not a documented,
+versioned Microsoft contract, so a surprise length/format degrades to "Unknown" rather than a wrong
+number, the same caveat `EventLogService`'s bugcheck-code extraction already carries for a
+different undocumented layout. Spectre/Meltdown mitigation status is informational only: Windows
+offers no simple "are mitigations active right now" API, so this reports whether an administrator
+has manually overridden the default via `FeatureSettingsOverride`/`FeatureSettingsOverrideMask`
+(their absence is the common, healthy case) without attempting to decode the exact undocumented bit
+meaning - a "quick flag, not a verdict" pointing at Microsoft's own KB4072698 for specifics.
+Instruction-set support (SSE4.2/AVX/AVX2/AVX-512/FMA) is the one readout in this round that's
+genuinely accurate rather than best-effort: it reads `System.Runtime.Intrinsics.X86`'s own
+`IsSupported` flags, which are backed by .NET 8's own CPUID-driven, JIT-verified runtime feature
+detection - a correct answer for "can code running on this machine actually use this instruction
+set" without this app taking on raw CPUID execution (self-modifying executable memory) or a native
+helper process, both a materially higher risk tier than the interop this app already carries
+elsewhere. (AVX-512 in particular can still read `false` on hardware that has the silicon but isn't
+exposed by this OS/runtime combination - documented in the UI, not just here.) Cache sizes prefer
+`Win32_CacheMemory` (the safer WMI-only path vs. CPUID leaf parsing) but fall back to
+`Win32_Processor.L2CacheSize`/`L3CacheSize` for L2/L3 when `Win32_CacheMemory` reports nothing - a
+known, common gap on modern systems; there's no L1 equivalent on `Win32_Processor`, so L1 stays
+"Unknown" in that fallback case.
+
+**Extra per-process memory columns**: `ProcessRow` gains `PrivateBytes`/`VirtualBytes`
+(`Process.PrivateMemorySize64`/`VirtualMemorySize64`, no new interop) shown alongside the existing
+working-set column on the Processes grid. Modern Windows doesn't expose a *fourth* truly distinct
+"commit charge" figure for a process beyond private bytes (Task Manager's own "Commit size" column
+reads the same underlying number `PrivateMemorySize64` does), so virtual size fills the third slot
+instead of a redundant duplicate - documented as a deliberate, honest scoping decision rather than
+silently showing two columns with identical values.
+
+**Top kernel-pool consumers**: `ProcessRow` also gains `NonpagedPoolBytes`/`PagedPoolBytes`
+(`Process.NonpagedSystemMemorySize64`/`PagedSystemMemorySize64`, again already exposed by .NET with
+no extra interop). `MemoryViewModel.TopPoolProcesses` re-sorts the same already-polling Processes
+collection `TopMemoryProcesses` already does (live-sorted by nonpaged pool descending, paged pool
+shown alongside each row) - no new process sampling, the same "second `ICollectionView` over one
+shared collection" pattern `TopMemoryProcesses` established in Round 2.
+
+**Memory-in-use-by-category stacked bar**: built entirely from figures the Memory tab already
+reads - no new signal. `PerformanceViewModel.MemoryInUsePercent`/`MemoryStandbyPercent`/
+`MemoryFreePercent` split matches Windows' own Resource Monitor breakdown: since
+`GlobalMemoryStatusEx`'s "available" figure already folds the standby (reclaimable cache) list in,
+"in use" is Total minus Available (excludes standby), Standby is its own slice, and Free is
+whatever of Available isn't standby - the three sum back to the total. Rendered as three
+`Grid.ColumnDefinition`s whose `Width`s come from a new `PercentToStarWidthConverter` (percent ->
+`GridLength(percent, Star)`) rather than a bespoke stacked-bar control, since three star-weighted
+columns already lay out proportionally for free.
+
+**Low-memory resource-exhaustion event detector**: extends `EventLogService` with
+`ReadLowMemoryEvents`, a second targeted `EventLogQuery` against the
+`Microsoft-Windows-Resource-Exhaustion-Detector` provider - these events log at Warning level, not
+Critical/Error, so they fall outside the `Level=1|2` filter the tab's main 30-day scan already uses
+and need their own query, the same "one provider, one separate query" shape
+`ReadServiceStartDurations` (Round 7) already established for a different provider. Surfaced as a
+fourth tile alongside "Since last crash"/"TDR events"/"Minidumps" on the Stability tab.
+
+**Swap-thrash Health Check rule**: a pure aggregator rule in `SummaryViewModel.RefreshHealthIssues`
+(no new sampling) - sustained heavy paging (`Performance.HardFaultsPerSec >= 500`) together with
+very little free RAM (`RamAvailablePercent < 10`) is a much stronger "the system is actually
+thrashing" signal than either figure alone, since a hard-fault burst during a big file load or
+briefly-low available RAM after opening several apps are both routine and not worth a critical flag
+on their own - the same "combine two figures for a real signal" reasoning the Round 4 dead-fan
+detector and Round 3's link-speed heuristics already established for different false-positive
+sources.
+
+**RAM module JEDEC manufacturer lookup**: `Services/JedecManufacturerLookup.cs` is a small,
+explicitly non-exhaustive table (about a dozen entries) mapping a handful of common raw SPD/JEDEC
+manufacturer codes to a friendly brand name, used only when `Win32_PhysicalMemory.Manufacturer`
+comes back as a short hex code rather than an already-readable string (the common case on modern
+firmware, which is left untouched) - an unmatched code passes through unchanged rather than being
+forced into a wrong guess, the same honestly-scoped-informational-only framing the BIOS-age hint
+(Round 6) and outdated-driver filtering (Round 3) already established for "worth knowing, not a
+verified fact" data.
+
 ### Notable implementation details
 
 - **CPU clock speed**: not directly exposed by Windows. Computed the same

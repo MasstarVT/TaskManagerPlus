@@ -22,6 +22,8 @@
             <conv:StringListJoinConverter x:Key="StringListJoinConverter" />
             <conv:BootMsToSecondsConverter x:Key="BootMsToSecondsConverter" />
             <conv:NullToVisibilityConverter x:Key="NullToVisibilityConverter" />
+            <conv:PercentToWidthConverter x:Key="PercentToWidthConverter" />
+            <conv:PercentToStarWidthConverter x:Key="PercentToStarWidthConverter" />
         </ResourceDictionary>
     </Application.Resources>
 </Application>

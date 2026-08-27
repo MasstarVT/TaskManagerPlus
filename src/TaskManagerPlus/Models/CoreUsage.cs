@@ -6,7 +6,14 @@ namespace TaskManagerPlus.Models;
 public sealed class CoreUsage : ObservableObject
 {
     public int Index { get; init; }
-    public string Label => $"CPU {Index}";
+
+    /// <summary>Round 8 #26: the other logical core index sharing this one's physical core (SMT/
+    /// Hyper-Threading sibling), -1 when this core has no sibling (SMT off, or a non-hybrid
+    /// single-thread-per-core CPU). Folded directly into Label below rather than a separate
+    /// SubText tag, since SubText is already spoken for by the Parked/P-core/E-core tags.</summary>
+    public int SiblingIndex { get; init; } = -1;
+
+    public string Label => SiblingIndex >= 0 ? $"CPU {Index} ↔{SiblingIndex}" : $"CPU {Index}";
 
     /// <summary>NUMA node this logical core belongs to, from CpuTopologyService. 0 when the
     /// system has a single node (the common case) or when topology couldn't be determined.</summary>

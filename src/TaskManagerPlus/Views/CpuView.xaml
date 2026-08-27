@@ -264,6 +264,147 @@
                                 SubText="Power-saving" AccentBrush="{DynamicResource AccentBrush}" />
             </UniformGrid>
 
+            <!-- Round 8 #26: SMT/Hyper-Threading summary - per-core sibling pairing is shown
+                 directly in each core tile's label above ("CPU 0 ↔4"), see CoreUsage.Label. -->
+            <TextBlock Margin="0,16,0,0" Style="{StaticResource SubStat}" TextWrapping="Wrap">
+                <Run Text="SMT / Hyper-Threading: " />
+                <Run FontWeight="SemiBold">
+                    <Run.Style>
+                        <Style TargetType="Run">
+                            <Setter Property="Text" Value="Off (or not determined)" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding Performance.HasSmt}" Value="True">
+                                    <Setter Property="Text" Value="On - sibling cores are marked ↔ in the grid above" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Run.Style>
+                </Run>
+            </TextBlock>
+
+            <!-- Round 8 #27: turbo-boost time-at-frequency histogram, accumulated across this
+                 session - bucketed by percent above/below base clock (see PerformanceViewModel's
+                 TurboHistogram remarks), not raw GHz, so it stays meaningful across CPU models. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <TextBlock Text="Turbo-boost histogram (this session)" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="What percent of this session's samples fell into each range vs. rated base clock."
+                               Style="{StaticResource SubStat}" Margin="0,-8,0,12" TextWrapping="Wrap" />
+                    <ItemsControl ItemsSource="{Binding Performance.TurboHistogram}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="110" />
+                                        <ColumnDefinition Width="220" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="{Binding Label}" VerticalAlignment="Center" FontSize="11.5"
+                                               Foreground="{DynamicResource TextSecondaryBrush}" />
+                                    <Border Grid.Column="1" Height="14" CornerRadius="3" Background="{DynamicResource BgElevatedBrush}" HorizontalAlignment="Left" Width="220">
+                                        <Border CornerRadius="3" Background="{DynamicResource AccentBrush}" HorizontalAlignment="Left"
+                                                Width="{Binding Percent, Converter={StaticResource PercentToWidthConverter}, ConverterParameter=220}" />
+                                    </Border>
+                                    <TextBlock Grid.Column="2" Text="{Binding Percent, StringFormat={}{0:0.0}%}" Margin="8,0,0,0"
+                                               VerticalAlignment="Center" FontSize="11.5" FontWeight="SemiBold" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- Round 8 #24: best-effort core-affinity heatmap - which cores the current top-CPU
+                 processes' threads prefer (GetThreadIdealProcessorEx), not a live trace of actual
+                 scheduling - see CoreAffinityService's remarks. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <TextBlock Text="Core affinity heatmap (top CPU processes)" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Preferred (ideal) core per thread for the current top few CPU-consuming processes - an approximation, not a live trace of every context switch."
+                               Style="{StaticResource SubStat}" Margin="0,-8,0,12" TextWrapping="Wrap" />
+                    <ItemsControl ItemsSource="{Binding CoreAffinity}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Width="76" Height="52" CornerRadius="6" Margin="0,0,6,6" Padding="6"
+                                        Background="{DynamicResource BgElevatedBrush}"
+                                        ToolTip="{Binding ProcessNames}">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding ProcessCount}" Value="1">
+                                                    <Setter Property="Background" Value="{DynamicResource AccentMutedBrush}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
+                                    <StackPanel>
+                                        <TextBlock Text="{Binding CoreIndex, StringFormat=CPU {0}}" FontSize="10.5"
+                                                   Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        <TextBlock Text="{Binding ProcessCount}" FontSize="18" FontWeight="SemiBold" />
+                                        <TextBlock Text="processes" FontSize="9" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- Round 8 #25/#28/#29/#30: static CPU identification readouts - microcode revision,
+                 Spectre/Meltdown mitigation override status, instruction-set support (backed by
+                 .NET's own CPUID-driven runtime feature detection, not raw CPUID execution - see
+                 CpuFeatureInfo's remarks), and L1/L2/L3 cache sizes. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <TextBlock Text="CPU identification" Style="{StaticResource CardTitle}" />
+                    <UniformGrid Columns="3" Margin="0,10,0,10">
+                        <StackPanel Margin="0,0,6,10">
+                            <TextBlock Text="Microcode revision" Style="{StaticResource SpecLabel}" />
+                            <TextBlock Text="{Binding Features.MicrocodeRevision}" Style="{StaticResource SpecValue}" />
+                        </StackPanel>
+                        <StackPanel Margin="3,0,3,10">
+                            <TextBlock Text="L1 cache" Style="{StaticResource SpecLabel}" />
+                            <TextBlock Text="{Binding Features.L1CacheText}" Style="{StaticResource SpecValue}" />
+                        </StackPanel>
+                        <StackPanel Margin="3,0,3,10">
+                            <TextBlock Text="L2 cache" Style="{StaticResource SpecLabel}" />
+                            <TextBlock Text="{Binding Features.L2CacheText}" Style="{StaticResource SpecValue}" />
+                        </StackPanel>
+                        <StackPanel Margin="0,0,6,0">
+                            <TextBlock Text="L3 cache" Style="{StaticResource SpecLabel}" />
+                            <TextBlock Text="{Binding Features.L3CacheText}" Style="{StaticResource SpecValue}" />
+                        </StackPanel>
+                        <StackPanel Margin="3,0,3,0">
+                            <TextBlock Text="Instruction sets" Style="{StaticResource SpecLabel}" />
+                            <TextBlock Style="{StaticResource SpecValue}" TextWrapping="Wrap" FontSize="12">
+                                <Run Text="{Binding Features.Sse42Supported, StringFormat={}SSE4.2: {0}}" />
+                                <Run Text="  ·  " />
+                                <Run Text="{Binding Features.AvxSupported, StringFormat={}AVX: {0}}" />
+                                <Run Text="  ·  " />
+                                <Run Text="{Binding Features.Avx2Supported, StringFormat={}AVX2: {0}}" />
+                                <Run Text="  ·  " />
+                                <Run Text="{Binding Features.Avx512Supported, StringFormat={}AVX-512: {0}}" />
+                                <Run Text="  ·  " />
+                                <Run Text="{Binding Features.FmaSupported, StringFormat={}FMA: {0}}" />
+                            </TextBlock>
+                        </StackPanel>
+                    </UniformGrid>
+                    <TextBlock Text="Instruction-set flags come from .NET's own runtime CPUID-driven feature detection (accurate for what code on this machine can use); AVX-512 can read false on hardware that has the silicon but isn't exposed by this OS/runtime combination."
+                               Style="{StaticResource SubStat}" TextWrapping="Wrap" Opacity="0.7" Margin="0,4,0,10" />
+                    <Border BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,1,0,0" Padding="0,10,0,0">
+                        <StackPanel>
+                            <TextBlock Text="Spectre/Meltdown mitigation override" Style="{StaticResource SpecLabel}" />
+                            <TextBlock Text="{Binding Features.MitigationOverrideText}" Style="{StaticResource SpecValue}" TextWrapping="Wrap" FontSize="12" />
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </Border>
+
         </StackPanel>
     </ScrollViewer>
 </UserControl>
