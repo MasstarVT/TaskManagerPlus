@@ -20,6 +20,7 @@
             <conv:TemperatureToBrushConverter x:Key="TemperatureToBrushConverter" />
             <conv:SensorTypeToUnitConverter x:Key="SensorTypeToUnitConverter" />
             <conv:StringListJoinConverter x:Key="StringListJoinConverter" />
+            <conv:BootMsToSecondsConverter x:Key="BootMsToSecondsConverter" />
         </ResourceDictionary>
     </Application.Resources>
 </Application>

@@ -1,4 +1,8 @@
 using System.Collections.ObjectModel;
+using LiveChartsCore;
+using LiveChartsCore.SkiaSharpView;
+using LiveChartsCore.SkiaSharpView.Painting;
+using SkiaSharp;
 using TaskManagerPlus.Common;
 using TaskManagerPlus.Models;
 using TaskManagerPlus.Services;
@@ -50,8 +54,41 @@ public sealed class StartupViewModel : ObservableObject
     public RelayCommand ToggleScheduledTaskCommand { get; }
     public AsyncRelayCommand CheckLogonDelayCommand { get; }
 
+    // #89/#90: boot time breakdown for the most recent boot, plus a small self-recorded trend
+    // across sessions - see BootPerformanceService's remarks on why the breakdown is an adaptive
+    // field list rather than fixed named properties.
+    private BootTimeBreakdown? _bootBreakdown;
+    public BootTimeBreakdown? BootBreakdown { get => _bootBreakdown; private set => SetProperty(ref _bootBreakdown, value); }
+
+    public ObservableCollection<double> BootHistoryMs { get; } = new();
+    private readonly LineSeries<double> _bootHistoryLine;
+    public ISeries[] BootHistorySeries { get; }
+    public Axis[] BootHistoryXAxes { get; }
+    public Axis[] BootHistoryYAxes { get; }
+
     public StartupViewModel()
     {
+        _bootHistoryLine = new LineSeries<double>
+        {
+            Values = BootHistoryMs,
+            Stroke = new SolidColorPaint(SKColors.DeepSkyBlue, 2f),
+            Fill = null,
+            GeometrySize = 6,
+            LineSmoothness = 0.2,
+        };
+        BootHistorySeries = new ISeries[] { _bootHistoryLine };
+        BootHistoryXAxes = new[] { new Axis { IsVisible = false, ShowSeparatorLines = false } };
+        BootHistoryYAxes = new[]
+        {
+            new Axis
+            {
+                MinLimit = 0,
+                Labeler = v => $"{v / 1000.0:0.#}s",
+                LabelsPaint = new SolidColorPaint(new SKColor(0x9A, 0x9A, 0xA2)),
+                SeparatorsPaint = new SolidColorPaint(new SKColor(0x33, 0x33, 0x3A, 160)) { StrokeThickness = 1 },
+            },
+        };
+
         RefreshCommand = new RelayCommand(_ => Refresh());
         ToggleEnabledCommand = new RelayCommand(param => Toggle(param as StartupItem ?? SelectedItem));
 
@@ -60,6 +97,31 @@ public sealed class StartupViewModel : ObservableObject
         CheckLogonDelayCommand = new AsyncRelayCommand(CheckLogonDelayAsync, () => SelectedScheduledTask is not null);
 
         Refresh();
+        LoadBootPerformance();
+    }
+
+    public void ApplyAxisTheme(System.Windows.Media.Color text, System.Windows.Media.Color separator)
+    {
+        var textSk = new SKColor(text.R, text.G, text.B);
+        var sepSk = new SKColor(separator.R, separator.G, separator.B, separator.A);
+        BootHistoryYAxes[0].LabelsPaint = new SolidColorPaint(textSk);
+        BootHistoryYAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
+    }
+
+    private void LoadBootPerformance()
+    {
+        _ = Task.Run(() =>
+        {
+            var breakdown = BootPerformanceService.ReadLatest();
+            var history = BootPerformanceService.RecordAndLoadHistory(breakdown);
+
+            System.Windows.Application.Current?.Dispatcher.Invoke(() =>
+            {
+                BootBreakdown = breakdown;
+                BootHistoryMs.Clear();
+                foreach (var h in history) BootHistoryMs.Add(h.TotalMs);
+            });
+        });
     }
 
     private async Task LoadScheduledTasksAsync()
@@ -105,8 +167,21 @@ public sealed class StartupViewModel : ObservableObject
     private void Refresh()
     {
         Items.Clear();
-        foreach (var item in _service.Sample())
+        var items = _service.Sample();
+        foreach (var item in items)
             Items.Add(item);
+
+        // #91: measured startup delay, off the UI thread (Process enumeration + per-process
+        // StartTime reads) - applied back via Dispatcher, the same pattern StorageViewModel's
+        // background WMI queries use.
+        _ = Task.Run(() =>
+        {
+            var delays = StartupDelayService.ComputeDelays(items);
+            System.Windows.Application.Current?.Dispatcher.Invoke(() =>
+            {
+                foreach (var (item, text) in delays) item.MeasuredDelayText = text;
+            });
+        });
     }
 
     private void Toggle(StartupItem? item)

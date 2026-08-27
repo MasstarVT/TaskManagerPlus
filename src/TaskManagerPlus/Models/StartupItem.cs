@@ -28,4 +28,9 @@ public sealed class StartupItem : ObservableObject
 
     private bool _isEnabled;
     public bool IsEnabled { get => _isEnabled; set => SetProperty(ref _isEnabled, value); }
+
+    // #91: measured (not estimated) delay between boot and this item's process actually starting,
+    // for whichever items are still running - see StartupDelayService's remarks.
+    private string _measuredDelayText = "Checking...";
+    public string MeasuredDelayText { get => _measuredDelayText; set => SetProperty(ref _measuredDelayText, value); }
 }
