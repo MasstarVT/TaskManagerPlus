@@ -2,8 +2,13 @@ using System.Globalization;
 using System.IO;
 using System.Windows.Threading;
 using LibreHardwareMonitor.Hardware;
+using LiveChartsCore;
+using LiveChartsCore.SkiaSharpView;
+using LiveChartsCore.SkiaSharpView.Painting;
 using Microsoft.Win32;
+using SkiaSharp;
 using TaskManagerPlus.Common;
+using TaskManagerPlus.Models;
 using TaskManagerPlus.Services;
 
 namespace TaskManagerPlus.ViewModels;
@@ -32,6 +37,33 @@ public sealed class LoggingViewModel : ObservableObject, IDisposable
     private int _coreCountAtStart;
     private List<(string Identifier, SensorType Type)> _sensorColumnsAtStart = new();
 
+    // #95: auto-start rolling buffer - a separate, independent "always logging the last N
+    // minutes to memory" mode that runs whenever manual logging (above) isn't active. Its own
+    // column snapshot (taken when the buffer starts, same reasoning as the manual snapshot
+    // above) and its own fixed-size queue, periodically flushed to one fixed file on disk so a
+    // crash mid-session still leaves a usable file behind, not just an in-memory buffer that
+    // dies with the process.
+    private readonly LoggingSettings _loggingSettings = LoggingSettingsService.Load();
+    private readonly Queue<string> _rollingBuffer = new();
+    private int _rollingCoreCountAtStart;
+    private List<(string Identifier, SensorType Type)> _rollingSensorColumnsAtStart = new();
+    private int _rollingFlushCountdown;
+    private static string RollingBufferPath => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TaskManagerPlus", "Logs", "rolling-buffer.csv");
+
+    public bool AutoStartRollingBufferEnabled
+    {
+        get => _loggingSettings.AutoStartRollingBuffer;
+        set
+        {
+            if (_loggingSettings.AutoStartRollingBuffer == value) return;
+            _loggingSettings.AutoStartRollingBuffer = value;
+            LoggingSettingsService.Save(_loggingSettings);
+            OnPropertyChanged();
+            if (value) StartRollingBuffer(); else _rollingBuffer.Clear();
+        }
+    }
+
     public bool IsLogging => _logging.IsLogging;
     public string? LogFilePath => _logging.FilePath;
     public string LogFileName => LogFilePath is null ? string.Empty : Path.GetFileName(LogFilePath);
@@ -48,6 +80,20 @@ public sealed class LoggingViewModel : ObservableObject, IDisposable
 
     public RelayCommand AddMarkerCommand { get; }
 
+    // #96: log file viewer/replay - loads a previously recorded CSV (this app's own, from either
+    // manual logging or the rolling buffer above) and re-charts its headline figures, so a past
+    // session can be inspected without an external tool like Excel. See LogReplayService's
+    // remarks for why only a handful of well-known columns are pulled out by name.
+    public RelayCommand LoadLogFileCommand { get; }
+
+    private ISeries[]? _replaySeries;
+    public ISeries[]? ReplaySeries { get => _replaySeries; private set => SetProperty(ref _replaySeries, value); }
+    public Axis[] ReplayXAxes { get; }
+    public Axis[] ReplayYAxes { get; }
+
+    private string _replayStatusText = string.Empty;
+    public string ReplayStatusText { get => _replayStatusText; private set => SetProperty(ref _replayStatusText, value); }
+
     public LoggingViewModel(PerformanceViewModel performance, EnergyThermalsViewModel energyThermals)
     {
         _performance = performance;
@@ -55,12 +101,130 @@ public sealed class LoggingViewModel : ObservableObject, IDisposable
 
         ToggleLoggingCommand = new RelayCommand(_ => ToggleLogging());
         AddMarkerCommand = new RelayCommand(_ => AddMarker(), _ => IsLogging);
+        LoadLogFileCommand = new RelayCommand(_ => LoadLogFile());
+
+        ReplayXAxes = new[] { new Axis { Labels = Array.Empty<string>(), LabelsPaint = new SolidColorPaint(new SKColor(0x9A, 0x9A, 0xA2)), SeparatorsPaint = null } };
+        ReplayYAxes = new[]
+        {
+            new Axis
+            {
+                MinLimit = 0, MaxLimit = 100, Labeler = v => $"{v:0}%",
+                LabelsPaint = new SolidColorPaint(new SKColor(0x9A, 0x9A, 0xA2)),
+                SeparatorsPaint = new SolidColorPaint(new SKColor(0x33, 0x33, 0x3A, 160)) { StrokeThickness = 1 },
+            },
+        };
 
         _logging.Rotated += () => RaiseLoggingChanged();
 
         _timer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(1) };
-        _timer.Tick += (_, _) => WriteRowIfLogging();
+        _timer.Tick += (_, _) => Tick();
         _timer.Start();
+
+        if (AutoStartRollingBufferEnabled) StartRollingBuffer();
+    }
+
+    private void Tick()
+    {
+        if (IsLogging) { WriteRowIfLogging(); return; }
+        if (AutoStartRollingBufferEnabled) WriteRollingBufferRow();
+    }
+
+    private void StartRollingBuffer()
+    {
+        _rollingCoreCountAtStart = _performance.Cores.Count;
+        _rollingSensorColumnsAtStart = _energyThermals.Temperatures
+            .Concat(_energyThermals.Fans).Concat(_energyThermals.Voltages).Concat(_energyThermals.Wattages)
+            .Select(s => (s.Identifier, s.Type)).ToList();
+        _rollingBuffer.Clear();
+        _rollingFlushCountdown = 0;
+    }
+
+    /// <summary>Builds one row the same shape WriteRowIfLogging does, using the rolling buffer's
+    /// own column snapshot, then trims to the configured window (minutes * 1 row/sec) and flushes
+    /// to the fixed rolling-buffer file every 10s - frequent enough that a crash leaves a
+    /// reasonably fresh file, infrequent enough not to be wasteful disk I/O for a background,
+    /// always-on feature.</summary>
+    private void WriteRollingBufferRow()
+    {
+        var row = BuildRow(_rollingCoreCountAtStart, _rollingSensorColumnsAtStart);
+        _rollingBuffer.Enqueue(string.Join(",", row.Select(Escape)));
+
+        int maxRows = Math.Max(1, _loggingSettings.RollingBufferMinutes * 60);
+        while (_rollingBuffer.Count > maxRows) _rollingBuffer.Dequeue();
+
+        if (++_rollingFlushCountdown < 10) return;
+        _rollingFlushCountdown = 0;
+
+        try
+        {
+            var dir = Path.GetDirectoryName(RollingBufferPath)!;
+            Directory.CreateDirectory(dir);
+            var lines = new List<string> { string.Join(",", BuildHeaders(_rollingCoreCountAtStart, _rollingSensorColumnsAtStart).Select(Escape)) };
+            lines.AddRange(_rollingBuffer);
+            File.WriteAllLines(RollingBufferPath, lines);
+        }
+        catch
+        {
+            // Best-effort - a failed flush just means the on-disk copy is a bit stale; the
+            // in-memory buffer itself is unaffected.
+        }
+    }
+
+    private static string Escape(string value)
+    {
+        if (value.IndexOfAny(new[] { ',', '"', '\n', '\r' }) < 0) return value;
+        return "\"" + value.Replace("\"", "\"\"") + "\"";
+    }
+
+    public void ApplyAxisTheme(System.Windows.Media.Color text, System.Windows.Media.Color separator)
+    {
+        var textSk = new SKColor(text.R, text.G, text.B);
+        var sepSk = new SKColor(separator.R, separator.G, separator.B, separator.A);
+        ReplayXAxes[0].LabelsPaint = new SolidColorPaint(textSk);
+        ReplayYAxes[0].LabelsPaint = new SolidColorPaint(textSk);
+        ReplayYAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
+    }
+
+    private void LoadLogFile()
+    {
+        var dialog = new OpenFileDialog
+        {
+            Title = "Load a log file to replay",
+            Filter = "CSV files (*.csv)|*.csv|All files (*.*)|*.*",
+            InitialDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TaskManagerPlus", "Logs"),
+        };
+        if (dialog.ShowDialog() != true) return;
+
+        var (result, error) = LogReplayService.Parse(dialog.FileName);
+        if (result is null)
+        {
+            ReplaySeries = null;
+            ReplayStatusText = error ?? "Couldn't read that file.";
+            return;
+        }
+
+        var cpuColor = SKColors.DeepSkyBlue;
+        var ramColor = SKColors.MediumPurple;
+        var diskColor = SKColors.Orange;
+        ISeries LineOf(List<double> values, SKColor color, string name) => new LineSeries<double>
+        {
+            Values = values, Name = name, Stroke = new SolidColorPaint(color, 2f), Fill = null,
+            GeometryStroke = null, GeometryFill = null, LineSmoothness = 0.2,
+        };
+        ReplaySeries = new[]
+        {
+            LineOf(result.CpuPercent, cpuColor, "CPU %"),
+            LineOf(result.RamPercent, ramColor, "RAM %"),
+            LineOf(result.DiskPercent, diskColor, "Disk %"),
+        };
+
+        int n = result.Timestamps.Count;
+        int labelEvery = Math.Max(1, n / 8);
+        ReplayXAxes[0].Labels = result.Timestamps
+            .Select((t, i) => i % labelEvery == 0 ? t.ToString("t") : string.Empty)
+            .ToArray();
+
+        ReplayStatusText = $"{result.RowCount} rows: {result.Timestamps[0]:g} – {result.Timestamps[^1]:g} ({Path.GetFileName(dialog.FileName)})";
     }
 
     private void AddMarker()
@@ -104,19 +268,19 @@ public sealed class LoggingViewModel : ObservableObject, IDisposable
             .Select(s => (s.Identifier, s.Type))
             .ToList();
 
-        _logging.Start(path, BuildHeaders());
+        _logging.Start(path, BuildHeaders(_coreCountAtStart, _sensorColumnsAtStart));
         WriteRowIfLogging(); // capture the current values immediately, not just on the next tick
         RaiseLoggingChanged();
     }
 
-    private List<string> BuildHeaders()
+    private List<string> BuildHeaders(int coreCount, List<(string Identifier, SensorType Type)> sensorColumns)
     {
         var headers = new List<string>
         {
             "Timestamp",
             "CPU Total (%)", "CPU Clock (GHz)",
         };
-        for (int i = 0; i < _coreCountAtStart; i++)
+        for (int i = 0; i < coreCount; i++)
             headers.Add($"CPU Core {i} (%)");
 
         headers.AddRange(new[]
@@ -138,7 +302,7 @@ public sealed class LoggingViewModel : ObservableObject, IDisposable
             .Concat(_energyThermals.Voltages)
             .Concat(_energyThermals.Wattages)
             .ToDictionary(s => s.Identifier);
-        foreach (var (identifier, type) in _sensorColumnsAtStart)
+        foreach (var (identifier, type) in sensorColumns)
         {
             var name = allSensors.TryGetValue(identifier, out var s)
                 ? $"{s.HardwareName} {s.SensorName}"
@@ -156,12 +320,16 @@ public sealed class LoggingViewModel : ObservableObject, IDisposable
     private void WriteRowIfLogging()
     {
         if (!IsLogging) return;
+        _logging.WriteRow(BuildRow(_coreCountAtStart, _sensorColumnsAtStart));
+    }
 
+    private List<string> BuildRow(int coreCount, List<(string Identifier, SensorType Type)> sensorColumns)
+    {
         var row = new List<string> { DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture) };
         row.Add(Num(_performance.CpuCurrentPercent));
         row.Add(Num(_performance.CpuCurrentClockGhz));
 
-        for (int i = 0; i < _coreCountAtStart; i++)
+        for (int i = 0; i < coreCount; i++)
             row.Add(i < _performance.Cores.Count ? Num(_performance.Cores[i].Percent) : string.Empty);
 
         row.Add(Num(_performance.CpuInterruptPercent));
@@ -195,7 +363,7 @@ public sealed class LoggingViewModel : ObservableObject, IDisposable
             .Concat(_energyThermals.Voltages)
             .Concat(_energyThermals.Wattages)
             .ToDictionary(s => s.Identifier);
-        foreach (var (identifier, _) in _sensorColumnsAtStart)
+        foreach (var (identifier, _) in sensorColumns)
         {
             row.Add(allSensors.TryGetValue(identifier, out var s) && s.Value.HasValue
                 ? Num(s.Value.Value)
@@ -205,7 +373,7 @@ public sealed class LoggingViewModel : ObservableObject, IDisposable
         row.Add(_pendingMarker ?? string.Empty);
         _pendingMarker = null;
 
-        _logging.WriteRow(row);
+        return row;
     }
 
     private static string Num(double value) => value.ToString("0.###", CultureInfo.InvariantCulture);

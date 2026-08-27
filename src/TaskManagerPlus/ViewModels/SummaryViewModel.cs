@@ -61,6 +61,11 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
     // snapshot, and top resource consumers into a single shareable markdown file.
     public RelayCommand GenerateReportCommand { get; }
 
+    // #97: the same report, as a single self-contained HTML file with embedded inline-SVG
+    // sparkline charts - no CSV/Excel round-trip needed for someone helping troubleshoot
+    // remotely to see the shape of the last minute's CPU/RAM/Disk activity, not just numbers.
+    public RelayCommand GenerateHtmlReportCommand { get; }
+
     // #93/#94: baseline capture + "what changed" comparison - one save/compare pair covers both
     // suggestions, since a saved baseline IS the comparison point for a later diff. See
     // SnapshotService's remarks.
@@ -86,6 +91,7 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         _stability = stability;
 
         GenerateReportCommand = new RelayCommand(_ => GenerateReport());
+        GenerateHtmlReportCommand = new RelayCommand(_ => GenerateHtmlReport());
         SaveSnapshotCommand = new RelayCommand(_ => SaveSnapshot());
         CompareSnapshotCommand = new RelayCommand(_ => CompareSnapshot());
 
@@ -240,6 +246,112 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
             Line($"| {p.Name} | {p.Pid} | {Formatting.FormatBytes(p.MemoryBytes)} | {p.CpuPercent:0.0} |");
 
         return sb.ToString();
+    }
+
+    /// <summary>#97: the HTML twin of GenerateReport() above - same underlying data, rendered as
+    /// one self-contained .html file (inline &lt;style&gt;, inline SVG charts, no external
+    /// references) that opens directly in any browser with no CSV/Excel round-trip.</summary>
+    private void GenerateHtmlReport()
+    {
+        var dialog = new SaveFileDialog
+        {
+            Title = "Generate HTML diagnostic report",
+            Filter = "HTML files (*.html)|*.html|All files (*.*)|*.*",
+            DefaultExt = ".html",
+            FileName = $"TaskManagerPlus-Report-{DateTime.Now:yyyy-MM-dd_HH-mm-ss}.html",
+        };
+        if (dialog.ShowDialog() != true) return;
+
+        try
+        {
+            File.WriteAllText(dialog.FileName, BuildReportHtml());
+        }
+        catch
+        {
+            // Best-effort - a failed write shouldn't crash the app; the user can just retry.
+        }
+    }
+
+    private string BuildReportHtml()
+    {
+        static string Esc(string s) => System.Net.WebUtility.HtmlEncode(s);
+
+        var sb = new StringBuilder();
+        void Line(string s = "") => sb.Append(s).Append('\n');
+
+        Line("<!doctype html><html><head><meta charset=\"utf-8\">");
+        Line($"<title>Task Manager Plus report - {Esc(DateTime.Now.ToString("F"))}</title>");
+        Line("<style>" +
+             "body{font-family:Segoe UI,Arial,sans-serif;background:#1c1c1f;color:#e4e4e7;max-width:900px;margin:32px auto;padding:0 16px}" +
+             "h1{font-size:20px}h2{font-size:15px;border-bottom:1px solid #3a3a42;padding-bottom:6px;margin-top:28px}" +
+             "table{border-collapse:collapse;width:100%;font-size:13px}td,th{padding:4px 8px;text-align:left;border-bottom:1px solid #2c2c33}" +
+             ".crit{color:#f26d6d}.warn{color:#e8b23c}.ok{color:#4fd18b}.muted{color:#9a9aa2;font-size:12px}" +
+             "svg{background:#242429;border-radius:6px}</style></head><body>");
+
+        Line($"<h1>Task Manager Plus diagnostic report</h1><p class=\"muted\">Generated {Esc(DateTime.Now.ToString("F"))}</p>");
+
+        Line("<h2>System</h2><table>");
+        Line($"<tr><td>OS</td><td>{Esc(_systemSpecs.OsName)} ({Esc(_systemSpecs.OsDetails)})</td></tr>");
+        Line($"<tr><td>Model</td><td>{Esc(_systemSpecs.SystemModel)}</td></tr>");
+        Line($"<tr><td>CPU</td><td>{Esc(_systemSpecs.CpuName)} — {Esc(_systemSpecs.CpuDetails)}</td></tr>");
+        Line($"<tr><td>RAM</td><td>{Esc(_systemSpecs.RamTotal)} ({Esc(_systemSpecs.RamDetails)})</td></tr>");
+        Line("</table>");
+
+        Line("<h2>Current load (last minute)</h2>");
+        Line($"<p>CPU: {Performance.CpuCurrentPercent:0.0}% @ {Performance.CpuCurrentClockGhz:0.00} GHz</p>");
+        Line(Sparkline(Performance.CpuHistory, "#3C9EE8"));
+        Line($"<p>Memory: {Performance.RamUsedGb:0.0} / {Performance.RamTotalGb:0.0} GB ({Performance.RamPercent:0.0}%)</p>");
+        Line(Sparkline(Performance.RamHistory, "#9B7FE0"));
+        Line($"<p>Disk activity: {Performance.DiskPercent:0.0}%</p>");
+        Line(Sparkline(Performance.DiskHistory, "#E8A23C"));
+        if (_energyThermals.CpuPackageTempC is { } temp) Line($"<p>CPU package temperature: {temp:0.#}°C</p>");
+        if (_energyThermals.TotalPackagePowerW is { } power) Line($"<p>CPU package power draw: {power:0.#} W</p>");
+
+        Line("<h2>Health Check</h2>");
+        if (HealthIssues.Count == 0)
+        {
+            Line("<p class=\"ok\">No issues detected.</p>");
+        }
+        else
+        {
+            Line("<ul>");
+            foreach (var issue in HealthIssues)
+                Line($"<li class=\"{(issue.IsCritical ? "crit" : "warn")}\">{(issue.IsCritical ? "Critical" : "Warning")}: {Esc(issue.Message)}</li>");
+            Line("</ul>");
+        }
+
+        Line("<h2>Recent stability</h2><table>");
+        Line($"<tr><td>Last unexpected shutdown</td><td>{Esc(_stability.LastUnexpectedShutdownText)}</td></tr>");
+        Line($"<tr><td>Time since last crash</td><td>{Esc(_stability.TimeSinceLastCrashText)}</td></tr>");
+        Line($"<tr><td>GPU driver resets (30d)</td><td>{_stability.TdrEventCount}</td></tr>");
+        Line("</table>");
+
+        Line("<h2>Top CPU processes</h2><table><tr><th>Process</th><th>PID</th><th>CPU %</th><th>Memory</th></tr>");
+        foreach (var p in Processes.Processes.OrderByDescending(p => p.CpuPercent).Take(10))
+            Line($"<tr><td>{Esc(p.Name)}</td><td>{p.Pid}</td><td>{p.CpuPercent:0.0}</td><td>{Esc(Formatting.FormatBytes(p.MemoryBytes))}</td></tr>");
+        Line("</table>");
+
+        Line("</body></html>");
+        return sb.ToString();
+    }
+
+    /// <summary>Renders one history buffer (0-100 range, 60 samples) as a small inline SVG
+    /// polyline - no chart library, just a hand-built path so the file stays a single
+    /// self-contained .html with no external script/CSS reference.</summary>
+    private static string Sparkline(IEnumerable<double> values, string color)
+    {
+        var list = values.ToList();
+        if (list.Count < 2) return string.Empty;
+
+        const int width = 600, height = 60;
+        var points = list.Select((v, i) =>
+        {
+            double x = i / (double)(list.Count - 1) * width;
+            double y = height - Math.Clamp(v, 0, 100) / 100.0 * height;
+            return $"{x:0.#},{y:0.#}";
+        });
+        return $"<svg viewBox=\"0 0 {width} {height}\" width=\"100%\" height=\"{height}\">" +
+               $"<polyline points=\"{string.Join(' ', points)}\" fill=\"none\" stroke=\"{color}\" stroke-width=\"2\" /></svg>";
     }
 
     /// <summary>#93: "record how my PC looks when healthy" - captures installed software,

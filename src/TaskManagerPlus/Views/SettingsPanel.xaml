@@ -198,7 +198,18 @@
                 <TextBox Style="{StaticResource HexBox}" Margin="0,0,0,22"
                          Text="{Binding NetworkSend, Converter={StaticResource ColorToHexConverter}, UpdateSourceTrigger=LostFocus}" />
 
-                <Button Content="Reset to defaults" Command="{Binding ResetCommand}" HorizontalAlignment="Left" />
+                <Button Content="Reset to defaults" Command="{Binding ResetCommand}" HorizontalAlignment="Left" Margin="0,0,0,22" />
+
+                <TextBlock Text="LOGGING" FontSize="10.5" FontWeight="Bold" Foreground="{DynamicResource TextTertiaryBrush}"
+                           Margin="0,0,0,14" />
+                <!-- #95: auto-start a rolling in-memory buffer on launch, so a crash can be
+                     diagnosed retroactively even if "Start Logging" was never clicked. Runs only
+                     while manual logging (the footer's Start/Stop Logging button) isn't active -
+                     see LoggingViewModel.Tick. -->
+                <CheckBox Content="Auto-start rolling log buffer on launch"
+                          IsChecked="{Binding DataContext.Logging.AutoStartRollingBufferEnabled, RelativeSource={RelativeSource AncestorType=Window}}" />
+                <TextBlock Text="Keeps the last 15 minutes of every metric written to a fixed file, even if you never click Start Logging."
+                           Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,4,0,0" />
 
             </StackPanel>
         </ScrollViewer>

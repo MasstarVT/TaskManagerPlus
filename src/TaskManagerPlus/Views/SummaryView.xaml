@@ -35,7 +35,12 @@
                         <!-- #73: one-click diagnostic report - bundles specs, recent stability
                              events, a sensor snapshot, and top resource consumers into a single
                              shareable markdown file. -->
-                        <Button Grid.Column="1" Content="Generate diagnostic report" Command="{Binding GenerateReportCommand}" />
+                        <StackPanel Grid.Column="1" Orientation="Horizontal">
+                            <Button Content="Markdown report" Command="{Binding GenerateReportCommand}" Margin="0,0,8,0" />
+                            <!-- #97: same report, as one self-contained HTML file with inline SVG
+                                 sparkline charts - opens directly in a browser. -->
+                            <Button Content="HTML report" Command="{Binding GenerateHtmlReportCommand}" />
+                        </StackPanel>
                     </Grid>
                     <TextBlock Foreground="{DynamicResource SuccessBrush}" Margin="0,8,0,0" FontSize="13">
                         <TextBlock.Style>
@@ -95,6 +100,43 @@
                             <TextBox Text="{Binding TempAlertThreshold, UpdateSourceTrigger=LostFocus}" IsEnabled="{Binding TempAlertEnabled}" Width="70" HorizontalAlignment="Left" />
                         </StackPanel>
                     </UniformGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- #96: log file viewer/replay - loads a previously recorded CSV (manual logging or
+                 the rolling buffer) and re-charts its CPU/RAM/Disk figures inline, no external
+                 tool needed. Logging isn't its own tab, so this reaches LoggingViewModel via the
+                 window's DataContext the same way the Settings drawer's rolling-buffer toggle does. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Log replay" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Load log file..."
+                                Command="{Binding DataContext.Logging.LoadLogFileCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+                    </Grid>
+                    <TextBlock Text="Re-charts a previously recorded CSV (Start Logging, or the auto-start rolling buffer) without needing Excel."
+                               Style="{StaticResource SubStat}" Margin="0,-2,0,8" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding DataContext.Logging.ReplayStatusText, RelativeSource={RelativeSource AncestorType=Window}}"
+                               Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" />
+                    <lvc:CartesianChart Series="{Binding DataContext.Logging.ReplaySeries, RelativeSource={RelativeSource AncestorType=Window}}"
+                                         XAxes="{Binding DataContext.Logging.ReplayXAxes, RelativeSource={RelativeSource AncestorType=Window}}"
+                                         YAxes="{Binding DataContext.Logging.ReplayYAxes, RelativeSource={RelativeSource AncestorType=Window}}"
+                                         Height="180" TooltipPosition="Top" LegendPosition="Bottom" Background="Transparent">
+                        <lvc:CartesianChart.Style>
+                            <Style TargetType="lvc:CartesianChart">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding DataContext.Logging.ReplaySeries, RelativeSource={RelativeSource AncestorType=Window}}" Value="{x:Null}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </lvc:CartesianChart.Style>
+                    </lvc:CartesianChart>
                 </StackPanel>
             </Border>
 
