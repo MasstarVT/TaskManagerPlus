@@ -79,6 +79,13 @@
                         <DataTrigger Binding="{Binding IsHighPrivilege}" Value="True">
                             <Setter Property="Background" Value="#142A2A00" />
                         </DataTrigger>
+                        <!-- #2: a process stuck "Not responding" gets a visible red row tint on
+                             top of the colored Status text below - "make it more prominent"
+                             beyond a plain text flag, since window ghosting is easy to miss in a
+                             long scrolling grid. -->
+                        <DataTrigger Binding="{Binding Status}" Value="Not responding">
+                            <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
+                        </DataTrigger>
                     </Style.Triggers>
                 </Style>
             </DataGrid.RowStyle>
@@ -130,16 +137,24 @@
                 <DataGridTextColumn Header="Disk" Binding="{Binding DiskBytesPerSec, Converter={StaticResource BytesToReadableConverter}, ConverterParameter=rate}" Width="90" />
                 <DataGridTextColumn Header="Threads" Binding="{Binding ThreadCount}" Width="80" />
                 <DataGridTextColumn Header="Handles" Binding="{Binding HandleCount}" Width="80" />
-                <DataGridTemplateColumn Header="Status" Width="120" SortMemberPath="Status">
+                <DataGridTemplateColumn Header="Status" Width="150" SortMemberPath="NotRespondingSeconds">
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate>
-                            <TextBlock Text="{Binding Status}" VerticalAlignment="Center">
+                            <!-- #2: "Not responding (12s)" - a running duration is a much more
+                                 prominent, actionable signal than a flat "Not responding" label,
+                                 since it distinguishes a window that's about to recover from one
+                                 that's genuinely hung. -->
+                            <TextBlock VerticalAlignment="Center">
                                 <TextBlock.Style>
                                     <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="{Binding Status}" />
                                         <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+                                        <Setter Property="FontWeight" Value="Normal" />
                                         <Style.Triggers>
                                             <DataTrigger Binding="{Binding Status}" Value="Not responding">
+                                                <Setter Property="Text" Value="{Binding NotRespondingSeconds, StringFormat=Not responding ({0}s)}" />
                                                 <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                <Setter Property="FontWeight" Value="SemiBold" />
                                             </DataTrigger>
                                         </Style.Triggers>
                                     </Style>

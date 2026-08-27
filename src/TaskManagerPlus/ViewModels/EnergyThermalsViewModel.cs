@@ -3,6 +3,7 @@ using System.Windows.Media;
 using System.Windows.Threading;
 using LibreHardwareMonitor.Hardware;
 using LiveChartsCore;
+using LiveChartsCore.Defaults;
 using LiveChartsCore.SkiaSharpView;
 using LiveChartsCore.SkiaSharpView.Painting;
 using SkiaSharp;
@@ -69,11 +70,50 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
     /// event list rather than an in-chart marker, capped to the 10 most recent, newest first.</summary>
     public ObservableCollection<string> ThrottleEvents { get; } = new();
 
+    // #81: motherboard/VRM temperature trend - VRM overheating causes throttling that CPU
+    // package temp alone won't show, so this is a second, independent chart rather than folded
+    // into the CPU one. Same glow+core LineOf pattern, on the Motherboard hardware tree only (so
+    // "System"/"VRM"-named sensors from a GPU or drive never collide with this lookup).
+    public ObservableCollection<double> MotherboardTempHistory { get; } = NewHistory();
+    private readonly LineSeries<double> _mbTempGlow;
+    private readonly LineSeries<double> _mbTempCore;
+    public ISeries[] MotherboardTempSeries { get; }
+    public Axis[] MotherboardTempYAxes { get; }
+
+    private double? _motherboardTempC;
+    public double? MotherboardTempC { get => _motherboardTempC; private set => SetProperty(ref _motherboardTempC, value); }
+
+    // #34: fan curve (RPM vs. temp) - a fan that isn't ramping with temperature shows up as a
+    // flat/scattered cloud instead of the expected rising trend. Tracks the primary CPU fan
+    // against CPU package temp specifically, since that's the one pairing present on virtually
+    // every system with any fan sensor at all.
+    private const int FanCurveWindow = 120;
+    public ObservableCollection<ObservablePoint> FanCurvePoints { get; } = new();
+    private readonly ScatterSeries<ObservablePoint> _fanCurveScatter;
+    public ISeries[] FanCurveSeries { get; }
+    public Axis[] FanCurveXAxes { get; }
+    public Axis[] FanCurveYAxes { get; }
+
     private double? _cpuPackageTempC;
     public double? CpuPackageTempC { get => _cpuPackageTempC; private set => SetProperty(ref _cpuPackageTempC, value); }
 
     private double? _totalPackagePowerW;
-    public double? TotalPackagePowerW { get => _totalPackagePowerW; private set => SetProperty(ref _totalPackagePowerW, value); }
+    public double? TotalPackagePowerW
+    {
+        get => _totalPackagePowerW;
+        private set
+        {
+            if (SetProperty(ref _totalPackagePowerW, value) && value is { } w)
+                PowerSessionMaxW = PowerSessionMaxW is { } max ? Math.Max(max, w) : w;
+        }
+    }
+
+    /// <summary>Highest package power draw seen this session (#35) - lets CpuViewModel tell
+    /// "pinned at its own ceiling" (power-limited) apart from "just hot" (thermal-limited), the
+    /// same distinction HWiNFO's vendor-proprietary limit-reason MSR reads make directly, which
+    /// this app can't read without that same proprietary access.</summary>
+    private double? _powerSessionMaxW;
+    public double? PowerSessionMaxW { get => _powerSessionMaxW; private set => SetProperty(ref _powerSessionMaxW, value); }
 
     /// <summary>GPU hotspot-vs-edge temperature differential (#29) - a large, sustained gap is a
     /// common sign of degraded thermal paste/pads on a GPU cooler, distinct from either reading
@@ -129,6 +169,39 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
                 SeparatorsPaint = new SolidColorPaint(AxisSeparatorColor) { StrokeThickness = 1 },
             },
         };
+        MotherboardTempYAxes = new[]
+        {
+            new Axis
+            {
+                MinLimit = 0,
+                Labeler = v => $"{v:0}°C",
+                LabelsPaint = new SolidColorPaint(AxisTextColor),
+                SeparatorsPaint = new SolidColorPaint(AxisSeparatorColor) { StrokeThickness = 1 },
+            },
+        };
+        FanCurveXAxes = new[]
+        {
+            new Axis
+            {
+                Name = "CPU temp (°C)",
+                NameTextSize = 11,
+                Labeler = v => $"{v:0}°C",
+                LabelsPaint = new SolidColorPaint(AxisTextColor),
+                SeparatorsPaint = new SolidColorPaint(AxisSeparatorColor) { StrokeThickness = 1 },
+            },
+        };
+        FanCurveYAxes = new[]
+        {
+            new Axis
+            {
+                Name = "Fan RPM",
+                NameTextSize = 11,
+                MinLimit = 0,
+                Labeler = v => $"{v:0}",
+                LabelsPaint = new SolidColorPaint(AxisTextColor),
+                SeparatorsPaint = new SolidColorPaint(AxisSeparatorColor) { StrokeThickness = 1 },
+            },
+        };
 
         var powerColor = SKColors.OrangeRed;
         _powerGlow = new LineSeries<double>
@@ -164,6 +237,34 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         };
         TempSeries = new ISeries[] { _tempGlow, _tempCore };
 
+        var mbColor = SKColors.MediumSeaGreen;
+        _mbTempGlow = new LineSeries<double>
+        {
+            Values = MotherboardTempHistory,
+            Stroke = new SolidColorPaint(mbColor.WithAlpha(70), GlowStrokeWidth),
+            Fill = null, GeometryStroke = null, GeometryFill = null,
+            LineSmoothness = 0.3, IsHoverable = false, IsVisibleAtLegend = false,
+        };
+        _mbTempCore = new LineSeries<double>
+        {
+            Values = MotherboardTempHistory,
+            Stroke = new SolidColorPaint(mbColor, CoreStrokeWidth),
+            Fill = new LinearGradientPaint(mbColor.WithAlpha(90), mbColor.WithAlpha(0), new SKPoint(0, 0), new SKPoint(0, 1)),
+            GeometryStroke = null, GeometryFill = null, LineSmoothness = 0.3,
+        };
+        MotherboardTempSeries = new ISeries[] { _mbTempGlow, _mbTempCore };
+
+        // #34: fan curve scatter - no glow pair (a scatter cloud doesn't read well with one), just
+        // small translucent points so overlapping samples at the same temp/RPM still show density.
+        _fanCurveScatter = new ScatterSeries<ObservablePoint>
+        {
+            Values = FanCurvePoints,
+            Fill = new SolidColorPaint(SKColors.DeepSkyBlue.WithAlpha(140)),
+            Stroke = null,
+            GeometrySize = 8,
+        };
+        FanCurveSeries = new ISeries[] { _fanCurveScatter };
+
         _timer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(1.5) };
         _timer.Tick += async (_, _) => await RefreshAsync();
         _timer.Start();
@@ -188,6 +289,12 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         PowerYAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
         TempYAxes[0].LabelsPaint = new SolidColorPaint(textSk);
         TempYAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
+        MotherboardTempYAxes[0].LabelsPaint = new SolidColorPaint(textSk);
+        MotherboardTempYAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
+        FanCurveXAxes[0].LabelsPaint = new SolidColorPaint(textSk);
+        FanCurveXAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
+        FanCurveYAxes[0].LabelsPaint = new SolidColorPaint(textSk);
+        FanCurveYAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
     }
 
     private async Task RefreshAsync()
@@ -236,6 +343,12 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         CpuPackageTempC = FindByNameContains(Temperatures, "CPU Package", "Core (Tctl/Tdie)", "CPU");
         TotalPackagePowerW = FindByNameContains(Wattages, "CPU Package", "Package", "CPU Cores", "CPU");
 
+        // #81: Motherboard hardware tree only, so a GPU/drive sensor also named "System" or
+        // "VRM" can't collide with this lookup - see IsGpu's remarks below for the same concern
+        // on the CPU-vs-GPU temperature lookups.
+        var mbTemps = tempReadings.Where(r => r.HardwareType == HardwareType.Motherboard).ToList();
+        MotherboardTempC = FindByNameContains(mbTemps, "VRM", "System", "Motherboard", "PCH", "Chipset");
+
         // #29: GPU hotspot/junction vs. edge/core temperature differential - restricted to GPU
         // hardware entries specifically (unlike the CPU lookups above) since sensor names like
         // "Core" collide with per-core CPU temperature readings otherwise.
@@ -249,6 +362,23 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         {
             PowerHistory.Add(TotalPackagePowerW.Value);
             if (PowerHistory.Count > HistoryLength) PowerHistory.RemoveAt(0);
+        }
+
+        if (MotherboardTempC is { } mbTemp)
+        {
+            MotherboardTempHistory.Add(mbTemp);
+            if (MotherboardTempHistory.Count > HistoryLength) MotherboardTempHistory.RemoveAt(0);
+        }
+
+        // #34: one (temp, RPM) sample per tick for the primary CPU fan (falling back to whatever
+        // fan is reported first when none is named "CPU") - a fan that isn't ramping with
+        // temperature shows up as a flat/scattered cloud instead of a rising trend.
+        var primaryFan = fanReadings.FirstOrDefault(r => r.SensorName.Contains("CPU", StringComparison.OrdinalIgnoreCase) && r.Value.HasValue)
+            ?? fanReadings.FirstOrDefault(r => r.Value.HasValue);
+        if (CpuPackageTempC is { } fanCurveTemp && primaryFan is not null)
+        {
+            FanCurvePoints.Add(new ObservablePoint(fanCurveTemp, primaryFan.Value!.Value));
+            while (FanCurvePoints.Count > FanCurveWindow) FanCurvePoints.RemoveAt(0);
         }
 
         if (CpuPackageTempC is { } cpuTemp)

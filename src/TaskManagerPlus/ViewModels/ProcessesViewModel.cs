@@ -149,6 +149,7 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
                 existing.MemoryBytes = fresh.MemoryBytes;
                 existing.DiskBytesPerSec = fresh.DiskBytesPerSec;
                 existing.Status = fresh.Status;
+                existing.NotRespondingSeconds = fresh.NotRespondingSeconds;
                 existing.ThreadCount = fresh.ThreadCount;
                 existing.HandleCount = fresh.HandleCount;
                 existing.SignatureStatus = fresh.SignatureStatus;

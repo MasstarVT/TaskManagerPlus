@@ -127,8 +127,60 @@
                 </StackPanel>
             </Border>
 
+            <!-- #81: motherboard/VRM temperature trend - VRM overheating causes throttling that
+                 CPU package temp alone won't show. Collapsed when no Motherboard-hardware
+                 temperature sensor with a VRM/system/chipset name is reported at all. -->
+            <Border Margin="0,16,0,0">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding MotherboardTempC}" Value="{x:Null}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" Style="{StaticResource TitleRow}" Margin="0">
+                            <Border Style="{StaticResource ColorDot}" Background="#3CD68C" />
+                            <TextBlock Text="Motherboard / VRM temperature" Style="{StaticResource CardTitle}" Margin="0" />
+                        </StackPanel>
+                        <TextBlock Grid.Column="1" Text="{Binding MotherboardTempC, StringFormat={}{0:0.#}°C}" Style="{StaticResource SubStat}" VerticalAlignment="Center" />
+                    </Grid>
+                    <lvc:CartesianChart Series="{Binding MotherboardTempSeries}" XAxes="{Binding HiddenXAxes}" YAxes="{Binding MotherboardTempYAxes}"
+                                         Height="140" TooltipPosition="Hidden" LegendPosition="Hidden" Background="Transparent" />
+                </StackPanel>
+            </Border>
+
+            <!-- #34: fan curve (RPM vs. temp) - a fan that isn't ramping with load shows up as a
+                 flat/scattered cloud instead of a rising trend. Collapsed until at least one
+                 (temp, RPM) sample has been recorded. -->
+            <Border Margin="0,16,0,0">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding FanCurvePoints.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Fan curve (primary CPU fan)" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="RPM vs. CPU temperature over the last few minutes - a fan that isn't ramping with temperature reads as a flat line instead of an upward trend."
+                               Style="{StaticResource SubStat}" Margin="0,-6,0,10" TextWrapping="Wrap" />
+                    <lvc:CartesianChart Series="{Binding FanCurveSeries}" XAxes="{Binding FanCurveXAxes}" YAxes="{Binding FanCurveYAxes}"
+                                         Height="180" TooltipPosition="Hidden" LegendPosition="Hidden" Background="Transparent" />
+                </StackPanel>
+            </Border>
+
             <!-- Temperatures -->
-            <TextBlock Text="Temperatures" Style="{StaticResource SubStat}" Margin="0,0,0,10" />
+            <TextBlock Text="Temperatures" Style="{StaticResource SubStat}" Margin="0,16,0,10" />
             <ItemsControl ItemsSource="{Binding Temperatures}" Margin="0,0,0,16">
                 <ItemsControl.ItemsPanel>
                     <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>

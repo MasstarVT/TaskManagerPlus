@@ -31,6 +31,10 @@ public sealed class ProcessMonitorService : IDisposable
     private readonly Dictionary<int, Queue<long>> _memoryHistory = new();
     // #11: rolling ~10s CPU% window per-pid - see ComputeCpuAverage.
     private readonly Dictionary<int, Queue<double>> _cpuHistory = new();
+    // #2: when a process first started reporting "Not responding" - lets the UI show a duration
+    // ("Not responding (12s)") rather than just a flat flag, so a genuinely stuck window stands
+    // out from one that ghosts for a split second and recovers.
+    private readonly Dictionary<int, DateTime> _notRespondingSince = new();
     private readonly Dictionary<int, string> _ownerCache = new();
     private readonly Dictionary<int, string?> _commandLineCache = new();
     // Parent process ID never changes after launch, same caching shape as command line (#52).
@@ -111,10 +115,20 @@ public sealed class ProcessMonitorService : IDisposable
                 try { filePath = proc.MainModule?.FileName; } catch { /* ignore, protected/x-bit mismatch */ }
 
                 string status = "Running";
+                int notRespondingSeconds = 0;
                 try
                 {
                     if (proc.Responding == false)
+                    {
                         status = "Not responding";
+                        if (!_notRespondingSince.TryGetValue(pid, out var since))
+                            _notRespondingSince[pid] = since = now;
+                        notRespondingSeconds = Math.Max(0, (int)(now - since).TotalSeconds);
+                    }
+                    else
+                    {
+                        _notRespondingSince.Remove(pid);
+                    }
                 }
                 catch { /* ignore */ }
 
@@ -130,6 +144,7 @@ public sealed class ProcessMonitorService : IDisposable
                     MemoryBytes = memoryBytes,
                     DiskBytesPerSec = Math.Round(diskBytesPerSec, 0),
                     Status = status,
+                    NotRespondingSeconds = notRespondingSeconds,
                     User = owner,
                     ThreadCount = threadCount,
                     HandleCount = handleCount,
@@ -175,6 +190,7 @@ public sealed class ProcessMonitorService : IDisposable
         PruneStaleEntries(_parentPidCache, seenPids);
         PruneStaleEntries(_memoryHistory, seenPids);
         PruneStaleEntries(_cpuHistory, seenPids);
+        PruneStaleEntries(_notRespondingSince, seenPids);
 
         _lastGlobalSampleUtc = now;
         return rows;

@@ -40,6 +40,12 @@ public sealed class ProcessRow : ObservableObject
     private string _status = string.Empty;
     public string Status { get => _status; set => SetProperty(ref _status, value); }
 
+    /// <summary>Seconds this process has continuously reported "Not responding" (window ghosting),
+    /// 0 while responding (#2) - "make it more prominent with duration" on top of Task Manager's
+    /// own plain Not-responding flag. See ProcessMonitorService for how this is tracked.</summary>
+    private int _notRespondingSeconds;
+    public int NotRespondingSeconds { get => _notRespondingSeconds; set => SetProperty(ref _notRespondingSeconds, value); }
+
     private string _user = string.Empty;
     public string User { get => _user; set => SetProperty(ref _user, value); }
 

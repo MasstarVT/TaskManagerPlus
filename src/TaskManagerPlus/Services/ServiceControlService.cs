@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Management;
 using System.ServiceProcess;
 using Microsoft.Win32;
@@ -141,6 +142,45 @@ public sealed class ServiceControlService
         catch (Exception ex)
         {
             return (false, ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Failure/recovery actions (#71) - what Windows does when this service crashes
+    /// (auto-restart, run a program, reboot, ...), read via `sc.exe qfailure`. The raw registry
+    /// value (SERVICE_FAILURE_ACTIONS, under the service's own key) is an undocumented binary
+    /// layout - shelling out to sc.exe, the same tool that already decodes it for `sc qfailure` at
+    /// the command line, avoids depending on that layout directly, the same "known Windows tool,
+    /// not raw struct interop" tradeoff NetworkDiagnosticsService's `netsh wlan` parsing already
+    /// takes. On-demand only (like Processes' module list) - not worth a WMI/registry read on
+    /// every 2s tick for every service.
+    /// </summary>
+    public static string ReadFailureActionsText(string serviceName)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo("sc.exe", $"qfailure \"{serviceName}\"")
+            {
+                RedirectStandardOutput = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            using var proc = Process.Start(psi);
+            if (proc is null) return "(couldn't run sc.exe)";
+
+            string output = proc.StandardOutput.ReadToEnd();
+            proc.WaitForExit(5000);
+
+            // Strip the "[SC] QueryServiceConfig2 SUCCESS" boilerplate line sc.exe always prints
+            // first - everything after it is the actual recovery-action report.
+            var lines = output.Split('\n').Select(l => l.TrimEnd('\r')).ToList();
+            int start = lines.FindIndex(l => l.Contains("SERVICE_NAME", StringComparison.OrdinalIgnoreCase));
+            var body = start >= 0 ? string.Join('\n', lines.Skip(start)) : output;
+            return body.Trim().Length == 0 ? "No recovery actions configured." : body.Trim();
+        }
+        catch (Exception ex)
+        {
+            return $"(couldn't read recovery actions: {ex.Message})";
         }
     }
 

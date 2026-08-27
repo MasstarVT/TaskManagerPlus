@@ -26,7 +26,17 @@
                     </Style>
                 </Border.Style>
                 <StackPanel>
-                    <TextBlock Text="Health Check" Style="{StaticResource CardTitle}" />
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Health Check" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <!-- #73: one-click diagnostic report - bundles specs, recent stability
+                             events, a sensor snapshot, and top resource consumers into a single
+                             shareable markdown file. -->
+                        <Button Grid.Column="1" Content="Generate diagnostic report" Command="{Binding GenerateReportCommand}" />
+                    </Grid>
                     <TextBlock Foreground="{DynamicResource SuccessBrush}" Margin="0,8,0,0" FontSize="13">
                         <TextBlock.Style>
                             <Style TargetType="TextBlock">
@@ -61,6 +71,30 @@
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #72: configurable threshold alerts - a toast fires once when CPU/Memory/CPU-temp
+                 crosses above its threshold, reusing the same already-polled data the logging
+                 infrastructure and Health Check card read. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Threshold alerts" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Shows a popup the moment a metric crosses its threshold." Style="{StaticResource SubStat}" Margin="0,-6,0,10" />
+                    <UniformGrid Columns="3">
+                        <StackPanel Margin="0,0,8,0">
+                            <CheckBox Content="CPU %" IsChecked="{Binding CpuAlertEnabled}" Margin="0,0,0,6" />
+                            <TextBox Text="{Binding CpuAlertThreshold, UpdateSourceTrigger=LostFocus}" IsEnabled="{Binding CpuAlertEnabled}" Width="70" HorizontalAlignment="Left" />
+                        </StackPanel>
+                        <StackPanel Margin="8,0,8,0">
+                            <CheckBox Content="Memory %" IsChecked="{Binding MemoryAlertEnabled}" Margin="0,0,0,6" />
+                            <TextBox Text="{Binding MemoryAlertThreshold, UpdateSourceTrigger=LostFocus}" IsEnabled="{Binding MemoryAlertEnabled}" Width="70" HorizontalAlignment="Left" />
+                        </StackPanel>
+                        <StackPanel Margin="8,0,0,0">
+                            <CheckBox Content="CPU temp °C" IsChecked="{Binding TempAlertEnabled}" Margin="0,0,0,6" />
+                            <TextBox Text="{Binding TempAlertThreshold, UpdateSourceTrigger=LostFocus}" IsEnabled="{Binding TempAlertEnabled}" Width="70" HorizontalAlignment="Left" />
+                        </StackPanel>
+                    </UniformGrid>
                 </StackPanel>
             </Border>
 

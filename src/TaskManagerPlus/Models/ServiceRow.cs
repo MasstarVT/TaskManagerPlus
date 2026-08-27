@@ -53,6 +53,13 @@ public sealed class ServiceRow : ObservableObject
     private IReadOnlyList<string> _dependentServices = Array.Empty<string>();
     public IReadOnlyList<string> DependentServices { get => _dependentServices; set => SetProperty(ref _dependentServices, value); }
 
+    /// <summary>Recovery/failure actions text (#71, e.g. "Restart the service" / "Run a program"
+    /// after N failures), loaded on demand via ViewFailureActionsCommand - see
+    /// ServiceControlService.ReadFailureActionsText. Empty until requested, same "expensive, so
+    /// make it explicit" tradeoff as Processes' on-demand module list.</summary>
+    private string _failureActionsText = string.Empty;
+    public string FailureActionsText { get => _failureActionsText; set => SetProperty(ref _failureActionsText, value); }
+
     public bool CanStart => Status is ServiceControllerStatus.Stopped;
     public bool CanStop => Status is ServiceControllerStatus.Running && ServiceName is not ("RpcSs" or "RpcEptMapper" or "DcomLaunch");
 }

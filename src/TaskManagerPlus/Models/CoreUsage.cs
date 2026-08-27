@@ -19,4 +19,9 @@ public sealed class CoreUsage : ObservableObject
 
     private double _percent;
     public double Percent { get => _percent; set => SetProperty(ref _percent, value); }
+
+    /// <summary>True when Windows has parked this logical core to save power (#78) - a common,
+    /// otherwise invisible reason only some cores appear to be doing anything under light load.</summary>
+    private bool _isParked;
+    public bool IsParked { get => _isParked; set => SetProperty(ref _isParked, value); }
 }

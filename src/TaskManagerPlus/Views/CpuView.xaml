@@ -31,6 +31,27 @@
                 </TextBlock>
             </Border>
 
+            <!-- #35: power-ceiling detector - distinct from the thermal-throttle banner above:
+                 pinned at its own session-high power draw while below base clock under load, but
+                 NOT running hot, points at a PSU/motherboard power limit or a vendor PL1/PL2 cap
+                 rather than the cooler. See CpuViewModel.IsPowerLimited's remarks. -->
+            <Border Background="{DynamicResource BgElevatedBrush}" BorderBrush="{DynamicResource WarningBrush}"
+                    BorderThickness="1" CornerRadius="8" Padding="14,10" Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsPowerLimited}" Value="True">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <TextBlock Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" FontSize="12.5">
+                    <Run Text="Possible power limit (not thermal): " /><Run Text="{Binding PowerLimitText, Mode=OneWay}" />
+                </TextBlock>
+            </Border>
+
             <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
                 <StackPanel>
                     <StackPanel Style="{StaticResource TitleRow}" Margin="0,0,0,4">
@@ -105,6 +126,12 @@
                                         </ItemsControl.ItemsPanel>
                                         <ItemsControl.ItemTemplate>
                                             <DataTemplate>
+                                                <!-- #78: a parked core is dimmed and tagged "Parked"
+                                                     (taking priority over the P-core/E-core tag) -
+                                                     Windows has scheduled it off to save power, not
+                                                     a fault, but a common, otherwise invisible
+                                                     reason only some cores appear busy under light
+                                                     load. -->
                                                 <views:VfdMeter Title="{Binding Label}" Percent="{Binding Percent}" Glow="False"
                                                                  ValueText="{Binding Percent, StringFormat={}{0:0}}" Unit="%"
                                                                  AccentBrush="{Binding Percent, Converter={StaticResource PercentToBrushConverter}}"
@@ -112,6 +139,7 @@
                                                     <views:VfdMeter.Style>
                                                         <Style TargetType="views:VfdMeter">
                                                             <Setter Property="SubText" Value="" />
+                                                            <Setter Property="Opacity" Value="1" />
                                                             <Style.Triggers>
                                                                 <MultiDataTrigger>
                                                                     <MultiDataTrigger.Conditions>
@@ -127,6 +155,10 @@
                                                                     </MultiDataTrigger.Conditions>
                                                                     <Setter Property="SubText" Value="E-core" />
                                                                 </MultiDataTrigger>
+                                                                <DataTrigger Binding="{Binding IsParked}" Value="True">
+                                                                    <Setter Property="SubText" Value="Parked" />
+                                                                    <Setter Property="Opacity" Value="0.5" />
+                                                                </DataTrigger>
                                                             </Style.Triggers>
                                                         </Style>
                                                     </views:VfdMeter.Style>
@@ -147,7 +179,7 @@
                  "how concerning" fill past 2x logical processors, same idea as the Storage tab's
                  latency gauges), and session min/max/avg clock (#11). -->
             <TextBlock Text="CPU diagnostics" Style="{StaticResource SubStat}" Margin="0,16,0,10" />
-            <UniformGrid Columns="4">
+            <UniformGrid Columns="5">
                 <views:VfdMeter Title="Interrupt / DPC" Glow="False" Margin="0,0,6,0"
                                 Percent="{Binding Performance.CpuInterruptPercent}"
                                 ValueText="{Binding Performance.CpuInterruptPercent, StringFormat={}{0:0.0}}" Unit="%"
@@ -160,10 +192,17 @@
                                 Percent="{Binding Performance.CpuQueueLengthGaugePercent}"
                                 ValueText="{Binding Performance.CpuQueueLength, StringFormat={}{0:0}}" Unit="threads"
                                 SubText="Waiting for a core" AccentBrush="{Binding Performance.CpuQueueLengthGaugePercent, Converter={StaticResource PercentToBrushConverter}}" />
-                <views:VfdMeter Title="Clock (session)" Glow="False" Margin="6,0,0,0"
+                <views:VfdMeter Title="Clock (session)" Glow="False" Margin="3,0,3,0"
                                 ValueText="{Binding Performance.CpuAvgClockGhz, StringFormat={}{0:0.00}}" Unit="GHz avg"
                                 SubText="{Binding Performance.CpuMaxClockGhzSeen, StringFormat={}up to {0:0.00} GHz}"
                                 AccentBrush="{DynamicResource AccentBrush}" />
+                <!-- #78: how many logical cores Windows currently has parked to save power - a
+                     common, otherwise invisible reason "only half my CPU seems busy" under
+                     light load. Always 0 (not "unavailable") when the counter itself doesn't
+                     exist on this Windows version - see HardwareMonitorService's remarks. -->
+                <views:VfdMeter Title="Parked cores" Glow="False" Margin="6,0,0,0"
+                                ValueText="{Binding Performance.ParkedCoreCount, StringFormat={}{0}}" Unit="cores"
+                                SubText="Power-saving" AccentBrush="{DynamicResource AccentBrush}" />
             </UniformGrid>
 
         </StackPanel>

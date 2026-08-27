@@ -19,5 +19,11 @@ public sealed class ThemeColors
     /// <summary>Palette saturation multiplier: 0 = grayscale, 1 = normal, up to 2 = boosted.</summary>
     public double Saturation { get; set; } = 1.0;
 
+    /// <summary>#76: swaps the Success/Warning/Danger status colors for a color-blind-safe set
+    /// (blue/yellow/orange instead of green/amber/red) - a separate toggle from the theme-family
+    /// system above, since it targets specifically the status/alert colors this app leans on
+    /// throughout its diagnostic UI, not the whole palette.</summary>
+    public bool ColorBlindSafeAlerts { get; set; }
+
     public static ThemeColors Defaults => new();
 }

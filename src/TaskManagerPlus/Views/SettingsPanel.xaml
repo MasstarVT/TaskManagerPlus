@@ -88,6 +88,11 @@
                 <Slider Minimum="0" Maximum="2" TickFrequency="0.1" IsSnapToTickEnabled="False"
                         Value="{Binding Saturation}" Margin="0,0,0,22" />
 
+                <!-- #76: swaps the Success/Warning/Danger status colors for a color-blind-safe
+                     set - a separate toggle from the theme family above, since it targets
+                     specifically the status/alert colors this app's diagnostic UI leans on. -->
+                <CheckBox Content="Color-blind-safe alert colors" IsChecked="{Binding ColorBlindSafeAlerts}" Margin="0,0,0,22" />
+
                 <!-- Accent -->
                 <TextBlock Text="Accent" Style="{StaticResource ColorRowLabel}" />
                 <ItemsControl ItemsSource="{Binding PresetColors}" Margin="0,0,0,8">

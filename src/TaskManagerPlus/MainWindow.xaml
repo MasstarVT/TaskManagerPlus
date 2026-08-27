@@ -270,6 +270,7 @@
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <StackPanel Grid.Column="0" Orientation="Horizontal">
                     <Border Width="7" Height="7" CornerRadius="3.5" Margin="0,0,7,0" VerticalAlignment="Center" Background="{DynamicResource SuccessBrush}" />
@@ -322,7 +323,27 @@
                     </Button.Template>
                 </Button>
 
-                <TextBlock Grid.Column="3" Text="{Binding Performance.Uptime, StringFormat=Uptime {0}}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5" VerticalAlignment="Center" />
+                <!-- #75: event marker - lets the user tag "this is when it happened" while
+                     reproducing an issue, written as a trailing "Marker" column in the CSV. Only
+                     shown while actively logging. -->
+                <StackPanel Grid.Column="3" Orientation="Horizontal" Margin="0,0,16,0">
+                    <StackPanel.Style>
+                        <Style TargetType="StackPanel">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding Logging.IsLogging}" Value="True">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </StackPanel.Style>
+                    <TextBox Width="140" FontSize="11.5" VerticalContentAlignment="Center"
+                             Text="{Binding Logging.MarkerText, UpdateSourceTrigger=PropertyChanged}"
+                             ToolTip="Optional marker label" Margin="0,0,6,0" />
+                    <Button Content="Add marker" FontSize="11.5" Padding="8,4" Command="{Binding Logging.AddMarkerCommand}" />
+                </StackPanel>
+
+                <TextBlock Grid.Column="4" Text="{Binding Performance.Uptime, StringFormat=Uptime {0}}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5" VerticalAlignment="Center" />
             </Grid>
         </Border>
     </Grid>

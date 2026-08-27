@@ -46,6 +46,22 @@ public sealed class CpuViewModel : ObservableObject, IDisposable
     private string _throttleText = string.Empty;
     public string ThrottleText { get => _throttleText; private set => SetProperty(ref _throttleText, value); }
 
+    /// <summary>
+    /// Best-effort "the CPU looks power-limited rather than thermal-limited" flag (#35) - true
+    /// when the package is pinned at (or very near) its own highest power draw seen this session
+    /// while running meaningfully below base clock under load, but is NOT also reading hot -
+    /// distinct from IsThrottling above, which requires a hot package temp. The practical
+    /// difference matters for troubleshooting: a power ceiling points at a PSU/motherboard power
+    /// limit or a vendor-set PL1/PL2 cap, not the cooler. Same heuristic tier as IsThrottling -
+    /// this app has no access to the vendor-proprietary "limit reason" MSR data HWiNFO reads
+    /// directly, so this is inferred from two independently-ticking view-models, not a verified fact.
+    /// </summary>
+    private bool _isPowerLimited;
+    public bool IsPowerLimited { get => _isPowerLimited; private set => SetProperty(ref _isPowerLimited, value); }
+
+    private string _powerLimitText = string.Empty;
+    public string PowerLimitText { get => _powerLimitText; private set => SetProperty(ref _powerLimitText, value); }
+
     /// <summary>Pass-through: true only on genuinely hybrid CPUs. The view should hide the
     /// P-core/E-core color distinction entirely when this is false.</summary>
     public bool HasHybridTopology => Performance.HasHybridTopology;
@@ -88,6 +104,16 @@ public sealed class CpuViewModel : ObservableObject, IDisposable
         IsThrottling = hot && highLoad && belowBase;
         ThrottleText = IsThrottling
             ? $"{temp:0}°C and {Performance.CpuVsBasePercent:0}% vs. base clock under load"
+            : string.Empty;
+
+        // #35: pinned at (within 3%) its own session-high power draw, below base clock, under
+        // load, but NOT also reading hot - the "power ceiling, not thermal ceiling" signature.
+        var power = _energyThermals.TotalPackagePowerW;
+        var powerMax = _energyThermals.PowerSessionMaxW;
+        bool atPowerCeiling = power is { } p && powerMax is { } max && max > 0 && p >= max * 0.97;
+        IsPowerLimited = !IsThrottling && !hot && highLoad && belowBase && atPowerCeiling;
+        PowerLimitText = IsPowerLimited
+            ? $"{power:0.#} W (session high {powerMax:0.#} W) and {Performance.CpuVsBasePercent:0}% vs. base clock under load"
             : string.Empty;
     }
 

@@ -64,6 +64,51 @@ public sealed class SystemSpecs
     /// <summary>True when more than one AV product looks actively enabled - conflicting
     /// real-time scanners are a classic, often-invisible perf killer.</summary>
     public bool MultipleActiveAvWarning { get; init; }
+
+    /// <summary>Recently installed third-party software (#68), from the Uninstall registry keys'
+    /// InstallDate values - correlates with "when did the problem start". Windows keeps no log of
+    /// *uninstalled* software, so this is deliberately install-only rather than a full timeline.</summary>
+    public IReadOnlyList<InstalledSoftwareInfo> RecentlyInstalledSoftware { get; init; } = Array.Empty<InstalledSoftwareInfo>();
+
+    /// <summary>USB devices currently enumerated by Windows (#69), flagged when Windows reports a
+    /// non-OK status/error code - helps catch a misbehaving peripheral or a failing USB
+    /// controller/hub. Per-device power draw isn't included: there's no public, reliable Windows
+    /// API for it (the same reason Round 3's per-process power figure was left out).</summary>
+    public IReadOnlyList<UsbDeviceInfo> UsbDevices { get; init; } = Array.Empty<UsbDeviceInfo>();
+
+    /// <summary>Where the page file lives and whether that's the boot/system drive (#70) - a page
+    /// file left on a slower secondary HDD (or vice versa, an SSD's page file effectively wasted
+    /// on a system that boots from HDD) is a common, silent slowdown cause on multi-drive systems.</summary>
+    public PageFileLocationInfo? PageFileLocation { get; init; }
+}
+
+/// <summary>One entry from the Uninstall registry keys with a parsed install date (#68).</summary>
+public sealed class InstalledSoftwareInfo
+{
+    public string Name { get; init; } = string.Empty;
+    public string Publisher { get; init; } = string.Empty;
+    public DateTime InstallDate { get; init; }
+}
+
+/// <summary>One USB device as reported by Win32_PnPEntity (#69).</summary>
+public sealed class UsbDeviceInfo
+{
+    public string Name { get; init; } = string.Empty;
+    public string Status { get; init; } = string.Empty;
+
+    /// <summary>Win32_PnPEntity.ConfigManagerErrorCode - 0 means "no problem reported" (Device
+    /// Manager's own "This device is working properly" state); anything else is a real,
+    /// Windows-reported enumeration/driver problem.</summary>
+    public int ConfigManagerErrorCode { get; init; }
+    public bool HasError => ConfigManagerErrorCode != 0;
+}
+
+/// <summary>Page file drive letter and the media type of the physical disk backing it (#70).</summary>
+public sealed class PageFileLocationInfo
+{
+    public string DriveLetter { get; init; } = string.Empty;
+    public string MediaType { get; init; } = "Unknown";
+    public bool IsSameAsBootDrive { get; init; }
 }
 
 /// <summary>One installed Windows update/hotfix, as reported by Win32_QuickFixEngineering.</summary>
@@ -149,6 +194,15 @@ public sealed class DiskInfo
     /// <summary>True when the drive's SMART failure-prediction flag is set, or its WMI status
     /// is anything other than "OK" - drives this app's UI as a warning color.</summary>
     public bool IsHealthWarning { get; init; }
+
+    /// <summary>SSD wear/life-used percentage (#65), from the Storage Management API's
+    /// MSFT_StorageReliabilityCounter.Wear (the same figure PowerShell's Get-StorageReliabilityCounter
+    /// reports) - 0 = fresh, 100 = manufacturer-rated end of life. Null when unavailable: NVMe/SATA
+    /// driver support for this varies, and matching a physical disk to its reliability counter is
+    /// itself a best-effort index-based pairing (see SystemSpecsService.ReadDiskWearByIndex), so
+    /// this degrades to "not shown" rather than a false reading, the same tier as the SMART
+    /// failure-prediction flag above.</summary>
+    public int? WearPercent { get; init; }
 }
 
 /// <summary>A single mounted volume (drive letter), for the free-space warning list.</summary>

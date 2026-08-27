@@ -472,7 +472,7 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
         PushHistory(NetworkSendHistory, snapshot.NetworkSendBytesPerSec);
         PushHistory(CommittedHistory, snapshot.CommittedBytes);
 
-        SyncCores(snapshot.CpuPerCorePercent);
+        SyncCores(snapshot.CpuPerCorePercent, snapshot.CoreParkedFlags);
 
         CpuName = string.IsNullOrWhiteSpace(snapshot.CpuName) ? "Unknown CPU" : snapshot.CpuName;
         CpuSpecs = $"{snapshot.PhysicalCores} cores, {snapshot.LogicalProcessors} logical processors  •  Base speed {snapshot.CpuBaseClockGhz:0.00} GHz";
@@ -544,8 +544,10 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
         Uptime = $"{(int)up.TotalDays}d {up.Hours:00}h {up.Minutes:00}m {up.Seconds:00}s";
     }
 
-    private void SyncCores(double[] percentages)
+    private void SyncCores(double[] percentages, bool[] parkedFlags)
     {
+        bool ParkedAt(int i) => i < parkedFlags.Length && parkedFlags[i];
+
         if (Cores.Count != percentages.Length)
         {
             Cores.Clear();
@@ -561,14 +563,25 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
                     Percent = percentages[i],
                     NumaNode = topo?.NumaNode ?? 0,
                     IsPCore = topo?.IsPCore ?? true,
+                    IsParked = ParkedAt(i),
                 });
             }
+            ParkedCoreCount = parkedFlags.Count(p => p);
             return;
         }
 
         for (int i = 0; i < percentages.Length; i++)
+        {
             Cores[i].Percent = percentages[i];
+            Cores[i].IsParked = ParkedAt(i);
+        }
+        ParkedCoreCount = parkedFlags.Count(p => p);
     }
+
+    // #78: summary count for the CPU tab's diagnostics row - "how many cores are parked right
+    // now" without needing to scan the whole per-core grid.
+    private int _parkedCoreCount;
+    public int ParkedCoreCount { get => _parkedCoreCount; private set => SetProperty(ref _parkedCoreCount, value); }
 
     public void Dispose()
     {

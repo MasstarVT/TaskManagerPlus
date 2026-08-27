@@ -24,12 +24,82 @@ public sealed class StartupViewModel : ObservableObject
     public RelayCommand RefreshCommand { get; }
     public RelayCommand ToggleEnabledCommand { get; }
 
+    // #79: Scheduled Tasks - a huge, often-overlooked source of background slowdowns and
+    // unwanted auto-launches the registry-Run/Startup-folder scan above doesn't cover at all.
+    // Loaded on demand (a "Load scheduled tasks" button) rather than up front - enumerating every
+    // registered task can take a couple of seconds on a system with hundreds of them, the same
+    // "expensive, so make it explicit" tradeoff as the Stability tab's event-log query.
+    public ObservableCollection<ScheduledTaskRow> ScheduledTasks { get; } = new();
+
+    private bool _isLoadingScheduledTasks;
+    public bool IsLoadingScheduledTasks { get => _isLoadingScheduledTasks; private set => SetProperty(ref _isLoadingScheduledTasks, value); }
+
+    private ScheduledTaskRow? _selectedScheduledTask;
+    public ScheduledTaskRow? SelectedScheduledTask
+    {
+        get => _selectedScheduledTask;
+        set
+        {
+            var previous = _selectedScheduledTask;
+            if (SetProperty(ref _selectedScheduledTask, value) && previous is not null)
+                previous.DelayText = string.Empty; // stale delay from a previous selection would be misleading
+        }
+    }
+
+    public AsyncRelayCommand LoadScheduledTasksCommand { get; }
+    public RelayCommand ToggleScheduledTaskCommand { get; }
+    public AsyncRelayCommand CheckLogonDelayCommand { get; }
+
     public StartupViewModel()
     {
         RefreshCommand = new RelayCommand(_ => Refresh());
         ToggleEnabledCommand = new RelayCommand(param => Toggle(param as StartupItem ?? SelectedItem));
 
+        LoadScheduledTasksCommand = new AsyncRelayCommand(LoadScheduledTasksAsync);
+        ToggleScheduledTaskCommand = new RelayCommand(param => ToggleScheduledTask(param as ScheduledTaskRow ?? SelectedScheduledTask));
+        CheckLogonDelayCommand = new AsyncRelayCommand(CheckLogonDelayAsync, () => SelectedScheduledTask is not null);
+
         Refresh();
+    }
+
+    private async Task LoadScheduledTasksAsync()
+    {
+        IsLoadingScheduledTasks = true;
+        try
+        {
+            var tasks = await Task.Run(ScheduledTaskService.List);
+            ScheduledTasks.Clear();
+            foreach (var t in tasks) ScheduledTasks.Add(t);
+        }
+        finally
+        {
+            IsLoadingScheduledTasks = false;
+        }
+    }
+
+    private void ToggleScheduledTask(ScheduledTaskRow? task)
+    {
+        if (task is null) return;
+
+        bool newState = !task.IsEnabled;
+        var (success, error) = ScheduledTaskService.SetEnabled(task.Name, newState);
+        if (success)
+        {
+            task.IsEnabled = newState;
+            StatusMessage = $"{task.Name} {(newState ? "enabled" : "disabled")}.";
+        }
+        else
+        {
+            StatusMessage = $"Couldn't change {task.Name}: {error}";
+        }
+    }
+
+    private async Task CheckLogonDelayAsync()
+    {
+        var target = SelectedScheduledTask;
+        if (target is null) return;
+
+        target.DelayText = await Task.Run(() => ScheduledTaskService.ReadLogonDelay(target.Name));
     }
 
     private void Refresh()

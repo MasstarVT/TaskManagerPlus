@@ -22,7 +22,12 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
     public ServiceRow? SelectedService
     {
         get => _selectedService;
-        set => SetProperty(ref _selectedService, value);
+        set
+        {
+            var previous = _selectedService;
+            if (SetProperty(ref _selectedService, value) && previous is not null)
+                previous.FailureActionsText = string.Empty; // stale text from a previous selection would be misleading
+        }
     }
 
     private string _filterText = string.Empty;
@@ -56,6 +61,7 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
     public RelayCommand StopCommand { get; }
     public RelayCommand RestartCommand { get; }
     public RelayCommand RefreshNowCommand { get; }
+    public RelayCommand ViewFailureActionsCommand { get; }
 
     public ServicesViewModel()
     {
@@ -66,6 +72,7 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
         StopCommand = new RelayCommand(_ => _ = RunAction(ServiceControlService.Stop, "stopped"), _ => CanStop());
         RestartCommand = new RelayCommand(_ => _ = RunAction(ServiceControlService.Restart, "restarted"), _ => CanStop());
         RefreshNowCommand = new RelayCommand(_ => _ = RefreshAsync());
+        ViewFailureActionsCommand = new RelayCommand(_ => _ = LoadFailureActionsAsync(), _ => SelectedService is not null);
 
         _timer = new DispatcherTimer(DispatcherPriority.Background)
         {
@@ -155,6 +162,17 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
             IsBusy = false;
             await RefreshAsync();
         }
+    }
+
+    /// <summary>Loads SelectedService's recovery-actions text (#71) on demand - see
+    /// ServiceControlService.ReadFailureActionsText for why this shells to sc.exe rather than
+    /// every tick.</summary>
+    private async Task LoadFailureActionsAsync()
+    {
+        var target = SelectedService;
+        if (target is null) return;
+
+        target.FailureActionsText = await Task.Run(() => ServiceControlService.ReadFailureActionsText(target.ServiceName));
     }
 
     public void Dispose() => _timer.Stop();

@@ -741,6 +741,151 @@ can't change without a reboot/reinstall anyway. Shown as a two-column
 whichever service is currently selected, via a new
 `Converters/StringListJoinConverter.cs` ("None" for an empty list).
 
+### Round 5: hang duration, core parking, SSD wear, scheduled tasks, alerts/report, log rotation
+
+A fifth batch of `suggestions.md` items, 20 in total, again following established patterns rather
+than introducing new architecture — see each area below.
+
+**Not-responding duration + row tint (Processes)**: `ProcessMonitorService` already flagged
+"Not responding" via `Process.Responding`; this round adds a per-pid `_notRespondingSince`
+dictionary so the Status column can show "Not responding (12s)" instead of a flat label, and the
+Processes grid's `RowStyle` gains a `DangerMutedBrush` tint on those rows - "make it more
+prominent with duration" was the original ask, and a plain text flag alone is easy to miss in a
+long scrolling grid.
+
+**Per-core parking status (CPU)**: `HardwareMonitorService` adds a second `PerformanceCounter[]`
+array parallel to the existing per-core `% Processor Time` one, reading the "Processor
+Information\Parking Status" instance (0 = unparked, nonzero = parked) - same instance names, same
+numeric node/core sort, wrapped in its own try/catch since older Windows versions don't expose
+this counter at all (degrades to "no cores parked" rather than failing construction).
+`CoreUsage.IsParked` dims a per-core `VfdMeter` tile to 0.5 opacity and tags it "Parked" (taking
+priority over the P-core/E-core tag), and a new "Parked cores" diagnostics tile on the CPU tab
+gives the aggregate count - a common, otherwise invisible reason "only half my CPU seems busy"
+under light load.
+
+**SSD wear indicator (System Specs)**: `MSFT_StorageReliabilityCounter.Wear` in
+`root\Microsoft\Windows\Storage` - the same figure PowerShell's `Get-StorageReliabilityCounter`
+reports - rather than parsing raw SMART attribute bytes, which would be a much larger and riskier
+undertaking. There's no direct WMI association between `Win32_DiskDrive` (used for the rest of
+this app's disk info) and `MSFT_PhysicalDisk`/`MSFT_StorageReliabilityCounter`, so
+`SystemSpecsService.ReadDiskWearByIndex` pairs them by their shared small numeric index
+(`Win32_DiskDrive.Index` and `MSFT_StorageReliabilityCounter.DeviceId`) - a best-effort match that
+holds on an ordinary single-controller desktop/laptop but isn't guaranteed under RAID/Storage
+Spaces, so the whole feature degrades to "not shown" on any failure rather than risk showing the
+wrong disk's wear. Rendered as an appended `" · N% life used"` on the existing Storage card's
+secondary line rather than a new column.
+
+**Fan curve, motherboard/VRM temperature, power-ceiling detector (Energy & Thermals / CPU)**: the
+fan curve is a `ScatterSeries<ObservablePoint>` (LiveChartsCore.SkiaSharpView 2.0.5 - the version
+already in use here - does expose a scatter series, unlike the uncertainty Round 4 flagged around
+in-chart throttle markers) plotting one (CPU package temp, primary-fan RPM) sample per tick, capped
+to a rolling 120-sample window; a fan that isn't ramping with load shows up as a flat/scattered
+cloud instead of a rising trend. Motherboard/VRM temperature reuses the CPU temperature chart's
+exact glow+core `LineOf` pattern on a second history buffer, restricted to `HardwareType.Motherboard`
+sensors specifically (the same "restrict to one hardware tree" trick the GPU hotspot lookup already
+uses, so a same-named sensor on a different component can't collide). The power-ceiling detector
+lives on `CpuViewModel` next to the existing thermal-throttle flag: `EnergyThermalsViewModel` now
+tracks `PowerSessionMaxW` (a running session-high), and `IsPowerLimited` fires when the CPU is
+pinned within 3% of that high, below base clock, under load, but **not** also reading hot - the
+"power ceiling, not thermal ceiling" signature, pointing at a PSU/motherboard limit or a vendor
+PL1/PL2 cap instead of the cooler. Same heuristic tier as the existing throttle flag - no access to
+the vendor-proprietary limit-reason MSR data HWiNFO reads directly.
+
+**Scheduled Tasks viewer + measured logon delay (Startup tab)**: `Services/ScheduledTaskService.cs`
+shells out to `schtasks.exe` (`/query /fo csv /v` for the list, `/change /tn ... /enable|disable`
+to toggle, `/query /tn ... /xml` for a single task's trigger XML) rather than taking a Task
+Scheduler COM (`ITaskService`) dependency - this app has no COM interop anywhere else, and
+schtasks' CSV/XML output is a stable, documented contract, the same "known Windows tool, not raw
+interop" tradeoff `ServiceControlService`'s recovery-actions reader and `netsh wlan` parsing
+already take. A hand-rolled quoted-CSV line parser handles the `/fo csv` output (no CSV library
+dependency for one simple, fixed escaping rule). The logon-trigger delay - #17's actual *measured*
+value, as opposed to Task Manager's own estimated "startup impact" rating - isn't in the CSV output
+at all, only in the per-task XML export as an undocumented but stable `<Delay>PT30S</Delay>`
+duration, so it's read on demand per selected task (a "Check logon delay" button) rather than for
+every row up front. The whole section is loaded on demand too (a "Load scheduled tasks" button) -
+enumerating every registered task can take a couple of seconds on a system with hundreds of them.
+`StartupView.xaml` needed converting from a bare `Grid` to a `ScrollViewer`-wrapped `StackPanel`
+with explicit `DataGrid` heights to fit the new section without truncating the tab.
+
+**Service recovery/failure-action viewer (Services)**: `ServiceControlService.ReadFailureActionsText`
+shells to `sc.exe qfailure "<name>"` and returns its (lightly cleaned-up) text output rather than
+decoding the underlying `SERVICE_FAILURE_ACTIONS` registry binary value directly - that layout is
+undocumented, and sc.exe already does the decoding reliably at the command line, the same
+"known tool, not raw struct interop" tradeoff as the Scheduled Tasks reader above. On-demand only
+(a "Recovery actions" button next to Start/Stop/Restart), shown in a new third column of the
+existing dependency-graph panel below the grid.
+
+**Recently installed software, USB device list, page file location (System Specs)**: recently
+installed software reads the per-app Uninstall registry keys (both the native and Wow6432Node
+views) the same way Windows' own "Installed apps" settings page does, filtering `InstallDate`
+(a plain `yyyyMMdd` string, not a real date type) to the last 6 months and excluding
+`SystemComponent=1` entries and Microsoft-published noise; there's no equivalent Windows log of
+*uninstalls*, so this is deliberately install-only, not a full add/remove timeline. USB devices are
+`Win32_PnPEntity` rows filtered to `PNPDeviceID LIKE 'USB%'`, sorted so any device with a nonzero
+`ConfigManagerErrorCode` (Device Manager's own "problem code") surfaces first - per-device power
+draw is deliberately not shown, the same "no reliable public API for it" reasoning Round 3's
+per-process power figure was skipped for. Page file location resolves the page file's drive letter
+(`Win32_PageFileUsage.Name`) through the documented `MSFT_Volume` → `MSFT_Partition` → `MSFT_Disk`
+→ `MSFT_PhysicalDisk.MediaType` associator chain in `root\Microsoft\Windows\Storage` to get an
+actual SSD/HDD answer, shown as a one-line note under the Storage card (warning-colored when the
+page file lands on an HDD) rather than a new card.
+
+**Health Check additions - Defender scan heuristic, anomaly highlighting (Summary)**: both are pure
+aggregator rules added to `SummaryViewModel.RefreshHealthIssues`, no new sampling. The antivirus
+heuristic just looks up `MsMpEng` in the Processes tab's already-polling collection and flags
+sustained CPU use past 20% - Windows exposes no "scan in progress" API, so this is the same
+"quick visual flag, not a verdict" tier as the process signature check. Anomaly highlighting
+computes a mean/stddev over `PerformanceViewModel`'s existing 60-sample CPU/RAM/Disk history
+buffers (already kept for the charts, no new buffer) and flags the current reading only when it's
+*both* a meaningful raw jump (≥20 points) *and* a real statistical outlier (≥3 standard deviations
+past a floor) - the double condition keeps a merely-noisy-but-normal baseline from producing false
+positives the way a bare z-score threshold would on a near-flat history.
+
+**Configurable threshold alerts + one-click diagnostic report (Summary)**: alert thresholds
+(CPU%/Memory%/CPU temp, each with its own enable checkbox) persist to
+`%AppData%\TaskManagerPlus\alerts.json` the same way `ThemeService` persists colors, and are
+checked on the Health Check card's existing 2s timer - edge-triggered per metric (a `_xAlerted`
+bool that resets when the value drops back under threshold) so one sustained excursion produces
+one toast, not one every tick. The toast itself (`Views/ToastWindow.xaml` + `Services/ToastService.cs`)
+is a hand-rolled borderless always-on-top `Window` positioned bottom-right of the work area and
+auto-closed after 8 seconds, not a native Windows toast - a real Action Center toast needs an
+AppUserModelID/MSIX package identity this app's classic .exe deployment doesn't have. The
+diagnostic report bundles system specs, the Health Check list, recent Stability-tab events, a
+sensor snapshot, and top CPU/memory processes into one Markdown file via a `SaveFileDialog` -
+`MainViewModel`'s existing construction order (Stability built before Summary) meant
+`SummaryViewModel`'s constructor could take a `StabilityViewModel` reference the same way it
+already takes five other view-models.
+
+**Log rotation + event markers (Logging)**: `LoggingService` now tracks the header list and base
+path it was started with so it can transparently roll over to a `-partN` file (same header
+rewritten) once the active file crosses 100 MB, firing a `Rotated` event so `LoggingViewModel` can
+refresh the footer's "Stop Logging (filename)" display - an unattended "log everything forever"
+session no longer silently fills the disk. Event markers are a plain, always-present trailing
+"Marker" column (blank on every row except one where the footer's new "Add marker" button was
+used) rather than a separate line in the CSV - keeps the column count fixed for the file's
+lifetime the same way the sensor-column snapshot already does, while still letting a user tag
+"this is when it happened" while reproducing an issue.
+
+**Color-blind-safe alert palette (Theming)**: a `ColorBlindSafeAlerts` toggle in the Settings
+drawer, orthogonal to the existing theme-family/saturation system - when on, `ThemeViewModel.ApplyPalette`
+overwrites just the `SuccessBrush`/`WarningBrush`/`DangerBrush` (+hover/muted variants) with a
+fixed deuteranopia/protanopia-safe blue/yellow/orange triple instead of the active palette's own
+green/amber/red, deliberately skipping the saturation adjustment those three otherwise get so the
+slider can't undermine the color choice. Persisted in `ThemeColors.ColorBlindSafeAlerts` (defaults
+false, so existing `theme.json` files load unaffected).
+
+**Command-line JSON snapshot (`--dump-json`)**: `App.xaml.cs` now overrides `OnStartup` (App.xaml's
+`StartupUri` was removed so this path can skip showing a window entirely rather than flashing one
+open and closing it) and checks `e.Args` for `--dump-json <path>` before creating `MainWindow`.
+`Services/CliDumpService.cs` constructs fresh, short-lived `HardwareMonitorService`/
+`SystemSpecsService`/`SensorMonitorService` instances, takes one sample of each, and writes a
+plain JSON object via `System.Text.Json` - useful for a scripted remote-diagnostics caller that
+wants one machine-readable reading without driving the full GUI. A known, documented limitation:
+rate-based counters (CPU%, disk/network throughput) read 0 on a single sample taken immediately
+after construction, since a real reading needs one full tick's elapsed time a one-shot dump can't
+wait around for. The app's elevation requirement still applies to this path - launching with the
+flag still triggers the same UAC prompt as a normal launch.
+
 ### Notable implementation details
 
 - **CPU clock speed**: not directly exposed by Windows. Computed the same

@@ -143,6 +143,29 @@ public sealed class ThemeViewModel : ObservableObject
         }
     }
 
+    // #76: color-blind-safe status colors (blue/yellow/orange instead of green/amber/red) - a
+    // deuteranopia/protanopia-safe triple, applied on top of whichever theme family/saturation is
+    // active, since red/green are exactly the colors this app's diagnostic UI leans on throughout.
+    private static readonly Color CbSafeSuccess = Color.FromRgb(0x00, 0x72, 0xB2); // blue
+    private static readonly Color CbSafeWarning = Color.FromRgb(0xF0, 0xE4, 0x42); // yellow
+    private static readonly Color CbSafeDanger = Color.FromRgb(0xE6, 0x9F, 0x00);  // orange
+    private static readonly Color CbSafeDangerHover = Color.FromRgb(0xFF, 0xB6, 0x33);
+    private static readonly Color CbSafeDangerMuted = Color.FromArgb(0x46, 0xE6, 0x9F, 0x00);
+
+    private bool _colorBlindSafeAlerts;
+    public bool ColorBlindSafeAlerts
+    {
+        get => _colorBlindSafeAlerts;
+        set
+        {
+            if (_colorBlindSafeAlerts == value) return;
+            _colorBlindSafeAlerts = value;
+            OnPropertyChanged();
+            ApplyPalette(_themeMode, _saturation);
+            if (!_isLoading) NotifyThemeModeChangedAndPersist();
+        }
+    }
+
     public IReadOnlyList<Color> PresetColors => Presets;
     public IReadOnlyList<string> ThemeModeNames => ThemeModes;
 
@@ -176,6 +199,7 @@ public sealed class ThemeViewModel : ObservableObject
         NetworkSend = ParseOrDefault(saved.NetworkSend, Presets[5]);
         _themeMode = Palettes.ContainsKey(saved.ThemeMode) ? saved.ThemeMode : "Dark";
         _saturation = Math.Clamp(saved.Saturation, 0.0, 2.0);
+        _colorBlindSafeAlerts = saved.ColorBlindSafeAlerts;
         _isLoading = false;
 
         ApplyPalette(_themeMode, _saturation);
@@ -193,8 +217,10 @@ public sealed class ThemeViewModel : ObservableObject
         NetworkSend = ParseOrDefault(d.NetworkSend, Presets[5]);
         _themeMode = d.ThemeMode;
         _saturation = d.Saturation;
+        _colorBlindSafeAlerts = d.ColorBlindSafeAlerts;
         OnPropertyChanged(nameof(ThemeMode));
         OnPropertyChanged(nameof(Saturation));
+        OnPropertyChanged(nameof(ColorBlindSafeAlerts));
         _isLoading = false;
 
         ApplyPalette(_themeMode, _saturation);
@@ -239,6 +265,7 @@ public sealed class ThemeViewModel : ObservableObject
             NetworkSend = ToHex(NetworkSend),
             ThemeMode = ThemeMode,
             Saturation = Saturation,
+            ColorBlindSafeAlerts = ColorBlindSafeAlerts,
         });
     }
 
@@ -265,11 +292,25 @@ public sealed class ThemeViewModel : ObservableObject
         _appResources["TextSecondaryBrush"] = Frozen(Adj(p.TextSecondary));
         _appResources["TextTertiaryBrush"] = Frozen(Adj(p.TextTertiary));
 
-        _appResources["SuccessBrush"] = Frozen(Adj(p.Success));
-        _appResources["WarningBrush"] = Frozen(Adj(p.Warning));
-        _appResources["DangerBrush"] = Frozen(Adj(p.Danger));
-        _appResources["DangerHoverBrush"] = Frozen(Adj(p.DangerHover));
-        _appResources["DangerMutedBrush"] = Frozen(Adj(p.DangerMuted));
+        if (_colorBlindSafeAlerts)
+        {
+            // #76: deliberately NOT saturation-adjusted - these three are chosen specifically for
+            // their distinguishability under deuteranopia/protanopia, and running them through the
+            // same saturation slider as the rest of the palette could undermine that.
+            _appResources["SuccessBrush"] = Frozen(CbSafeSuccess);
+            _appResources["WarningBrush"] = Frozen(CbSafeWarning);
+            _appResources["DangerBrush"] = Frozen(CbSafeDanger);
+            _appResources["DangerHoverBrush"] = Frozen(CbSafeDangerHover);
+            _appResources["DangerMutedBrush"] = Frozen(CbSafeDangerMuted);
+        }
+        else
+        {
+            _appResources["SuccessBrush"] = Frozen(Adj(p.Success));
+            _appResources["WarningBrush"] = Frozen(Adj(p.Warning));
+            _appResources["DangerBrush"] = Frozen(Adj(p.Danger));
+            _appResources["DangerHoverBrush"] = Frozen(Adj(p.DangerHover));
+            _appResources["DangerMutedBrush"] = Frozen(Adj(p.DangerMuted));
+        }
 
         // Keep the user's chosen accent visually consistent with the new family/saturation.
         if (!_isLoading)

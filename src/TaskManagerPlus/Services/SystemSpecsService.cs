@@ -64,6 +64,9 @@ public sealed class SystemSpecsService
             RecentUpdates = ReadRecentHotfixes(),
             AntivirusProducts = ReadAntivirusProducts(out var multipleActive),
             MultipleActiveAvWarning = multipleActive,
+            RecentlyInstalledSoftware = ReadRecentlyInstalledSoftware(),
+            UsbDevices = ReadUsbDevices(),
+            PageFileLocation = ReadPageFileLocation(),
         };
     }
 
@@ -323,13 +326,17 @@ public sealed class SystemSpecsService
         try
         {
             var failurePredictions = ReadFailurePredictStatus();
+            var wearByIndex = ReadDiskWearByIndex();
 
             using var searcher = new ManagementObjectSearcher(
-                "SELECT Model, Size, MediaType, InterfaceType, Status, PNPDeviceID FROM Win32_DiskDrive");
+                "SELECT Index, Model, Size, MediaType, InterfaceType, Status, PNPDeviceID FROM Win32_DiskDrive");
             foreach (ManagementObject mo in searcher.Get())
             {
                 long size = 0;
                 try { size = System.Convert.ToInt64(mo["Size"] ?? 0L); } catch { /* leave 0 */ }
+
+                int diskIndex = -1;
+                try { diskIndex = System.Convert.ToInt32(mo["Index"] ?? -1); } catch { /* leave -1 */ }
 
                 string wmiStatus = (mo["Status"] as string ?? string.Empty).Trim();
                 string pnpDeviceId = (mo["PNPDeviceID"] as string ?? string.Empty).Trim();
@@ -369,6 +376,7 @@ public sealed class SystemSpecsService
                     InterfaceType = (mo["InterfaceType"] as string ?? string.Empty).Trim(),
                     HealthStatus = health,
                     IsHealthWarning = warning,
+                    WearPercent = diskIndex >= 0 && wearByIndex.TryGetValue(diskIndex, out var wear) ? wear : null,
                 });
             }
         }
@@ -414,6 +422,245 @@ public sealed class SystemSpecsService
     }
 
     private static string NormalizeForMatch(string s) => s.Replace(' ', '_').ToLowerInvariant();
+
+    /// <summary>
+    /// SSD wear/life-used percentage (#65), via the Storage Management API's
+    /// MSFT_StorageReliabilityCounter.Wear in root\Microsoft\Windows\Storage - the same figure
+    /// PowerShell's Get-PhysicalDisk | Get-StorageReliabilityCounter reports. There's no direct
+    /// WMI association between Win32_DiskDrive (used for the rest of this disk info) and
+    /// MSFT_PhysicalDisk/MSFT_StorageReliabilityCounter, so this pairs them by their numeric
+    /// index (Win32_DiskDrive.Index and MSFT_PhysicalDisk.DeviceId are both small integers "0",
+    /// "1", ... assigned in enumeration order) - a best-effort match that holds on an ordinary
+    /// single-controller desktop/laptop but isn't guaranteed on every RAID/Storage Spaces
+    /// configuration, which is why this whole feature degrades to "not shown" rather than a wrong
+    /// disk's wear value on any failure (this namespace is also simply unsupported by a fair
+    /// number of SATA/AHCI drivers, same as the SMART failure-prediction class above).
+    /// </summary>
+    private static Dictionary<int, int> ReadDiskWearByIndex()
+    {
+        var result = new Dictionary<int, int>();
+        try
+        {
+            using var searcher = new ManagementObjectSearcher(
+                @"root\Microsoft\Windows\Storage", "SELECT DeviceId, Wear FROM MSFT_StorageReliabilityCounter");
+            foreach (ManagementObject mo in searcher.Get())
+            {
+                if (mo["DeviceId"] is not string deviceId || !int.TryParse(deviceId, out int index)) continue;
+                if (mo["Wear"] is null) continue; // not reported by this drive's driver
+                result[index] = System.Convert.ToInt32(mo["Wear"]);
+            }
+        }
+        catch
+        {
+            // Namespace/class unavailable (older Windows, unsupported driver, or a locked-down
+            // policy) - every disk simply shows no wear figure.
+        }
+        return result;
+    }
+
+    // Publishers that are effectively OS/runtime components, not something a user "installed" in
+    // the sense of "did this correlate with when my problem started" - filtered out the same way
+    // ReadOutdatedDrivers excludes Microsoft/Generic/Standard-manufacturer noise.
+    private static readonly string[] NoiseInstallPublishers = { "Microsoft Corporation", "Microsoft" };
+
+    /// <summary>
+    /// Recently installed third-party software (#68), from the per-app Uninstall registry keys
+    /// (both native and the 32-bit view on a 64-bit OS) - the same data Windows' own "Installed
+    /// apps" settings page reads. InstallDate is stored as a plain "yyyyMMdd" string (not a real
+    /// registry date type), so this parses that exact format and skips anything that doesn't
+    /// match rather than guessing. Windows keeps no equivalent log of *uninstalled* software, so
+    /// this is deliberately install-only, not a full add/remove timeline.
+    /// </summary>
+    private static List<InstalledSoftwareInfo> ReadRecentlyInstalledSoftware()
+    {
+        var results = new List<InstalledSoftwareInfo>();
+        string[] uninstallKeyPaths =
+        {
+            @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+            @"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
+        };
+
+        foreach (var keyPath in uninstallKeyPaths)
+        {
+            try
+            {
+                using var uninstallKey = Registry.LocalMachine.OpenSubKey(keyPath);
+                if (uninstallKey is null) continue;
+
+                foreach (var subKeyName in uninstallKey.GetSubKeyNames())
+                {
+                    try
+                    {
+                        using var sub = uninstallKey.OpenSubKey(subKeyName);
+                        if (sub is null) continue;
+
+                        string name = (sub.GetValue("DisplayName") as string ?? string.Empty).Trim();
+                        if (name.Length == 0) continue;
+                        // Uninstall entries for OS patches/components have no DisplayIcon/real UI
+                        // presence but do have a DisplayName - SystemComponent=1 is the documented
+                        // flag for "don't show this in Add/Remove Programs", the same filter
+                        // Explorer's own uninstall list applies.
+                        if (sub.GetValue("SystemComponent") is int sc && sc == 1) continue;
+
+                        string dateRaw = (sub.GetValue("InstallDate") as string ?? string.Empty).Trim();
+                        if (dateRaw.Length != 8 || !DateTime.TryParseExact(dateRaw, "yyyyMMdd",
+                            System.Globalization.CultureInfo.InvariantCulture,
+                            System.Globalization.DateTimeStyles.None, out var installDate))
+                            continue;
+
+                        // Older than ~6 months isn't "recent" for correlating with a fresh problem.
+                        if (installDate < DateTime.Now.AddMonths(-6)) continue;
+
+                        string publisher = (sub.GetValue("Publisher") as string ?? string.Empty).Trim();
+                        if (NoiseInstallPublishers.Contains(publisher, StringComparer.OrdinalIgnoreCase)) continue;
+
+                        results.Add(new InstalledSoftwareInfo { Name = name, Publisher = publisher, InstallDate = installDate });
+                    }
+                    catch
+                    {
+                        // One malformed subkey shouldn't stop the rest of the scan.
+                    }
+                }
+            }
+            catch
+            {
+                // Registry hive/path unavailable - fall through to whatever the other path found.
+            }
+        }
+
+        return results
+            .GroupBy(r => r.Name, StringComparer.OrdinalIgnoreCase).Select(g => g.First()) // native+Wow6432 duplicates
+            .OrderByDescending(r => r.InstallDate)
+            .Take(20)
+            .ToList();
+    }
+
+    // Device classes/statuses common enough on a healthy system that listing every instance
+    // would just be noise - USB hubs and composite devices report "OK" constantly and add nothing
+    // a user would act on; the useful signal here is specifically the ones that AREN'T "OK".
+    private static List<UsbDeviceInfo> ReadUsbDevices()
+    {
+        var devices = new List<UsbDeviceInfo>();
+        try
+        {
+            using var searcher = new ManagementObjectSearcher(
+                "SELECT Name, Status, ConfigManagerErrorCode, PNPDeviceID FROM Win32_PnPEntity WHERE PNPDeviceID LIKE 'USB%'");
+            foreach (ManagementObject mo in searcher.Get())
+            {
+                string name = (mo["Name"] as string ?? string.Empty).Trim();
+                if (name.Length == 0) continue;
+
+                int errorCode = 0;
+                try { errorCode = System.Convert.ToInt32(mo["ConfigManagerErrorCode"] ?? 0); } catch { /* leave 0 */ }
+
+                devices.Add(new UsbDeviceInfo
+                {
+                    Name = name,
+                    Status = (mo["Status"] as string ?? "Unknown").Trim(),
+                    ConfigManagerErrorCode = errorCode,
+                });
+            }
+        }
+        catch
+        {
+            // return whatever was gathered before the failure
+        }
+        return devices.OrderByDescending(d => d.HasError).ThenBy(d => d.Name, StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    /// <summary>
+    /// Page file drive letter and whether that drive is a fixed disk or an HDD/SSD (#70), via the
+    /// documented MSFT_Volume -&gt; MSFT_Partition -&gt; MSFT_Disk -&gt; (indirectly) MediaType
+    /// associator chain in root\Microsoft\Windows\Storage. A page file left on a slower secondary
+    /// HDD on a system that otherwise boots from SSD (or the reverse) is a common, easy-to-miss
+    /// slowdown cause on multi-drive systems. Degrades to null on any failure - this namespace can
+    /// legitimately be unavailable the same way the SMART/reliability-counter classes above can.
+    /// </summary>
+    private static PageFileLocationInfo? ReadPageFileLocation()
+    {
+        try
+        {
+            string pageFilePath = string.Empty;
+            using (var pfSearcher = new ManagementObjectSearcher("SELECT Name FROM Win32_PageFileUsage"))
+            {
+                foreach (ManagementObject mo in pfSearcher.Get())
+                {
+                    pageFilePath = (mo["Name"] as string ?? string.Empty).Trim();
+                    if (pageFilePath.Length > 0) break;
+                }
+            }
+            if (pageFilePath.Length < 2) return null;
+
+            string driveLetter = pageFilePath.Substring(0, 2); // e.g. "C:"
+            string bootDrive = (Environment.GetEnvironmentVariable("SystemDrive") ?? "C:").ToUpperInvariant();
+
+            using var volSearcher = new ManagementObjectSearcher(
+                @"root\Microsoft\Windows\Storage",
+                $"SELECT ObjectId FROM MSFT_Volume WHERE DriveLetter = '{driveLetter[0]}'");
+            foreach (ManagementObject vol in volSearcher.Get())
+            {
+                string mediaType = "Unknown";
+                try
+                {
+                    using var partitions = new ManagementObjectSearcher(
+                        @"root\Microsoft\Windows\Storage",
+                        $"ASSOCIATORS OF {{MSFT_Volume.ObjectId='{EscapeWmiPath((string)vol["ObjectId"])}'}} WHERE AssocClass=MSFT_PartitionToVolume");
+                    foreach (ManagementObject partition in partitions.Get())
+                    {
+                        using var disks = new ManagementObjectSearcher(
+                            @"root\Microsoft\Windows\Storage",
+                            $"ASSOCIATORS OF {{MSFT_Partition.ObjectId='{EscapeWmiPath((string)partition["ObjectId"])}'}} WHERE AssocClass=MSFT_PartitionToDisk");
+                        foreach (ManagementObject disk in disks.Get())
+                        {
+                            mediaType = ReadPhysicalDiskMediaType(disk);
+                            break;
+                        }
+                    }
+                }
+                catch { /* leave "Unknown" */ }
+
+                return new PageFileLocationInfo
+                {
+                    DriveLetter = driveLetter,
+                    MediaType = mediaType,
+                    IsSameAsBootDrive = driveLetter.Equals(bootDrive, StringComparison.OrdinalIgnoreCase),
+                };
+            }
+        }
+        catch
+        {
+            // Storage Management API namespace unavailable - "Unknown" location, not a guess.
+        }
+        return null;
+    }
+
+    // MSFT_Disk itself doesn't expose a plain SSD/HDD media-type string reliably across drivers -
+    // MSFT_PhysicalDisk.MediaType (via the disk's associated physical disk) is the actual documented
+    // source for that, so this reads it as a second associator hop rather than guessing from the model name.
+    private static string ReadPhysicalDiskMediaType(ManagementObject disk)
+    {
+        try
+        {
+            using var physicalDisks = new ManagementObjectSearcher(
+                @"root\Microsoft\Windows\Storage",
+                $"ASSOCIATORS OF {{MSFT_Disk.ObjectId='{EscapeWmiPath((string)disk["ObjectId"])}'}} WHERE AssocClass=MSFT_DiskToPhysicalDisk");
+            foreach (ManagementObject phys in physicalDisks.Get())
+            {
+                if (phys["MediaType"] is null) continue;
+                return System.Convert.ToInt32(phys["MediaType"]) switch
+                {
+                    3 => "HDD",
+                    4 => "SSD",
+                    5 => "SCM",
+                    _ => "Unknown",
+                };
+            }
+        }
+        catch { /* fall through */ }
+        return "Unknown";
+    }
+
+    private static string EscapeWmiPath(string objectId) => objectId.Replace(@"\", @"\\").Replace("\"", "\\\"");
 
     /// <summary>Per-drive-letter free space, for a low-disk-space warning list. DriveInfo (not
     /// WMI) since it already handles removable/unready drives cleanly via IsReady.</summary>

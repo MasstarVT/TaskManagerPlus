@@ -48,6 +48,7 @@
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
 
             <TextBox Grid.Column="0" Text="{Binding FilterText, UpdateSourceTrigger=PropertyChanged}"
@@ -59,7 +60,10 @@
 
             <Button Grid.Column="3" Content="Start" Margin="0,0,8,0" Command="{Binding StartCommand}" Style="{StaticResource SuccessButton}" />
             <Button Grid.Column="4" Content="Stop" Margin="0,0,8,0" Command="{Binding StopCommand}" Style="{StaticResource DangerButton}" />
-            <Button Grid.Column="5" Content="Restart" Command="{Binding RestartCommand}" Style="{StaticResource PrimaryButton}" />
+            <Button Grid.Column="5" Content="Restart" Margin="0,0,8,0" Command="{Binding RestartCommand}" Style="{StaticResource PrimaryButton}" />
+            <!-- #71: what Windows does when this service crashes (auto-restart, run a program,
+                 reboot, ...) - loaded on demand, see ServicesViewModel.LoadFailureActionsAsync. -->
+            <Button Grid.Column="6" Content="Recovery actions" Command="{Binding ViewFailureActionsCommand}" />
         </Grid>
 
         <DataGrid Grid.Row="1"
@@ -138,10 +142,27 @@
                     <TextBlock Text="{Binding SelectedService.DependsOn, Converter={StaticResource StringListJoinConverter}}"
                                TextWrapping="Wrap" FontSize="12" Margin="0,2,0,0" />
                 </StackPanel>
-                <StackPanel MaxWidth="420">
+                <StackPanel MaxWidth="420" Margin="0,0,24,0">
                     <TextBlock Text="Other services depend on this" Style="{StaticResource SubStat}" />
                     <TextBlock Text="{Binding SelectedService.DependentServices, Converter={StaticResource StringListJoinConverter}}"
                                TextWrapping="Wrap" FontSize="12" Margin="0,2,0,0" />
+                </StackPanel>
+                <!-- #71: on-demand recovery-actions text - empty (and collapsed) until the
+                     "Recovery actions" button is clicked, see ServicesViewModel. -->
+                <StackPanel MaxWidth="420">
+                    <StackPanel.Style>
+                        <Style TargetType="StackPanel">
+                            <Setter Property="Visibility" Value="Visible" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding SelectedService.FailureActionsText}" Value="">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </StackPanel.Style>
+                    <TextBlock Text="Recovery actions" Style="{StaticResource SubStat}" />
+                    <TextBlock Text="{Binding SelectedService.FailureActionsText}"
+                               TextWrapping="Wrap" FontSize="11.5" FontFamily="Consolas" Margin="0,2,0,0" />
                 </StackPanel>
             </StackPanel>
         </Border>

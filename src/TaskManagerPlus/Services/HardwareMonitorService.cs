@@ -16,6 +16,12 @@ public sealed class HardwareMonitorService : IDisposable
 {
     private readonly PerformanceCounter _cpuTotalCounter;
     private readonly PerformanceCounter[] _cpuCoreUsageCounters;
+
+    // #78: per-core parking status. Same "Processor Information" instances as the usage counters
+    // above, just a different counter name - kept as a separate array (rather than folded into
+    // one struct) since it's allowed to fail independently: older Windows versions don't expose
+    // "Parking Status" at all, in which case this stays empty and every core reports "unparked".
+    private readonly PerformanceCounter[] _cpuParkingCounters;
     private readonly PerformanceCounter _cpuTotalPerformanceCounter;
     private readonly PerformanceCounter _diskTimeCounter;
     private readonly PerformanceCounter _diskReadCounter;
@@ -99,6 +105,19 @@ public sealed class HardwareMonitorService : IDisposable
         _cpuCoreUsageCounters = coreInstances
             .Select(name => new PerformanceCounter("Processor Information", "% Processor Time", name, readOnly: true))
             .ToArray();
+
+        // #78: best-effort - wrapped as a whole rather than per-counter, since if "Parking Status"
+        // doesn't exist on this Windows version it won't exist for any instance either.
+        try
+        {
+            _cpuParkingCounters = coreInstances
+                .Select(name => new PerformanceCounter("Processor Information", "Parking Status", name, readOnly: true))
+                .ToArray();
+        }
+        catch
+        {
+            _cpuParkingCounters = Array.Empty<PerformanceCounter>();
+        }
 
         _diskTimeCounter = new PerformanceCounter("PhysicalDisk", "% Disk Time", "_Total", readOnly: true);
         _diskReadCounter = new PerformanceCounter("PhysicalDisk", "Disk Read Bytes/sec", "_Total", readOnly: true);
@@ -187,6 +206,16 @@ public sealed class HardwareMonitorService : IDisposable
         for (int i = 0; i < _cpuCoreUsageCounters.Length; i++)
             perCore[i] = Clamp(_cpuCoreUsageCounters[i].NextValue());
 
+        // #78: "Parking Status" reports a small integer (0 = unparked); any nonzero value means
+        // the scheduler has parked that logical core to save power - a common, otherwise invisible
+        // reason "only half my CPU seems to be doing anything" under light load.
+        var coreParked = new bool[_cpuParkingCounters.Length];
+        for (int i = 0; i < _cpuParkingCounters.Length; i++)
+        {
+            try { coreParked[i] = _cpuParkingCounters[i].NextValue() != 0; }
+            catch { coreParked[i] = false; }
+        }
+
         double diskPercent = Clamp(_diskTimeCounter.NextValue());
         double diskRead = _diskReadCounter.NextValue();
         double diskWrite = _diskWriteCounter.NextValue();
@@ -215,6 +244,7 @@ public sealed class HardwareMonitorService : IDisposable
         {
             CpuTotalPercent = Math.Round(cpuTotal, 1),
             CpuPerCorePercent = perCore.Select(v => Math.Round(v, 1)).ToArray(),
+            CoreParkedFlags = coreParked,
             CpuCurrentClockGhz = currentClockGhz <= 0 ? _cpuBaseClockGhz : currentClockGhz,
             CpuBaseClockGhz = _cpuBaseClockGhz,
             CpuMaxClockGhz = _cpuBaseClockGhz,
@@ -391,6 +421,7 @@ public sealed class HardwareMonitorService : IDisposable
         _cpuTotalCounter.Dispose();
         _cpuTotalPerformanceCounter.Dispose();
         foreach (var c in _cpuCoreUsageCounters) c.Dispose();
+        foreach (var c in _cpuParkingCounters) c.Dispose();
         _diskTimeCounter.Dispose();
         _diskReadCounter.Dispose();
         _diskWriteCounter.Dispose();

@@ -38,16 +38,35 @@ public sealed class LoggingViewModel : ObservableObject, IDisposable
 
     public RelayCommand ToggleLoggingCommand { get; }
 
+    // #75: event markers - lets the user tag "this is when it happened" while reproducing an
+    // issue, without needing to cross-reference a separate stopwatch/timestamp against the CSV
+    // afterward. Written as an always-present trailing "Marker" column (blank on every other
+    // row) rather than a separate line, so the CSV's column count never changes mid-file.
+    private string _markerText = string.Empty;
+    public string MarkerText { get => _markerText; set => SetProperty(ref _markerText, value); }
+    private string? _pendingMarker;
+
+    public RelayCommand AddMarkerCommand { get; }
+
     public LoggingViewModel(PerformanceViewModel performance, EnergyThermalsViewModel energyThermals)
     {
         _performance = performance;
         _energyThermals = energyThermals;
 
         ToggleLoggingCommand = new RelayCommand(_ => ToggleLogging());
+        AddMarkerCommand = new RelayCommand(_ => AddMarker(), _ => IsLogging);
+
+        _logging.Rotated += () => RaiseLoggingChanged();
 
         _timer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(1) };
         _timer.Tick += (_, _) => WriteRowIfLogging();
         _timer.Start();
+    }
+
+    private void AddMarker()
+    {
+        _pendingMarker = string.IsNullOrWhiteSpace(MarkerText) ? "Marker" : MarkerText.Trim();
+        MarkerText = string.Empty;
     }
 
     private void ToggleLogging()
@@ -127,6 +146,10 @@ public sealed class LoggingViewModel : ObservableObject, IDisposable
             headers.Add($"{name} ({UnitOf(type)})");
         }
 
+        // #75: always present, last column - blank on every row except one where AddMarkerCommand
+        // was used, so the CSV's column set stays fixed for the file's lifetime either way.
+        headers.Add("Marker");
+
         return headers;
     }
 
@@ -178,6 +201,9 @@ public sealed class LoggingViewModel : ObservableObject, IDisposable
                 ? Num(s.Value.Value)
                 : string.Empty);
         }
+
+        row.Add(_pendingMarker ?? string.Empty);
+        _pendingMarker = null;
 
         _logging.WriteRow(row);
     }

@@ -245,6 +245,49 @@
                             </Style>
                         </TextBlock.Style>
                     </TextBlock>
+                    <!-- #70: page file location vs. the boot drive's media type - a page file left
+                         on a slower secondary HDD (or the reverse) is a common, silent slowdown
+                         cause on multi-drive systems, easy to miss since this tab otherwise only
+                         shows aggregate disk activity. -->
+                    <Border BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,1,0,0" Margin="0,12,0,0" Padding="0,10,0,0">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="Page file: " Style="{StaticResource SpecLabel}" Margin="0" />
+                            <TextBlock Text="{Binding PageFileLocationText}">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource SpecValue}">
+                                        <Setter Property="FontSize" Value="12" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding PageFileLocationWarning}" Value="True">
+                                                <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </Border>
+
+            <!-- USB devices (#69): flags a Windows-reported enumeration/driver problem - helps
+                 catch a misbehaving peripheral or a failing USB controller/hub. Per-device power
+                 draw isn't shown - see UsbDeviceInfo's remarks for why. -->
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel>
+                    <TextBlock Text="USB devices" Style="{StaticResource CardTitle}" />
+                    <ItemsControl ItemsSource="{Binding UsbDevices}" ItemTemplate="{StaticResource SpecRowTemplate}" />
+                    <TextBlock Text="No USB devices detected.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding UsbDevices.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
                 </StackPanel>
             </Border>
 
@@ -397,6 +440,27 @@
                 <StackPanel>
                     <TextBlock Text="Recent Windows updates" Style="{StaticResource CardTitle}" />
                     <ItemsControl ItemsSource="{Binding RecentUpdates}" ItemTemplate="{StaticResource SpecRowTemplate}" Margin="0,12,0,0" />
+                </StackPanel>
+            </Border>
+
+            <!-- #68: recently installed third-party software - correlates with "when did the
+                 problem start". Collapsed entirely when empty (same as Outdated Drivers/Recent
+                 Windows updates) - install-only, see InstalledSoftwareInfo's remarks. -->
+            <Border Margin="0,16,0,0">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding RecentlyInstalledSoftware.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Recently installed software" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Third-party software installed in the last 6 months, oldest at the bottom - Windows keeps no equivalent log of uninstalls."
+                               Style="{StaticResource SubStat}" Margin="0,-8,0,12" TextWrapping="Wrap" />
+                    <ItemsControl ItemsSource="{Binding RecentlyInstalledSoftware}" ItemTemplate="{StaticResource SpecRowTemplate}" />
                 </StackPanel>
             </Border>
 

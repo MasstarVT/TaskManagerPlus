@@ -43,6 +43,14 @@ public sealed class SystemSpecsViewModel : ObservableObject
     public ObservableCollection<SpecRow> OutdatedDrivers { get; } = new();
     public ObservableCollection<SpecRow> RecentUpdates { get; } = new();
     public ObservableCollection<SpecRow> AntivirusProducts { get; } = new();
+    public ObservableCollection<SpecRow> RecentlyInstalledSoftware { get; } = new();
+    public ObservableCollection<SpecRow> UsbDevices { get; } = new();
+
+    private string _pageFileLocationText = string.Empty;
+    public string PageFileLocationText { get => _pageFileLocationText; private set => SetProperty(ref _pageFileLocationText, value); }
+
+    private bool _pageFileLocationWarning;
+    public bool PageFileLocationWarning { get => _pageFileLocationWarning; private set => SetProperty(ref _pageFileLocationWarning, value); }
 
     private bool _multipleActiveAvWarning;
     public bool MultipleActiveAvWarning { get => _multipleActiveAvWarning; private set => SetProperty(ref _multipleActiveAvWarning, value); }
@@ -188,10 +196,15 @@ public sealed class SystemSpecsViewModel : ObservableObject
         Disks.Clear();
         foreach (var d in specs.Disks)
         {
+            // #65: SSD wear/life-used percentage, appended to the same secondary line as media/
+            // interface type rather than a new column - see DiskInfo.WearPercent's remarks for
+            // why this is best-effort and frequently unavailable.
+            string? wearText = d.WearPercent is { } wear ? $"{wear}% life used" : null;
+
             Disks.Add(new SpecRow
             {
                 Primary = string.IsNullOrWhiteSpace(d.Model) ? "Unknown disk" : d.Model,
-                Secondary = string.Join(" ", new[] { d.MediaType, d.InterfaceType }.Where(s => !string.IsNullOrWhiteSpace(s))),
+                Secondary = string.Join(" · ", new[] { d.MediaType, d.InterfaceType, wearText }.Where(s => !string.IsNullOrWhiteSpace(s))),
                 SizeText = Formatting.FormatBytes(d.SizeBytes),
                 HealthText = d.HealthStatus,
                 IsHealthWarning = d.IsHealthWarning,
@@ -266,5 +279,47 @@ public sealed class SystemSpecsViewModel : ObservableObject
             });
         }
         MultipleActiveAvWarning = specs.MultipleActiveAvWarning;
+
+        // #68: recently installed third-party software - correlates with "when did the problem
+        // start". Install-only (see InstalledSoftwareInfo's remarks) - Windows keeps no log of
+        // uninstalls to pair with it.
+        RecentlyInstalledSoftware.Clear();
+        foreach (var s in specs.RecentlyInstalledSoftware)
+        {
+            RecentlyInstalledSoftware.Add(new SpecRow
+            {
+                Primary = s.Name,
+                Secondary = s.Publisher,
+                SizeText = s.InstallDate.ToShortDateString(),
+            });
+        }
+
+        // #69: USB devices with a Windows-reported enumeration/driver problem - per-device power
+        // draw isn't shown (no reliable public API for it, see UsbDeviceInfo's remarks).
+        UsbDevices.Clear();
+        foreach (var u in specs.UsbDevices)
+        {
+            UsbDevices.Add(new SpecRow
+            {
+                Primary = u.Name,
+                HealthText = u.HasError ? $"Error {u.ConfigManagerErrorCode}" : "OK",
+                IsHealthWarning = u.HasError,
+            });
+        }
+
+        // #70: page file location vs. the boot drive's media type - a page file left on a slower
+        // secondary HDD (or the reverse) is a common, silent slowdown cause on multi-drive systems.
+        if (specs.PageFileLocation is { } pf)
+        {
+            PageFileLocationText = pf.IsSameAsBootDrive
+                ? $"{pf.DriveLetter} ({pf.MediaType}) - same as boot drive"
+                : $"{pf.DriveLetter} ({pf.MediaType}) - different from boot drive";
+            PageFileLocationWarning = pf.MediaType == "HDD";
+        }
+        else
+        {
+            PageFileLocationText = "Unknown";
+            PageFileLocationWarning = false;
+        }
     }
 }

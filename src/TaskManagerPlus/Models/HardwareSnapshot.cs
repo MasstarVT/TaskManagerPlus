@@ -5,6 +5,12 @@ public sealed class HardwareSnapshot
 {
     public double CpuTotalPercent { get; init; }
     public double[] CpuPerCorePercent { get; init; } = Array.Empty<double>();
+
+    /// <summary>Per-core parking status (#78, "Processor Information\Parking Status" - 0 =
+    /// unparked, nonzero = parked), lined up 1:1 with CpuPerCorePercent. Empty when the counter
+    /// isn't available (older Windows versions don't expose core parking at all) - callers should
+    /// treat that the same as "no cores parked" rather than an error.</summary>
+    public bool[] CoreParkedFlags { get; init; } = Array.Empty<bool>();
     public double CpuCurrentClockGhz { get; init; }
     public double CpuBaseClockGhz { get; init; }
     public double CpuMaxClockGhz { get; init; }
