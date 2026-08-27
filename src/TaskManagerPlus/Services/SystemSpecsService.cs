@@ -79,7 +79,45 @@ public sealed class SystemSpecsService
             DefenderExclusions = ReadDefenderExclusions(),
             SystemUuid = hwIds.Uuid,
             CpuIdentifier = hwIds.CpuId,
+
+            RebootPending = ReadRebootPending(),
         };
+    }
+
+    /// <summary>Round 11, #73: Windows Update/servicing reboot-pending check - reads a few
+    /// well-known, widely-documented indicator keys rather than an exhaustive enumeration of
+    /// every possible reboot-pending source (there are many, undocumented and version-specific):
+    /// the Component Based Servicing key (set after most cumulative-update installs), the Windows
+    /// Update Auto Update client's own key, and PendingFileRenameOperations (set by any installer
+    /// - not just Windows Update - that couldn't replace a file still in use). Any one present
+    /// means true; a denied/failed read degrades to false ("not pending") rather than risk a false
+    /// positive, the same "don't over-claim" tradeoff the volume dirty-bit check already takes.</summary>
+    private static bool ReadRebootPending()
+    {
+        try
+        {
+            using var cbs = Registry.LocalMachine.OpenSubKey(
+                @"SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending");
+            if (cbs is not null) return true;
+        }
+        catch { /* ignore - fall through to the next indicator */ }
+
+        try
+        {
+            using var wu = Registry.LocalMachine.OpenSubKey(
+                @"SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired");
+            if (wu is not null) return true;
+        }
+        catch { /* ignore */ }
+
+        try
+        {
+            using var session = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Control\Session Manager");
+            if (session?.GetValue("PendingFileRenameOperations") is string[] { Length: > 0 }) return true;
+        }
+        catch { /* ignore */ }
+
+        return false;
     }
 
     private static (string Name, string Version, string Architecture, string InstallDate, int? InstallAgeDays) ReadOperatingSystem()

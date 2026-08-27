@@ -156,6 +156,11 @@ public sealed class SystemSpecsViewModel : ObservableObject
     private string _hardwareIdsText = string.Empty;
     public RelayCommand CopyHardwareIdsCommand { get; }
 
+    // Round 11, #73: Windows Update/servicing reboot-pending flag, read for the System tab and
+    // for SummaryViewModel's Health Check rule.
+    private bool _rebootPending;
+    public bool RebootPending { get => _rebootPending; private set => SetProperty(ref _rebootPending, value); }
+
     public AsyncRelayCommand RefreshCommand { get; }
 
     public SystemSpecsViewModel()
@@ -370,6 +375,7 @@ public sealed class SystemSpecsViewModel : ObservableObject
             });
         }
         MultipleActiveAvWarning = specs.MultipleActiveAvWarning;
+        RebootPending = specs.RebootPending;
 
         // #68: recently installed third-party software - correlates with "when did the problem
         // start". Install-only (see InstalledSoftwareInfo's remarks) - Windows keeps no log of

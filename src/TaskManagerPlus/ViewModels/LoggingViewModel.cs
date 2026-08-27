@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.IO;
+using System.Threading.Tasks;
 using System.Windows.Threading;
 using LibreHardwareMonitor.Hardware;
 using LiveChartsCore;
@@ -64,6 +65,54 @@ public sealed class LoggingViewModel : ObservableObject, IDisposable
         }
     }
 
+    /// <summary>Round 11, #76: how many seconds elapse between rows, for both manual logging and
+    /// the rolling buffer - the original app always wrote one row per second; a longer interval
+    /// trades resolution for a smaller file/less disk I/O on a long unattended session. Only
+    /// 1/5/10s are offered (matching the assignment's guidance) rather than an arbitrary value.
+    /// Changing it live re-intervals the already-running timer immediately.</summary>
+    public int SampleIntervalSeconds
+    {
+        get => _loggingSettings.SampleIntervalSeconds;
+        set
+        {
+            value = value is 1 or 5 or 10 ? value : 1;
+            if (_loggingSettings.SampleIntervalSeconds == value) return;
+            _loggingSettings.SampleIntervalSeconds = value;
+            LoggingSettingsService.Save(_loggingSettings);
+            OnPropertyChanged();
+            _timer.Interval = TimeSpan.FromSeconds(value);
+        }
+    }
+
+    public IReadOnlyList<int> SampleIntervalOptions { get; } = new[] { 1, 5, 10 };
+
+    /// <summary>Round 11, #77: whether old rotated log parts get swept automatically - see
+    /// LoggingService.CleanupOldRotatedParts.</summary>
+    public bool AutoCleanupEnabled
+    {
+        get => _loggingSettings.AutoCleanupEnabled;
+        set
+        {
+            if (_loggingSettings.AutoCleanupEnabled == value) return;
+            _loggingSettings.AutoCleanupEnabled = value;
+            LoggingSettingsService.Save(_loggingSettings);
+            OnPropertyChanged();
+        }
+    }
+
+    public int AutoCleanupDays
+    {
+        get => _loggingSettings.AutoCleanupDays;
+        set
+        {
+            value = Math.Max(1, value);
+            if (_loggingSettings.AutoCleanupDays == value) return;
+            _loggingSettings.AutoCleanupDays = value;
+            LoggingSettingsService.Save(_loggingSettings);
+            OnPropertyChanged();
+        }
+    }
+
     public bool IsLogging => _logging.IsLogging;
     public string? LogFilePath => _logging.FilePath;
     public string LogFileName => LogFilePath is null ? string.Empty : Path.GetFileName(LogFilePath);
@@ -116,11 +165,19 @@ public sealed class LoggingViewModel : ObservableObject, IDisposable
 
         _logging.Rotated += () => RaiseLoggingChanged();
 
-        _timer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(1) };
+        _timer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(_loggingSettings.SampleIntervalSeconds) };
         _timer.Tick += (_, _) => Tick();
         _timer.Start();
 
         if (AutoStartRollingBufferEnabled) StartRollingBuffer();
+
+        // #77: sweep old rotated parts once per launch, not on a timer - a logs folder only grows
+        // between app runs, so there's nothing to gain from repeating this check every session tick.
+        if (_loggingSettings.AutoCleanupEnabled)
+        {
+            var logsDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TaskManagerPlus", "Logs");
+            Task.Run(() => LoggingService.CleanupOldRotatedParts(logsDir, _loggingSettings.AutoCleanupDays, activeFilePath: null));
+        }
     }
 
     private void Tick()
@@ -149,7 +206,9 @@ public sealed class LoggingViewModel : ObservableObject, IDisposable
         var row = BuildRow(_rollingCoreCountAtStart, _rollingSensorColumnsAtStart);
         _rollingBuffer.Enqueue(string.Join(",", row.Select(Escape)));
 
-        int maxRows = Math.Max(1, _loggingSettings.RollingBufferMinutes * 60);
+        // #76: one row is written per SampleIntervalSeconds, not necessarily per second - divide
+        // through so "N minutes" of buffer still means N minutes of wall-clock time either way.
+        int maxRows = Math.Max(1, _loggingSettings.RollingBufferMinutes * 60 / Math.Max(1, _loggingSettings.SampleIntervalSeconds));
         while (_rollingBuffer.Count > maxRows) _rollingBuffer.Dequeue();
 
         if (++_rollingFlushCountdown < 10) return;

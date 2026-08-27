@@ -103,6 +103,10 @@ public sealed class SystemSpecs
 
     public string SystemUuid { get; init; } = string.Empty;
     public string CpuIdentifier { get; init; } = string.Empty;
+
+    /// <summary>Round 11, #73: Windows Update/servicing reboot-pending flag - see
+    /// SystemSpecsService.ReadRebootPending for which indicator keys are checked.</summary>
+    public bool RebootPending { get; init; }
 }
 
 /// <summary>One active display (#60) - resolution/refresh rate from Win32_VideoController's current

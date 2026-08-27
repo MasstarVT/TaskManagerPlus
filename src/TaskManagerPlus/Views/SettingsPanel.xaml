@@ -198,7 +198,51 @@
                 <TextBox Style="{StaticResource HexBox}" Margin="0,0,0,22"
                          Text="{Binding NetworkSend, Converter={StaticResource ColorToHexConverter}, UpdateSourceTrigger=LostFocus}" />
 
-                <Button Content="Reset to defaults" Command="{Binding ResetCommand}" HorizontalAlignment="Left" Margin="0,0,0,22" />
+                <Button Content="Reset to defaults" Command="{Binding ResetCommand}" HorizontalAlignment="Left" Margin="0,0,0,10" />
+
+                <!-- Round 11, #82: export/import just the accent/family/saturation subset of
+                     theme.json as its own small shareable file. -->
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                    <Button Content="Export palette..." Command="{Binding ExportPaletteCommand}" Margin="0,0,8,0" />
+                    <Button Content="Import palette..." Command="{Binding ImportPaletteCommand}" />
+                </StackPanel>
+                <TextBlock Text="{Binding PaletteStatusText}" TextWrapping="Wrap" Margin="0,0,0,22">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                            <Setter Property="Visibility" Value="Visible" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding PaletteStatusText}" Value="">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+
+                <TextBlock Text="DISPLAY" FontSize="10.5" FontWeight="Bold" Foreground="{DynamicResource TextTertiaryBrush}"
+                           Margin="0,0,0,14" />
+
+                <!-- #78: dense/compact DataGrid rows - fit more rows on screen at once. -->
+                <CheckBox Content="Compact table rows" IsChecked="{Binding CompactRows}" Margin="0,0,0,16" />
+
+                <!-- #79: independent UI scale, separate from Windows' own display scaling - see
+                     ThemeViewModel.FontScale's remarks. -->
+                <TextBlock Text="UI scale" Style="{StaticResource ColorRowLabel}" Margin="0,0,0,4" />
+                <TextBlock Text="{Binding FontScale, StringFormat={}{0:0%}}" Style="{StaticResource SubStat}" Margin="0,0,0,4" />
+                <Slider Minimum="0.8" Maximum="1.5" TickFrequency="0.05" IsSnapToTickEnabled="True"
+                        Value="{Binding FontScale}" Margin="0,0,0,16" />
+
+                <!-- #81: pins the main window above every other window - the same Topmost
+                     behavior the mini dashboard/toast windows already use. -->
+                <CheckBox Content="Always on top"
+                          IsChecked="{Binding DataContext.AlwaysOnTop, RelativeSource={RelativeSource AncestorType=Window}}" Margin="0,0,0,22" />
+
+                <!-- #80: Ctrl+1..Ctrl+9 jump straight to a tab - the mapping defaults to this
+                     app's first nine tabs and is configurable via ui-preferences.json's
+                     TabShortcuts list (no in-app remapping UI, same tradeoff a couple of this
+                     app's other advanced options already take). -->
+                <TextBlock Text="Ctrl+1 through Ctrl+9 jump to a tab (first nine, by default). Customize the order in %AppData%\TaskManagerPlus\ui-preferences.json."
+                           Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,22" />
 
                 <TextBlock Text="LOGGING" FontSize="10.5" FontWeight="Bold" Foreground="{DynamicResource TextTertiaryBrush}"
                            Margin="0,0,0,14" />
@@ -209,7 +253,30 @@
                 <CheckBox Content="Auto-start rolling log buffer on launch"
                           IsChecked="{Binding DataContext.Logging.AutoStartRollingBufferEnabled, RelativeSource={RelativeSource AncestorType=Window}}" />
                 <TextBlock Text="Keeps the last 15 minutes of every metric written to a fixed file, even if you never click Start Logging."
-                           Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,4,0,22" />
+                           Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,4,0,16" />
+
+                <!-- #76: configurable sample interval - trades resolution for a smaller file/less
+                     disk I/O on a long unattended session. Applies to both manual logging and the
+                     rolling buffer above. -->
+                <TextBlock Text="Sample interval" Style="{StaticResource ColorRowLabel}" Margin="0,0,0,6" />
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
+                    <RadioButton GroupName="SampleInterval" Content="1s" Margin="0,0,14,0"
+                                 IsChecked="{Binding DataContext.Logging.SampleIntervalSeconds, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource IntEqualsConverter}, ConverterParameter=1}" />
+                    <RadioButton GroupName="SampleInterval" Content="5s" Margin="0,0,14,0"
+                                 IsChecked="{Binding DataContext.Logging.SampleIntervalSeconds, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource IntEqualsConverter}, ConverterParameter=5}" />
+                    <RadioButton GroupName="SampleInterval" Content="10s"
+                                 IsChecked="{Binding DataContext.Logging.SampleIntervalSeconds, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource IntEqualsConverter}, ConverterParameter=10}" />
+                </StackPanel>
+
+                <!-- #77: automatic cleanup of old rotated log parts (see LoggingService.CleanupOldRotatedParts) -
+                     never touches the file currently being written to. -->
+                <CheckBox Content="Automatically delete old rotated log parts"
+                          IsChecked="{Binding DataContext.Logging.AutoCleanupEnabled, RelativeSource={RelativeSource AncestorType=Window}}" Margin="0,0,0,6" />
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,22">
+                    <TextBlock Text="Older than" VerticalAlignment="Center" Margin="0,0,6,0" Style="{StaticResource SubStat}" />
+                    <TextBox Width="50" Text="{Binding DataContext.Logging.AutoCleanupDays, RelativeSource={RelativeSource AncestorType=Window}, UpdateSourceTrigger=LostFocus}" />
+                    <TextBlock Text="days" VerticalAlignment="Center" Margin="6,0,0,0" Style="{StaticResource SubStat}" />
+                </StackPanel>
 
                 <TextBlock Text="REMOTE MONITORING" FontSize="10.5" FontWeight="Bold" Foreground="{DynamicResource TextTertiaryBrush}"
                            Margin="0,0,0,14" />

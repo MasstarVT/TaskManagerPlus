@@ -9,7 +9,8 @@
         d:DataContext="{d:DesignInstance Type=vm:MainViewModel}"
         mc:Ignorable="d"
         Title="Task Manager Plus" Height="860" Width="1280" MinHeight="560" MinWidth="820"
-        WindowStartupLocation="CenterScreen">
+        WindowStartupLocation="CenterScreen"
+        Topmost="{Binding AlwaysOnTop}">
     <Window.Resources>
         <!-- Shared brush for every nav-rail icon: bound to the ancestor TabItem's Foreground so
              icons recolor automatically with the existing selected/hover triggers. -->
@@ -117,7 +118,14 @@
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
 
-            <TabControl Grid.Column="0" TabStripPlacement="Top" SelectedIndex="0">
+            <TabControl x:Name="MainTabControl" Grid.Column="0" TabStripPlacement="Top" SelectedIndex="0">
+                <!-- Round 11, #79: independent UI scale, separate from Windows' own display
+                     scaling - see ThemeViewModel.FontScale's remarks for why a uniform
+                     LayoutTransform (rather than threading a font-size resource through every
+                     explicit FontSize setter in this app's XAML) is the pragmatic hook point. -->
+                <TabControl.LayoutTransform>
+                    <ScaleTransform ScaleX="{Binding Theme.FontScale}" ScaleY="{Binding Theme.FontScale}" />
+                </TabControl.LayoutTransform>
                 <!-- Footer entry docked to the trailing edge of the top strip (see the
                      TabControl ControlTemplate in Dark.xaml, which docks Tag to the right). -->
                 <TabControl.Tag>

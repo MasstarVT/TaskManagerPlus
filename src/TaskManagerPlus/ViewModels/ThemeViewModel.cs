@@ -1,3 +1,4 @@
+using System.Windows;
 using System.Windows.Media;
 using TaskManagerPlus.Common;
 using TaskManagerPlus.Models;
@@ -29,8 +30,10 @@ public sealed class ThemeViewModel : ObservableObject
         Color.FromRgb(0x9A, 0xA0, 0xA6), // gray
     };
 
-    /// <summary>Theme-family names, in the order shown in the Colors panel.</summary>
-    public static readonly string[] ThemeModes = { "Dark", "Light", "Green", "Amber", "Blue", "Monochrome" };
+    /// <summary>Theme-family names, in the order shown in the Colors panel. Round 11, #83 adds
+    /// "High Contrast" as a 7th family, following the exact same PaletteDefinition mechanism as
+    /// the original six - no new architecture, just another table entry.</summary>
+    public static readonly string[] ThemeModes = { "Dark", "Light", "Green", "Amber", "Blue", "Monochrome", "High Contrast" };
 
     /// <summary>
     /// Base palettes for each theme family. Every color here is repainted into
@@ -81,6 +84,20 @@ public sealed class ThemeViewModel : ObservableObject
             TextPrimary: C("#F2F2F2"), TextSecondary: C("#9E9E9E"), TextTertiary: C("#6E6E6E"),
             Success: C("#C6C6C6"), Warning: C("#DCDCDC"),
             Danger: C("#EAEAEA"), DangerHover: C("#FFFFFF"), DangerMuted: C("#3A3A3A")),
+
+        // Round 11, #83: accessibility-focused variant - pure black background, near-white text,
+        // and status colors deliberately chosen for a high contrast ratio against that background
+        // (all comfortably past WCAG AA's 4.5:1 body-text threshold) rather than reusing any other
+        // family's more muted tones. Saturation is still applied on top like every other family
+        // (ApplyPalette doesn't special-case this one) - a user who wants both high contrast and,
+        // say, ColorBlindSafeAlerts (#76) can combine the two, since that toggle overrides the
+        // Success/Warning/Danger brushes independently of whichever family is active.
+        ["High Contrast"] = new PaletteDefinition(
+            Bg: C("#000000"), BgPanel: C("#0A0A0A"), BgElevated: C("#141414"), BgHover: C("#232323"),
+            Border: C("#8A8A8A"), BorderSubtle: C("#4A4A4A"),
+            TextPrimary: C("#FFFFFF"), TextSecondary: C("#E6E6E6"), TextTertiary: C("#C0C0C0"),
+            Success: C("#4AFF7A"), Warning: C("#FFE24A"),
+            Danger: C("#FF5C5C"), DangerHover: C("#FF8080"), DangerMuted: C("#4A1414")),
     };
 
     public event Action? ColorsChanged;
@@ -166,6 +183,48 @@ public sealed class ThemeViewModel : ObservableObject
         }
     }
 
+    // Round 11, #78: dense/compact DataGrid row height - swaps two small resource values
+    // (row height, cell padding) the same "mutate the resource dictionary" way ApplyPalette
+    // already repaints colors, so every DataGrid across the app (Processes/Services/Startup/...)
+    // picks it up live via the DynamicResource bindings Dark.xaml's DataGrid/DataGridCell styles
+    // already use for their RowHeight/Padding setters.
+    private bool _compactRows;
+    public bool CompactRows
+    {
+        get => _compactRows;
+        set
+        {
+            if (_compactRows == value) return;
+            _compactRows = value;
+            OnPropertyChanged();
+            ApplyRowHeight();
+            if (!_isLoading) NotifyAndPersist();
+        }
+    }
+
+    // Round 11, #79: independent UI scale, separate from Windows' own display scaling. A literal
+    // "font size" slider would need to be threaded through every explicit FontSize setter across
+    // dozens of XAML files (most cards hardcode FontSize rather than inheriting it) - a much more
+    // invasive change than this app's established "one resource-dictionary hook, everything
+    // DynamicResource-bound repaints" pattern allows for text alone. Instead this drives a
+    // LayoutTransform on the main window's tab content (MainWindow.xaml) that scales the whole UI
+    // uniformly - text, tiles, charts, grids all get bigger/smaller together, which is the
+    // practical goal ("make the whole app easier to read") even though it's a layout scale rather
+    // than a font-metric change.
+    private double _fontScale = 1.0;
+    public double FontScale
+    {
+        get => _fontScale;
+        set
+        {
+            value = Math.Clamp(value, 0.8, 1.5);
+            if (Math.Abs(_fontScale - value) < 0.001) return;
+            _fontScale = value;
+            OnPropertyChanged();
+            if (!_isLoading) NotifyAndPersist();
+        }
+    }
+
     public IReadOnlyList<Color> PresetColors => Presets;
     public IReadOnlyList<string> ThemeModeNames => ThemeModes;
 
@@ -178,6 +237,17 @@ public sealed class ThemeViewModel : ObservableObject
     public RelayCommand SetNetworkSendCommand { get; }
     public RelayCommand SetThemeModeCommand { get; }
 
+    // Round 11, #82: export/import just the accent/family/saturation subset of theme.json, as its
+    // own small shareable file - distinct from theme.json itself (which this app already persists
+    // automatically) and from a full settings/config export, since a user sharing "here's my color
+    // scheme" with someone else has no reason to also hand over their alert thresholds or logging
+    // preferences.
+    public RelayCommand ExportPaletteCommand { get; }
+    public RelayCommand ImportPaletteCommand { get; }
+
+    private string _paletteStatusText = string.Empty;
+    public string PaletteStatusText { get => _paletteStatusText; private set => SetProperty(ref _paletteStatusText, value); }
+
     public ThemeViewModel()
     {
         ResetCommand = new RelayCommand(_ => ResetToDefaults());
@@ -188,6 +258,8 @@ public sealed class ThemeViewModel : ObservableObject
         SetNetworkReceiveCommand = new RelayCommand(p => NetworkReceive = (Color)p!);
         SetNetworkSendCommand = new RelayCommand(p => NetworkSend = (Color)p!);
         SetThemeModeCommand = new RelayCommand(p => ThemeMode = (string)p!);
+        ExportPaletteCommand = new RelayCommand(_ => ExportPalette());
+        ImportPaletteCommand = new RelayCommand(_ => ImportPalette());
 
         var saved = ThemeService.Load();
         _isLoading = true;
@@ -200,9 +272,96 @@ public sealed class ThemeViewModel : ObservableObject
         _themeMode = Palettes.ContainsKey(saved.ThemeMode) ? saved.ThemeMode : "Dark";
         _saturation = Math.Clamp(saved.Saturation, 0.0, 2.0);
         _colorBlindSafeAlerts = saved.ColorBlindSafeAlerts;
+        _compactRows = saved.CompactRows;
+        _fontScale = Math.Clamp(saved.FontScale <= 0 ? 1.0 : saved.FontScale, 0.8, 1.5);
         _isLoading = false;
 
         ApplyPalette(_themeMode, _saturation);
+        ApplyRowHeight();
+    }
+
+    /// <summary>Repaints the DataGrid row-height/cell-padding resources for the current
+    /// CompactRows setting - the same "mutate the app resource dictionary" trick ApplyPalette uses
+    /// for colors, just for two layout values instead.</summary>
+    private void ApplyRowHeight()
+    {
+        _appResources["DataGridRowHeightValue"] = _compactRows ? 24.0 : 34.0;
+        _appResources["DataGridCellPaddingValue"] = _compactRows ? new Thickness(10, 1, 10, 1) : new Thickness(10, 4, 10, 4);
+    }
+
+    /// <summary>Round 11, #82: writes just the palette subset of theme.json to a file the user
+    /// picks - a small, shareable "here's my color scheme" file distinct from the app's full
+    /// theme.json (which is persisted automatically and covers logging/remote-monitor prefs too
+    /// in spirit, even though technically theme.json itself only ever held color/theme fields).</summary>
+    private void ExportPalette()
+    {
+        var dialog = new Microsoft.Win32.SaveFileDialog
+        {
+            Title = "Export color palette",
+            Filter = "Palette files (*.tmpalette.json)|*.tmpalette.json|All files (*.*)|*.*",
+            DefaultExt = ".tmpalette.json",
+            FileName = $"TaskManagerPlus-Palette-{DateTime.Now:yyyy-MM-dd_HH-mm-ss}.tmpalette.json",
+        };
+        if (dialog.ShowDialog() != true) return;
+
+        try
+        {
+            var preset = new PalettePreset
+            {
+                Accent = ToHex(Accent), Cpu = ToHex(Cpu), Ram = ToHex(Ram), Disk = ToHex(Disk),
+                NetworkReceive = ToHex(NetworkReceive), NetworkSend = ToHex(NetworkSend),
+                ThemeMode = ThemeMode, Saturation = Saturation, ColorBlindSafeAlerts = ColorBlindSafeAlerts,
+            };
+            System.IO.File.WriteAllText(dialog.FileName,
+                System.Text.Json.JsonSerializer.Serialize(preset, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+            PaletteStatusText = $"Palette exported: {System.IO.Path.GetFileName(dialog.FileName)}";
+        }
+        catch (Exception ex)
+        {
+            PaletteStatusText = $"Couldn't export palette: {ex.Message}";
+        }
+    }
+
+    private void ImportPalette()
+    {
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "Import color palette",
+            Filter = "Palette files (*.tmpalette.json;*.json)|*.tmpalette.json;*.json|All files (*.*)|*.*",
+        };
+        if (dialog.ShowDialog() != true) return;
+
+        try
+        {
+            var json = System.IO.File.ReadAllText(dialog.FileName);
+            var preset = System.Text.Json.JsonSerializer.Deserialize<PalettePreset>(json);
+            if (preset is null) { PaletteStatusText = "Couldn't read that palette file."; return; }
+
+            _isLoading = true;
+            Accent = ParseOrDefault(preset.Accent, Accent);
+            Cpu = ParseOrDefault(preset.Cpu, Cpu);
+            Ram = ParseOrDefault(preset.Ram, Ram);
+            Disk = ParseOrDefault(preset.Disk, Disk);
+            NetworkReceive = ParseOrDefault(preset.NetworkReceive, NetworkReceive);
+            NetworkSend = ParseOrDefault(preset.NetworkSend, NetworkSend);
+            _themeMode = Palettes.ContainsKey(preset.ThemeMode) ? preset.ThemeMode : _themeMode;
+            _saturation = Math.Clamp(preset.Saturation, 0.0, 2.0);
+            _colorBlindSafeAlerts = preset.ColorBlindSafeAlerts;
+            OnPropertyChanged(nameof(ThemeMode));
+            OnPropertyChanged(nameof(Saturation));
+            OnPropertyChanged(nameof(ColorBlindSafeAlerts));
+            _isLoading = false;
+
+            ApplyPalette(_themeMode, _saturation);
+            NotifyAndPersist();
+            ThemeModeChanged?.Invoke();
+            PaletteStatusText = $"Palette imported: {System.IO.Path.GetFileName(dialog.FileName)}";
+        }
+        catch (Exception ex)
+        {
+            _isLoading = false;
+            PaletteStatusText = $"Couldn't import palette: {ex.Message}";
+        }
     }
 
     private void ResetToDefaults()
@@ -218,12 +377,17 @@ public sealed class ThemeViewModel : ObservableObject
         _themeMode = d.ThemeMode;
         _saturation = d.Saturation;
         _colorBlindSafeAlerts = d.ColorBlindSafeAlerts;
+        _compactRows = d.CompactRows;
+        _fontScale = d.FontScale;
         OnPropertyChanged(nameof(ThemeMode));
         OnPropertyChanged(nameof(Saturation));
         OnPropertyChanged(nameof(ColorBlindSafeAlerts));
+        OnPropertyChanged(nameof(CompactRows));
+        OnPropertyChanged(nameof(FontScale));
         _isLoading = false;
 
         ApplyPalette(_themeMode, _saturation);
+        ApplyRowHeight();
         NotifyAndPersist();
         ThemeModeChanged?.Invoke();
     }
@@ -266,6 +430,8 @@ public sealed class ThemeViewModel : ObservableObject
             ThemeMode = ThemeMode,
             Saturation = Saturation,
             ColorBlindSafeAlerts = ColorBlindSafeAlerts,
+            CompactRows = CompactRows,
+            FontScale = FontScale,
         });
     }
 

@@ -48,6 +48,30 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
 
     public ObservableCollection<HealthIssue> HealthIssues { get; } = new();
 
+    // Round 11, #69: hideable/reorderable dashboard tiles - see DashboardTileConfig's remarks for
+    // why this is up/down reordering within a fixed two-column layout rather than freeform
+    // drag-and-drop. Left/right mirror the Summary tab's existing two-column Grid (CPU/Memory
+    // charts on the left; processes/disk/network/system tiles on the right) - which column a tile
+    // belongs to is a structural page-layout choice, not something the user reassigns, only
+    // visibility and order-within-column are.
+    private static readonly (string Id, string Name, bool Left)[] TileCatalog =
+    {
+        ("cpu", "CPU Overview", true),
+        ("memory", "Memory Utilization", true),
+        ("topcpu", "Top CPU processes", false),
+        ("topcpu10s", "Top CPU (10s avg)", false),
+        ("disk", "Disk", false),
+        ("network", "Network", false),
+        ("system", "System", false),
+    };
+
+    public ObservableCollection<DashboardTileViewModel> LeftTiles { get; } = new();
+    public ObservableCollection<DashboardTileViewModel> RightTiles { get; } = new();
+
+    private bool _isTileCustomizerOpen;
+    public bool IsTileCustomizerOpen { get => _isTileCustomizerOpen; set => SetProperty(ref _isTileCustomizerOpen, value); }
+    public RelayCommand ToggleTileCustomizerCommand { get; }
+
     // #72: configurable threshold alerts - a toast fires once when a metric crosses above its
     // threshold (edge-triggered via the _xAlerted flags below, reset when the metric drops back
     // under, so one sustained excursion doesn't spam a toast every 2s tick).
@@ -84,6 +108,45 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
     private string _snapshotStatusText = string.Empty;
     public string SnapshotStatusText { get => _snapshotStatusText; private set => SetProperty(ref _snapshotStatusText, value); }
 
+    // Round 11, #71: baseline-vs-baseline - diff two previously-saved snapshot files against each
+    // other, rather than always comparing a saved baseline to the live system. Reuses
+    // SnapshotService.Diff verbatim (it already just takes two SystemSnapshot objects; nothing
+    // about it assumes the second one is "current"), so this is purely a second load/compare flow
+    // with its own state, kept separate from SnapshotDiff/SnapshotStatusText above so the two
+    // comparison modes don't clobber each other's results.
+    private SystemSnapshot? _snapshotA;
+    private SystemSnapshot? _snapshotB;
+
+    private string _snapshotAName = string.Empty;
+    public string SnapshotAName { get => _snapshotAName; private set => SetProperty(ref _snapshotAName, value); }
+
+    private string _snapshotBName = string.Empty;
+    public string SnapshotBName { get => _snapshotBName; private set => SetProperty(ref _snapshotBName, value); }
+
+    private SnapshotDiff? _snapshotAbDiff;
+    public SnapshotDiff? SnapshotAbDiff { get => _snapshotAbDiff; private set => SetProperty(ref _snapshotAbDiff, value); }
+
+    private string _snapshotAbStatusText = string.Empty;
+    public string SnapshotAbStatusText { get => _snapshotAbStatusText; private set => SetProperty(ref _snapshotAbStatusText, value); }
+
+    public RelayCommand LoadSnapshotACommand { get; }
+    public RelayCommand LoadSnapshotBCommand { get; }
+    public RelayCommand CompareSnapshotsAbCommand { get; }
+
+    // Round 11, #70: "generate report on exit" - see SummarySettings' remarks.
+    private readonly SummarySettings _summarySettings = SummarySettingsService.Load();
+    public bool GenerateReportOnExit
+    {
+        get => _summarySettings.GenerateReportOnExit;
+        set
+        {
+            if (_summarySettings.GenerateReportOnExit == value) return;
+            _summarySettings.GenerateReportOnExit = value;
+            SummarySettingsService.Save(_summarySettings);
+            OnPropertyChanged();
+        }
+    }
+
     public SummaryViewModel(PerformanceViewModel performance, ProcessesViewModel processes,
         ServicesViewModel services, EnergyThermalsViewModel energyThermals,
         SystemSpecsViewModel systemSpecs, NetworkViewModel network, StabilityViewModel stability)
@@ -100,6 +163,12 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         GenerateHtmlReportCommand = new RelayCommand(_ => GenerateHtmlReport());
         SaveSnapshotCommand = new RelayCommand(_ => SaveSnapshot());
         CompareSnapshotCommand = new RelayCommand(_ => CompareSnapshot());
+        LoadSnapshotACommand = new RelayCommand(_ => LoadSnapshotAb(isA: true));
+        LoadSnapshotBCommand = new RelayCommand(_ => LoadSnapshotAb(isA: false));
+        CompareSnapshotsAbCommand = new RelayCommand(_ => CompareSnapshotsAb(), _ => _snapshotA is not null && _snapshotB is not null);
+        ToggleTileCustomizerCommand = new RelayCommand(_ => IsTileCustomizerOpen = !IsTileCustomizerOpen);
+
+        BuildTiles();
 
         var view = new CollectionViewSource { Source = processes.Processes }.View;
         if (view is ICollectionViewLiveShaping liveShaping && liveShaping.CanChangeLiveSorting)
@@ -415,6 +484,126 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
             : $"Compared against {baseline.CapturedAt:g} - no changes found.";
     }
 
+    /// <summary>Round 11, #69: builds LeftTiles/RightTiles from TileCatalog, applying whatever
+    /// visibility/order was previously saved (matched by Id - a tile added in a later app version
+    /// with no saved entry just appends at the end, visible by default, the same graceful
+    /// "unknown/missing degrades to sane default" shape every other persisted-settings file in
+    /// this app already follows).</summary>
+    private void BuildTiles()
+    {
+        var saved = DashboardLayoutService.Load().ToDictionary(t => t.Id);
+        LeftTiles.Clear();
+        RightTiles.Clear();
+
+        int nextOrder = 0;
+        foreach (var (id, name, left) in TileCatalog)
+        {
+            var cfg = saved.TryGetValue(id, out var c) ? c : new DashboardTileConfig { Id = id, IsVisible = true, Order = nextOrder };
+            nextOrder = Math.Max(nextOrder, cfg.Order) + 1;
+
+            var list = left ? LeftTiles : RightTiles;
+            var capturedId = id;
+            var tile = new DashboardTileViewModel(id, name, cfg.IsVisible, cfg.Order,
+                moveUp: () => MoveTile(capturedId, list, -1),
+                moveDown: () => MoveTile(capturedId, list, +1));
+            list.Add(tile);
+        }
+
+        foreach (var list in new[] { LeftTiles, RightTiles })
+        {
+            var ordered = list.OrderBy(t => t.Order).ToList();
+            list.Clear();
+            foreach (var t in ordered) list.Add(t);
+            for (int i = 0; i < list.Count; i++) list[i].Order = i;
+        }
+
+        // Wired up only after the initial load above, so restoring saved visibility doesn't
+        // trigger a redundant persist.
+        foreach (var t in LeftTiles.Concat(RightTiles)) t.Changed += PersistTiles;
+    }
+
+    private void MoveTile(string id, ObservableCollection<DashboardTileViewModel> list, int direction)
+    {
+        int i = -1;
+        for (int k = 0; k < list.Count; k++) if (list[k].Id == id) { i = k; break; }
+        int j = i + direction;
+        if (i < 0 || j < 0 || j >= list.Count) return;
+
+        list.Move(i, j);
+        for (int k = 0; k < list.Count; k++) list[k].Order = k;
+        PersistTiles();
+    }
+
+    private void PersistTiles()
+    {
+        var all = LeftTiles.Concat(RightTiles)
+            .Select(t => new DashboardTileConfig { Id = t.Id, IsVisible = t.IsVisible, Order = t.Order })
+            .ToList();
+        DashboardLayoutService.Save(all);
+    }
+
+    /// <summary>Round 11, #71: loads a snapshot file into slot A or B for the baseline-vs-baseline
+    /// comparison below - completely independent of SaveSnapshot/CompareSnapshot's own
+    /// baseline-vs-current flow above (neither reads the other's state).</summary>
+    private void LoadSnapshotAb(bool isA)
+    {
+        var dialog = new OpenFileDialog
+        {
+            Title = isA ? "Load snapshot A" : "Load snapshot B",
+            Filter = "Snapshot files (*.json)|*.json|All files (*.*)|*.*",
+            InitialDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TaskManagerPlus", "Snapshots"),
+        };
+        if (dialog.ShowDialog() != true) return;
+
+        var snapshot = SnapshotService.Load(dialog.FileName);
+        if (snapshot is null)
+        {
+            SnapshotAbStatusText = "Couldn't read that snapshot file.";
+            return;
+        }
+
+        if (isA) { _snapshotA = snapshot; SnapshotAName = Path.GetFileName(dialog.FileName); }
+        else { _snapshotB = snapshot; SnapshotBName = Path.GetFileName(dialog.FileName); }
+
+        SnapshotAbDiff = null;
+        SnapshotAbStatusText = _snapshotA is not null && _snapshotB is not null
+            ? "Both snapshots loaded - click Compare."
+            : "Load the other snapshot, then click Compare.";
+        CompareSnapshotsAbCommand.RaiseCanExecuteChanged();
+    }
+
+    private void CompareSnapshotsAb()
+    {
+        if (_snapshotA is null || _snapshotB is null) return;
+
+        var diff = SnapshotService.Diff(_snapshotA, _snapshotB);
+        SnapshotAbDiff = diff;
+        SnapshotAbStatusText = diff.HasChanges
+            ? $"{SnapshotAName} → {SnapshotBName}: changes found."
+            : $"{SnapshotAName} → {SnapshotBName}: no changes found.";
+    }
+
+    /// <summary>Round 11, #70: called from MainWindow's Closing handler - a no-op unless the user
+    /// opted in via the Settings drawer. Writes silently (no SaveFileDialog, unlike the manual
+    /// report button) to a fixed, timestamped path under %AppData%, since popping a file dialog
+    /// during shutdown would block the app from actually closing until the user responds to it.</summary>
+    public void GenerateReportOnExitIfEnabled()
+    {
+        if (!GenerateReportOnExit) return;
+
+        try
+        {
+            var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TaskManagerPlus", "Reports");
+            Directory.CreateDirectory(dir);
+            var path = Path.Combine(dir, $"TaskManagerPlus-Report-{DateTime.Now:yyyy-MM-dd_HH-mm-ss}.md");
+            File.WriteAllText(path, BuildReportMarkdown());
+        }
+        catch
+        {
+            // Best-effort - shutdown shouldn't be blocked or crashed by a failed report write.
+        }
+    }
+
     /// <summary>CPU package temperature past this point reads as "running hot" for the Health
     /// Check card - a rough, conservative threshold (most desktop/laptop CPUs throttle well
     /// above this), not a precise per-model limit.</summary>
@@ -424,6 +613,12 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
     {
         var issues = new List<HealthIssue>();
 
+        // #72 (Round 11): "volume nearly full" was already a Health Check rule from an earlier
+        // round - this is just confirming/documenting it here rather than adding a duplicate.
+        // The System tab's Volumes card itself tints its progress bar red starting at 85%
+        // (PercentToBrushConverter); this rule intentionally stays a little more conservative
+        // (90%/97%) since a Health Check entry is a standing item on the dashboard, not just a
+        // color hint on a progress bar the user has to be looking at.
         foreach (var volume in _systemSpecs.Volumes)
         {
             if (volume.PercentUsed >= 90)
@@ -470,6 +665,11 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
 
         if (_systemSpecs.MultipleActiveAvWarning)
             issues.Add(new HealthIssue { Message = "Multiple antivirus products look active", IsCritical = false });
+
+        // Round 11, #73: Windows Update/servicing reboot pending - see
+        // SystemSpecsService.ReadRebootPending for which registry keys are checked.
+        if (_systemSpecs.RebootPending)
+            issues.Add(new HealthIssue { Message = "A restart is pending to finish installing updates", IsCritical = false });
 
         // #66: Windows Defender real-time scan activity heuristic - no new sampling needed, this
         // just reads the CPU% the Processes tab is already polling for MsMpEng.exe. Sustained high

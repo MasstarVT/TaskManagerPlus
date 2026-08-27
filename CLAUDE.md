@@ -1556,6 +1556,128 @@ two new tiles on the Summary tab's existing "System" card -
 reference publicly (`Stability`) rather than adding wrapper properties for
 each figure.
 
+### Round 11: dashboard tile hide/reorder, snapshot A/B diff, log rotation gzip/cleanup,
+high-contrast theme + UI scale/compact rows, always-on-top + tab shortcuts
+
+An eleventh batch of `suggestions.md` items - 14 in total, closing out the remaining Summary/
+Health Check, Logging, and Theming/UX categories. Two items turned out to already be satisfied by
+earlier rounds under different original numbering (suggestions.md renumbers as items are removed,
+so a current item number doesn't correspond to the round that actually implemented it) - noted
+below rather than re-implemented.
+
+**Volume-nearly-full Health Check rule / log viewer sparklines - already done**: two of this
+round's assigned items were, on inspection, already live: `SummaryViewModel.RefreshHealthIssues`
+already flags a nearly-full volume (from the Health Check card's original introduction), and
+`LogReplayService`/`LoggingViewModel.LoadLogFileCommand` (Round 6) already reopens a saved CSV and
+re-charts its CPU/RAM/Disk columns as `LineSeries` sparklines on the Summary tab's "Log replay"
+card. Both are left as-is; the volume rule gained a short comment clarifying its (intentionally
+more conservative, 90%/97%) thresholds relative to the Volumes card's own 85% progress-bar tint.
+
+**Dashboard tile hide/reorder (Summary)**: a full freeform drag-and-drop layout (dragging a tile
+anywhere on the page, spanning the two-column grid) is a meaningfully larger WPF undertaking than
+anything else in this round, so this is the honestly-scoped version per the assignment's own
+guidance: each of the Summary tab's seven main tiles (CPU/Memory charts, Top CPU processes, Top
+CPU 10s avg, Disk, Network, System) can be hidden and moved up/down within its column via a
+"Customize tiles" panel, persisted to `%AppData%\TaskManagerPlus\dashboard-layout.json`
+(`DashboardLayoutService`, same shape as `ThemeService`) - genuinely functional (hide a tile,
+reorder it, restart the app, it's remembered), just reorder-within-column rather than freeform
+drag-and-drop. Which column a tile belongs to (left/right) stays a structural page-layout choice,
+not something the user reassigns. Mechanically, the two-column `Grid`'s previously-hardcoded
+`StackPanel`s became `ItemsControl`s bound to `SummaryViewModel.LeftTiles`/`RightTiles`
+(`ObservableCollection<DashboardTileViewModel>`), rendered through a new
+`Views/DashboardTileTemplateSelector.cs` that resolves each tile's real content by looking up a
+`"Tile_<id>"`-keyed `DataTemplate` in `SummaryView.xaml`'s `UserControl.Resources` - every binding
+those templates used to reach `SummaryViewModel` directly now goes through
+`DataContext.X, RelativeSource={RelativeSource AncestorType=UserControl}` (each item's own
+DataContext is now the `DashboardTileViewModel`, not `SummaryViewModel`), the same
+cross-view-model indirection trick the Settings drawer and log-replay card already use.
+
+**Baseline-vs-baseline snapshot diff (Summary)**: `SnapshotService.Diff` already just takes two
+plain `SystemSnapshot` objects - nothing about it assumed the second one was "current" - so this
+needed no service-layer change, only a second, independent load/compare UI flow
+(`LoadSnapshotACommand`/`LoadSnapshotBCommand`/`CompareSnapshotsAbCommand`, `SnapshotAbDiff`/
+`SnapshotAbStatusText`) alongside the existing baseline-vs-current one, so the two comparison modes
+don't share or clobber each other's state.
+
+**Windows Update reboot-pending Health Check rule (System Specs/Summary)**:
+`SystemSpecsService.ReadRebootPending` checks three well-known, widely-documented indicator keys
+(the Component Based Servicing `RebootPending` key, the Windows Update Auto Update client's own
+`RebootRequired` key, and a nonempty `PendingFileRenameOperations` value) rather than an exhaustive
+enumeration of every possible reboot-pending source, which is large, undocumented, and
+version-specific - any one present means true; a denied/failed registry read degrades to false
+("not pending") rather than risk a false positive, the same "don't over-claim" tradeoff the volume
+dirty-bit check already takes. Surfaced both as a plain Yes/No line on the System tab's Security
+card and as a new Health Check entry.
+
+**Log rotation: gzip + auto-cleanup (Logging)**: `LoggingService.RotateFile` now compresses the
+just-closed part file with `GZipStream` (never the file still being actively written to) on a
+background `Task.Run`, deleting the plain `.csv` once the `.csv.gz` copy succeeds - a plain-text
+one-row-per-second CSV compresses very well, so this meaningfully shrinks an unattended long
+session's footprint. `LoggingService.CleanupOldRotatedParts` (a new static helper, called once per
+app launch from `LoggingViewModel`'s constructor when `LoggingSettings.AutoCleanupEnabled` is on)
+deletes `-partN` files (plain or gzipped) older than `AutoCleanupDays` by last-write time - never
+the currently-active file - both settings persisted alongside the existing rolling-buffer settings
+in `LoggingSettings`/`LoggingSettingsService`.
+
+**Configurable sample interval (Logging)**: `LoggingViewModel`'s previously-hardcoded 1s
+`DispatcherTimer` interval is now `LoggingSettings.SampleIntervalSeconds` (1/5/10, radio buttons in
+the Settings drawer via a new `Converters/IntEqualsConverter.cs` two-way int-equality check),
+re-intervaling the already-running timer live on change. Applies to both manual logging and the
+Round 6 rolling buffer; the rolling buffer's "N minutes" window math now divides by the interval
+(`RollingBufferMinutes * 60 / SampleIntervalSeconds`) so "15 minutes" still means 15 minutes of
+wall-clock time at any interval, not 15 minutes' worth of samples.
+
+**Compact rows + independent UI scale (Theming)**: `ThemeViewModel.CompactRows` swaps two more
+resource-dictionary values (`DataGridRowHeightValue`/`DataGridCellPaddingValue`, declared with
+defaults in `Dark.xaml` and overwritten live by `ApplyRowHeight` the same "mutate the app resource
+dictionary" way `ApplyPalette` already repaints colors) that `Dark.xaml`'s `DataGrid`/
+`DataGridCell` styles now reference via `DynamicResource` instead of a hardcoded `34`/`10,4` -
+every `DataGrid` across the app (Processes/Services/Startup/...) picks up the change live with no
+per-view wiring. `ThemeViewModel.FontScale` is deliberately **not** a literal font-size override -
+threading a font-size resource through every explicit `FontSize` setter across dozens of XAML
+files (most cards hardcode it rather than inheriting from the `Window` style) would be a far more
+invasive change than this round's other items. Instead it drives a `ScaleTransform` on
+`MainWindow.xaml`'s `TabControl` via `LayoutTransform` - a uniform layout scale that grows/shrinks
+text, tiles, charts, and grids together, achieving the practical "make the whole app easier to
+read, independent of Windows' own display scaling" goal through a single, low-risk hook point
+rather than a font-metric change.
+
+**High-contrast theme variant (Theming)**: a 7th `PaletteDefinition` entry ("High Contrast": pure
+black background, near-white text, status colors chosen for a high contrast ratio against black)
+added to `ThemeViewModel`'s `Palettes` table and `ThemeModes` array - no new mechanism, the exact
+same `ApplyPalette`/saturation/`ColorBlindSafeAlerts`-layering the original six families already
+go through, so it shows up automatically in the Settings drawer's theme-family `ItemsControl`.
+
+**Always-on-top + Ctrl+1..9 tab shortcuts (App-level UX)**: both are small window-level
+preferences that don't belong in `ThemeColors` (window behavior/keyboard nav, not color/scale), so
+they get their own `Models/UiPreferences.cs` + `Services/UiPreferencesService.cs`
+(`ui-preferences.json`, same shape as every other settings file) owned by `MainViewModel` rather
+than `ThemeViewModel`. `AlwaysOnTop` is a straight `Window.Topmost` binding - the same `Topmost`
+behavior the mini dashboard/toast windows already use, just opt-in and user-visible for the main
+window itself. Ctrl+1..Ctrl+9 (`MainWindow.xaml.cs`'s new `PreviewKeyDown` handler) jump to a tab
+by matching `MainViewModel.TabShortcutOrder` (a plain ordered list of tab header strings, falling
+back to this app's first nine tabs when `ui-preferences.json`'s `TabShortcuts` list is empty)
+against each `TabItem.Header` - matching by header text rather than a hardcoded index means the
+mapping still works if tabs are ever reordered in `MainWindow.xaml`. Per the assignment's guidance,
+there's no in-app remapping UI (edit the JSON list directly to customize); the underlying Ctrl+1..9
+navigation itself is fully functional with its default mapping.
+
+**Export/import palette only (Theming)**: `ThemeViewModel.ExportPaletteCommand`/
+`ImportPaletteCommand` write/read just the accent/family/saturation subset of `theme.json` (a new
+small `Models/PalettePreset.cs` type, deliberately separate from `ThemeColors` so this file's shape
+stays stable even as `ThemeColors` grows unrelated fields like `CompactRows`/`FontScale`) to a
+`SaveFileDialog`/`OpenFileDialog`-picked `.tmpalette.json` file - a small, shareable "here's my
+color scheme" file distinct from the app's full `theme.json`, which is already persisted
+automatically and never hand-exported.
+
+**"Generate report on exit" (Summary)**: a `SummaryViewModel.GenerateReportOnExit` toggle
+(`Models/SummarySettings.cs`/`Services/SummarySettingsService.cs`, `summary-settings.json`) checked
+from a new `MainWindow.xaml.cs` `Closing` handler that calls
+`SummaryViewModel.GenerateReportOnExitIfEnabled()` - reuses `BuildReportMarkdown()` verbatim (the
+same content the manual "Markdown report" button produces) but writes silently to a fixed,
+timestamped path under `%AppData%\TaskManagerPlus\Reports\` rather than popping a `SaveFileDialog`
+during shutdown, which would block the app from actually closing until the user responded to it.
+
 ### Notable implementation details
 
 - **CPU clock speed**: not directly exposed by Windows. Computed the same

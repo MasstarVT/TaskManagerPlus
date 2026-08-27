@@ -499,6 +499,24 @@
                             <TextBlock Text="Virtualization-based security" Style="{StaticResource SpecLabel}" />
                             <TextBlock Text="{Binding VbsText}" Style="{StaticResource SpecValue}" TextWrapping="Wrap" />
                         </StackPanel>
+                        <!-- Round 11, #73: Windows Update/servicing reboot-pending flag - see
+                             SystemSpecsService.ReadRebootPending. -->
+                        <StackPanel Margin="0,10,8,0">
+                            <TextBlock Text="Reboot pending" Style="{StaticResource SpecLabel}" />
+                            <TextBlock>
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource SpecValue}">
+                                        <Setter Property="Text" Value="No" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding RebootPending}" Value="True">
+                                                <Setter Property="Text" Value="Yes" />
+                                                <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </StackPanel>
                     </UniformGrid>
                 </StackPanel>
             </Border>

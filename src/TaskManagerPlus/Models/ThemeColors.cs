@@ -25,5 +25,14 @@ public sealed class ThemeColors
     /// throughout its diagnostic UI, not the whole palette.</summary>
     public bool ColorBlindSafeAlerts { get; set; }
 
+    /// <summary>Round 11, #78: dense/compact DataGrid row height, for fitting more rows on screen
+    /// at once (Processes/Services/Startup/... grids).</summary>
+    public bool CompactRows { get; set; }
+
+    /// <summary>Round 11, #79: independent UI scale, separate from Windows' own display scaling -
+    /// see ThemeViewModel.FontScale's remarks for why this is a uniform layout scale rather than a
+    /// literal per-control font-size override.</summary>
+    public double FontScale { get; set; } = 1.0;
+
     public static ThemeColors Defaults => new();
 }

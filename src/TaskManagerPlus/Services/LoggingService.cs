@@ -1,5 +1,7 @@
 using System.IO;
+using System.IO.Compression;
 using System.Text;
+using System.Threading.Tasks;
 
 namespace TaskManagerPlus.Services;
 
@@ -62,12 +64,74 @@ public sealed class LoggingService : IDisposable
     private void RotateFile()
     {
         _writer!.Dispose();
+        var justClosedPath = FilePath!;
         _part++;
         var dir = Path.GetDirectoryName(_basePath!) ?? string.Empty;
         var name = Path.GetFileNameWithoutExtension(_basePath!);
         var ext = Path.GetExtension(_basePath!);
         OpenFile(Path.Combine(dir, $"{name}-part{_part}{ext}"));
         Rotated?.Invoke();
+
+        // #74: gzip the part that was just closed (never the file we're still actively writing
+        // to) - a plain-text one-row-per-second CSV compresses very well, so this meaningfully
+        // shrinks an unattended long-running session's footprint on disk. Best-effort: a failed
+        // compression just leaves the plain .csv part behind uncompressed rather than losing data.
+        CompressAndDeleteAsync(justClosedPath);
+    }
+
+    private static void CompressAndDeleteAsync(string path)
+    {
+        Task.Run(() =>
+        {
+            try
+            {
+                var gzPath = path + ".gz";
+                using (var source = File.OpenRead(path))
+                using (var destination = File.Create(gzPath))
+                using (var gzip = new GZipStream(destination, CompressionLevel.Optimal))
+                {
+                    source.CopyTo(gzip);
+                }
+                File.Delete(path);
+            }
+            catch
+            {
+                // Best-effort - the uncompressed part file is still a perfectly valid log either way.
+            }
+        });
+    }
+
+    /// <summary>Round 11, #77: deletes rotated "-partN" files (plain .csv or already-gzipped
+    /// .csv.gz) older than <paramref name="maxAgeDays"/>, based on last-write time - never the
+    /// currently-active file, since <paramref name="activeFilePath"/> (possibly null if nothing is
+    /// logging right now) is always excluded even if it happens to match the naming pattern.
+    /// Best-effort and silent: a locked/inaccessible file is just skipped, not an error.</summary>
+    public static void CleanupOldRotatedParts(string logsDir, int maxAgeDays, string? activeFilePath)
+    {
+        try
+        {
+            if (!Directory.Exists(logsDir)) return;
+            var cutoff = DateTime.Now.AddDays(-Math.Max(1, maxAgeDays));
+
+            foreach (var file in Directory.EnumerateFiles(logsDir, "*-part*.csv*"))
+            {
+                try
+                {
+                    if (activeFilePath is not null && string.Equals(file, activeFilePath, StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    if (File.GetLastWriteTime(file) < cutoff)
+                        File.Delete(file);
+                }
+                catch
+                {
+                    // One locked/inaccessible file shouldn't stop the rest of the sweep.
+                }
+            }
+        }
+        catch
+        {
+            // Best-effort - the Logs folder might not exist yet, or be briefly unavailable.
+        }
     }
 
     public void Stop()

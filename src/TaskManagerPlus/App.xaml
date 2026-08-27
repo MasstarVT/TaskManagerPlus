@@ -26,6 +26,8 @@
             <conv:PercentToStarWidthConverter x:Key="PercentToStarWidthConverter" />
             <conv:BugcheckCodeToDescriptionConverter x:Key="BugcheckCodeToDescriptionConverter" />
             <conv:StabilityIndexToBrushConverter x:Key="StabilityIndexToBrushConverter" />
+            <conv:IntEqualsConverter x:Key="IntEqualsConverter" />
+            <conv:BoolToVisibilityConverter x:Key="BoolToVisibilityConverter" />
         </ResourceDictionary>
     </Application.Resources>
 </Application>

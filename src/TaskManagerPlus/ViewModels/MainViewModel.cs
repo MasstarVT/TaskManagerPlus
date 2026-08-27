@@ -86,6 +86,31 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     public RelayCommand ToggleSettingsCommand { get; }
 
+    // Round 11, #80/#81: window-level preferences (always-on-top, Ctrl+1..9 tab shortcuts) - see
+    // UiPreferences' remarks for why these live separately from ThemeColors.
+    private readonly UiPreferences _uiPreferences = UiPreferencesService.Load();
+
+    public bool AlwaysOnTop
+    {
+        get => _uiPreferences.AlwaysOnTop;
+        set
+        {
+            if (_uiPreferences.AlwaysOnTop == value) return;
+            _uiPreferences.AlwaysOnTop = value;
+            UiPreferencesService.Save(_uiPreferences);
+            OnPropertyChanged();
+        }
+    }
+
+    /// <summary>#80: the tab header each of Ctrl+1..Ctrl+9 jumps to, in order - falls back to this
+    /// app's first nine tabs (in their normal strip order) when the user hasn't customized
+    /// ui-preferences.json's TabShortcuts list.</summary>
+    public static readonly string[] DefaultTabShortcutOrder =
+        { "Summary", "CPU", "Memory", "Storage", "Network", "GPU", "Energy & Thermals", "Processes", "Services" };
+
+    public IReadOnlyList<string> TabShortcutOrder =>
+        _uiPreferences.TabShortcuts.Count > 0 ? _uiPreferences.TabShortcuts : DefaultTabShortcutOrder;
+
     // #98/#99: pin-to-top compact overlay / second-monitor mini dashboard - one window instance,
     // toggled open/closed, rather than two separate features (a "pinned" main window and a
     // "detached" second window are the same small always-on-top view in practice).

@@ -8,6 +8,189 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              mc:Ignorable="d">
+    <UserControl.Resources>
+        <views:DashboardTileTemplateSelector x:Key="DashboardTileTemplateSelector" />
+
+        <!-- Round 11, #69: one DataTemplate per dashboard tile, keyed "Tile_<id>" so
+             DashboardTileTemplateSelector can look them up by DashboardTileViewModel.Id. Each
+             item's DataContext is now the DashboardTileViewModel (for IsVisible/DisplayName), so
+             every binding that used to reach SummaryViewModel directly now goes through
+             DataContext.X, RelativeSource={RelativeSource AncestorType=UserControl} - the same
+             indirection this app's cross-view-model bindings (Settings drawer, log replay card)
+             already use. -->
+        <DataTemplate x:Key="Tile_cpu">
+            <Border Style="{StaticResource CardStyle}" Visibility="{Binding IsVisible, Converter={StaticResource BoolToVisibilityConverter}}">
+                <StackPanel>
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" Style="{StaticResource TitleRow}" Margin="0">
+                            <Border Style="{StaticResource ColorDot}" Background="{Binding DataContext.Performance.CpuColor, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource ColorToBrushConverter}}" />
+                            <TextBlock Text="CPU Overview" Style="{StaticResource CardTitle}" Margin="0" />
+                        </StackPanel>
+                        <TextBlock Grid.Column="1" Text="{Binding DataContext.Performance.CpuCurrentPercent, RelativeSource={RelativeSource AncestorType=UserControl}, StringFormat={}{0:0.0}%}"
+                                   FontSize="20" FontWeight="SemiBold" VerticalAlignment="Center" />
+                    </Grid>
+                    <lvc:CartesianChart Series="{Binding DataContext.Performance.CpuSeries, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                         XAxes="{Binding DataContext.Performance.HiddenXAxes, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                         YAxes="{Binding DataContext.Performance.PercentYAxes, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                         Height="200" TooltipPosition="Hidden" LegendPosition="Hidden" Background="Transparent" />
+                </StackPanel>
+            </Border>
+        </DataTemplate>
+
+        <DataTemplate x:Key="Tile_memory">
+            <Border Style="{StaticResource CardStyle}" Visibility="{Binding IsVisible, Converter={StaticResource BoolToVisibilityConverter}}">
+                <StackPanel>
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" Style="{StaticResource TitleRow}" Margin="0">
+                            <Border Style="{StaticResource ColorDot}" Background="{Binding DataContext.Performance.RamColor, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource ColorToBrushConverter}}" />
+                            <TextBlock Text="Memory Utilization" Style="{StaticResource CardTitle}" Margin="0" />
+                        </StackPanel>
+                        <TextBlock Grid.Column="1" VerticalAlignment="Center" FontSize="20" FontWeight="SemiBold">
+                            <Run Text="{Binding DataContext.Performance.RamUsedGb, RelativeSource={RelativeSource AncestorType=UserControl}, StringFormat={}{0:0.0}, Mode=OneWay}" />
+                            <Run Text=" / " FontSize="13" FontWeight="Normal" />
+                            <Run Text="{Binding DataContext.Performance.RamTotalGb, RelativeSource={RelativeSource AncestorType=UserControl}, StringFormat={}{0:0.0}, Mode=OneWay}" FontSize="13" FontWeight="Normal" />
+                            <Run Text=" GB" FontSize="13" FontWeight="Normal" />
+                        </TextBlock>
+                    </Grid>
+                    <lvc:CartesianChart Series="{Binding DataContext.Performance.RamSeries, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                         XAxes="{Binding DataContext.Performance.HiddenXAxes, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                         YAxes="{Binding DataContext.Performance.PercentYAxes, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                         Height="160" TooltipPosition="Hidden" LegendPosition="Hidden" Background="Transparent" />
+                </StackPanel>
+            </Border>
+        </DataTemplate>
+
+        <DataTemplate x:Key="Tile_topcpu">
+            <Border Style="{StaticResource CardStyle}" Visibility="{Binding IsVisible, Converter={StaticResource BoolToVisibilityConverter}}">
+                <StackPanel>
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Top CPU processes" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="1" Text="{Binding DataContext.Processes.ProcessCount, RelativeSource={RelativeSource AncestorType=UserControl}, StringFormat={}{0} total}" Style="{StaticResource SubStat}" VerticalAlignment="Center" />
+                    </Grid>
+                    <ItemsControl ItemsSource="{Binding DataContext.TopProcesses, RelativeSource={RelativeSource AncestorType=UserControl}}" MaxHeight="330">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                                        <TextBlock Text="{Binding Name}" FontSize="12.5" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Style="{StaticResource SubStat}" FontSize="10.5">
+                                            <Run Text="PID " /><Run Text="{Binding Pid, Mode=OneWay}" />
+                                            <Run Text=" · " /><Run Text="{Binding MemoryMb, StringFormat={}{0:0} MB, Mode=OneWay}" />
+                                        </TextBlock>
+                                    </StackPanel>
+                                    <TextBlock Grid.Column="1" Text="{Binding CpuPercent, StringFormat={}{0:0.0}%}"
+                                               FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center"
+                                               Foreground="{Binding CpuPercent, Converter={StaticResource PercentToBrushConverter}}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+        </DataTemplate>
+
+        <!-- #11: "what's actually been eating CPU right now" - a rolling ~10s average, steadier
+             than the instantaneous reading above for a bursty process. -->
+        <DataTemplate x:Key="Tile_topcpu10s">
+            <Border Style="{StaticResource CardStyle}" Visibility="{Binding IsVisible, Converter={StaticResource BoolToVisibilityConverter}}">
+                <StackPanel>
+                    <TextBlock Text="Top CPU (10s avg)" Style="{StaticResource CardTitle}" />
+                    <ItemsControl ItemsSource="{Binding DataContext.TopProcesses10sAvg, RelativeSource={RelativeSource AncestorType=UserControl}}" MaxHeight="150">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="{Binding Name}" FontSize="12.5" TextTrimming="CharacterEllipsis" Margin="0,0,8,0" />
+                                    <TextBlock Grid.Column="1" Text="{Binding CpuPercent10sAvg, StringFormat={}{0:0.0}%}"
+                                               FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center"
+                                               Foreground="{Binding CpuPercent10sAvg, Converter={StaticResource PercentToBrushConverter}}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+        </DataTemplate>
+
+        <DataTemplate x:Key="Tile_disk">
+            <views:VfdMeter Title="Disk" Percent="{Binding DataContext.Performance.DiskPercent, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                             ValueText="{Binding DataContext.Performance.DiskPercent, RelativeSource={RelativeSource AncestorType=UserControl}, StringFormat={}{0:0.0}}" Unit="%"
+                             SubText="Active time" AccentBrush="{Binding DataContext.Performance.DiskColor, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource ColorToBrushConverter}}"
+                             Visibility="{Binding IsVisible, Converter={StaticResource BoolToVisibilityConverter}}"
+                             Margin="0,0,0,16" />
+        </DataTemplate>
+
+        <DataTemplate x:Key="Tile_network">
+            <Border Style="{StaticResource CardStyle}" Visibility="{Binding IsVisible, Converter={StaticResource BoolToVisibilityConverter}}">
+                <StackPanel>
+                    <StackPanel Style="{StaticResource TitleRow}" Margin="0,0,0,4">
+                        <Border Style="{StaticResource ColorDot}" Background="{Binding DataContext.Performance.NetworkColor, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource ColorToBrushConverter}}" />
+                        <TextBlock Text="Network" Style="{StaticResource CardTitle}" Margin="0" />
+                    </StackPanel>
+                    <TextBlock Text="{Binding DataContext.Performance.NetworkReceiveBps, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource BytesToReadableConverter}, ConverterParameter=rate}" Style="{StaticResource BigStat}" />
+                    <TextBlock Text="{Binding DataContext.Performance.NetworkSendBps, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource BytesToReadableConverter}, ConverterParameter=rate, StringFormat=Up: {0}}" Style="{StaticResource SubStat}" />
+                </StackPanel>
+            </Border>
+        </DataTemplate>
+
+        <DataTemplate x:Key="Tile_system">
+            <Border Style="{StaticResource CardStyle}" Margin="0" Visibility="{Binding IsVisible, Converter={StaticResource BoolToVisibilityConverter}}">
+                <StackPanel>
+                    <TextBlock Text="System" Style="{StaticResource CardTitle}" />
+                    <UniformGrid Columns="2" Rows="3">
+                        <StackPanel Margin="0,0,8,10">
+                            <TextBlock Text="Processes" Style="{StaticResource SubStat}" />
+                            <TextBlock Text="{Binding DataContext.Performance.ProcessCount, RelativeSource={RelativeSource AncestorType=UserControl}}" FontSize="16" />
+                        </StackPanel>
+                        <StackPanel Margin="8,0,0,10">
+                            <TextBlock Text="Threads" Style="{StaticResource SubStat}" />
+                            <TextBlock Text="{Binding DataContext.Performance.ThreadCount, RelativeSource={RelativeSource AncestorType=UserControl}}" FontSize="16" />
+                        </StackPanel>
+                        <StackPanel Margin="0,0,8,10">
+                            <TextBlock Text="Handles" Style="{StaticResource SubStat}" />
+                            <TextBlock Text="{Binding DataContext.Performance.HandleCount, RelativeSource={RelativeSource AncestorType=UserControl}}" FontSize="16" />
+                        </StackPanel>
+                        <StackPanel Margin="8,0,0,10">
+                            <TextBlock Text="Uptime" Style="{StaticResource SubStat}" />
+                            <TextBlock Text="{Binding DataContext.Performance.Uptime, RelativeSource={RelativeSource AncestorType=UserControl}}" FontSize="16" />
+                        </StackPanel>
+                        <!-- #67: "time since last crash" headline stat, pulled from the
+                             Stability tab's already-computed figure - no new event-log query. -->
+                        <StackPanel Margin="0,0,8,0">
+                            <TextBlock Text="Since last crash" Style="{StaticResource SubStat}" />
+                            <TextBlock Text="{Binding DataContext.Stability.TimeSinceLastCrashText, RelativeSource={RelativeSource AncestorType=UserControl}}" FontSize="16" TextWrapping="Wrap" />
+                        </StackPanel>
+                        <!-- #68: single 0-10 stability index - see StabilityViewModel.ComputeStabilityIndex. -->
+                        <StackPanel Margin="8,0,0,0">
+                            <TextBlock Text="Stability index" Style="{StaticResource SubStat}" />
+                            <TextBlock FontSize="16" FontWeight="SemiBold"
+                                       Text="{Binding DataContext.Stability.StabilityIndex, RelativeSource={RelativeSource AncestorType=UserControl}, StringFormat={}{0:0.0} / 10}"
+                                       Foreground="{Binding DataContext.Stability.StabilityIndex, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource StabilityIndexToBrushConverter}}" />
+                        </StackPanel>
+                    </UniformGrid>
+                </StackPanel>
+            </Border>
+        </DataTemplate>
+    </UserControl.Resources>
     <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16">
         <StackPanel>
 
@@ -55,6 +238,11 @@
                         </TextBlock.Style>
                         <Run Text="All clear — no issues detected." />
                     </TextBlock>
+                    <!-- Round 11, #70: silently writes the same Markdown report to
+                         %AppData%\TaskManagerPlus\Reports\ every time the app closes, so there's
+                         always a "what did things look like right before I closed it" record
+                         without remembering to click the button above first. -->
+                    <CheckBox Content="Generate report automatically when the app closes" IsChecked="{Binding GenerateReportOnExit}" Margin="0,10,0,0" />
                     <ItemsControl ItemsSource="{Binding HealthIssues}" Margin="0,8,0,0">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
@@ -217,171 +405,169 @@
                 </StackPanel>
             </Border>
 
+            <!-- Round 11, #71: baseline-vs-baseline - diff two previously-saved snapshot files
+                 against each other (e.g. "before" and "after" a change), rather than always
+                 comparing a saved baseline to the live system the way the card above does. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Compare two snapshots" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Diffs two previously-saved snapshot files against each other, instead of a saved baseline against the live system."
+                               Style="{StaticResource SubStat}" Margin="0,-6,0,10" TextWrapping="Wrap" />
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                        <Button Content="Load snapshot A..." Command="{Binding LoadSnapshotACommand}" Margin="0,0,8,0" />
+                        <Button Content="Load snapshot B..." Command="{Binding LoadSnapshotBCommand}" Margin="0,0,8,0" />
+                        <Button Content="Compare A → B" Command="{Binding CompareSnapshotsAbCommand}" />
+                    </StackPanel>
+                    <TextBlock FontSize="12" Style="{StaticResource SubStat}" Margin="0,0,0,8">
+                        <Run Text="A: " /><Run Text="{Binding SnapshotAName, Mode=OneWay}" />
+                        <Run Text="   B: " /><Run Text="{Binding SnapshotBName, Mode=OneWay}" />
+                    </TextBlock>
+                    <TextBlock Text="{Binding SnapshotAbStatusText}" Margin="0,0,0,8" TextWrapping="Wrap">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding SnapshotAbStatusText}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
+                    <StackPanel Visibility="{Binding SnapshotAbDiff, Converter={StaticResource NullToVisibilityConverter}}">
+                        <ItemsControl ItemsSource="{Binding SnapshotAbDiff.SoftwareAdded}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock FontSize="12" Foreground="{DynamicResource SuccessBrush}" Text="{Binding StringFormat=+ software: {0}}" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <ItemsControl ItemsSource="{Binding SnapshotAbDiff.SoftwareRemoved}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock FontSize="12" Foreground="{DynamicResource DangerBrush}" Text="{Binding StringFormat=- software: {0}}" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <ItemsControl ItemsSource="{Binding SnapshotAbDiff.ServicesAdded}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock FontSize="12" Foreground="{DynamicResource SuccessBrush}" Text="{Binding StringFormat=+ service: {0}}" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <ItemsControl ItemsSource="{Binding SnapshotAbDiff.ServicesRemoved}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock FontSize="12" Foreground="{DynamicResource DangerBrush}" Text="{Binding StringFormat=- service: {0}}" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <ItemsControl ItemsSource="{Binding SnapshotAbDiff.StartupAdded}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock FontSize="12" Foreground="{DynamicResource SuccessBrush}" Text="{Binding StringFormat=+ startup item: {0}}" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <ItemsControl ItemsSource="{Binding SnapshotAbDiff.StartupRemoved}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock FontSize="12" Foreground="{DynamicResource DangerBrush}" Text="{Binding StringFormat=- startup item: {0}}" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- Round 11, #69: hide/reorder the tiles below - see DashboardTileConfig's remarks. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Dashboard tiles" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Command="{Binding ToggleTileCustomizerCommand}">
+                            <TextBlock>
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="Customize..." />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsTileCustomizerOpen}" Value="True">
+                                                <Setter Property="Text" Value="Done" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Button>
+                    </Grid>
+                    <StackPanel Visibility="{Binding IsTileCustomizerOpen, Converter={StaticResource BoolToVisibilityConverter}}">
+                        <TextBlock Text="Hide a tile, or move it up/down within its column. Changes are remembered."
+                                   Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,-2,0,10" />
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="16" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <ItemsControl Grid.Column="0" ItemsSource="{Binding LeftTiles}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid Margin="0,0,0,6">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <CheckBox Grid.Column="0" Content="{Binding DisplayName}" IsChecked="{Binding IsVisible}" />
+                                            <Button Grid.Column="1" Content="↑" Padding="6,2" Margin="0,0,4,0" Command="{Binding MoveUpCommand}" />
+                                            <Button Grid.Column="2" Content="↓" Padding="6,2" Command="{Binding MoveDownCommand}" />
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <ItemsControl Grid.Column="2" ItemsSource="{Binding RightTiles}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid Margin="0,0,0,6">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <CheckBox Grid.Column="0" Content="{Binding DisplayName}" IsChecked="{Binding IsVisible}" />
+                                            <Button Grid.Column="1" Content="↑" Padding="6,2" Margin="0,0,4,0" Command="{Binding MoveUpCommand}" />
+                                            <Button Grid.Column="2" Content="↓" Padding="6,2" Command="{Binding MoveDownCommand}" />
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </Grid>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
         <Grid>
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="340" />
             </Grid.ColumnDefinitions>
 
-            <!-- Left column: CPU + Memory charts -->
-            <StackPanel Grid.Column="0" Margin="0,0,16,0">
-                <Border Style="{StaticResource CardStyle}">
-                    <StackPanel>
-                        <Grid Margin="0,0,0,10">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <StackPanel Grid.Column="0" Style="{StaticResource TitleRow}" Margin="0">
-                                <Border Style="{StaticResource ColorDot}" Background="{Binding Performance.CpuColor, Converter={StaticResource ColorToBrushConverter}}" />
-                                <TextBlock Text="CPU Overview" Style="{StaticResource CardTitle}" Margin="0" />
-                            </StackPanel>
-                            <TextBlock Grid.Column="1" Text="{Binding Performance.CpuCurrentPercent, StringFormat={}{0:0.0}%}"
-                                       FontSize="20" FontWeight="SemiBold" VerticalAlignment="Center" />
-                        </Grid>
-                        <lvc:CartesianChart Series="{Binding Performance.CpuSeries}" XAxes="{Binding Performance.HiddenXAxes}" YAxes="{Binding Performance.PercentYAxes}"
-                                             Height="200" TooltipPosition="Hidden" LegendPosition="Hidden" Background="Transparent" />
-                    </StackPanel>
-                </Border>
+            <!-- Left column: CPU + Memory charts. Round 11, #69: now data-driven off LeftTiles
+                 (hide/reorder), rendered via DashboardTileTemplateSelector against the Tile_*
+                 templates declared in UserControl.Resources above - same visual result as before
+                 for the default layout, just no longer hardcoded. -->
+            <ItemsControl Grid.Column="0" Margin="0,0,16,0" ItemsSource="{Binding LeftTiles}"
+                          ItemTemplateSelector="{StaticResource DashboardTileTemplateSelector}" />
 
-                <Border Style="{StaticResource CardStyle}">
-                    <StackPanel>
-                        <Grid Margin="0,0,0,10">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <StackPanel Grid.Column="0" Style="{StaticResource TitleRow}" Margin="0">
-                                <Border Style="{StaticResource ColorDot}" Background="{Binding Performance.RamColor, Converter={StaticResource ColorToBrushConverter}}" />
-                                <TextBlock Text="Memory Utilization" Style="{StaticResource CardTitle}" Margin="0" />
-                            </StackPanel>
-                            <TextBlock Grid.Column="1" VerticalAlignment="Center" FontSize="20" FontWeight="SemiBold">
-                                <Run Text="{Binding Performance.RamUsedGb, StringFormat={}{0:0.0}, Mode=OneWay}" />
-                                <Run Text=" / " FontSize="13" FontWeight="Normal" />
-                                <Run Text="{Binding Performance.RamTotalGb, StringFormat={}{0:0.0}, Mode=OneWay}" FontSize="13" FontWeight="Normal" />
-                                <Run Text=" GB" FontSize="13" FontWeight="Normal" />
-                            </TextBlock>
-                        </Grid>
-                        <lvc:CartesianChart Series="{Binding Performance.RamSeries}" XAxes="{Binding Performance.HiddenXAxes}" YAxes="{Binding Performance.PercentYAxes}"
-                                             Height="160" TooltipPosition="Hidden" LegendPosition="Hidden" Background="Transparent" />
-                    </StackPanel>
-                </Border>
-            </StackPanel>
-
-            <!-- Right column: top processes + meter tiles -->
-            <StackPanel Grid.Column="1">
-                <Border Style="{StaticResource CardStyle}">
-                    <StackPanel>
-                        <Grid Margin="0,0,0,10">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0" Text="Top CPU processes" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
-                            <TextBlock Grid.Column="1" Text="{Binding Processes.ProcessCount, StringFormat={}{0} total}" Style="{StaticResource SubStat}" VerticalAlignment="Center" />
-                        </Grid>
-                        <ItemsControl ItemsSource="{Binding TopProcesses}" MaxHeight="330">
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate>
-                                    <Grid Margin="0,0,0,8">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
-                                        <StackPanel Grid.Column="0" Margin="0,0,8,0">
-                                            <TextBlock Text="{Binding Name}" FontSize="12.5" TextTrimming="CharacterEllipsis" />
-                                            <TextBlock Style="{StaticResource SubStat}" FontSize="10.5">
-                                                <Run Text="PID " /><Run Text="{Binding Pid, Mode=OneWay}" />
-                                                <Run Text=" · " /><Run Text="{Binding MemoryMb, StringFormat={}{0:0} MB, Mode=OneWay}" />
-                                            </TextBlock>
-                                        </StackPanel>
-                                        <TextBlock Grid.Column="1" Text="{Binding CpuPercent, StringFormat={}{0:0.0}%}"
-                                                   FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center"
-                                                   Foreground="{Binding CpuPercent, Converter={StaticResource PercentToBrushConverter}}" />
-                                    </Grid>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </StackPanel>
-                </Border>
-
-                <!-- #11: "what's actually been eating CPU right now" - a rolling ~10s average,
-                     steadier than the instantaneous reading above for a bursty process. -->
-                <Border Style="{StaticResource CardStyle}">
-                    <StackPanel>
-                        <TextBlock Text="Top CPU (10s avg)" Style="{StaticResource CardTitle}" />
-                        <ItemsControl ItemsSource="{Binding TopProcesses10sAvg}" MaxHeight="150">
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate>
-                                    <Grid Margin="0,0,0,8">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0" Text="{Binding Name}" FontSize="12.5" TextTrimming="CharacterEllipsis" Margin="0,0,8,0" />
-                                        <TextBlock Grid.Column="1" Text="{Binding CpuPercent10sAvg, StringFormat={}{0:0.0}%}"
-                                                   FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center"
-                                                   Foreground="{Binding CpuPercent10sAvg, Converter={StaticResource PercentToBrushConverter}}" />
-                                    </Grid>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </StackPanel>
-                </Border>
-
-                <views:VfdMeter Title="Disk" Percent="{Binding Performance.DiskPercent}"
-                                ValueText="{Binding Performance.DiskPercent, StringFormat={}{0:0.0}}" Unit="%"
-                                SubText="Active time" AccentBrush="{Binding Performance.DiskColor, Converter={StaticResource ColorToBrushConverter}}"
-                                Margin="0,0,0,16" />
-
-                <Border Style="{StaticResource CardStyle}">
-                    <StackPanel>
-                        <StackPanel Style="{StaticResource TitleRow}" Margin="0,0,0,4">
-                            <Border Style="{StaticResource ColorDot}" Background="{Binding Performance.NetworkColor, Converter={StaticResource ColorToBrushConverter}}" />
-                            <TextBlock Text="Network" Style="{StaticResource CardTitle}" Margin="0" />
-                        </StackPanel>
-                        <TextBlock Text="{Binding Performance.NetworkReceiveBps, Converter={StaticResource BytesToReadableConverter}, ConverterParameter=rate}" Style="{StaticResource BigStat}" />
-                        <TextBlock Text="{Binding Performance.NetworkSendBps, Converter={StaticResource BytesToReadableConverter}, ConverterParameter=rate, StringFormat=Up: {0}}" Style="{StaticResource SubStat}" />
-                    </StackPanel>
-                </Border>
-
-                <Border Style="{StaticResource CardStyle}" Margin="0">
-                    <StackPanel>
-                        <TextBlock Text="System" Style="{StaticResource CardTitle}" />
-                        <UniformGrid Columns="2" Rows="3">
-                            <StackPanel Margin="0,0,8,10">
-                                <TextBlock Text="Processes" Style="{StaticResource SubStat}" />
-                                <TextBlock Text="{Binding Performance.ProcessCount}" FontSize="16" />
-                            </StackPanel>
-                            <StackPanel Margin="8,0,0,10">
-                                <TextBlock Text="Threads" Style="{StaticResource SubStat}" />
-                                <TextBlock Text="{Binding Performance.ThreadCount}" FontSize="16" />
-                            </StackPanel>
-                            <StackPanel Margin="0,0,8,10">
-                                <TextBlock Text="Handles" Style="{StaticResource SubStat}" />
-                                <TextBlock Text="{Binding Performance.HandleCount}" FontSize="16" />
-                            </StackPanel>
-                            <StackPanel Margin="8,0,0,10">
-                                <TextBlock Text="Uptime" Style="{StaticResource SubStat}" />
-                                <TextBlock Text="{Binding Performance.Uptime}" FontSize="16" />
-                            </StackPanel>
-                            <!-- #67: "time since last crash" headline stat, pulled from the
-                                 Stability tab's already-computed figure - no new event-log query. -->
-                            <StackPanel Margin="0,0,8,0">
-                                <TextBlock Text="Since last crash" Style="{StaticResource SubStat}" />
-                                <TextBlock Text="{Binding Stability.TimeSinceLastCrashText}" FontSize="16" TextWrapping="Wrap" />
-                            </StackPanel>
-                            <!-- #68: single 0-10 stability index - see StabilityViewModel.ComputeStabilityIndex. -->
-                            <StackPanel Margin="8,0,0,0">
-                                <TextBlock Text="Stability index" Style="{StaticResource SubStat}" />
-                                <TextBlock FontSize="16" FontWeight="SemiBold"
-                                           Text="{Binding Stability.StabilityIndex, StringFormat={}{0:0.0} / 10}"
-                                           Foreground="{Binding Stability.StabilityIndex, Converter={StaticResource StabilityIndexToBrushConverter}}" />
-                            </StackPanel>
-                        </UniformGrid>
-                    </StackPanel>
-                </Border>
-            </StackPanel>
+            <!-- Right column: top processes + meter tiles - see LeftTiles' remarks above. -->
+            <ItemsControl Grid.Column="1" ItemsSource="{Binding RightTiles}"
+                          ItemTemplateSelector="{StaticResource DashboardTileTemplateSelector}" />
         </Grid>
         </StackPanel>
     </ScrollViewer>
