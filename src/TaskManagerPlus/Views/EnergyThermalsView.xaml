@@ -63,6 +63,24 @@
                                 AccentBrush="{DynamicResource DangerBrush}" />
             </UniformGrid>
 
+            <!-- #28: GPU hotspot-vs-edge differential - a large, sustained gap flags degraded
+                 thermal paste/pads distinct from either reading alone being high. Hidden entirely
+                 when no discrete GPU/hotspot sensor is reported. -->
+            <views:VfdMeter Title="GPU ΔT" Glow="False" Margin="0,0,0,16"
+                            ValueText="{Binding GpuHotspotDeltaC, StringFormat={}{0:0.#}, TargetNullValue=–}" Unit="°C"
+                            SubText="Hotspot vs. edge — a large gap can flag thermal paste/pad wear"
+                            AccentBrush="{DynamicResource WarningBrush}">
+                <views:VfdMeter.Style>
+                    <Style TargetType="views:VfdMeter">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding GpuHotspotDeltaC}" Value="{x:Null}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </views:VfdMeter.Style>
+            </views:VfdMeter>
+
             <!-- Power trend -->
             <Border Style="{StaticResource CardStyle}">
                 <StackPanel>
@@ -72,6 +90,40 @@
                     </StackPanel>
                     <lvc:CartesianChart Series="{Binding PowerSeries}" XAxes="{Binding HiddenXAxes}" YAxes="{Binding PowerYAxes}"
                                          Height="160" TooltipPosition="Hidden" LegendPosition="Hidden" Background="Transparent" />
+                </StackPanel>
+            </Border>
+
+            <!-- #33: historical CPU temperature chart, with a timestamped log of exactly when
+                 the CPU was detected running hot and below its rated base clock under load -
+                 see EnergyThermalsViewModel.RefreshAsync. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <StackPanel Style="{StaticResource TitleRow}">
+                        <Border Style="{StaticResource ColorDot}" Background="#3C9EE8" />
+                        <TextBlock Text="CPU temperature" Style="{StaticResource CardTitle}" Margin="0" />
+                    </StackPanel>
+                    <lvc:CartesianChart Series="{Binding TempSeries}" XAxes="{Binding HiddenXAxes}" YAxes="{Binding TempYAxes}"
+                                         Height="160" TooltipPosition="Hidden" LegendPosition="Hidden" Background="Transparent" />
+                    <StackPanel Margin="0,10,0,0">
+                        <StackPanel.Style>
+                            <Style TargetType="StackPanel">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding ThrottleEvents.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </StackPanel.Style>
+                        <TextBlock Text="Throttle events (hot + below base clock under load)" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                        <ItemsControl ItemsSource="{Binding ThrottleEvents}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding}" FontSize="11.5" Foreground="{DynamicResource WarningBrush}" Margin="0,0,0,3" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
                 </StackPanel>
             </Border>
 

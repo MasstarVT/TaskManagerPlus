@@ -13,6 +13,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public ServicesViewModel Services { get; } = new();
     public StartupViewModel Startup { get; } = new();
     public SystemSpecsViewModel SystemSpecs { get; } = new();
+    public StabilityViewModel Stability { get; } = new();
     public SummaryViewModel Summary { get; }
 
     // Thin wrappers over the shared Performance sampler (see CpuViewModel's remarks) - the
@@ -25,7 +26,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     // Owns its own timer/sampler (LibreHardwareMonitorLib), unlike the four above - see
     // EnergyThermalsViewModel's remarks.
-    public EnergyThermalsViewModel EnergyThermals { get; } = new();
+    public EnergyThermalsViewModel EnergyThermals { get; }
 
     public LoggingViewModel Logging { get; }
 
@@ -43,11 +44,13 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     public MainViewModel()
     {
-        // Cpu/Memory/Storage/Network/Logging are constructed before Summary, since Summary's
-        // Health Check card (#64) needs a live Network reference to read from.
-        Cpu = new CpuViewModel(Performance);
+        // EnergyThermals now needs to be constructed before Cpu/Storage (both take a reference
+        // to it - Cpu for its thermal-throttle flag, Storage for its per-drive temperature list -
+        // see each view-model's remarks) and before Summary as before (#64's Health Check card).
+        EnergyThermals = new EnergyThermalsViewModel(Performance);
+        Cpu = new CpuViewModel(Performance, EnergyThermals);
         Memory = new MemoryViewModel(Performance, Processes);
-        Storage = new StorageViewModel(Performance);
+        Storage = new StorageViewModel(Performance, EnergyThermals);
         Network = new NetworkViewModel(Performance);
         Logging = new LoggingViewModel(Performance, EnergyThermals);
         Summary = new SummaryViewModel(Performance, Processes, Services, EnergyThermals, SystemSpecs, Network);
@@ -99,6 +102,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Performance.Dispose();
         Services.Dispose();
         EnergyThermals.Dispose();
+        Cpu.Dispose();
         Network.Dispose();
         Logging.Dispose();
         Summary.Dispose();

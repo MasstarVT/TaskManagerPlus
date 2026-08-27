@@ -235,6 +235,17 @@
                     </TabItem.Tag>
                     <views:SystemSpecsView DataContext="{Binding SystemSpecs}" />
                 </TabItem>
+
+                <TabItem Header="Stability">
+                    <TabItem.Tag>
+                        <Viewbox Width="16" Height="16">
+                            <Canvas Width="16" Height="16">
+                                <Path Style="{StaticResource NavIconStroke}" Data="M 1,8 L 5,8 L 6.5,3 L 9.5,13 L 11,8 L 15,8" />
+                            </Canvas>
+                        </Viewbox>
+                    </TabItem.Tag>
+                    <views:StabilityView DataContext="{Binding Stability}" />
+                </TabItem>
             </TabControl>
 
             <views:SettingsPanel Grid.Column="1" DataContext="{Binding Theme}">

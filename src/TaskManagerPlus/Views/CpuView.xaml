@@ -11,6 +11,26 @@
     <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16">
         <StackPanel>
 
+            <!-- #9: best-effort thermal-throttle flag - hot package temp AND meaningfully below
+                 rated base clock under load. See CpuViewModel.IsThrottling's remarks for why this
+                 is a heuristic, not a verified "throttle reason" the way HWiNFO's MSR reads are. -->
+            <Border Background="{DynamicResource DangerMutedBrush}" BorderBrush="{DynamicResource DangerBrush}"
+                    BorderThickness="1" CornerRadius="8" Padding="14,10" Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsThrottling}" Value="True">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <TextBlock Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" FontSize="12.5">
+                    <Run Text="Possible thermal throttling: " /><Run Text="{Binding ThrottleText, Mode=OneWay}" />
+                </TextBlock>
+            </Border>
+
             <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
                 <StackPanel>
                     <StackPanel Style="{StaticResource TitleRow}" Margin="0,0,0,4">

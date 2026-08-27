@@ -26,6 +26,12 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
     private readonly SensorMonitorService _sensors = new();
     private readonly DispatcherTimer _timer;
 
+    // #34: needed to know whether the CPU is actually running below its rated base clock under
+    // load (a real throttle signal), not just "hot" - CpuViewModel's own thermal-throttle flag
+    // reads the same two figures, but this view-model logs the *history* of when it happened.
+    private readonly PerformanceViewModel _performance;
+    private DateTime? _lastThrottleLogged;
+
     /// <summary>False when the sensor driver couldn't open at all (Smart App Control, missing
     /// driver signing, unsupported hardware, ...) - the view should show an "unavailable" state
     /// rather than a permanently-empty grid that looks broken.</summary>
@@ -51,11 +57,30 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
     public Axis[] HiddenXAxes { get; }
     public Axis[] PowerYAxes { get; }
 
+    // #33: historical CPU temperature chart, same glow+core line pattern as the power chart above.
+    public ObservableCollection<double> CpuTempHistory { get; } = NewHistory();
+    private readonly LineSeries<double> _tempGlow;
+    private readonly LineSeries<double> _tempCore;
+    public ISeries[] TempSeries { get; }
+    public Axis[] TempYAxes { get; }
+
+    /// <summary>Timestamped log of when the CPU was detected running hot and meaningfully below
+    /// its rated base clock under load (#33's "mark exactly when this happened") - a readable
+    /// event list rather than an in-chart marker, capped to the 10 most recent, newest first.</summary>
+    public ObservableCollection<string> ThrottleEvents { get; } = new();
+
     private double? _cpuPackageTempC;
     public double? CpuPackageTempC { get => _cpuPackageTempC; private set => SetProperty(ref _cpuPackageTempC, value); }
 
     private double? _totalPackagePowerW;
     public double? TotalPackagePowerW { get => _totalPackagePowerW; private set => SetProperty(ref _totalPackagePowerW, value); }
+
+    /// <summary>GPU hotspot-vs-edge temperature differential (#28) - a large, sustained gap is a
+    /// common sign of degraded thermal paste/pads on a GPU cooler, distinct from either reading
+    /// alone being high. Null when either sensor isn't reported (no discrete GPU, or the vendor's
+    /// LibreHardwareMonitorLib backend doesn't expose a hotspot/junction sensor).</summary>
+    private double? _gpuHotspotDeltaC;
+    public double? GpuHotspotDeltaC { get => _gpuHotspotDeltaC; private set => SetProperty(ref _gpuHotspotDeltaC, value); }
 
     // #46: running min/max per sensor since launch, keyed by Identifier - see SensorReading's
     // remarks for why this lives here rather than on SensorMonitorService.
@@ -76,8 +101,10 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
     private const float CoreStrokeWidth = 2f;
     private const float GlowStrokeWidth = 7f;
 
-    public EnergyThermalsViewModel()
+    public EnergyThermalsViewModel(PerformanceViewModel performance)
     {
+        _performance = performance;
+
         HiddenXAxes = new[]
         {
             new Axis { IsVisible = false, MinLimit = 0, MaxLimit = HistoryLength - 1, ShowSeparatorLines = false },
@@ -88,6 +115,16 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
             {
                 MinLimit = 0,
                 Labeler = v => $"{v:0.#} W",
+                LabelsPaint = new SolidColorPaint(AxisTextColor),
+                SeparatorsPaint = new SolidColorPaint(AxisSeparatorColor) { StrokeThickness = 1 },
+            },
+        };
+        TempYAxes = new[]
+        {
+            new Axis
+            {
+                MinLimit = 0,
+                Labeler = v => $"{v:0}°C",
                 LabelsPaint = new SolidColorPaint(AxisTextColor),
                 SeparatorsPaint = new SolidColorPaint(AxisSeparatorColor) { StrokeThickness = 1 },
             },
@@ -109,6 +146,23 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
             GeometryStroke = null, GeometryFill = null, LineSmoothness = 0.3,
         };
         PowerSeries = new ISeries[] { _powerGlow, _powerCore };
+
+        var tempColor = SKColors.DeepSkyBlue;
+        _tempGlow = new LineSeries<double>
+        {
+            Values = CpuTempHistory,
+            Stroke = new SolidColorPaint(tempColor.WithAlpha(70), GlowStrokeWidth),
+            Fill = null, GeometryStroke = null, GeometryFill = null,
+            LineSmoothness = 0.3, IsHoverable = false, IsVisibleAtLegend = false,
+        };
+        _tempCore = new LineSeries<double>
+        {
+            Values = CpuTempHistory,
+            Stroke = new SolidColorPaint(tempColor, CoreStrokeWidth),
+            Fill = new LinearGradientPaint(tempColor.WithAlpha(90), tempColor.WithAlpha(0), new SKPoint(0, 0), new SKPoint(0, 1)),
+            GeometryStroke = null, GeometryFill = null, LineSmoothness = 0.3,
+        };
+        TempSeries = new ISeries[] { _tempGlow, _tempCore };
 
         _timer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(1.5) };
         _timer.Tick += async (_, _) => await RefreshAsync();
@@ -132,6 +186,8 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         var sepSk = new SKColor(separator.R, separator.G, separator.B, separator.A);
         PowerYAxes[0].LabelsPaint = new SolidColorPaint(textSk);
         PowerYAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
+        TempYAxes[0].LabelsPaint = new SolidColorPaint(textSk);
+        TempYAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
     }
 
     private async Task RefreshAsync()
@@ -180,12 +236,41 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         CpuPackageTempC = FindByNameContains(Temperatures, "CPU Package", "Core (Tctl/Tdie)", "CPU");
         TotalPackagePowerW = FindByNameContains(Wattages, "CPU Package", "Package", "CPU Cores", "CPU");
 
+        // #28: GPU hotspot/junction vs. edge/core temperature differential - restricted to GPU
+        // hardware entries specifically (unlike the CPU lookups above) since sensor names like
+        // "Core" collide with per-core CPU temperature readings otherwise.
+        var gpuTemps = tempReadings.Where(r => IsGpu(r.HardwareType)).ToList();
+        var gpuEdge = FindByNameContains(gpuTemps, "GPU Core", "Edge", "Core");
+        var gpuHotspot = FindByNameContains(gpuTemps, "Hot Spot", "Junction");
+        GpuHotspotDeltaC = gpuEdge.HasValue && gpuHotspot.HasValue && gpuHotspot > gpuEdge
+            ? gpuHotspot - gpuEdge : null;
+
         if (TotalPackagePowerW.HasValue)
         {
             PowerHistory.Add(TotalPackagePowerW.Value);
             if (PowerHistory.Count > HistoryLength) PowerHistory.RemoveAt(0);
         }
+
+        if (CpuPackageTempC is { } cpuTemp)
+        {
+            CpuTempHistory.Add(cpuTemp);
+            if (CpuTempHistory.Count > HistoryLength) CpuTempHistory.RemoveAt(0);
+
+            // #33: log (at most once per 30s, to avoid spamming the list) whenever the CPU is
+            // both running hot and meaningfully below its rated base clock under load - the same
+            // "hot AND actually throttled" condition CpuViewModel flags for its own banner, just
+            // recorded here as a timestamped history rather than a live flag.
+            bool throttlingNow = cpuTemp >= 85 && _performance.CpuVsBasePercent <= -8 && _performance.CpuCurrentPercent >= 60;
+            if (throttlingNow && (_lastThrottleLogged is null || (DateTime.Now - _lastThrottleLogged.Value).TotalSeconds >= 30))
+            {
+                _lastThrottleLogged = DateTime.Now;
+                ThrottleEvents.Insert(0, $"{DateTime.Now:T} — {cpuTemp:0}°C, {_performance.CpuVsBasePercent:0}% vs. base clock");
+                while (ThrottleEvents.Count > 10) ThrottleEvents.RemoveAt(ThrottleEvents.Count - 1);
+            }
+        }
     }
+
+    private static bool IsGpu(HardwareType type) => type is HardwareType.GpuAmd or HardwareType.GpuNvidia;
 
     /// <summary>Updates the running min/max for this reading's Identifier and returns a copy of
     /// the reading carrying that session range (#46) - the raw reading from SensorMonitorService

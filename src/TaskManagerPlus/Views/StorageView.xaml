@@ -38,7 +38,7 @@
                  per-I/O latency - both flag a saturated/failing drive earlier than raw
                  throughput or %-active-time alone. -->
             <TextBlock Text="Bottleneck diagnostics" Style="{StaticResource SubStat}" Margin="0,0,0,10" />
-            <UniformGrid Columns="3">
+            <UniformGrid Columns="3" Margin="0,0,0,16">
                 <views:VfdMeter Title="Queue length" Glow="False" Margin="0,0,8,0"
                                 Percent="{Binding Performance.DiskQueueLengthGaugePercent}"
                                 ValueText="{Binding Performance.DiskQueueLength, StringFormat={}{0:0.00}}"
@@ -52,6 +52,36 @@
                                 ValueText="{Binding Performance.DiskWriteLatencyMs, StringFormat={}{0:0.0}}" Unit="ms"
                                 SubText="Avg. per write" AccentBrush="{Binding Performance.DiskColor, Converter={StaticResource ColorToBrushConverter}}" />
             </UniformGrid>
+
+            <!-- #26: per-drive temperature, filtered from the same LibreHardwareMonitorLib
+                 sensor poll the Energy & Thermals tab already runs - see StorageViewModel. -->
+            <TextBlock Text="Drive temperatures" Style="{StaticResource SubStat}" Margin="0,0,0,10" />
+            <ItemsControl ItemsSource="{Binding DriveTemperatures}">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <views:VfdMeter Title="{Binding HardwareName}" Glow="False" Width="172" Margin="0,0,8,8"
+                                        Percent="{Binding Value, TargetNullValue=0}"
+                                        ValueText="{Binding Value, StringFormat={}{0:0.#}, TargetNullValue=–}" Unit="°C"
+                                        SubText="{Binding SensorName}"
+                                        AccentBrush="{Binding Value, Converter={StaticResource TemperatureToBrushConverter}}" />
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+            <TextBlock Text="No drive temperature sensors detected.">
+                <TextBlock.Style>
+                    <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding DriveTemperatures.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </TextBlock.Style>
+            </TextBlock>
 
         </StackPanel>
     </ScrollViewer>

@@ -1,0 +1,150 @@
+<UserControl x:Class="TaskManagerPlus.Views.StabilityView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:TaskManagerPlus.ViewModels"
+             xmlns:views="clr-namespace:TaskManagerPlus.Views"
+             d:DataContext="{d:DesignInstance Type=vm:StabilityViewModel}"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d">
+    <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16">
+        <StackPanel>
+
+            <!-- #4: the shutdown immediately preceding this boot looks unexpected (Kernel-Power 41
+                 / EventLog 6008 within a few minutes of the last boot time) - see
+                 EventLogService.Query. -->
+            <Border Background="{DynamicResource DangerMutedBrush}" BorderBrush="{DynamicResource DangerBrush}"
+                    BorderThickness="1" CornerRadius="8" Padding="14,10" Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding WasLastShutdownUnexpected}" Value="True">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <TextBlock Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" FontSize="12.5">
+                    <Run Text="Last shutdown looks unexpected — " /><Run Text="{Binding LastUnexpectedShutdownText, Mode=OneWay}" />
+                    <Run Text=" (Kernel-Power 41 / unclean shutdown near the last boot time)." />
+                </TextBlock>
+            </Border>
+
+            <Grid Margin="0,0,0,16">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="Crash / stability diagnostics" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" FontSize="15" />
+                <Button Grid.Column="1" Content="Refresh" Command="{Binding RefreshCommand}" Padding="10,4" />
+            </Grid>
+
+            <!-- #6/#5: uptime-since-last-crash and TDR (GPU driver timeout/reset) count - both
+                 computed from the same event-log query as everything else on this tab. -->
+            <UniformGrid Columns="3" Margin="0,0,0,16">
+                <views:VfdMeter Title="Since last crash" Glow="False" Margin="0,0,6,0"
+                                ValueText="{Binding TimeSinceLastCrashText}"
+                                SubText="Unexpected shutdown or BSOD" AccentBrush="{DynamicResource AccentBrush}" />
+                <views:VfdMeter Title="TDR events" Glow="False" Margin="3,0,3,0"
+                                ValueText="{Binding TdrEventCount}"
+                                SubText="{Binding LastTdrEventText}"
+                                AccentBrush="{DynamicResource WarningBrush}" />
+                <views:VfdMeter Title="Minidumps" Glow="False" Margin="6,0,0,0"
+                                ValueText="{Binding Minidumps.Count}"
+                                SubText="%SystemRoot%\Minidump" AccentBrush="{DynamicResource AccentBrush}" />
+            </UniformGrid>
+
+            <!-- #3: minidump files, timestamp + best-effort bugcheck code correlated from a
+                 nearby Kernel-Power 41 event - see EventLogService.ReadMinidumps. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Minidumps" Style="{StaticResource CardTitle}" />
+                    <ItemsControl ItemsSource="{Binding Minidumps}" Margin="0,8,0,0">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="{Binding FileName}" FontSize="12.5" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Grid.Column="1" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}">
+                                        <Run Text="{Binding Timestamp, StringFormat={}{0:g}, Mode=OneWay}" />
+                                        <Run Text=" · " /><Run Text="{Binding BugcheckCode, TargetNullValue=Unknown, Mode=OneWay}" />
+                                    </TextBlock>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="No minidump files found.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding Minidumps.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- #1/#8: recent Critical/Error entries from the System and Application logs, last
+                 30 days - a faulting-module tooltip is shown when the message matched that shape
+                 (typically an Application-log app crash entry). -->
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel>
+                    <TextBlock Text="Recent critical / error events" Style="{StaticResource CardTitle}" />
+                    <DataGrid ItemsSource="{Binding RecentEvents}" Height="320" Margin="0,8,0,0" IsReadOnly="True">
+                        <DataGrid.RowStyle>
+                            <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+                                <Setter Property="ToolTip" Value="{Binding Message}" />
+                            </Style>
+                        </DataGrid.RowStyle>
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Time" Binding="{Binding TimeCreated, StringFormat={}{0:g}}" Width="150" />
+                            <DataGridTextColumn Header="Log" Binding="{Binding LogName}" Width="90" />
+                            <DataGridTemplateColumn Header="Level" Width="80" SortMemberPath="Level">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding Level}" VerticalAlignment="Center">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding Level}" Value="Critical">
+                                                            <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTextColumn Header="Source" Binding="{Binding ProviderName}" Width="2*" />
+                            <DataGridTextColumn Header="ID" Binding="{Binding EventId}" Width="60" />
+                            <DataGridTextColumn Header="Faulting module" Binding="{Binding FaultingModule}" Width="1.5*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <TextBlock Text="No Critical/Error events found in the last 30 days." Margin="0,8,0,0">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding RecentEvents.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>
