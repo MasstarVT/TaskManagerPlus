@@ -3,6 +3,7 @@ using System.IO;
 using System.Management;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography.X509Certificates;
+using System.Text.RegularExpressions;
 using TaskManagerPlus.Models;
 
 namespace TaskManagerPlus.Services;
@@ -12,7 +13,7 @@ namespace TaskManagerPlus.Services;
 /// Manager does: (CPU time consumed since last sample) / (wall time elapsed *
 /// logical processor count).
 /// </summary>
-public sealed class ProcessMonitorService
+public sealed class ProcessMonitorService : IDisposable
 {
     private sealed class CpuSample
     {
@@ -26,6 +27,8 @@ public sealed class ProcessMonitorService
     }
 
     private readonly Dictionary<int, CpuSample> _lastSamples = new();
+    // #21: rolling per-pid working-set history for the leak detector - see ComputeLeakSuspect.
+    private readonly Dictionary<int, Queue<long>> _memoryHistory = new();
     private readonly Dictionary<int, string> _ownerCache = new();
     private readonly Dictionary<int, string?> _commandLineCache = new();
     // Parent process ID never changes after launch, same caching shape as command line (#52).
@@ -36,6 +39,12 @@ public sealed class ProcessMonitorService
     private readonly Dictionary<string, string> _signatureCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly int _logicalProcessors = Environment.ProcessorCount;
     private DateTime _lastGlobalSampleUtc = DateTime.UtcNow;
+
+    // #45: per-process GPU usage, keyed by "GPU Engine" perf-counter instance name (which churns
+    // far more than the CPU core instances HardwareMonitorService tracks - engines come and go
+    // as processes start/stop using the GPU) - see ReadGpuUsageByPid.
+    private readonly Dictionary<string, PerformanceCounter> _gpuEngineCounters = new();
+    private static readonly Regex GpuEnginePidRegex = new(@"pid_(\d+)_", RegexOptions.Compiled);
 
     /// <summary>Well-known high-privilege service accounts - flagged distinctly from an
     /// ordinary signed-in user account when auditing the process list for something unexpected.</summary>
@@ -50,6 +59,7 @@ public sealed class ProcessMonitorService
         var processes = Process.GetProcesses();
         var rows = new List<ProcessRow>(processes.Length);
         var seenPids = new HashSet<int>(processes.Length);
+        var gpuUsageByPid = ReadGpuUsageByPid();
 
         foreach (var proc in processes)
         {
@@ -125,6 +135,8 @@ public sealed class ProcessMonitorService
                     SignatureStatus = GetSignatureStatusCached(filePath),
                     IsHighPrivilege = HighPrivilegeAccounts.Contains(owner, StringComparer.OrdinalIgnoreCase),
                     ParentPid = GetParentPidCached(pid),
+                    IsLeakSuspect = ComputeLeakSuspect(pid, memoryBytes),
+                    GpuPercent = gpuUsageByPid.TryGetValue(pid, out var gpu) ? Math.Round(Math.Min(gpu, 100.0), 1) : 0,
                 });
             }
             catch (Exception)
@@ -156,9 +168,101 @@ public sealed class ProcessMonitorService
         PruneStaleEntries(_ownerCache, seenPids);
         PruneStaleEntries(_commandLineCache, seenPids);
         PruneStaleEntries(_parentPidCache, seenPids);
+        PruneStaleEntries(_memoryHistory, seenPids);
 
         _lastGlobalSampleUtc = now;
         return rows;
+    }
+
+    // #21: a rolling window's worth of samples (at the ~1s poll tick, ~2 minutes) - long enough
+    // that a real leak's slope is distinguishable from ordinary allocate/GC noise, short enough
+    // that memory use is still small per-process (one long per sample).
+    private const int MemoryHistoryWindow = 120;
+
+    // Below this, a "monotonic" climb is just measurement noise on an otherwise-flat process,
+    // not a meaningful leak - a real leak worth flagging keeps growing well past this.
+    private const long LeakGrowthThresholdBytes = 50L * 1024 * 1024;
+
+    /// <summary>
+    /// Flags a process whose working set has grown without ever giving memory back over the
+    /// whole tracked window (#21) - a real leak keeps climbing; anything that dips at any point
+    /// (a GC pass, a cache eviction, normal alloc/free churn) is disqualified outright, since a
+    /// genuine unbounded leak is exactly the kind of allocation that's never freed. This is a
+    /// heuristic tuned for "flag something worth a second look", not a definitive diagnosis - a
+    /// process that legitimately needs more memory over time (e.g. loading a large dataset) will
+    /// also match.
+    /// </summary>
+    private bool ComputeLeakSuspect(int pid, long memoryBytes)
+    {
+        if (!_memoryHistory.TryGetValue(pid, out var history))
+        {
+            history = new Queue<long>();
+            _memoryHistory[pid] = history;
+        }
+        history.Enqueue(memoryBytes);
+        while (history.Count > MemoryHistoryWindow) history.Dequeue();
+
+        if (history.Count < MemoryHistoryWindow) return false;
+
+        var samples = history.ToArray();
+        for (int i = 1; i < samples.Length; i++)
+        {
+            if (samples[i] < samples[i - 1]) return false;
+        }
+        return samples[^1] - samples[0] >= LeakGrowthThresholdBytes;
+    }
+
+    /// <summary>
+    /// Sums each process's GPU engine utilization (#45) - Task Manager's own "GPU" column reads
+    /// this same "GPU Engine" perf-counter category, since there's no other public API for
+    /// per-process GPU usage. Instance names look like
+    /// "pid_1234_luid_0x...0x..._phys_0_eng_0_engtype_3D" - a process can own several engine
+    /// instances at once (3D, Copy, VideoDecode, ...), summed here the same way Task Manager
+    /// totals them for its single GPU column. Unlike the static per-core CPU counters in
+    /// HardwareMonitorService, engine instances churn constantly as processes start/stop using
+    /// the GPU, so counters are created lazily and kept only as long as their instance still
+    /// exists; a newly-seen instance is skipped for one tick (same "prime before trusting a rate
+    /// counter" rule as every other counter in this app) rather than reported as a false 0.
+    /// </summary>
+    private Dictionary<int, double> ReadGpuUsageByPid()
+    {
+        var result = new Dictionary<int, double>();
+        try
+        {
+            var instances = new PerformanceCounterCategory("GPU Engine").GetInstanceNames();
+            var seen = new HashSet<string>(instances);
+
+            foreach (var stale in _gpuEngineCounters.Keys.Where(k => !seen.Contains(k)).ToList())
+            {
+                _gpuEngineCounters[stale].Dispose();
+                _gpuEngineCounters.Remove(stale);
+            }
+
+            foreach (var instance in instances)
+            {
+                if (!_gpuEngineCounters.TryGetValue(instance, out var counter))
+                {
+                    try { _gpuEngineCounters[instance] = new PerformanceCounter("GPU Engine", "Utilization Percentage", instance, readOnly: true); }
+                    catch { /* instance disappeared between GetInstanceNames() and here - skip it */ }
+                    continue;
+                }
+
+                var match = GpuEnginePidRegex.Match(instance);
+                if (!match.Success || !int.TryParse(match.Groups[1].Value, out int pid)) continue;
+
+                double value;
+                try { value = counter.NextValue(); }
+                catch { continue; }
+
+                result[pid] = result.TryGetValue(pid, out var existing) ? existing + value : value;
+            }
+        }
+        catch
+        {
+            // The "GPU Engine" category can be entirely missing on an old/unusual driver stack -
+            // degrade to "no GPU data" rather than failing the whole process sample.
+        }
+        return result;
     }
 
     /// <summary>Total (read+write) I/O bytes for a process via the native GetProcessIoCounters
@@ -358,5 +462,11 @@ public sealed class ProcessMonitorService
         {
             return (false, ex.Message);
         }
+    }
+
+    public void Dispose()
+    {
+        foreach (var counter in _gpuEngineCounters.Values) counter.Dispose();
+        _gpuEngineCounters.Clear();
     }
 }

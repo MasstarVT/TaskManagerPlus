@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Data;
 using System.Windows.Threading;
@@ -22,8 +23,19 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
     public ProcessRow? SelectedProcess
     {
         get => _selectedProcess;
-        set => SetProperty(ref _selectedProcess, value);
+        set
+        {
+            if (SetProperty(ref _selectedProcess, value))
+                SelectedProcessModules.Clear(); // stale modules from a previous selection would be misleading
+        }
     }
+
+    /// <summary>Loaded modules/DLLs for SelectedProcess (#48), populated on demand via
+    /// ViewModulesCommand rather than every tick - walking a process's full module list is
+    /// comparatively expensive and something Task Manager itself also only does on request.</summary>
+    public ObservableCollection<string> SelectedProcessModules { get; } = new();
+
+    public RelayCommand ViewModulesCommand { get; }
 
     private string _filterText = string.Empty;
     public string FilterText
@@ -65,6 +77,7 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
         EndTaskCommand = new RelayCommand(_ => EndSelected(tree: false), _ => SelectedProcess is not null);
         EndProcessTreeCommand = new RelayCommand(_ => EndSelected(tree: true), _ => SelectedProcess is not null);
         RefreshNowCommand = new RelayCommand(_ => _ = RefreshAsync());
+        ViewModulesCommand = new RelayCommand(_ => LoadSelectedProcessModules(), _ => SelectedProcess is not null);
 
         _timer = new DispatcherTimer(DispatcherPriority.Background)
         {
@@ -139,6 +152,8 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
                 existing.HandleCount = fresh.HandleCount;
                 existing.SignatureStatus = fresh.SignatureStatus;
                 existing.IsHighPrivilege = fresh.IsHighPrivilege;
+                existing.IsLeakSuspect = fresh.IsLeakSuspect;
+                existing.GpuPercent = fresh.GpuPercent;
                 // CommandLine/FilePath/StartTime/User/ParentPid/ParentName don't change for the
                 // lifetime of a pid - no need to reassign them every tick like the values above
                 // that actually vary.
@@ -182,5 +197,32 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
             _ = RefreshAsync();
     }
 
-    public void Dispose() => _timer.Stop();
+    /// <summary>Loads SelectedProcess's module/DLL list (#48) - a plain synchronous read of
+    /// Process.Modules, which is itself fast; the expensive part avoided by making this on-demand
+    /// is doing it for every process on every tick, not this one call.</summary>
+    private void LoadSelectedProcessModules()
+    {
+        SelectedProcessModules.Clear();
+        var target = SelectedProcess;
+        if (target is null) return;
+
+        try
+        {
+            using var proc = Process.GetProcessById(target.Pid);
+            foreach (ProcessModule module in proc.Modules)
+                SelectedProcessModules.Add($"{module.ModuleName}  —  {module.FileName}");
+        }
+        catch (Exception ex)
+        {
+            // Protected process (access denied) or it exited before this ran - a real,
+            // expected limitation worth surfacing inline rather than failing silently.
+            SelectedProcessModules.Add($"(couldn't read modules: {ex.Message})");
+        }
+    }
+
+    public void Dispose()
+    {
+        _timer.Stop();
+        _monitor.Dispose();
+    }
 }

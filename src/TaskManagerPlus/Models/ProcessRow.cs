@@ -72,5 +72,16 @@ public sealed class ProcessRow : ObservableObject
     private string _parentName = string.Empty;
     public string ParentName { get => _parentName; set => SetProperty(ref _parentName, value); }
 
+    /// <summary>True when working-set memory has grown steadily, without ever giving memory
+    /// back, over the whole tracked history window - see ProcessMonitorService.ComputeLeakSuspect
+    /// for the exact rule and its limitations (a heuristic flag, not a diagnosis).</summary>
+    private bool _isLeakSuspect;
+    public bool IsLeakSuspect { get => _isLeakSuspect; set => SetProperty(ref _isLeakSuspect, value); }
+
+    /// <summary>Per-process GPU engine utilization, summed across every "GPU Engine" perf-counter
+    /// instance for this pid (#45) - see ProcessMonitorService.ReadGpuUsageByPid.</summary>
+    private double _gpuPercent;
+    public double GpuPercent { get => _gpuPercent; set => SetProperty(ref _gpuPercent, value); }
+
     public double MemoryMb => MemoryBytes / 1024.0 / 1024.0;
 }

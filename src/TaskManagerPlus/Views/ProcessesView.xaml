@@ -11,6 +11,7 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
         <!-- Toolbar -->
@@ -19,6 +20,7 @@
                 <ColumnDefinition Width="260" />
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
@@ -58,8 +60,9 @@
                 <Run Text="{Binding ProcessCount, Mode=OneWay}" /><Run Text=" processes" />
             </TextBlock>
 
-            <Button Grid.Column="3" Content="End process tree" Margin="0,0,8,0" Command="{Binding EndProcessTreeCommand}" />
-            <Button Grid.Column="4" Content="End task" Command="{Binding EndTaskCommand}" Style="{StaticResource DangerButton}" />
+            <Button Grid.Column="3" Content="View modules" Margin="0,0,8,0" Command="{Binding ViewModulesCommand}" />
+            <Button Grid.Column="4" Content="End process tree" Margin="0,0,8,0" Command="{Binding EndProcessTreeCommand}" />
+            <Button Grid.Column="5" Content="End task" Command="{Binding EndTaskCommand}" Style="{StaticResource DangerButton}" />
         </Grid>
 
         <!-- Grid -->
@@ -92,6 +95,37 @@
                     </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>
                 <DataGridTextColumn Header="Memory" Binding="{Binding MemoryBytes, Converter={StaticResource BytesToReadableConverter}}" Width="100" />
+                <!-- #21: possible memory leak - working set has grown without ever giving memory
+                     back over the whole tracked history window. See ProcessMonitorService.ComputeLeakSuspect. -->
+                <DataGridTemplateColumn Header="Mem trend" Width="90" SortMemberPath="IsLeakSuspect">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="Possible leak" Foreground="{DynamicResource WarningBrush}" FontSize="11" VerticalAlignment="Center">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsLeakSuspect}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <!-- #45: per-process GPU engine utilization, via the "GPU Engine" perf-counter
+                     category (the same source Task Manager's own GPU column reads). -->
+                <DataGridTemplateColumn Header="GPU" Width="80" SortMemberPath="GpuPercent">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding GpuPercent, StringFormat={}{0:0.0}%}"
+                                       Foreground="{Binding GpuPercent, Converter={StaticResource PercentToBrushConverter}}"
+                                       VerticalAlignment="Center" />
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
                 <!-- #26: per-process disk I/O rate, via GetProcessIoCounters - see ProcessMonitorService.ReadIoBytes. -->
                 <DataGridTextColumn Header="Disk" Binding="{Binding DiskBytesPerSec, Converter={StaticResource BytesToReadableConverter}, ConverterParameter=rate}" Width="90" />
                 <DataGridTextColumn Header="Threads" Binding="{Binding ThreadCount}" Width="80" />
@@ -162,7 +196,34 @@
             </DataGrid.ContextMenu>
         </DataGrid>
 
-        <TextBlock Grid.Row="2" Text="{Binding StatusMessage}" Margin="0,8,0,0"
+        <!-- #48: on-demand module/DLL list for the selected process - see
+             ProcessesViewModel.LoadSelectedProcessModules. -->
+        <Border Grid.Row="2" Margin="0,10,0,0" Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
+            <Border.Style>
+                <Style TargetType="Border">
+                    <Setter Property="Visibility" Value="Visible" />
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding SelectedProcessModules.Count}" Value="0">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </Border.Style>
+            <StackPanel>
+                <TextBlock Text="Loaded modules" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                <ScrollViewer MaxHeight="140" VerticalScrollBarVisibility="Auto">
+                    <ItemsControl ItemsSource="{Binding SelectedProcessModules}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding}" FontSize="11.5" TextTrimming="CharacterEllipsis" Margin="0,0,0,2" />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </StackPanel>
+        </Border>
+
+        <TextBlock Grid.Row="3" Text="{Binding StatusMessage}" Margin="0,8,0,0"
                    Foreground="{DynamicResource TextSecondaryBrush}" />
     </Grid>
 </UserControl>
