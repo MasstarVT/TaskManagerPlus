@@ -48,13 +48,31 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
     private string _vpnStatusText = string.Empty;
     public string VpnStatusText { get => _vpnStatusText; private set => SetProperty(ref _vpnStatusText, value); }
 
+    // #40: active TCP connections with owning process - refreshed on the same slow timer, since
+    // reading the full connection table + resolving process names every 1s would be wasteful for
+    // data that mostly matters when actively investigating something.
+    public ObservableCollection<TcpConnectionInfo> Connections { get; } = new();
+
+    // #43: current Wi-Fi association (SSID/signal/channel) - null (and the view hides the card)
+    // on a wired connection, no Wi-Fi adapter, or a non-English Windows install (netsh's text
+    // output is parsed by English field labels - see WifiDiagnosticsService's remarks).
+    private WifiInfo? _wifi;
+    public WifiInfo? Wifi { get => _wifi; private set => SetProperty(ref _wifi, value); }
+
+    // #48: public IP + ISP - deliberately not refreshed on the timer above, since it's a real
+    // outbound call to a third-party service; only runs when the user clicks the button.
+    private string _publicIpStatusText = "Not checked";
+    public string PublicIpStatusText { get => _publicIpStatusText; private set => SetProperty(ref _publicIpStatusText, value); }
+
     public RelayCommand CheckConnectivityCommand { get; }
+    public AsyncRelayCommand LookupPublicIpCommand { get; }
 
     public NetworkViewModel(PerformanceViewModel performance)
     {
         Performance = performance;
 
         CheckConnectivityCommand = new RelayCommand(_ => _ = CheckConnectivityAsync());
+        LookupPublicIpCommand = new AsyncRelayCommand(LookupPublicIpAsync);
 
         _timer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(15) };
         _timer.Tick += async (_, _) => await CheckConnectivityAsync();
@@ -96,6 +114,13 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
             var vpnAdapters = NetworkDiagnosticsService.ReadActiveVpnAdapterNames();
             HasActiveVpn = vpnAdapters.Count > 0;
             VpnStatusText = HasActiveVpn ? string.Join(", ", vpnAdapters) : "None detected";
+
+            var connections = await Task.Run(() => NetworkConnectionsService.Sample());
+            Connections.Clear();
+            foreach (var c in connections.OrderByDescending(c => c.State == "ESTABLISHED").ThenBy(c => c.ProcessName, StringComparer.OrdinalIgnoreCase))
+                Connections.Add(c);
+
+            Wifi = await Task.Run(WifiDiagnosticsService.ReadCurrentWifi);
         }
         catch
         {
@@ -105,6 +130,18 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         {
             _isChecking = false;
         }
+    }
+
+    /// <summary>#48: only ever runs on an explicit button click - see PublicIpLookupService's
+    /// remarks for why this doesn't ride the timer above like everything else on this tab.</summary>
+    private async Task LookupPublicIpAsync()
+    {
+        PublicIpStatusText = "Looking up...";
+        var info = await PublicIpLookupService.LookupAsync();
+        PublicIpStatusText = info is null
+            ? "Lookup failed (no internet, or the lookup service is unreachable)"
+            : string.Join("  •  ", new[] { info.Ip, info.Isp, string.Join(", ", new[] { info.City, info.Region, info.Country }.Where(s => !string.IsNullOrWhiteSpace(s))) }
+                .Where(s => !string.IsNullOrWhiteSpace(s)));
     }
 
     public void Dispose() => _timer.Stop();

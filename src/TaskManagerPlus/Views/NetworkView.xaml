@@ -46,8 +46,14 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" Text="Connectivity" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
-                        <Button Grid.Column="1" Content="Check now" Command="{Binding CheckConnectivityCommand}" Padding="10,4" />
+                        <StackPanel Grid.Column="1" Orientation="Horizontal">
+                            <!-- #48: opt-in, since it's a real outbound call to a third-party
+                                 lookup service - never runs automatically. -->
+                            <Button Content="Look up public IP" Command="{Binding LookupPublicIpCommand}" Padding="10,4" Margin="0,0,8,0" />
+                            <Button Content="Check now" Command="{Binding CheckConnectivityCommand}" Padding="10,4" />
+                        </StackPanel>
                     </Grid>
+                    <TextBlock Text="{Binding PublicIpStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,10" TextWrapping="Wrap" />
                     <UniformGrid Columns="3">
                         <StackPanel Margin="0,0,8,0">
                             <StackPanel Orientation="Horizontal">
@@ -152,6 +158,57 @@
                     <TextBlock Style="{StaticResource SubStat}" Margin="0,10,0,0">
                         <Run Text="VPN: " /><Run Text="{Binding VpnStatusText, Mode=OneWay}" />
                     </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- #43: current Wi-Fi association - collapsed entirely on a wired connection, no
+                 Wi-Fi adapter, or a non-English Windows install (see WifiDiagnosticsService). -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Setter Property="Visibility" Value="Visible" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding Wifi}" Value="{x:Null}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Wi-Fi" Style="{StaticResource CardTitle}" />
+                    <TextBlock FontSize="12.5">
+                        <Run Text="{Binding Wifi.Ssid, Mode=OneWay}" FontWeight="SemiBold" />
+                        <Run Text=" · " /><Run Text="{Binding Wifi.RadioType, Mode=OneWay}" />
+                    </TextBlock>
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,4,0,0">
+                        <Run Text="Signal " /><Run Text="{Binding Wifi.SignalPercent, TargetNullValue=Unknown, Mode=OneWay}" /><Run Text="%" />
+                        <Run Text=" · Channel " /><Run Text="{Binding Wifi.Channel, TargetNullValue=Unknown, Mode=OneWay}" />
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- #40: active TCP connections with owning process - see NetworkConnectionsService. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Active connections" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="1" Text="{Binding Connections.Count, StringFormat={}{0} total}" Style="{StaticResource SubStat}" VerticalAlignment="Center" />
+                    </Grid>
+                    <DataGrid ItemsSource="{Binding Connections}" Height="260" IsReadOnly="True">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Process" Binding="{Binding ProcessName}" Width="1.4*" />
+                            <DataGridTextColumn Header="PID" Binding="{Binding Pid}" Width="70" />
+                            <DataGridTextColumn Header="Local address" Binding="{Binding LocalAddress}" Width="1.3*" />
+                            <DataGridTextColumn Header="Local port" Binding="{Binding LocalPort}" Width="80" />
+                            <DataGridTextColumn Header="Remote address" Binding="{Binding RemoteAddress}" Width="1.3*" />
+                            <DataGridTextColumn Header="Remote port" Binding="{Binding RemotePort}" Width="90" />
+                            <DataGridTextColumn Header="State" Binding="{Binding State}" Width="110" />
+                        </DataGrid.Columns>
+                    </DataGrid>
                 </StackPanel>
             </Border>
 
