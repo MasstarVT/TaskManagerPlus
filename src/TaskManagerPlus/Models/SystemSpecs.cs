@@ -38,7 +38,7 @@ public sealed class SystemSpecs
     public IReadOnlyList<MemoryModuleInfo> MemoryModules { get; init; } = Array.Empty<MemoryModuleInfo>();
 
     /// <summary>Total physical RAM slots on the motherboard (Win32_PhysicalMemoryArray.MemoryDevices,
-    /// #19) - null when that class isn't available. Compared against MemoryModules.Count to show
+    /// #16) - null when that class isn't available. Compared against MemoryModules.Count to show
     /// "N of M slots populated".</summary>
     public int? TotalMemorySlots { get; init; }
 
@@ -114,10 +114,10 @@ public sealed class MemoryModuleInfo
     public long CapacityBytes { get; init; }
 
     /// <summary>The module's rated speed (Win32_PhysicalMemory.Speed, i.e. what's printed on the
-    /// SPD label - e.g. "3200" for a DDR4-3200 stick), #19.</summary>
+    /// SPD label - e.g. "3200" for a DDR4-3200 stick), #16.</summary>
     public double SpeedMhz { get; init; }
 
-    /// <summary>The speed Windows actually detected it running at (ConfiguredClockSpeed, #19) -
+    /// <summary>The speed Windows actually detected it running at (ConfiguredClockSpeed, #16) -
     /// lower than SpeedMhz means XMP/DOCP (or the motherboard's equivalent) isn't enabled, a
     /// common and otherwise invisible "why is my PC slower than it should be" cause.</summary>
     public double ConfiguredSpeedMhz { get; init; }

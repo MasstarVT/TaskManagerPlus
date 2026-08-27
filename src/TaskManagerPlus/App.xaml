@@ -20,6 +20,7 @@
             <conv:ThemeModeSelectedBrushConverter x:Key="ThemeModeSelectedBrushConverter" />
             <conv:TemperatureToBrushConverter x:Key="TemperatureToBrushConverter" />
             <conv:SensorTypeToUnitConverter x:Key="SensorTypeToUnitConverter" />
+            <conv:StringListJoinConverter x:Key="StringListJoinConverter" />
         </ResourceDictionary>
     </Application.Resources>
 </Application>

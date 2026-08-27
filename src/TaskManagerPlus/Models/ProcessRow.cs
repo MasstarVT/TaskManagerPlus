@@ -85,7 +85,7 @@ public sealed class ProcessRow : ObservableObject
     public bool IsLeakSuspect { get => _isLeakSuspect; set => SetProperty(ref _isLeakSuspect, value); }
 
     /// <summary>Per-process GPU engine utilization, summed across every "GPU Engine" perf-counter
-    /// instance for this pid (#45) - see ProcessMonitorService.ReadGpuUsageByPid.</summary>
+    /// instance for this pid (#36) - see ProcessMonitorService.ReadGpuUsageByPid.</summary>
     private double _gpuPercent;
     public double GpuPercent { get => _gpuPercent; set => SetProperty(ref _gpuPercent, value); }
 

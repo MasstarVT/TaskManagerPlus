@@ -5,7 +5,7 @@ using System.Text.RegularExpressions;
 
 namespace TaskManagerPlus.Services;
 
-/// <summary>One active TCP connection, with its owning process (#40 - a themed "netstat -b").</summary>
+/// <summary>One active TCP connection, with its owning process (#21 - a themed "netstat -b").</summary>
 public sealed record TcpConnectionInfo(
     string LocalAddress, int LocalPort, string RemoteAddress, int RemotePort, string State, int Pid, string ProcessName);
 
@@ -107,7 +107,7 @@ public static class NetworkConnectionsService
     }
 }
 
-/// <summary>Current Wi-Fi association details (#43), from parsing `netsh wlan show interfaces` -
+/// <summary>Current Wi-Fi association details (#23), from parsing `netsh wlan show interfaces` -
 /// there's no managed API for RSSI/channel short of the native WLAN API, and parsing netsh's own
 /// text output is the same lower-effort technique many diagnostic tools use for this. A real
 /// limitation: the field labels below ("SSID", "Signal", "Channel", "Radio type") are

@@ -47,7 +47,7 @@
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" Text="Connectivity" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
                         <StackPanel Grid.Column="1" Orientation="Horizontal">
-                            <!-- #48: opt-in, since it's a real outbound call to a third-party
+                            <!-- #24: opt-in, since it's a real outbound call to a third-party
                                  lookup service - never runs automatically. -->
                             <Button Content="Look up public IP" Command="{Binding LookupPublicIpCommand}" Padding="10,4" Margin="0,0,8,0" />
                             <Button Content="Check now" Command="{Binding CheckConnectivityCommand}" Padding="10,4" />
@@ -161,7 +161,7 @@
                 </StackPanel>
             </Border>
 
-            <!-- #43: current Wi-Fi association - collapsed entirely on a wired connection, no
+            <!-- #23: current Wi-Fi association - collapsed entirely on a wired connection, no
                  Wi-Fi adapter, or a non-English Windows install (see WifiDiagnosticsService). -->
             <Border Margin="0,0,0,16">
                 <Border.Style>
@@ -187,7 +187,7 @@
                 </StackPanel>
             </Border>
 
-            <!-- #40: active TCP connections with owning process - see NetworkConnectionsService. -->
+            <!-- #21: active TCP connections with owning process - see NetworkConnectionsService. -->
             <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
                 <StackPanel>
                     <Grid Margin="0,0,0,10">

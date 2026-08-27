@@ -53,7 +53,7 @@
                                 SubText="Avg. per write" AccentBrush="{Binding Performance.DiskColor, Converter={StaticResource ColorToBrushConverter}}" />
             </UniformGrid>
 
-            <!-- #26: per-drive temperature, filtered from the same LibreHardwareMonitorLib
+            <!-- #17: per-drive temperature, filtered from the same LibreHardwareMonitorLib
                  sensor poll the Energy & Thermals tab already runs - see StorageViewModel. -->
             <TextBlock Text="Drive temperatures" Style="{StaticResource SubStat}" Margin="0,0,0,10" />
             <ItemsControl ItemsSource="{Binding DriveTemperatures}">

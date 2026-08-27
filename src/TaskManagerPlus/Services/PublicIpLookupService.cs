@@ -3,11 +3,11 @@ using System.Text.Json;
 
 namespace TaskManagerPlus.Services;
 
-/// <summary>Public IP + ISP lookup result (#48).</summary>
+/// <summary>Public IP + ISP lookup result (#24).</summary>
 public sealed record PublicIpInfo(string Ip, string Isp, string City, string Region, string Country);
 
 /// <summary>
-/// Looks up the machine's public IP and ISP via ipinfo.io's free JSON endpoint (#48) - useful for
+/// Looks up the machine's public IP and ISP via ipinfo.io's free JSON endpoint (#24) - useful for
 /// confirming NAT/VPN state, but a real outbound network call, so this is deliberately never
 /// called automatically: it only runs when the user clicks the Network tab's "Look up public IP"
 /// button.

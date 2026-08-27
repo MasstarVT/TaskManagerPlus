@@ -37,6 +37,7 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
         <Grid Grid.Row="0" Margin="0,0,0,12">
@@ -118,7 +119,34 @@
             </DataGrid.ContextMenu>
         </DataGrid>
 
-        <TextBlock Grid.Row="2" Text="{Binding StatusMessage}" Margin="0,8,0,0"
+        <!-- #37: dependency graph for the selected service, so a user understands the blast
+             radius before stopping something. -->
+        <Border Grid.Row="2" Margin="0,10,0,0" Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
+            <Border.Style>
+                <Style TargetType="Border">
+                    <Setter Property="Visibility" Value="Visible" />
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding SelectedService}" Value="{x:Null}">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </Border.Style>
+            <StackPanel Orientation="Horizontal">
+                <StackPanel Margin="0,0,24,0" MaxWidth="420">
+                    <TextBlock Text="Depends on" Style="{StaticResource SubStat}" />
+                    <TextBlock Text="{Binding SelectedService.DependsOn, Converter={StaticResource StringListJoinConverter}}"
+                               TextWrapping="Wrap" FontSize="12" Margin="0,2,0,0" />
+                </StackPanel>
+                <StackPanel MaxWidth="420">
+                    <TextBlock Text="Other services depend on this" Style="{StaticResource SubStat}" />
+                    <TextBlock Text="{Binding SelectedService.DependentServices, Converter={StaticResource StringListJoinConverter}}"
+                               TextWrapping="Wrap" FontSize="12" Margin="0,2,0,0" />
+                </StackPanel>
+            </StackPanel>
+        </Border>
+
+        <TextBlock Grid.Row="3" Text="{Binding StatusMessage}" Margin="0,8,0,0"
                    Foreground="{DynamicResource TextSecondaryBrush}" />
     </Grid>
 </UserControl>

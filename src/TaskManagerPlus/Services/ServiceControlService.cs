@@ -32,6 +32,15 @@ public sealed class ServiceControlService
                 if (exitCodes.TryGetValue(sc.ServiceName, out var exitCode))
                     row.ExitCode = exitCode;
 
+                // #37: dependency graph - so a user understands the blast radius before stopping
+                // a service. Read fresh every tick, the same "no per-row caching" tradeoff
+                // Description above already makes, since dependencies can't change without a
+                // reboot/reinstall anyway.
+                try { row.DependsOn = sc.ServicesDependedOn.Select(s => s.DisplayName).ToList(); }
+                catch { /* leave empty */ }
+                try { row.DependentServices = sc.DependentServices.Select(s => s.DisplayName).ToList(); }
+                catch { /* leave empty */ }
+
                 rows.Add(row);
             }
             catch

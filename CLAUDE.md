@@ -7,7 +7,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Task Manager Plus — a Windows Task Manager replacement written in C# / WPF
 (.NET 8): a Summary dashboard, per-subsystem CPU/Memory/Storage/Network/
 Energy & Thermals tabs (live charts, real sensors), Processes, Services,
-Startup manager, System specs, and a live color-theming system. Navigation
+Startup manager, System specs, a Stability tab (event-log-based crash/
+TDR/minidump diagnostics), and a live color-theming system. Navigation
 is a TMOG-style top horizontal tab strip (`TabStripPlacement="Top"`), not a
 left sidebar rail — this is a deliberate redesign away from the earlier
 iStat-Menus-style rail, matching the visual/IA style of
@@ -73,9 +74,17 @@ container — everything is `new`'d directly). Layers:
   one `HardwareMonitorService.Sample()` call per tick; giving each its own
   timer would mean redundant `PerformanceCounter` instantiation for
   identical data, so keep new tabs like this thin instead of adding a
-  sampler per tab. `MainViewModel` composes all of them plus settings-drawer
-  state (`IsSettingsOpen`) and elevation status (`IsElevated`, checked once
-  via `WindowsPrincipal`).
+  sampler per tab. `CpuViewModel` and `StorageViewModel` also take a shared
+  `EnergyThermalsViewModel` reference now (Round 4) — `Cpu` for its
+  composite thermal-throttle flag (needs both `Performance` and
+  `EnergyThermals` data, so it owns one small timer of its own to recompute
+  it; see the CPU section below), `Storage` purely to re-filter
+  `EnergyThermals.Temperatures` down to Storage hardware, no new polling.
+  `StabilityViewModel` follows `SystemSpecsViewModel`'s on-demand pattern
+  instead (an initial load plus a manual Refresh command, no timer) since an
+  event-log query isn't cheap enough to repeat on a tick. `MainViewModel`
+  composes all of them plus settings-drawer state (`IsSettingsOpen`) and
+  elevation status (`IsElevated`, checked once via `WindowsPrincipal`).
 - **Views/** — XAML + minimal code-behind per tab, hosted in `MainWindow.xaml`'s
   `TabControl` (see "UI shell" below). `CpuView`/`MemoryView`/`StorageView`/
   `NetworkView` replace the old single `PerformanceView` (deleted). `MeterTile`
@@ -115,7 +124,7 @@ family; otherwise tabs don't know about each other.
 `MainWindow.xaml`'s `TabControl` is re-templated (in `Themes/Dark.xaml`) as a
 TMOG-style top icon+label tab strip — `TabStripPlacement="Top"` gets the
 horizontal `TabPanel` layout for free, and the strip's `ScrollViewer` scrolls
-horizontally so all 10 tabs stay reachable at narrower window widths instead
+horizontally so all 11 tabs stay reachable at narrower window widths instead
 of wrapping/clipping. No separate nav ViewModel/converters exist; page
 switching is still plain `TabItem` selection.
 
@@ -605,6 +614,132 @@ before `SummaryViewModel`'s constructor needs them. Each rule is
 independent and best-effort: a missing/unavailable data source (e.g. no
 sensors, no AV product registered) just means that rule contributes nothing
 to the list, never an error state.
+
+### Round 4: Stability tab, thermal-throttle diagnostics, memory leaks, network/process depth
+
+A fourth batch of `suggestions.md` items. The one new top-level tab in this
+round (Stability) plus a spread of smaller additions across existing tabs,
+all following established patterns rather than introducing new ones.
+
+**Stability tab (event log, minidumps, TDR, unexpected shutdown)**:
+`Services/EventLogService.cs` queries the System and Application event logs
+via `System.Diagnostics.Eventing.Reader.EventLogReader` (built into the
+.NET 8 Windows targeting pack — no extra NuGet package needed), filtered to
+Critical/Error (Level 1/2) entries from the last 30 days, capped at 60 per
+log. `StabilityViewModel` follows `SystemSpecsViewModel`'s on-demand shape
+(initial load + manual Refresh command, no timer) since an event-log query
+walks potentially thousands of records and isn't cheap enough to repeat on
+a tick. "Last shutdown was unexpected" is detected by finding a
+Kernel-Power 41 or legacy EventLog 6008 entry timestamped within 5 minutes
+of `DateTime.Now - Environment.TickCount64` (the approximate last boot
+time) — a real, if approximate, correlation rather than a guaranteed match.
+TDR (GPU driver timeout/reset) events are just a count of event ID 4101 in
+the same query. Minidump bugcheck codes are **not** parsed from the raw
+`.dmp` binary format (a much larger undertaking, on par with a mini
+MINIDUMP-stream reader) — instead, each `%SystemRoot%\Minidump\*.dmp`
+file's timestamp is correlated with the nearest Kernel-Power 41 event
+(within 10 minutes) to recover the same bugcheck code from that event's
+insertion strings, reusing data already read for the shutdown banner. That
+insertion-string layout is undocumented and not a versioned contract, so
+`ExtractBugcheckCode` degrades to "Unknown" on any parse failure rather
+than showing a wrong value.
+
+**CPU thermal-throttle flag**: `CpuViewModel` now takes a shared
+`EnergyThermalsViewModel` reference and owns one small 2s `DispatcherTimer`
+of its own (unlike every other CPU/Memory/Storage/Network tab, which is a
+pure thin wrapper with no timer) — flagging "is the CPU throttling right
+now" needs both `Performance.CpuVsBasePercent`/`CpuCurrentPercent` and
+`EnergyThermals.CpuPackageTempC`, two view-models that tick on different
+intervals (1s vs. 1.5s), so a periodic recompute is simpler and more
+robust than wiring cross-object `PropertyChanged` chains between them. This
+is a heuristic ("hot AND meaningfully below base clock AND under load"),
+not a verified throttle reason — LibreHardwareMonitorLib exposes no
+"limit reason" API on most consumer hardware (that's the vendor-proprietary
+MSR data HWiNFO reads directly), so a CPU idle-clocked for power-saving
+reasons, or throttling for a non-thermal reason, won't necessarily be
+flagged correctly. Same tradeoff family as the process signature check and
+the outdated-driver date filtering.
+
+**Historical CPU temperature chart + GPU hotspot differential (Energy &
+Thermals)**: the temperature chart reuses `PerformanceViewModel.LineOf`'s
+glow+core `LineSeries<double>` pattern verbatim (a second history buffer,
+`CpuTempHistory`, alongside the existing `PowerHistory`). Throttle
+"annotations" are a plain timestamped `ObservableCollection<string>` log
+(at most one entry per 30 seconds, capped to the 10 most recent) rather
+than an in-chart marker series — deliberately the lower-risk choice, since
+this app's LiveChartsCore version's scatter/marker API wasn't something to
+gamble a whole feature's compile success on when a readable list conveys
+the same "exactly when did this happen" information. GPU hotspot-vs-edge
+differential reuses the existing `FindByNameContains` name-hint lookup,
+restricted to `HardwareType.GpuAmd`/`GpuNvidia` entries specifically (LHM
+0.9.6 has no separate Intel iGPU `HardwareType`) — necessary because sensor
+names like "Core" collide with per-core CPU temperature readings otherwise.
+
+**Memory leak heuristic + per-process GPU usage + on-demand module list
+(Processes)**: `ProcessMonitorService` gained two more per-pid rolling
+buffers alongside the existing CPU/IO sample dictionary — a ~120-sample
+(~2 minute) working-set history for the leak flag (`IsLeakSuspect`: true
+only when every consecutive sample is non-decreasing across the *entire*
+window AND total growth exceeds 50 MB; any single dip disqualifies it,
+since a real unbounded leak never gives memory back, unlike GC/cache
+churn), and a 10-sample (~10s) CPU% window feeding `CpuPercent10sAvg` for
+the Summary tab's new "Top CPU (10s avg)" card. Per-process GPU usage
+(`ReadGpuUsageByPid`) reads the same `"GPU Engine"` perf-counter category
+Task Manager's own GPU column is built on — instance names look like
+`pid_1234_..._engtype_3D`, parsed by regex and summed per pid across every
+engine instance a process owns. Unlike the static per-core CPU counters in
+`HardwareMonitorService`, GPU engine instances churn constantly as
+processes start/stop using the GPU, so `ProcessMonitorService` now
+implements `IDisposable` to manage its counter dictionary (created lazily,
+pruned when an instance disappears, a newly-seen instance skipped for one
+tick per the usual "prime before trusting a rate counter" rule). The
+loaded-modules list is a plain on-demand `Process.Modules` read behind a
+"View modules" button + `ViewModulesCommand`, not sampled per-tick — same
+"expensive, so make it explicit" tradeoff as the event log queries above.
+
+**Active connections, Wi-Fi signal, public IP lookup (Network)**:
+`Services/NetworkConnectionsService.cs` lists TCP connections with owning
+PID via the native `GetExtendedTcpTable` call (`iphlpapi.dll`) — the same
+API `netstat -b` itself is built on, since no managed .NET API exposes a
+connection's owning process. Same interop-risk tier as `CpuTopologyService`'s
+native calls: wrapped to return an empty list on any failure. Wi-Fi
+SSID/signal/channel comes from parsing `netsh wlan show interfaces` text
+output rather than the native WLAN API — a deliberately lower-effort
+technique with a real, documented limitation: the field labels ("SSID",
+"Signal", "Channel", "Radio type") are English-locale text netsh prints, so
+this silently returns null (and the Network tab hides the Wi-Fi card, the
+same "hidden when not applicable" pattern the Battery section already
+uses) on a non-English Windows install. Public IP + ISP lookup
+(`PublicIpLookupService`, via ipinfo.io's free JSON endpoint) is the one
+feature in this round that makes a real outbound network call, so unlike
+everything else on this tab, it deliberately does **not** ride the
+existing 15s connectivity timer — it only ever runs from an explicit
+"Look up public IP" button click.
+
+**RAM slot population + rated-vs-running speed, memory-compression note
+(Memory/System Specs)**: `Win32_PhysicalMemory.ConfiguredClockSpeed`
+(the speed Windows actually detected a module running at) alongside the
+already-read `Speed` field (the module's rated/SPD speed) is a real,
+accurate way to detect "XMP/DOCP not enabled" — when configured speed is
+lower than rated speed, the System tab's memory-module row now says
+`"2133 MHz running (rated 3200)"` instead of just the rated number.
+`Win32_PhysicalMemoryArray.MemoryDevices` (total physical slots) is
+compared against the populated-module count for a "3 of 4 slots
+populated" line. Windows has no separate "compressed memory" stat the way
+macOS does — the Memory tab's existing Committed % figure (from Round 2's
+`Memory\% Committed Bytes In Use`) already **is** Windows' equivalent
+memory-pressure indicator, so this item became a one-line explanatory note
+next to that tile rather than a new figure.
+
+**Service dependency graph (Services)**: `ServiceController.ServicesDependedOn`/
+`DependentServices` are already-available .NET APIs (unlike almost
+everything else in `ServiceControlService`, no WMI/registry needed) — read
+fresh every 2s tick per service, the same "no per-row caching" tradeoff the
+existing `Description` registry read already makes, since dependencies
+can't change without a reboot/reinstall anyway. Shown as a two-column
+"Depends on" / "Other services depend on this" panel below the grid for
+whichever service is currently selected, via a new
+`Converters/StringListJoinConverter.cs` ("None" for an empty list).
 
 ### Notable implementation details
 

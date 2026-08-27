@@ -63,7 +63,7 @@
                                 AccentBrush="{DynamicResource DangerBrush}" />
             </UniformGrid>
 
-            <!-- #28: GPU hotspot-vs-edge differential - a large, sustained gap flags degraded
+            <!-- #29: GPU hotspot-vs-edge differential - a large, sustained gap flags degraded
                  thermal paste/pads distinct from either reading alone being high. Hidden entirely
                  when no discrete GPU/hotspot sensor is reported. -->
             <views:VfdMeter Title="GPU ΔT" Glow="False" Margin="0,0,0,16"
@@ -93,7 +93,7 @@
                 </StackPanel>
             </Border>
 
-            <!-- #33: historical CPU temperature chart, with a timestamped log of exactly when
+            <!-- #25: historical CPU temperature chart, with a timestamped log of exactly when
                  the CPU was detected running hot and below its rated base clock under load -
                  see EnergyThermalsViewModel.RefreshAsync. -->
             <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">

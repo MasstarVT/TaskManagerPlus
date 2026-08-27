@@ -48,18 +48,18 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
     private string _vpnStatusText = string.Empty;
     public string VpnStatusText { get => _vpnStatusText; private set => SetProperty(ref _vpnStatusText, value); }
 
-    // #40: active TCP connections with owning process - refreshed on the same slow timer, since
+    // #21: active TCP connections with owning process - refreshed on the same slow timer, since
     // reading the full connection table + resolving process names every 1s would be wasteful for
     // data that mostly matters when actively investigating something.
     public ObservableCollection<TcpConnectionInfo> Connections { get; } = new();
 
-    // #43: current Wi-Fi association (SSID/signal/channel) - null (and the view hides the card)
+    // #23: current Wi-Fi association (SSID/signal/channel) - null (and the view hides the card)
     // on a wired connection, no Wi-Fi adapter, or a non-English Windows install (netsh's text
     // output is parsed by English field labels - see WifiDiagnosticsService's remarks).
     private WifiInfo? _wifi;
     public WifiInfo? Wifi { get => _wifi; private set => SetProperty(ref _wifi, value); }
 
-    // #48: public IP + ISP - deliberately not refreshed on the timer above, since it's a real
+    // #24: public IP + ISP - deliberately not refreshed on the timer above, since it's a real
     // outbound call to a third-party service; only runs when the user clicks the button.
     private string _publicIpStatusText = "Not checked";
     public string PublicIpStatusText { get => _publicIpStatusText; private set => SetProperty(ref _publicIpStatusText, value); }
@@ -132,7 +132,7 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         }
     }
 
-    /// <summary>#48: only ever runs on an explicit button click - see PublicIpLookupService's
+    /// <summary>#24: only ever runs on an explicit button click - see PublicIpLookupService's
     /// remarks for why this doesn't ride the timer above like everything else on this tab.</summary>
     private async Task LookupPublicIpAsync()
     {

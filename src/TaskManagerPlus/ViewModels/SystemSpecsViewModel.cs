@@ -144,7 +144,7 @@ public sealed class SystemSpecsViewModel : ObservableObject
         CpuDetails = $"{specs.CpuPhysicalCores} cores, {specs.CpuLogicalProcessors} logical processors  •  Max speed {specs.CpuMaxClockGhz:0.00} GHz";
 
         RamTotal = Formatting.FormatBytes(specs.RamTotalBytes);
-        // #19: "N of M slots populated" when the slot count is known - a quick, otherwise
+        // #16: "N of M slots populated" when the slot count is known - a quick, otherwise
         // invisible signal that there's room to add more RAM without an upgrade.
         RamDetails = specs.TotalMemorySlots is { } slots && slots > 0
             ? $"{specs.MemoryModules.Count} of {slots} slots populated"
@@ -158,7 +158,7 @@ public sealed class SystemSpecsViewModel : ObservableObject
         MemoryModules.Clear();
         foreach (var m in specs.MemoryModules)
         {
-            // #19: flag when the module is running below its own rated speed (XMP/DOCP not
+            // #16: flag when the module is running below its own rated speed (XMP/DOCP not
             // enabled) - a common, otherwise invisible "why is my PC slower than it should be" cause.
             string? speedText = m.SpeedMhz > 0
                 ? (m.ConfiguredSpeedMhz > 0 && m.ConfiguredSpeedMhz < m.SpeedMhz

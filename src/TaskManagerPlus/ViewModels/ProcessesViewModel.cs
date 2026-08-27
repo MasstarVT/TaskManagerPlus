@@ -30,7 +30,7 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
         }
     }
 
-    /// <summary>Loaded modules/DLLs for SelectedProcess (#48), populated on demand via
+    /// <summary>Loaded modules/DLLs for SelectedProcess (#39), populated on demand via
     /// ViewModulesCommand rather than every tick - walking a process's full module list is
     /// comparatively expensive and something Task Manager itself also only does on request.</summary>
     public ObservableCollection<string> SelectedProcessModules { get; } = new();
@@ -198,7 +198,7 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
             _ = RefreshAsync();
     }
 
-    /// <summary>Loads SelectedProcess's module/DLL list (#48) - a plain synchronous read of
+    /// <summary>Loads SelectedProcess's module/DLL list (#39) - a plain synchronous read of
     /// Process.Modules, which is itself fast; the expensive part avoided by making this on-demand
     /// is doing it for every process on every tick, not this one call.</summary>
     private void LoadSelectedProcessModules()

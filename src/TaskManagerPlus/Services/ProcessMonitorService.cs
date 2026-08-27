@@ -27,7 +27,7 @@ public sealed class ProcessMonitorService : IDisposable
     }
 
     private readonly Dictionary<int, CpuSample> _lastSamples = new();
-    // #21: rolling per-pid working-set history for the leak detector - see ComputeLeakSuspect.
+    // #14: rolling per-pid working-set history for the leak detector - see ComputeLeakSuspect.
     private readonly Dictionary<int, Queue<long>> _memoryHistory = new();
     // #11: rolling ~10s CPU% window per-pid - see ComputeCpuAverage.
     private readonly Dictionary<int, Queue<double>> _cpuHistory = new();
@@ -42,7 +42,7 @@ public sealed class ProcessMonitorService : IDisposable
     private readonly int _logicalProcessors = Environment.ProcessorCount;
     private DateTime _lastGlobalSampleUtc = DateTime.UtcNow;
 
-    // #45: per-process GPU usage, keyed by "GPU Engine" perf-counter instance name (which churns
+    // #36: per-process GPU usage, keyed by "GPU Engine" perf-counter instance name (which churns
     // far more than the CPU core instances HardwareMonitorService tracks - engines come and go
     // as processes start/stop using the GPU) - see ReadGpuUsageByPid.
     private readonly Dictionary<string, PerformanceCounter> _gpuEngineCounters = new();
@@ -198,7 +198,7 @@ public sealed class ProcessMonitorService : IDisposable
         return Math.Round(history.Average(), 1);
     }
 
-    // #21: a rolling window's worth of samples (at the ~1s poll tick, ~2 minutes) - long enough
+    // #14: a rolling window's worth of samples (at the ~1s poll tick, ~2 minutes) - long enough
     // that a real leak's slope is distinguishable from ordinary allocate/GC noise, short enough
     // that memory use is still small per-process (one long per sample).
     private const int MemoryHistoryWindow = 120;
@@ -209,7 +209,7 @@ public sealed class ProcessMonitorService : IDisposable
 
     /// <summary>
     /// Flags a process whose working set has grown without ever giving memory back over the
-    /// whole tracked window (#21) - a real leak keeps climbing; anything that dips at any point
+    /// whole tracked window (#14) - a real leak keeps climbing; anything that dips at any point
     /// (a GC pass, a cache eviction, normal alloc/free churn) is disqualified outright, since a
     /// genuine unbounded leak is exactly the kind of allocation that's never freed. This is a
     /// heuristic tuned for "flag something worth a second look", not a definitive diagnosis - a
@@ -237,7 +237,7 @@ public sealed class ProcessMonitorService : IDisposable
     }
 
     /// <summary>
-    /// Sums each process's GPU engine utilization (#45) - Task Manager's own "GPU" column reads
+    /// Sums each process's GPU engine utilization (#36) - Task Manager's own "GPU" column reads
     /// this same "GPU Engine" perf-counter category, since there's no other public API for
     /// per-process GPU usage. Instance names look like
     /// "pid_1234_luid_0x...0x..._phys_0_eng_0_engtype_3D" - a process can own several engine

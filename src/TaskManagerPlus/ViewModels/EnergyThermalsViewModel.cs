@@ -26,7 +26,7 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
     private readonly SensorMonitorService _sensors = new();
     private readonly DispatcherTimer _timer;
 
-    // #34: needed to know whether the CPU is actually running below its rated base clock under
+    // #25: needed to know whether the CPU is actually running below its rated base clock under
     // load (a real throttle signal), not just "hot" - CpuViewModel's own thermal-throttle flag
     // reads the same two figures, but this view-model logs the *history* of when it happened.
     private readonly PerformanceViewModel _performance;
@@ -57,7 +57,7 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
     public Axis[] HiddenXAxes { get; }
     public Axis[] PowerYAxes { get; }
 
-    // #33: historical CPU temperature chart, same glow+core line pattern as the power chart above.
+    // #25: historical CPU temperature chart, same glow+core line pattern as the power chart above.
     public ObservableCollection<double> CpuTempHistory { get; } = NewHistory();
     private readonly LineSeries<double> _tempGlow;
     private readonly LineSeries<double> _tempCore;
@@ -65,7 +65,7 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
     public Axis[] TempYAxes { get; }
 
     /// <summary>Timestamped log of when the CPU was detected running hot and meaningfully below
-    /// its rated base clock under load (#33's "mark exactly when this happened") - a readable
+    /// its rated base clock under load (#25's "mark exactly when this happened") - a readable
     /// event list rather than an in-chart marker, capped to the 10 most recent, newest first.</summary>
     public ObservableCollection<string> ThrottleEvents { get; } = new();
 
@@ -75,7 +75,7 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
     private double? _totalPackagePowerW;
     public double? TotalPackagePowerW { get => _totalPackagePowerW; private set => SetProperty(ref _totalPackagePowerW, value); }
 
-    /// <summary>GPU hotspot-vs-edge temperature differential (#28) - a large, sustained gap is a
+    /// <summary>GPU hotspot-vs-edge temperature differential (#29) - a large, sustained gap is a
     /// common sign of degraded thermal paste/pads on a GPU cooler, distinct from either reading
     /// alone being high. Null when either sensor isn't reported (no discrete GPU, or the vendor's
     /// LibreHardwareMonitorLib backend doesn't expose a hotspot/junction sensor).</summary>
@@ -236,7 +236,7 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         CpuPackageTempC = FindByNameContains(Temperatures, "CPU Package", "Core (Tctl/Tdie)", "CPU");
         TotalPackagePowerW = FindByNameContains(Wattages, "CPU Package", "Package", "CPU Cores", "CPU");
 
-        // #28: GPU hotspot/junction vs. edge/core temperature differential - restricted to GPU
+        // #29: GPU hotspot/junction vs. edge/core temperature differential - restricted to GPU
         // hardware entries specifically (unlike the CPU lookups above) since sensor names like
         // "Core" collide with per-core CPU temperature readings otherwise.
         var gpuTemps = tempReadings.Where(r => IsGpu(r.HardwareType)).ToList();
@@ -256,7 +256,7 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
             CpuTempHistory.Add(cpuTemp);
             if (CpuTempHistory.Count > HistoryLength) CpuTempHistory.RemoveAt(0);
 
-            // #33: log (at most once per 30s, to avoid spamming the list) whenever the CPU is
+            // #25: log (at most once per 30s, to avoid spamming the list) whenever the CPU is
             // both running hot and meaningfully below its rated base clock under load - the same
             // "hot AND actually throttled" condition CpuViewModel flags for its own banner, just
             // recorded here as a timestamped history rather than a live flag.

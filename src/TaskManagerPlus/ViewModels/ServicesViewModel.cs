@@ -123,6 +123,8 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
                 existing.StartType = fresh.StartType;
                 existing.ProcessId = fresh.ProcessId;
                 existing.ExitCode = fresh.ExitCode;
+                existing.DependsOn = fresh.DependsOn;
+                existing.DependentServices = fresh.DependentServices;
                 latestByName.Remove(existing.ServiceName);
             }
             else

@@ -194,7 +194,7 @@ public sealed class SystemSpecsService
                 double speed = 0;
                 try { speed = System.Convert.ToDouble(mo["Speed"] ?? 0.0); } catch { /* leave 0 */ }
 
-                // #19: the speed Windows actually detected the module running at - lower than the
+                // #16: the speed Windows actually detected the module running at - lower than the
                 // rated Speed above means XMP/DOCP isn't enabled.
                 double configuredSpeed = 0;
                 try { configuredSpeed = System.Convert.ToDouble(mo["ConfiguredClockSpeed"] ?? 0.0); } catch { /* leave 0 */ }
@@ -220,7 +220,7 @@ public sealed class SystemSpecsService
         return modules.OrderBy(m => m.Location, StringComparer.OrdinalIgnoreCase).ToList();
     }
 
-    /// <summary>Total physical RAM slots on the motherboard (#19), compared against the populated-
+    /// <summary>Total physical RAM slots on the motherboard (#16), compared against the populated-
     /// module count above to show "N of M slots populated" - a quick, otherwise invisible signal
     /// that there's headroom to add more RAM without an upgrade.</summary>
     private static int? ReadTotalMemorySlots()

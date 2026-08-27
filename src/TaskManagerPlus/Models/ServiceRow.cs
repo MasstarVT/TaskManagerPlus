@@ -44,6 +44,15 @@ public sealed class ServiceRow : ObservableObject
     /// legitimately stopped most of the time and would otherwise dominate this list).</summary>
     public bool HasFailedToStart => StartType == ServiceStartMode.Automatic && ExitCode != 0;
 
+    /// <summary>Other services this one depends on to start, and services that in turn depend on
+    /// it (#37) - shown so a user understands the blast radius before stopping a service. Display
+    /// names, resolved from ServiceController.ServicesDependedOn/DependentServices.</summary>
+    private IReadOnlyList<string> _dependsOn = Array.Empty<string>();
+    public IReadOnlyList<string> DependsOn { get => _dependsOn; set => SetProperty(ref _dependsOn, value); }
+
+    private IReadOnlyList<string> _dependentServices = Array.Empty<string>();
+    public IReadOnlyList<string> DependentServices { get => _dependentServices; set => SetProperty(ref _dependentServices, value); }
+
     public bool CanStart => Status is ServiceControllerStatus.Stopped;
     public bool CanStop => Status is ServiceControllerStatus.Running && ServiceName is not ("RpcSs" or "RpcEptMapper" or "DcomLaunch");
 }
