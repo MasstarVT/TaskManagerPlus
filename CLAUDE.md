@@ -499,6 +499,113 @@ readings, unlike a temperature/voltage/wattage sensor reading exactly 0
 (which usually means "unsupported" — see the zero-filtering comment in
 `EnergyThermalsViewModel.RefreshAsync`).
 
+### Round 3: CPU/memory/network deep diagnostics, process ancestry, System Specs, Health Check
+
+A third batch of `suggestions.md` items, all following the established
+patterns rather than introducing new ones — see each area below.
+
+**CPU (interrupt/DPC time, context switches, queue length, clock vs. rated
+spec)**: four more `PerformanceCounter`s in `HardwareMonitorService`
+(`"Processor"\% Interrupt|DPC Time` on `"_Total"`, `"System"\Context
+Switches/sec`, `"System"\Processor Queue Length`), flowing through
+`HardwareSnapshot` to `PerformanceViewModel` the same way every other CPU
+figure does. `CpuQueueLengthGaugePercent` is a rough "how concerning" fill
+(past 2× logical processors) for the `VfdMeter` bar, the same non-exact-value
+convention the Storage tab's disk-latency gauges already established.
+Session min/max/avg clock speed is a running accumulator in
+`PerformanceViewModel.RefreshAsync` (no history buffer, since only the
+summary values are shown), and `CpuVsBasePercent` makes the base-vs-current
+comparison explicit as a percent delta rather than requiring the user to do
+the math between two separate numbers on the CPU tab.
+
+**Memory (page faults, standby list, kernel pool)**: five more instantaneous/
+rate counters (`Memory\Page Faults/sec`, `Memory\Pages/sec` as the hard-fault
+proxy, the three `Standby Cache *` counters summed into one reclaimable-
+memory figure, `Pool Nonpaged|Paged Bytes`), shown as a second "Diagnostics"
+`VfdMeter` row below the Memory tab's existing Breakdown row. Soft faults are
+derived (`total − hard`, clamped at 0) rather than counted directly — there's
+no separate "soft faults" PerfCounter, only a total and a hard-fault proxy.
+
+**Per-process disk I/O and parent process (Processes)**: `GetProcessIoCounters`
+(kernel32) is the same interop-risk tier as `CpuTopologyService`'s native
+calls — wrapped so an access-denied/exited process just reports a 0 rate
+rather than failing the whole sample. The read+write byte total piggybacks
+on the same per-pid `CpuSample` bookkeeping the CPU% calculation already
+does (same elapsed-time window), rather than a second tracking dictionary.
+Parent process ID comes from `Win32_Process.ParentProcessId` via WMI, cached
+per-pid like command line and owner already are (it never changes after
+launch); the parent's *name* can't be cached the same way since it needs to
+be resolved from whichever processes exist in the current batch, so
+`ProcessMonitorService.Sample()` does a second pass over the freshly-built
+rows to look it up, falling back to `"(exited)"` when the parent is gone -
+a lighter-weight alternative to a full indented process-tree view that
+still answers "does this process have a parent I didn't expect."
+
+**Network (link speed, TCP retransmits, DNS resolution latency, VPN
+detection)**: TCP retransmit rate (`TCPv4\Segments Retransmitted/sec`) is
+the one addition here that belongs on the shared 1s sampler like the
+existing adapter error counters — `HardwareMonitorService` wraps its
+creation in try/catch since the `"TCPv4"` category can legitimately be
+missing on an unusual network stack, degrading to "always reports 0" rather
+than failing construction. Link speed and VPN detection are both pure
+`NetworkInterface` enumeration (no I/O), so they piggyback on
+`NetworkViewModel`'s existing slow (15s) connectivity timer instead of
+getting a new one; DNS resolution latency extends the same timer's
+`CheckAsync` with an actual `Dns.GetHostEntryAsync` call (timed with a
+`Stopwatch`) against Windows' own NCSI connectivity-check hostname
+(`www.msftconnecttest.com`) — deliberately distinct from the existing ICMP
+ping to a resolver IP, which never exercises real name resolution. VPN
+detection and the "Gigabit adapter negotiated down" flag are both
+heuristics (name/description substring matches, and a speed-vs.-description
+comparison respectively) in the same "quick flag, not a verdict" spirit as
+the process signature check.
+
+**Dead fan detector and session temperature baseline (Energy & Thermals)**:
+both computed in `EnergyThermalsViewModel.RefreshAsync` from data
+`SensorMonitorService` already provides each tick, no new sampling. A "dead
+fan" is a 0 RPM reading paired with any temperature reading past a "clearly
+under load" threshold (55°C) — 0 RPM alone is normal for an idle
+semi-passive fan, so it's the *combination* that's the real signal, the
+same reasoning the zero-filtering comment for Temperatures/Voltages/
+Wattages already documents for a different false-positive. Session min/max
+per sensor lives on `SensorReading` itself (`SessionMin`/`SessionMax`,
+`init`-only like the rest of the model) rather than a side dictionary the
+view has to look up — `EnergyThermalsViewModel` keeps the running
+min/max in a private dictionary keyed by `Identifier` and stamps a fresh
+copy of each Temperature reading with it every tick.
+
+**Volume dirty bit, Windows Update history, AV detection (System Specs)**:
+the dirty bit (`FSCTL_IS_VOLUME_DIRTY` via `DeviceIoControl` on a raw
+`\\.\C:`-style volume handle) is the same interop-risk tier as the other
+native calls in this app, wrapped to degrade to `null` ("Unknown") rather
+than a false "clean" — it can fail even elevated on some volume types
+(removable/network drives). Windows Update history
+(`Win32_QuickFixEngineering`) follows `ReadOutdatedDrivers`'s exact
+try/catch-degrades-to-empty shape, including one wrinkle specific to this
+WMI class: `InstalledOn` comes back as a plain culture-formatted date
+string, not the usual CIM_DATETIME format the rest of this service parses
+with `ManagementDateTimeConverter`, so it needs a direct `DateTime.TryParse`
+instead. AV detection reads the undocumented (but widely reverse-engineered)
+`productState` bitmask from the `root\SecurityCenter2` namespace — presented
+as a best-effort "looks enabled" heuristic in both the code comment and the
+UI, the same "quick visual flag, not a security verdict" tradeoff the
+process signature check already established, since the bitmask encoding
+isn't officially documented by Microsoft.
+
+**Health Check summary card (Summary tab)**: the one feature in this round
+that's a pure aggregator — `SummaryViewModel` gained a lightweight 2s
+`DispatcherTimer` (previously it owned no timer at all, being a thin
+composition over other view-models) that recomputes a rule-based
+`ObservableCollection<HealthIssue>` purely by reading state already live on
+`Performance`/`EnergyThermals`/`SystemSpecs`/`Services`/`Network` — no new
+polling or I/O of its own. This required reordering `MainViewModel`'s
+constructor (`Cpu`/`Memory`/`Storage`/`Network`/`Logging` now built before
+`Summary`, previously the reverse) so those view-model references exist
+before `SummaryViewModel`'s constructor needs them. Each rule is
+independent and best-effort: a missing/unavailable data source (e.g. no
+sensors, no AV product registered) just means that rule contributes nothing
+to the list, never an error state.
+
 ### Notable implementation details
 
 - **CPU clock speed**: not directly exposed by Windows. Computed the same

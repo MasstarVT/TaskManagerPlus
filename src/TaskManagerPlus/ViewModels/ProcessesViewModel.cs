@@ -133,13 +133,15 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
             {
                 existing.CpuPercent = fresh.CpuPercent;
                 existing.MemoryBytes = fresh.MemoryBytes;
+                existing.DiskBytesPerSec = fresh.DiskBytesPerSec;
                 existing.Status = fresh.Status;
                 existing.ThreadCount = fresh.ThreadCount;
                 existing.HandleCount = fresh.HandleCount;
                 existing.SignatureStatus = fresh.SignatureStatus;
                 existing.IsHighPrivilege = fresh.IsHighPrivilege;
-                // CommandLine/FilePath/StartTime/User don't change for the lifetime of a pid -
-                // no need to reassign them every tick like the values above that actually vary.
+                // CommandLine/FilePath/StartTime/User/ParentPid/ParentName don't change for the
+                // lifetime of a pid - no need to reassign them every tick like the values above
+                // that actually vary.
                 latestByPid.Remove(existing.Pid);
             }
             else

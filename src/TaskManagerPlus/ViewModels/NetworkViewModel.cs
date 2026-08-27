@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using System.Windows.Threading;
 using TaskManagerPlus.Common;
 using TaskManagerPlus.Services;
@@ -31,6 +32,21 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
 
     private string _dnsStatusText = "Checking...";
     public string DnsStatusText { get => _dnsStatusText; private set => SetProperty(ref _dnsStatusText, value); }
+
+    // #33: actual hostname resolution time, distinct from the ICMP ping to a resolver IP above.
+    private string _dnsLookupText = "Checking...";
+    public string DnsLookupText { get => _dnsLookupText; private set => SetProperty(ref _dnsLookupText, value); }
+
+    // #31/#37: adapter link speeds and VPN presence - cheap NetworkInterface enumeration, so
+    // it rides the same slow timer as the ping-based connectivity check rather than getting its
+    // own.
+    public ObservableCollection<AdapterLinkInfo> AdapterLinks { get; } = new();
+
+    private bool _hasActiveVpn;
+    public bool HasActiveVpn { get => _hasActiveVpn; private set => SetProperty(ref _hasActiveVpn, value); }
+
+    private string _vpnStatusText = string.Empty;
+    public string VpnStatusText { get => _vpnStatusText; private set => SetProperty(ref _vpnStatusText, value); }
 
     public RelayCommand CheckConnectivityCommand { get; }
 
@@ -70,6 +86,16 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
                 false => "Unreachable",
                 null => "Check unavailable",
             };
+
+            DnsLookupText = result.DnsLookupMs is { } lookupMs ? $"{lookupMs} ms" : "Failed";
+
+            var links = NetworkDiagnosticsService.ReadAdapterLinks();
+            AdapterLinks.Clear();
+            foreach (var link in links) AdapterLinks.Add(link);
+
+            var vpnAdapters = NetworkDiagnosticsService.ReadActiveVpnAdapterNames();
+            HasActiveVpn = vpnAdapters.Count > 0;
+            VpnStatusText = HasActiveVpn ? string.Join(", ", vpnAdapters) : "None detected";
         }
         catch
         {

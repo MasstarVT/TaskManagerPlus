@@ -48,7 +48,7 @@
                         <TextBlock Grid.Column="0" Text="Connectivity" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
                         <Button Grid.Column="1" Content="Check now" Command="{Binding CheckConnectivityCommand}" Padding="10,4" />
                     </Grid>
-                    <UniformGrid Columns="2">
+                    <UniformGrid Columns="3">
                         <StackPanel Margin="0,0,8,0">
                             <StackPanel Orientation="Horizontal">
                                 <Border Width="8" Height="8" CornerRadius="4" Margin="0,0,7,0" VerticalAlignment="Center">
@@ -70,7 +70,7 @@
                             </StackPanel>
                             <TextBlock Text="{Binding GatewayStatusText}" Style="{StaticResource SubStat}" Margin="0,4,0,0" />
                         </StackPanel>
-                        <StackPanel Margin="8,0,0,0">
+                        <StackPanel Margin="8,0,8,0">
                             <StackPanel Orientation="Horizontal">
                                 <Border Width="8" Height="8" CornerRadius="4" Margin="0,0,7,0" VerticalAlignment="Center">
                                     <Border.Style>
@@ -91,7 +91,67 @@
                             </StackPanel>
                             <TextBlock Text="{Binding DnsStatusText}" Style="{StaticResource SubStat}" Margin="0,4,0,0" />
                         </StackPanel>
+                        <!-- #33: actual hostname resolution time - distinct from the ping-based
+                             DNS reachability check to the left (which only proves the resolver
+                             IP answers ICMP, not that name resolution itself is fast/working). -->
+                        <StackPanel Margin="8,0,0,0">
+                            <StackPanel Orientation="Horizontal">
+                                <Border Width="8" Height="8" CornerRadius="4" Margin="0,0,7,0" VerticalAlignment="Center" Background="{DynamicResource AccentBrush}" />
+                                <TextBlock Text="DNS resolution" Style="{StaticResource CardTitle}" Margin="0" />
+                            </StackPanel>
+                            <TextBlock Text="{Binding DnsLookupText}" Style="{StaticResource SubStat}" Margin="0,4,0,0" />
+                        </StackPanel>
                     </UniformGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- Adapters: negotiated link speed per active adapter (#31, flags a "Gigabit"
+                 adapter that negotiated down - a classic bad-cable/bad-port symptom) and VPN
+                 presence (#37, a heuristic name/type match, not a "traffic is routed through it"
+                 guarantee). -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Adapters" Style="{StaticResource CardTitle}" />
+                    <ItemsControl ItemsSource="{Binding AdapterLinks}" Margin="0,8,0,0">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="{Binding Name}" FontSize="12.5" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                    <TextBlock Grid.Column="1" Text="{Binding SpeedMbps, StringFormat={}{0:0} Mbps}" FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding LooksDegraded}" Value="True">
+                                                        <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="No active adapters detected.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding AdapterLinks.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,10,0,0">
+                        <Run Text="VPN: " /><Run Text="{Binding VpnStatusText, Mode=OneWay}" />
+                    </TextBlock>
                 </StackPanel>
             </Border>
 
@@ -118,6 +178,12 @@
                     </TextBlock>
                     <TextBlock Text="Cumulative since the adapter/driver last loaded, not a rate - any nonzero count can flag a failing NIC or a bad cable."
                                Style="{StaticResource SubStat}" Margin="0,6,0,0" TextWrapping="Wrap" Opacity="0.7" />
+                    <!-- #32: TCP-level retransmits, distinct from the adapter/frame-level counters
+                         above - a transport-level packet-loss signal (e.g. a congested/lossy
+                         path) that can be nonzero even when the adapter itself reports clean. -->
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,10,0,0">
+                        <Run Text="TCP retransmits: " /><Run Text="{Binding Performance.TcpRetransmitsPerSec, StringFormat={}{0:0.0}, Mode=OneWay}" /><Run Text="/s" />
+                    </TextBlock>
                 </StackPanel>
             </Border>
 

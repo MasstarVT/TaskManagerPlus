@@ -49,6 +49,32 @@ public sealed class SystemSpecs
 
     // Third-party drivers old enough to be worth a "check for an update" nudge.
     public IReadOnlyList<DriverInfo> OutdatedDrivers { get; init; } = Array.Empty<DriverInfo>();
+
+    // Recently installed Windows updates/hotfixes (#57) - correlates with "when did the problem start".
+    public IReadOnlyList<UpdateInfo> RecentUpdates { get; init; } = Array.Empty<UpdateInfo>();
+
+    // Registered antivirus/security products (#63).
+    public IReadOnlyList<AntivirusInfo> AntivirusProducts { get; init; } = Array.Empty<AntivirusInfo>();
+
+    /// <summary>True when more than one AV product looks actively enabled - conflicting
+    /// real-time scanners are a classic, often-invisible perf killer.</summary>
+    public bool MultipleActiveAvWarning { get; init; }
+}
+
+/// <summary>One installed Windows update/hotfix, as reported by Win32_QuickFixEngineering.</summary>
+public sealed class UpdateInfo
+{
+    public string HotFixId { get; init; } = string.Empty;
+    public string Description { get; init; } = string.Empty;
+    public DateTime? InstalledOn { get; init; }
+}
+
+/// <summary>One registered antivirus/security product, as reported by the SecurityCenter2 WMI
+/// namespace. See SystemSpecsService.ReadAntivirusProducts for the "enabled" heuristic caveat.</summary>
+public sealed class AntivirusInfo
+{
+    public string Name { get; init; } = string.Empty;
+    public bool LooksEnabled { get; init; }
 }
 
 /// <summary>TPM / Secure Boot / VBS (Core Isolation) posture, for the System tab's security card.
@@ -119,4 +145,10 @@ public sealed class VolumeInfo
     public long TotalBytes { get; init; }
     public long FreeBytes { get; init; }
     public double PercentUsed => TotalBytes <= 0 ? 0 : (double)(TotalBytes - FreeBytes) / TotalBytes * 100.0;
+
+    /// <summary>File system dirty bit (#29, via FSCTL_IS_VOLUME_DIRTY) - true means the volume
+    /// needs a chkdsk pass (e.g. after an unclean shutdown). Null when the check itself couldn't
+    /// run (needs a handle to the raw volume - can fail even elevated on some configurations) -
+    /// "Unknown", not "clean".</summary>
+    public bool? IsDirty { get; init; }
 }

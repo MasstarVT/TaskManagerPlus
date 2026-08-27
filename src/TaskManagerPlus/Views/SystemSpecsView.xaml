@@ -87,7 +87,24 @@
                     <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
                 <StackPanel Grid.Row="0" Grid.Column="0" Margin="0,0,12,0">
-                    <TextBlock Text="{Binding Primary}" FontWeight="SemiBold" />
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="{Binding Primary}" FontWeight="SemiBold" />
+                        <!-- #29: dirty-bit badge - reuses the disk health badge's visual (colored
+                             pill) but keyed off IsDirty instead of HealthText. -->
+                        <Border Background="{DynamicResource DangerBrush}" CornerRadius="3" Padding="5,1" Margin="8,0,0,0" VerticalAlignment="Center">
+                            <Border.Style>
+                                <Style TargetType="Border">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsDirty}" Value="True">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Border.Style>
+                            <TextBlock Text="Needs chkdsk" FontSize="10" FontWeight="SemiBold" Foreground="White" />
+                        </Border>
+                    </StackPanel>
                     <TextBlock Text="{Binding Secondary}" Style="{StaticResource SecondaryLine}" />
                 </StackPanel>
                 <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding SizeText}" VerticalAlignment="Center"
@@ -296,6 +313,52 @@
                 </StackPanel>
             </Border>
 
+            <!-- Security software (#63): registered AV/security products, via the
+                 SecurityCenter2 WMI namespace. A best-effort "looks enabled" heuristic, not a
+                 verified fact - see SystemSpecsService.ReadAntivirusProducts. Warning-colored
+                 when more than one product looks active at once (conflicting real-time scanners
+                 are a classic, often-invisible perf killer). -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding MultipleActiveAvWarning}" Value="True">
+                                <Setter Property="BorderBrush" Value="{DynamicResource WarningBrush}" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Security software" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="More than one product looks actively enabled - conflicting real-time scanners commonly hurt performance."
+                               Foreground="{DynamicResource WarningBrush}" Margin="0,4,0,12" TextWrapping="Wrap">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding MultipleActiveAvWarning}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <ItemsControl ItemsSource="{Binding AntivirusProducts}" ItemTemplate="{StaticResource SpecRowTemplate}" />
+                    <TextBlock Text="No antivirus product reported (or the check isn't supported on this system).">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding AntivirusProducts.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
             <!-- Outdated third-party drivers: a curated, conservative list - see
                  SystemSpecsService.ReadOutdatedDrivers for the filtering rules. Collapsed entirely
                  when empty rather than showing a "no drivers detected" line, since an empty list
@@ -315,6 +378,25 @@
                     <TextBlock Text="Third-party drivers older than 2 years, in device categories where a stale driver commonly causes problems (display, network, storage, audio/video peripherals)."
                                Style="{StaticResource SubStat}" Margin="0,-8,0,12" TextWrapping="Wrap" />
                     <ItemsControl ItemsSource="{Binding OutdatedDrivers}" ItemTemplate="{StaticResource SpecRowTemplate}" />
+                </StackPanel>
+            </Border>
+
+            <!-- Recent Windows updates (#57): a common "PC got slow/broke after X" correlation
+                 aid. Collapsed entirely when empty (same as Outdated Drivers) - Win32_QuickFixEngineering
+                 can legitimately return nothing on some builds even with updates installed. -->
+            <Border Margin="0,16,0,0">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding RecentUpdates.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Recent Windows updates" Style="{StaticResource CardTitle}" />
+                    <ItemsControl ItemsSource="{Binding RecentUpdates}" ItemTemplate="{StaticResource SpecRowTemplate}" Margin="0,12,0,0" />
                 </StackPanel>
             </Border>
 

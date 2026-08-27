@@ -27,6 +27,9 @@ public sealed class VolumeRow
     public string Secondary { get; init; } = string.Empty;
     public string SizeText { get; init; } = string.Empty;
     public double PercentUsed { get; init; }
+
+    /// <summary>True when the file system dirty bit is set (#29) - needs a chkdsk pass.</summary>
+    public bool IsDirty { get; init; }
 }
 
 public sealed class SystemSpecsViewModel : ObservableObject
@@ -38,6 +41,11 @@ public sealed class SystemSpecsViewModel : ObservableObject
     public ObservableCollection<SpecRow> Disks { get; } = new();
     public ObservableCollection<VolumeRow> Volumes { get; } = new();
     public ObservableCollection<SpecRow> OutdatedDrivers { get; } = new();
+    public ObservableCollection<SpecRow> RecentUpdates { get; } = new();
+    public ObservableCollection<SpecRow> AntivirusProducts { get; } = new();
+
+    private bool _multipleActiveAvWarning;
+    public bool MultipleActiveAvWarning { get => _multipleActiveAvWarning; private set => SetProperty(ref _multipleActiveAvWarning, value); }
 
     private bool _isLoading;
     public bool IsLoading { get => _isLoading; private set => SetProperty(ref _isLoading, value); }
@@ -192,6 +200,7 @@ public sealed class SystemSpecsViewModel : ObservableObject
                 Secondary = v.Label,
                 SizeText = $"{Formatting.FormatBytes(v.FreeBytes)} free of {Formatting.FormatBytes(v.TotalBytes)}",
                 PercentUsed = v.PercentUsed,
+                IsDirty = v.IsDirty == true,
             });
         }
 
@@ -227,5 +236,28 @@ public sealed class SystemSpecsViewModel : ObservableObject
                 SizeText = d.DriverDate is { } date ? date.ToShortDateString() : string.Empty,
             });
         }
+
+        RecentUpdates.Clear();
+        foreach (var u in specs.RecentUpdates)
+        {
+            RecentUpdates.Add(new SpecRow
+            {
+                Primary = u.HotFixId,
+                Secondary = u.Description,
+                SizeText = u.InstalledOn is { } installed ? installed.ToShortDateString() : string.Empty,
+            });
+        }
+
+        AntivirusProducts.Clear();
+        foreach (var a in specs.AntivirusProducts)
+        {
+            AntivirusProducts.Add(new SpecRow
+            {
+                Primary = a.Name,
+                HealthText = a.LooksEnabled ? "Active" : "Inactive",
+                IsHealthWarning = !a.LooksEnabled,
+            });
+        }
+        MultipleActiveAvWarning = specs.MultipleActiveAvWarning;
     }
 }

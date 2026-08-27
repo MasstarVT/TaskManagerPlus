@@ -19,6 +19,13 @@
                     </StackPanel>
                     <TextBlock Text="{Binding Performance.CpuCurrentPercent, StringFormat={}{0:0.0}%}" Style="{StaticResource BigStat}" />
                     <TextBlock Text="{Binding Performance.CpuCurrentClockGhz, StringFormat={}{0:0.00} GHz}" Style="{StaticResource SubStat}" />
+                    <!-- #18: base vs. current clock, so "stuck at base clock" (≈0%) or a turbo
+                         boost (positive %) is explicit rather than implied by two separate numbers. -->
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,2,0,0">
+                        <Run Text="{Binding Performance.CpuBaseClockGhz, StringFormat={}Base {0:0.00} GHz, Mode=OneWay}" />
+                        <Run Text=" · " />
+                        <Run Text="{Binding Performance.CpuVsBasePercent, StringFormat={}{0:+0;-0;0}% vs base, Mode=OneWay}" />
+                    </TextBlock>
                 </StackPanel>
             </Border>
 
@@ -113,6 +120,31 @@
                     </ItemsControl>
                 </StackPanel>
             </Border>
+
+            <!-- CPU diagnostics: interrupt/DPC time (#13, a sustained spike usually means a bad
+                 driver, not app load), context-switch rate (#14, thrashing/livelock), queue
+                 length (#15, threads waiting for a core - CpuQueueLengthGaugePercent is a rough
+                 "how concerning" fill past 2x logical processors, same idea as the Storage tab's
+                 latency gauges), and session min/max/avg clock (#11). -->
+            <TextBlock Text="CPU diagnostics" Style="{StaticResource SubStat}" Margin="0,16,0,10" />
+            <UniformGrid Columns="4">
+                <views:VfdMeter Title="Interrupt / DPC" Glow="False" Margin="0,0,6,0"
+                                Percent="{Binding Performance.CpuInterruptPercent}"
+                                ValueText="{Binding Performance.CpuInterruptPercent, StringFormat={}{0:0.0}}" Unit="%"
+                                SubText="{Binding Performance.CpuDpcPercent, StringFormat={}+{0:0.0}% DPC}"
+                                AccentBrush="{DynamicResource AccentBrush}" />
+                <views:VfdMeter Title="Context switches" Glow="False" Margin="3,0,3,0"
+                                ValueText="{Binding Performance.ContextSwitchesPerSec, StringFormat={}{0:0}}" Unit="/s"
+                                SubText="Thrashing indicator" AccentBrush="{DynamicResource AccentBrush}" />
+                <views:VfdMeter Title="Queue length" Glow="False" Margin="3,0,3,0"
+                                Percent="{Binding Performance.CpuQueueLengthGaugePercent}"
+                                ValueText="{Binding Performance.CpuQueueLength, StringFormat={}{0:0}}" Unit="threads"
+                                SubText="Waiting for a core" AccentBrush="{Binding Performance.CpuQueueLengthGaugePercent, Converter={StaticResource PercentToBrushConverter}}" />
+                <views:VfdMeter Title="Clock (session)" Glow="False" Margin="6,0,0,0"
+                                ValueText="{Binding Performance.CpuAvgClockGhz, StringFormat={}{0:0.00}}" Unit="GHz avg"
+                                SubText="{Binding Performance.CpuMaxClockGhzSeen, StringFormat={}up to {0:0.00} GHz}"
+                                AccentBrush="{DynamicResource AccentBrush}" />
+            </UniformGrid>
 
         </StackPanel>
     </ScrollViewer>

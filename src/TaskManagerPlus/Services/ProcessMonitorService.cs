@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO;
 using System.Management;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography.X509Certificates;
 using TaskManagerPlus.Models;
 
@@ -17,11 +18,18 @@ public sealed class ProcessMonitorService
     {
         public TimeSpan CpuTime;
         public DateTime SampledAtUtc;
+
+        /// <summary>Total (read+write) I/O bytes as of the last sample (#26) - piggybacks on
+        /// the same per-pid sample/elapsed-time bookkeeping the CPU% calculation already does,
+        /// rather than a second dictionary.</summary>
+        public ulong IoBytes;
     }
 
     private readonly Dictionary<int, CpuSample> _lastSamples = new();
     private readonly Dictionary<int, string> _ownerCache = new();
     private readonly Dictionary<int, string?> _commandLineCache = new();
+    // Parent process ID never changes after launch, same caching shape as command line (#52).
+    private readonly Dictionary<int, int> _parentPidCache = new();
     // Keyed by file path, not pid: many processes share the same executable (svchost.exe,
     // browser renderer processes, ...), and a signature check reads the file from disk, so
     // caching per-path avoids repeating that I/O for every process using the same binary.
@@ -61,7 +69,10 @@ public sealed class ProcessMonitorService
                     cpuTime = TimeSpan.Zero;
                 }
 
+                ulong ioBytesNow = ReadIoBytes(proc);
+
                 double cpuPercent = 0;
+                double diskBytesPerSec = 0;
                 if (_lastSamples.TryGetValue(pid, out var last))
                 {
                     var elapsed = (now - last.SampledAtUtc).TotalMilliseconds;
@@ -69,9 +80,12 @@ public sealed class ProcessMonitorService
                     {
                         var cpuDeltaMs = (cpuTime - last.CpuTime).TotalMilliseconds;
                         cpuPercent = Math.Max(0, cpuDeltaMs / elapsed / _logicalProcessors * 100.0);
+
+                        if (ioBytesNow >= last.IoBytes)
+                            diskBytesPerSec = (ioBytesNow - last.IoBytes) / (elapsed / 1000.0);
                     }
                 }
-                _lastSamples[pid] = new CpuSample { CpuTime = cpuTime, SampledAtUtc = now };
+                _lastSamples[pid] = new CpuSample { CpuTime = cpuTime, SampledAtUtc = now, IoBytes = ioBytesNow };
 
                 long memoryBytes = 0;
                 int threadCount = 0;
@@ -100,6 +114,7 @@ public sealed class ProcessMonitorService
                     Name = SafeName(proc),
                     CpuPercent = Math.Round(Math.Min(cpuPercent, 100.0 * _logicalProcessors), 1),
                     MemoryBytes = memoryBytes,
+                    DiskBytesPerSec = Math.Round(diskBytesPerSec, 0),
                     Status = status,
                     User = owner,
                     ThreadCount = threadCount,
@@ -109,6 +124,7 @@ public sealed class ProcessMonitorService
                     CommandLine = GetCommandLineCached(pid),
                     SignatureStatus = GetSignatureStatusCached(filePath),
                     IsHighPrivilege = HighPrivilegeAccounts.Contains(owner, StringComparer.OrdinalIgnoreCase),
+                    ParentPid = GetParentPidCached(pid),
                 });
             }
             catch (Exception)
@@ -121,6 +137,17 @@ public sealed class ProcessMonitorService
             }
         }
 
+        // #52: resolve each row's parent name from this same batch (a second pass, since the
+        // parent may appear later in the enumeration order than its child) - falls back to
+        // "(exited)" for a parent that's no longer running rather than leaving it blank.
+        var namesByPid = rows.ToDictionary(r => r.Pid, r => r.Name);
+        foreach (var row in rows)
+        {
+            row.ParentName = row.ParentPid > 0 && namesByPid.TryGetValue(row.ParentPid, out var parentName)
+                ? parentName
+                : "(exited)";
+        }
+
         // Drop cached samples/owners/command lines for processes that no longer exist. The
         // signature cache is keyed by file path, not pid, so it isn't pruned here - it's small
         // (one entry per distinct executable seen) and a stale entry just saves a re-check if
@@ -128,9 +155,43 @@ public sealed class ProcessMonitorService
         PruneStaleEntries(_lastSamples, seenPids);
         PruneStaleEntries(_ownerCache, seenPids);
         PruneStaleEntries(_commandLineCache, seenPids);
+        PruneStaleEntries(_parentPidCache, seenPids);
 
         _lastGlobalSampleUtc = now;
         return rows;
+    }
+
+    /// <summary>Total (read+write) I/O bytes for a process via the native GetProcessIoCounters
+    /// call (#26) - .NET's Process class doesn't expose this. Best-effort: a protected/
+    /// inaccessible process just reports 0, the same as every other per-process field here that
+    /// can be access-denied.</summary>
+    private static ulong ReadIoBytes(Process proc)
+    {
+        try
+        {
+            if (GetProcessIoCounters(proc.Handle, out var counters))
+                return counters.ReadTransferCount + counters.WriteTransferCount;
+        }
+        catch
+        {
+            // Access denied, or the process exited mid-call - leave it at 0.
+        }
+        return 0;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetProcessIoCounters(IntPtr hProcess, out IO_COUNTERS lpIoCounters);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct IO_COUNTERS
+    {
+        public ulong ReadOperationCount;
+        public ulong WriteOperationCount;
+        public ulong OtherOperationCount;
+        public ulong ReadTransferCount;
+        public ulong WriteTransferCount;
+        public ulong OtherTransferCount;
     }
 
     private static void PruneStaleEntries<TValue>(Dictionary<int, TValue> dict, HashSet<int> livePids)
@@ -203,6 +264,30 @@ public sealed class ProcessMonitorService
 
         _commandLineCache[pid] = commandLine;
         return commandLine;
+    }
+
+    /// <summary>Parent process ID (#52), fetched via WMI (like command line, .NET's Process class
+    /// doesn't expose this) and cached per-pid since it never changes after launch.</summary>
+    private int GetParentPidCached(int pid)
+    {
+        if (_parentPidCache.TryGetValue(pid, out var cached))
+            return cached;
+
+        int parentPid = 0;
+        try
+        {
+            using var searcher = new ManagementObjectSearcher(
+                $"SELECT ParentProcessId FROM Win32_Process WHERE ProcessId = {pid}");
+            foreach (ManagementObject mo in searcher.Get())
+                parentPid = Convert.ToInt32(mo["ParentProcessId"] ?? 0);
+        }
+        catch
+        {
+            // Access denied or the process exited mid-query - leave it 0 ("unknown").
+        }
+
+        _parentPidCache[pid] = parentPid;
+        return parentPid;
     }
 
     /// <summary>

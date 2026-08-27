@@ -1,6 +1,8 @@
 using System.IO;
 using System.Management;
+using System.Runtime.InteropServices;
 using Microsoft.Win32;
+using Microsoft.Win32.SafeHandles;
 using TaskManagerPlus.Models;
 
 namespace TaskManagerPlus.Services;
@@ -57,6 +59,9 @@ public sealed class SystemSpecsService
 
             Security = ReadSecurityInfo(),
             OutdatedDrivers = ReadOutdatedDrivers(),
+            RecentUpdates = ReadRecentHotfixes(),
+            AntivirusProducts = ReadAntivirusProducts(out var multipleActive),
+            MultipleActiveAvWarning = multipleActive,
         };
     }
 
@@ -402,6 +407,7 @@ public sealed class SystemSpecsService
                     Label = string.IsNullOrWhiteSpace(drive.VolumeLabel) ? drive.DriveType.ToString() : drive.VolumeLabel,
                     TotalBytes = drive.TotalSize,
                     FreeBytes = drive.TotalFreeSpace,
+                    IsDirty = ReadVolumeDirtyBit(drive.Name),
                 });
             }
             catch
@@ -576,5 +582,138 @@ public sealed class SystemSpecsService
             // return whatever was gathered before the failure
         }
         return drivers.OrderBy(d => d.DriverDate).Take(20).ToList();
+    }
+
+    /// <summary>
+    /// Recently installed Windows updates/hotfixes (#57), via Win32_QuickFixEngineering - a huge,
+    /// common source of "PC got slow/broke after X" reports. Same try/catch-degrades-to-empty
+    /// shape as ReadOutdatedDrivers; this WMI class can legitimately return nothing on some
+    /// builds even though updates were installed (Windows doesn't guarantee every update is
+    /// recorded here), so an empty list means "nothing to show", not "no updates installed".
+    /// </summary>
+    private static List<UpdateInfo> ReadRecentHotfixes()
+    {
+        var updates = new List<UpdateInfo>();
+        try
+        {
+            using var searcher = new ManagementObjectSearcher(
+                "SELECT HotFixID, Description, InstalledOn FROM Win32_QuickFixEngineering");
+            foreach (ManagementObject mo in searcher.Get())
+            {
+                string hotFixId = (mo["HotFixID"] as string ?? string.Empty).Trim();
+                if (hotFixId.Length == 0) continue;
+
+                DateTime? installedOn = null;
+                // InstalledOn comes back as a plain culture-formatted date string (not the usual
+                // WMI CIM_DATETIME format) for this particular class - parse it directly.
+                if (mo["InstalledOn"] is string raw && DateTime.TryParse(raw, out var parsed))
+                    installedOn = parsed;
+
+                updates.Add(new UpdateInfo
+                {
+                    HotFixId = hotFixId,
+                    Description = (mo["Description"] as string ?? string.Empty).Trim(),
+                    InstalledOn = installedOn,
+                });
+            }
+        }
+        catch
+        {
+            // return whatever was gathered before the failure
+        }
+        return updates.OrderByDescending(u => u.InstalledOn).Take(15).ToList();
+    }
+
+    /// <summary>
+    /// Registered antivirus/security products (#63), via the SecurityCenter2 WMI namespace.
+    /// productState is an undocumented (but widely reverse-engineered) bitmask; the middle byte
+    /// generally reflects real-time-protection enabled/disabled status. This is a best-effort
+    /// heuristic, not a verified fact - the same "quick visual flag, not a security verdict"
+    /// tradeoff ProcessMonitorService's signature check documents - so it's presented as such
+    /// rather than a precise on/off state.
+    /// </summary>
+    private static List<AntivirusInfo> ReadAntivirusProducts(out bool multipleActive)
+    {
+        var products = new List<AntivirusInfo>();
+        try
+        {
+            using var searcher = new ManagementObjectSearcher(
+                @"root\SecurityCenter2", "SELECT displayName, productState FROM AntiVirusProduct");
+            foreach (ManagementObject mo in searcher.Get())
+            {
+                string name = (mo["displayName"] as string ?? string.Empty).Trim();
+                if (name.Length == 0) continue;
+
+                int state = 0;
+                try { state = Convert.ToInt32(mo["productState"] ?? 0); } catch { /* leave 0 */ }
+                // Middle byte: 0x10/0x11 families generally mean "enabled", 0x00/0x01 mean "off" -
+                // approximate, see the method comment above.
+                bool looksEnabled = ((state >> 8) & 0xFF) is 0x10 or 0x11 or 0x12;
+
+                products.Add(new AntivirusInfo { Name = name, LooksEnabled = looksEnabled });
+            }
+        }
+        catch
+        {
+            // SecurityCenter2 namespace unavailable (older Windows, or a locked-down policy) -
+            // "no products detected", not an error.
+        }
+
+        multipleActive = products.Count(p => p.LooksEnabled) > 1;
+        return products;
+    }
+
+    private const uint GenericRead = 0x80000000;
+    private const uint FileShareReadWrite = 0x00000003;
+    private const uint OpenExisting = 3;
+    private const uint FsctlIsVolumeDirty = 0x00090078;
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Auto)]
+    private static extern SafeFileHandle CreateFile(string lpFileName, uint dwDesiredAccess, uint dwShareMode,
+        IntPtr lpSecurityAttributes, uint dwCreationDisposition, uint dwFlagsAndAttributes, IntPtr hTemplateFile);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool DeviceIoControl(SafeFileHandle hDevice, uint dwIoControlCode,
+        IntPtr lpInBuffer, uint nInBufferSize, IntPtr lpOutBuffer, uint nOutBufferSize,
+        out uint lpBytesReturned, IntPtr lpOverlapped);
+
+    /// <summary>
+    /// File system dirty bit (#29) via FSCTL_IS_VOLUME_DIRTY - the same flag `fsutil dirty query`
+    /// reports, set when the volume needs a chkdsk pass (typically after an unclean shutdown).
+    /// Needs a handle to the raw volume (`\\.\C:`, no trailing backslash) rather than a file
+    /// path - wrapped to degrade to null ("Unknown") on any failure, same tier as the SMART
+    /// failure-prediction lookup above.
+    /// </summary>
+    private static bool? ReadVolumeDirtyBit(string driveName)
+    {
+        string trimmed = driveName.TrimEnd('\\');
+        if (trimmed.Length < 2) return null;
+
+        try
+        {
+            using var handle = CreateFile($@"\\.\{trimmed}", GenericRead, FileShareReadWrite,
+                IntPtr.Zero, OpenExisting, 0, IntPtr.Zero);
+            if (handle.IsInvalid) return null;
+
+            var outBuffer = Marshal.AllocHGlobal(1);
+            try
+            {
+                bool ok = DeviceIoControl(handle, FsctlIsVolumeDirty, IntPtr.Zero, 0, outBuffer, 1, out _, IntPtr.Zero);
+                if (!ok) return null;
+                int flags = Marshal.ReadByte(outBuffer);
+                return (flags & 0x1) != 0; // VOLUME_IS_DIRTY bit
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(outBuffer);
+            }
+        }
+        catch
+        {
+            // Requires access to the raw volume - can fail even elevated on some configurations
+            // (e.g. a removable/network drive) - "Unknown" rather than a false "clean".
+            return null;
+        }
     }
 }

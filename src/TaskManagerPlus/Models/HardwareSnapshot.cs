@@ -12,6 +12,19 @@ public sealed class HardwareSnapshot
     public int LogicalProcessors { get; init; }
     public int PhysicalCores { get; init; }
 
+    /// <summary>% time spent servicing hardware interrupts / deferred procedure calls
+    /// (Processor\% Interrupt Time|% DPC Time, "_Total") - a sustained spike here usually means
+    /// a bad driver, not application load.</summary>
+    public double CpuInterruptPercent { get; init; }
+    public double CpuDpcPercent { get; init; }
+
+    /// <summary>System\Context Switches/sec - a rate, helps spot thrashing/livelock.</summary>
+    public double ContextSwitchesPerSec { get; init; }
+
+    /// <summary>System\Processor Queue Length - threads waiting for a CPU right now (not
+    /// running ones), an over-subscription indicator independent of the vs busy percent.</summary>
+    public double CpuQueueLength { get; init; }
+
     public long RamUsedBytes { get; init; }
     public long RamTotalBytes { get; init; }
     public double RamPercent => RamTotalBytes == 0 ? 0 : (double)RamUsedBytes / RamTotalBytes * 100.0;
@@ -38,6 +51,22 @@ public sealed class HardwareSnapshot
     /// physical RAM usage.</summary>
     public long PageFileUsedBytes { get; init; }
 
+    /// <summary>Memory\Page Faults/sec (total, soft+hard) and Memory\Pages/sec (hard-fault
+    /// proxy - pages actually read/written to disk). A hard-fault rate spiking usually means
+    /// low RAM / heavy paging, unlike a soft fault which is cheap (already-resident memory).</summary>
+    public double PageFaultsPerSec { get; init; }
+    public double HardFaultsPerSec { get; init; }
+
+    /// <summary>Reclaimable file-cache pages (Standby Cache Core/Normal Priority/Reserve Bytes,
+    /// summed) - the biggest source of "why does Windows show low free RAM when nothing is
+    /// running": this memory looks used but is instantly reclaimable under pressure.</summary>
+    public long StandbyListBytes { get; init; }
+
+    /// <summary>Kernel pool usage (Memory\Pool Nonpaged|Paged Bytes) - a slow, sustained climb
+    /// here (rather than a stable baseline) usually points to a leaking driver, not an app.</summary>
+    public long PoolNonpagedBytes { get; init; }
+    public long PoolPagedBytes { get; init; }
+
     public double DiskActivePercent { get; init; }
     public double DiskReadBytesPerSec { get; init; }
     public double DiskWriteBytesPerSec { get; init; }
@@ -61,6 +90,12 @@ public sealed class HardwareSnapshot
     public long NetworkInDiscards { get; init; }
     public long NetworkOutErrors { get; init; }
     public long NetworkOutDiscards { get; init; }
+
+    /// <summary>TCPv4\Segments Retransmitted/sec - a transport-level packet-loss signal distinct
+    /// from the adapter-level CRC/discard counters above. 0 when the "TCPv4" perf category isn't
+    /// available on this system, same as a genuinely healthy connection - not distinguishable
+    /// from here, but never crashes the sampler either way.</summary>
+    public double TcpRetransmitsPerSec { get; init; }
 
     public int ProcessCount { get; init; }
     public int ThreadCount { get; init; }

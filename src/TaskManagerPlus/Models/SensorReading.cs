@@ -22,4 +22,11 @@ public sealed class SensorReading
     public float? Value { get; init; }
 
     public string Identifier { get; init; } = string.Empty;
+
+    /// <summary>Lowest/highest value seen for this sensor since the app launched (#46) - lets a
+    /// temperature tile answer "is 70°C normal for my CPU" without needing an external baseline.
+    /// Null until at least one reading has been recorded; set by EnergyThermalsViewModel, not
+    /// SensorMonitorService (which just reports the instantaneous hardware value).</summary>
+    public float? SessionMin { get; init; }
+    public float? SessionMax { get; init; }
 }

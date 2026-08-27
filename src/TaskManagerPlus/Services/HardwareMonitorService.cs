@@ -31,6 +31,30 @@ public sealed class HardwareMonitorService : IDisposable
     private readonly PerformanceCounter _cacheBytesCounter;
     private readonly PerformanceCounter _pageFileUsageCounter;
 
+    // CPU diagnostics (#13/#14/#15): interrupt/DPC time use the classic "Processor" category
+    // (not "Processor Information") since that's the one guaranteed to exist with a plain
+    // "_Total" instance on every SKU; context switches and queue length have no instance at all.
+    private readonly PerformanceCounter _cpuInterruptCounter;
+    private readonly PerformanceCounter _cpuDpcCounter;
+    private readonly PerformanceCounter _contextSwitchesCounter;
+    private readonly PerformanceCounter _cpuQueueLengthCounter;
+
+    // Memory diagnostics (#20/#22/#24): page fault rates, the standby (reclaimable) list, and
+    // kernel pool usage - all instantaneous/rate PerfCounters like the ones above, no new
+    // dependency. Standby list is split across three priority-tier counters that get summed.
+    private readonly PerformanceCounter _pageFaultsCounter;
+    private readonly PerformanceCounter _hardFaultsCounter;
+    private readonly PerformanceCounter _standbyCoreCounter;
+    private readonly PerformanceCounter _standbyNormalCounter;
+    private readonly PerformanceCounter _standbyReserveCounter;
+    private readonly PerformanceCounter _poolNonpagedCounter;
+    private readonly PerformanceCounter _poolPagedCounter;
+
+    // Network diagnostic (#32): TCP retransmit rate. Wrapped separately since the "TCPv4"
+    // category can legitimately be absent on an unusual network stack config - null means
+    // "not available", and Sample() just reports 0 rather than throwing.
+    private readonly PerformanceCounter? _tcpRetransmitsCounter;
+
     private readonly string _cpuName;
     private readonly double _cpuBaseClockGhz;
     private readonly int _logicalProcessors;
@@ -104,6 +128,31 @@ public sealed class HardwareMonitorService : IDisposable
         _pageFileUsageCounter = new PerformanceCounter("Paging File", "% Usage", "_Total", readOnly: true);
         _pageFileTotalMb = ReadPageFileTotalMb();
 
+        _cpuInterruptCounter = new PerformanceCounter("Processor", "% Interrupt Time", "_Total", readOnly: true);
+        _cpuDpcCounter = new PerformanceCounter("Processor", "% DPC Time", "_Total", readOnly: true);
+        _contextSwitchesCounter = new PerformanceCounter("System", "Context Switches/sec", readOnly: true);
+        _cpuQueueLengthCounter = new PerformanceCounter("System", "Processor Queue Length", readOnly: true);
+
+        _pageFaultsCounter = new PerformanceCounter("Memory", "Page Faults/sec", readOnly: true);
+        _hardFaultsCounter = new PerformanceCounter("Memory", "Pages/sec", readOnly: true);
+        _standbyCoreCounter = new PerformanceCounter("Memory", "Standby Cache Core Bytes", readOnly: true);
+        _standbyNormalCounter = new PerformanceCounter("Memory", "Standby Cache Normal Priority Bytes", readOnly: true);
+        _standbyReserveCounter = new PerformanceCounter("Memory", "Standby Cache Reserve Bytes", readOnly: true);
+        _poolNonpagedCounter = new PerformanceCounter("Memory", "Pool Nonpaged Bytes", readOnly: true);
+        _poolPagedCounter = new PerformanceCounter("Memory", "Pool Paged Bytes", readOnly: true);
+
+        try
+        {
+            _tcpRetransmitsCounter = new PerformanceCounter("TCPv4", "Segments Retransmitted/sec", readOnly: true);
+            _ = _tcpRetransmitsCounter.NextValue();
+        }
+        catch
+        {
+            // "TCPv4" category can be missing on an unusual network stack config - degrade to
+            // "not available" (Sample() reports 0) rather than failing the whole service.
+            _tcpRetransmitsCounter = null;
+        }
+
         // Rate counters return 0 on their first read; prime them now so the
         // very first UI sample isn't a meaningless zero.
         _ = _cpuTotalCounter.NextValue();
@@ -116,6 +165,11 @@ public sealed class HardwareMonitorService : IDisposable
         _ = _diskReadLatencyCounter.NextValue();
         _ = _diskWriteLatencyCounter.NextValue();
         _ = _pageFileUsageCounter.NextValue();
+        _ = _cpuInterruptCounter.NextValue();
+        _ = _cpuDpcCounter.NextValue();
+        _ = _contextSwitchesCounter.NextValue();
+        _ = _pageFaultsCounter.NextValue();
+        _ = _hardFaultsCounter.NextValue();
 
         (_lastBytesReceived, _lastBytesSent) = ReadTotalNetworkBytes();
         _lastNetSampleUtc = DateTime.UtcNow;
@@ -153,6 +207,10 @@ public sealed class HardwareMonitorService : IDisposable
 
         GetMemoryStatus(out long totalBytes, out long availBytes);
 
+        double totalFaultsPerSec = Math.Max(0, _pageFaultsCounter.NextValue());
+        double hardFaultsPerSec = Math.Max(0, _hardFaultsCounter.NextValue());
+        long standbyBytes = (long)_standbyCoreCounter.NextValue() + (long)_standbyNormalCounter.NextValue() + (long)_standbyReserveCounter.NextValue();
+
         return new HardwareSnapshot
         {
             CpuTotalPercent = Math.Round(cpuTotal, 1),
@@ -163,6 +221,10 @@ public sealed class HardwareMonitorService : IDisposable
             CpuName = _cpuName,
             LogicalProcessors = _logicalProcessors,
             PhysicalCores = _physicalCores,
+            CpuInterruptPercent = Math.Round(Clamp(_cpuInterruptCounter.NextValue()), 2),
+            CpuDpcPercent = Math.Round(Clamp(_cpuDpcCounter.NextValue()), 2),
+            ContextSwitchesPerSec = Math.Round(Math.Max(0, _contextSwitchesCounter.NextValue()), 0),
+            CpuQueueLength = Math.Round(Math.Max(0, _cpuQueueLengthCounter.NextValue()), 0),
 
             RamTotalBytes = totalBytes,
             RamUsedBytes = totalBytes - availBytes,
@@ -172,6 +234,11 @@ public sealed class HardwareMonitorService : IDisposable
             CacheBytes = (long)_cacheBytesCounter.NextValue(),
             PageFileTotalBytes = _pageFileTotalMb * 1024L * 1024L,
             PageFileUsedBytes = (long)(_pageFileTotalMb * 1024L * 1024L * (Clamp(_pageFileUsageCounter.NextValue()) / 100.0)),
+            PageFaultsPerSec = Math.Round(totalFaultsPerSec, 0),
+            HardFaultsPerSec = Math.Round(hardFaultsPerSec, 0),
+            StandbyListBytes = Math.Max(0, standbyBytes),
+            PoolNonpagedBytes = (long)_poolNonpagedCounter.NextValue(),
+            PoolPagedBytes = (long)_poolPagedCounter.NextValue(),
 
             DiskActivePercent = Math.Round(diskPercent, 1),
             DiskReadBytesPerSec = diskRead,
@@ -186,6 +253,7 @@ public sealed class HardwareMonitorService : IDisposable
             NetworkInDiscards = netInDiscards,
             NetworkOutErrors = netOutErrors,
             NetworkOutDiscards = netOutDiscards,
+            TcpRetransmitsPerSec = _tcpRetransmitsCounter is null ? 0 : Math.Round(Math.Max(0, _tcpRetransmitsCounter.NextValue()), 1),
 
             ProcessCount = (int)_processCountCounter.NextValue(),
             ThreadCount = (int)_threadCountCounter.NextValue(),
@@ -336,5 +404,17 @@ public sealed class HardwareMonitorService : IDisposable
         _commitLimitCounter.Dispose();
         _cacheBytesCounter.Dispose();
         _pageFileUsageCounter.Dispose();
+        _cpuInterruptCounter.Dispose();
+        _cpuDpcCounter.Dispose();
+        _contextSwitchesCounter.Dispose();
+        _cpuQueueLengthCounter.Dispose();
+        _pageFaultsCounter.Dispose();
+        _hardFaultsCounter.Dispose();
+        _standbyCoreCounter.Dispose();
+        _standbyNormalCounter.Dispose();
+        _standbyReserveCounter.Dispose();
+        _poolNonpagedCounter.Dispose();
+        _poolPagedCounter.Dispose();
+        _tcpRetransmitsCounter?.Dispose();
     }
 }

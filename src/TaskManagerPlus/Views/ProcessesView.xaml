@@ -92,6 +92,8 @@
                     </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>
                 <DataGridTextColumn Header="Memory" Binding="{Binding MemoryBytes, Converter={StaticResource BytesToReadableConverter}}" Width="100" />
+                <!-- #26: per-process disk I/O rate, via GetProcessIoCounters - see ProcessMonitorService.ReadIoBytes. -->
+                <DataGridTextColumn Header="Disk" Binding="{Binding DiskBytesPerSec, Converter={StaticResource BytesToReadableConverter}, ConverterParameter=rate}" Width="90" />
                 <DataGridTextColumn Header="Threads" Binding="{Binding ThreadCount}" Width="80" />
                 <DataGridTextColumn Header="Handles" Binding="{Binding HandleCount}" Width="80" />
                 <DataGridTemplateColumn Header="Status" Width="120" SortMemberPath="Status">
@@ -131,6 +133,18 @@
                     </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>
                 <DataGridTextColumn Header="User" Binding="{Binding User}" Width="140" />
+                <!-- #52: parent process, so an orphaned/unexpectedly-spawned process (e.g. a
+                     process masquerading as a child of explorer.exe) stands out. -->
+                <DataGridTemplateColumn Header="Parent" Width="160" SortMemberPath="ParentName">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <TextBlock VerticalAlignment="Center" TextTrimming="CharacterEllipsis">
+                                <Run Text="{Binding ParentName, Mode=OneWay}" />
+                                <Run Text=" (" /><Run Text="{Binding ParentPid, Mode=OneWay}" /><Run Text=")" />
+                            </TextBlock>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
                 <DataGridTemplateColumn Header="Started" Width="140" SortMemberPath="StartTime">
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate>

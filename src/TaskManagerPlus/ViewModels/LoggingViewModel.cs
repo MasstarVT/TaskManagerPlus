@@ -102,10 +102,16 @@ public sealed class LoggingViewModel : ObservableObject, IDisposable
 
         headers.AddRange(new[]
         {
+            // CPU diagnostics (#13/#14/#15) - keep the CSV consistent with what the CPU tab shows.
+            "CPU Interrupt (%)", "CPU DPC (%)", "Context Switches (/s)", "CPU Queue Length",
             "RAM Used (GB)", "RAM Total (GB)", "RAM (%)", "RAM Available (GB)",
             "Committed (GB)", "Commit Limit (GB)", "Cached (GB)",
+            // Memory diagnostics (#20/#22/#24).
+            "Page Faults Hard (/s)", "Page Faults Soft (/s)", "Standby (GB)", "Nonpaged Pool (GB)", "Paged Pool (GB)",
             "Disk Active (%)", "Disk Read (B/s)", "Disk Write (B/s)",
             "Network Receive (B/s)", "Network Send (B/s)",
+            // Network diagnostic (#32).
+            "TCP Retransmits (/s)",
         });
 
         var allSensors = _energyThermals.Temperatures
@@ -135,6 +141,11 @@ public sealed class LoggingViewModel : ObservableObject, IDisposable
         for (int i = 0; i < _coreCountAtStart; i++)
             row.Add(i < _performance.Cores.Count ? Num(_performance.Cores[i].Percent) : string.Empty);
 
+        row.Add(Num(_performance.CpuInterruptPercent));
+        row.Add(Num(_performance.CpuDpcPercent));
+        row.Add(Num(_performance.ContextSwitchesPerSec));
+        row.Add(Num(_performance.CpuQueueLength));
+
         row.Add(Num(_performance.RamUsedGb));
         row.Add(Num(_performance.RamTotalGb));
         row.Add(Num(_performance.RamPercent));
@@ -142,11 +153,19 @@ public sealed class LoggingViewModel : ObservableObject, IDisposable
         row.Add(Num(_performance.CommittedGb));
         row.Add(Num(_performance.CommitLimitGb));
         row.Add(Num(_performance.CachedGb));
+
+        row.Add(Num(_performance.HardFaultsPerSec));
+        row.Add(Num(_performance.SoftFaultsPerSec));
+        row.Add(Num(_performance.StandbyGb));
+        row.Add(Num(_performance.PoolNonpagedGb));
+        row.Add(Num(_performance.PoolPagedGb));
+
         row.Add(Num(_performance.DiskPercent));
         row.Add(Num(_performance.DiskReadBps));
         row.Add(Num(_performance.DiskWriteBps));
         row.Add(Num(_performance.NetworkReceiveBps));
         row.Add(Num(_performance.NetworkSendBps));
+        row.Add(Num(_performance.TcpRetransmitsPerSec));
 
         var allSensors = _energyThermals.Temperatures
             .Concat(_energyThermals.Fans)

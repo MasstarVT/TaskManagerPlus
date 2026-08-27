@@ -63,5 +63,14 @@ public sealed class ProcessRow : ObservableObject
     private bool _isHighPrivilege;
     public bool IsHighPrivilege { get => _isHighPrivilege; set => SetProperty(ref _isHighPrivilege, value); }
 
+    /// <summary>Parent process ID (Win32_Process.ParentProcessId, cached per-pid) and its
+    /// resolved name (0/empty when unknown, "(exited)" when the parent no longer exists) - see
+    /// ProcessMonitorService.Sample for how the name is resolved from the same batch.</summary>
+    private int _parentPid;
+    public int ParentPid { get => _parentPid; set => SetProperty(ref _parentPid, value); }
+
+    private string _parentName = string.Empty;
+    public string ParentName { get => _parentName; set => SetProperty(ref _parentName, value); }
+
     public double MemoryMb => MemoryBytes / 1024.0 / 1024.0;
 }

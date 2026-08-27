@@ -106,6 +106,48 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
     private double _cpuCurrentClockGhz;
     public double CpuCurrentClockGhz { get => _cpuCurrentClockGhz; private set => SetProperty(ref _cpuCurrentClockGhz, value); }
 
+    private double _cpuBaseClockGhz;
+    public double CpuBaseClockGhz { get => _cpuBaseClockGhz; private set => SetProperty(ref _cpuBaseClockGhz, value); }
+
+    // Session min/max/avg clock speed (#11) - plain running accumulators, no history buffer
+    // needed since only the summary values are shown, not a trend line.
+    private double _cpuMinClockGhz = double.MaxValue;
+    public double CpuMinClockGhz { get => _cpuMinClockGhz; private set => SetProperty(ref _cpuMinClockGhz, value); }
+
+    private double _cpuMaxClockGhz;
+    public double CpuMaxClockGhzSeen { get => _cpuMaxClockGhz; private set => SetProperty(ref _cpuMaxClockGhz, value); }
+
+    private double _cpuAvgClockGhz;
+    public double CpuAvgClockGhz { get => _cpuAvgClockGhz; private set => SetProperty(ref _cpuAvgClockGhz, value); }
+
+    private double _cpuClockSampleSum;
+    private long _cpuClockSampleCount;
+
+    /// <summary>Base clock (rated spec, from WMI) vs. the live clock right now, as a percent
+    /// delta (#18) - "+12%" reads as turbo boost, "~0%" (or negative, on some throttling
+    /// scenarios) reads as "stuck at base clock".</summary>
+    private double _cpuVsBasePercent;
+    public double CpuVsBasePercent { get => _cpuVsBasePercent; private set => SetProperty(ref _cpuVsBasePercent, value); }
+
+    private double _cpuInterruptPercent;
+    public double CpuInterruptPercent { get => _cpuInterruptPercent; private set => SetProperty(ref _cpuInterruptPercent, value); }
+
+    private double _cpuDpcPercent;
+    public double CpuDpcPercent { get => _cpuDpcPercent; private set => SetProperty(ref _cpuDpcPercent, value); }
+
+    private double _contextSwitchesPerSec;
+    public double ContextSwitchesPerSec { get => _contextSwitchesPerSec; private set => SetProperty(ref _contextSwitchesPerSec, value); }
+
+    private double _cpuQueueLength;
+    public double CpuQueueLength { get => _cpuQueueLength; private set { if (SetProperty(ref _cpuQueueLength, value)) OnPropertyChanged(nameof(CpuQueueLengthGaugePercent)); } }
+
+    // Like the Storage tab's disk-latency gauges: queue length has no natural 0-100 range, so
+    // this is a rough "how concerning" fill (past 2x logical processors = sustained
+    // over-subscription), not an exact value - the numeric readout next to it is the real one.
+    public double CpuQueueLengthGaugePercent => _logicalProcessors <= 0 ? 0 : Math.Clamp(CpuQueueLength / (2.0 * _logicalProcessors) * 100.0, 0, 100);
+
+    private int _logicalProcessors = Environment.ProcessorCount;
+
     private double _ramUsedGb;
     public double RamUsedGb { get => _ramUsedGb; private set => SetProperty(ref _ramUsedGb, value); }
 
@@ -147,6 +189,29 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
 
     private double _pageFilePercent;
     public double PageFilePercent { get => _pageFilePercent; private set => SetProperty(ref _pageFilePercent, value); }
+
+    // Memory diagnostics (#20/#22/#24) - see HardwareSnapshot's remarks for what each figure means.
+    private double _pageFaultsPerSec;
+    public double PageFaultsPerSec { get => _pageFaultsPerSec; private set => SetProperty(ref _pageFaultsPerSec, value); }
+
+    private double _hardFaultsPerSec;
+    public double HardFaultsPerSec { get => _hardFaultsPerSec; private set => SetProperty(ref _hardFaultsPerSec, value); }
+
+    /// <summary>Soft faults = total - hard, clamped at 0 (the two counters are read independently
+    /// a few microseconds apart, so a tiny negative delta is possible without this).</summary>
+    public double SoftFaultsPerSec => Math.Max(0, PageFaultsPerSec - HardFaultsPerSec);
+
+    private double _standbyGb;
+    public double StandbyGb { get => _standbyGb; private set => SetProperty(ref _standbyGb, value); }
+
+    private double _standbyPercent;
+    public double StandbyPercent { get => _standbyPercent; private set => SetProperty(ref _standbyPercent, value); }
+
+    private double _poolNonpagedGb;
+    public double PoolNonpagedGb { get => _poolNonpagedGb; private set => SetProperty(ref _poolNonpagedGb, value); }
+
+    private double _poolPagedGb;
+    public double PoolPagedGb { get => _poolPagedGb; private set => SetProperty(ref _poolPagedGb, value); }
 
     private double _diskPercent;
     public double DiskPercent { get => _diskPercent; private set => SetProperty(ref _diskPercent, value); }
@@ -194,6 +259,9 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
     public long NetworkOutDiscards { get => _networkOutDiscards; private set => SetProperty(ref _networkOutDiscards, value); }
 
     public bool HasNetworkErrors => NetworkInErrors > 0 || NetworkInDiscards > 0 || NetworkOutErrors > 0 || NetworkOutDiscards > 0;
+
+    private double _tcpRetransmitsPerSec;
+    public double TcpRetransmitsPerSec { get => _tcpRetransmitsPerSec; private set => SetProperty(ref _tcpRetransmitsPerSec, value); }
 
     private int _processCount;
     public int ProcessCount { get => _processCount; private set => SetProperty(ref _processCount, value); }
@@ -410,6 +478,23 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
         CpuSpecs = $"{snapshot.PhysicalCores} cores, {snapshot.LogicalProcessors} logical processors  •  Base speed {snapshot.CpuBaseClockGhz:0.00} GHz";
         CpuCurrentPercent = snapshot.CpuTotalPercent;
         CpuCurrentClockGhz = snapshot.CpuCurrentClockGhz;
+        CpuBaseClockGhz = snapshot.CpuBaseClockGhz;
+        _logicalProcessors = snapshot.LogicalProcessors;
+
+        if (snapshot.CpuCurrentClockGhz > 0)
+        {
+            CpuMinClockGhz = Math.Min(CpuMinClockGhz, snapshot.CpuCurrentClockGhz);
+            CpuMaxClockGhzSeen = Math.Max(CpuMaxClockGhzSeen, snapshot.CpuCurrentClockGhz);
+            _cpuClockSampleSum += snapshot.CpuCurrentClockGhz;
+            _cpuClockSampleCount++;
+            CpuAvgClockGhz = _cpuClockSampleSum / _cpuClockSampleCount;
+        }
+        CpuVsBasePercent = snapshot.CpuBaseClockGhz <= 0 ? 0 : (snapshot.CpuCurrentClockGhz - snapshot.CpuBaseClockGhz) / snapshot.CpuBaseClockGhz * 100.0;
+
+        CpuInterruptPercent = snapshot.CpuInterruptPercent;
+        CpuDpcPercent = snapshot.CpuDpcPercent;
+        ContextSwitchesPerSec = snapshot.ContextSwitchesPerSec;
+        CpuQueueLength = snapshot.CpuQueueLength;
 
         RamUsedGb = snapshot.RamUsedBytes / 1024.0 / 1024.0 / 1024.0;
         RamTotalGb = snapshot.RamTotalBytes / 1024.0 / 1024.0 / 1024.0;
@@ -427,6 +512,14 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
         PageFileTotalGb = snapshot.PageFileTotalBytes / 1024.0 / 1024.0 / 1024.0;
         PageFilePercent = snapshot.PageFileTotalBytes == 0 ? 0 : (double)snapshot.PageFileUsedBytes / snapshot.PageFileTotalBytes * 100.0;
 
+        PageFaultsPerSec = snapshot.PageFaultsPerSec;
+        HardFaultsPerSec = snapshot.HardFaultsPerSec;
+        OnPropertyChanged(nameof(SoftFaultsPerSec));
+        StandbyGb = snapshot.StandbyListBytes / 1024.0 / 1024.0 / 1024.0;
+        StandbyPercent = snapshot.RamTotalBytes == 0 ? 0 : (double)snapshot.StandbyListBytes / snapshot.RamTotalBytes * 100.0;
+        PoolNonpagedGb = snapshot.PoolNonpagedBytes / 1024.0 / 1024.0 / 1024.0;
+        PoolPagedGb = snapshot.PoolPagedBytes / 1024.0 / 1024.0 / 1024.0;
+
         DiskPercent = snapshot.DiskActivePercent;
         DiskReadBps = snapshot.DiskReadBytesPerSec;
         DiskWriteBps = snapshot.DiskWriteBytesPerSec;
@@ -441,6 +534,7 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
         NetworkOutErrors = snapshot.NetworkOutErrors;
         NetworkOutDiscards = snapshot.NetworkOutDiscards;
         OnPropertyChanged(nameof(HasNetworkErrors));
+        TcpRetransmitsPerSec = snapshot.TcpRetransmitsPerSec;
 
         ProcessCount = snapshot.ProcessCount;
         ThreadCount = snapshot.ThreadCount;

@@ -57,6 +57,20 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
     private double? _totalPackagePowerW;
     public double? TotalPackagePowerW { get => _totalPackagePowerW; private set => SetProperty(ref _totalPackagePowerW, value); }
 
+    // #46: running min/max per sensor since launch, keyed by Identifier - see SensorReading's
+    // remarks for why this lives here rather than on SensorMonitorService.
+    private readonly Dictionary<string, (float Min, float Max)> _temperatureBaseline = new();
+
+    // #41: "dead fan" - a fan reading exactly 0 RPM while some temperature reading is clearly
+    // under load, which a genuinely idle/passive fan wouldn't be paired with.
+    private const float DeadFanTempThresholdC = 55f;
+
+    private bool _deadFanDetected;
+    public bool DeadFanDetected { get => _deadFanDetected; private set => SetProperty(ref _deadFanDetected, value); }
+
+    private string _deadFanName = string.Empty;
+    public string DeadFanName { get => _deadFanName; private set => SetProperty(ref _deadFanName, value); }
+
     private static readonly SKColor AxisTextColor = new(0x9A, 0x9A, 0xA2);
     private static readonly SKColor AxisSeparatorColor = new(0x33, 0x33, 0x3A, 160);
     private const float CoreStrokeWidth = 2f;
@@ -139,8 +153,11 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         // types on a running PC, so treat exact 0 the same as "no data" and drop it, rather than
         // showing a wall of misleading "0 °C"/"0 W"/"0 V" tiles. Fans are the one exception - 0
         // RPM is a normal, real reading for a semi-passive fan that's stopped at idle.
-        Replace(Temperatures, readings.Where(r => r.Type == SensorType.Temperature && HasNonZeroReading(r)));
-        Replace(Fans, readings.Where(r => r.Type == SensorType.Fan && r.Value.HasValue));
+        var tempReadings = readings.Where(r => r.Type == SensorType.Temperature && HasNonZeroReading(r)).ToList();
+        Replace(Temperatures, tempReadings.Select(WithSessionBaseline));
+
+        var fanReadings = readings.Where(r => r.Type == SensorType.Fan && r.Value.HasValue).ToList();
+        Replace(Fans, fanReadings);
         Replace(Voltages, readings.Where(r => r.Type == SensorType.Voltage && HasNonZeroReading(r)));
         Replace(Wattages, readings.Where(r => r.Type == SensorType.Power && HasNonZeroReading(r)));
         // Battery sensors mix several SensorTypes (Level for charge %/degradation %, Voltage,
@@ -149,6 +166,13 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         // normal readings for a battery, unlike a temperature/voltage/wattage sensor reading
         // exactly 0 (which usually means "unsupported", per the comment above).
         Replace(Battery, readings.Where(r => r.HardwareType == HardwareType.Battery && r.Value.HasValue));
+
+        // #41: a fan pinned at 0 RPM while some temperature reading is clearly under load is a
+        // real "this fan stopped spinning" signal, not a normal idle/passive-cooling reading.
+        bool anyHot = tempReadings.Any(r => r.Value is float t && t >= DeadFanTempThresholdC);
+        var deadFan = anyHot ? fanReadings.FirstOrDefault(r => r.Value is 0f) : null;
+        DeadFanDetected = deadFan is not null;
+        DeadFanName = deadFan is null ? string.Empty : $"{deadFan.HardwareName} {deadFan.SensorName}";
 
         // Sensor names aren't standardized across CPU vendors (Intel: "CPU Package"; AMD:
         // "Core (Tctl/Tdie)"; varies further by model), so try a few known hints in order
@@ -161,6 +185,31 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
             PowerHistory.Add(TotalPackagePowerW.Value);
             if (PowerHistory.Count > HistoryLength) PowerHistory.RemoveAt(0);
         }
+    }
+
+    /// <summary>Updates the running min/max for this reading's Identifier and returns a copy of
+    /// the reading carrying that session range (#46) - the raw reading from SensorMonitorService
+    /// only ever has the instantaneous value.</summary>
+    private SensorReading WithSessionBaseline(SensorReading reading)
+    {
+        if (reading.Value is not float value) return reading;
+
+        var (min, max) = _temperatureBaseline.TryGetValue(reading.Identifier, out var existing)
+            ? (Math.Min(existing.Min, value), Math.Max(existing.Max, value))
+            : (value, value);
+        _temperatureBaseline[reading.Identifier] = (min, max);
+
+        return new SensorReading
+        {
+            HardwareName = reading.HardwareName,
+            HardwareType = reading.HardwareType,
+            SensorName = reading.SensorName,
+            Type = reading.Type,
+            Value = reading.Value,
+            Identifier = reading.Identifier,
+            SessionMin = min,
+            SessionMax = max,
+        };
     }
 
     private static void Replace(ObservableCollection<SensorReading> target, IEnumerable<SensorReading> source)

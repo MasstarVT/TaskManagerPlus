@@ -43,12 +43,14 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     public MainViewModel()
     {
-        Summary = new SummaryViewModel(Performance, Processes);
+        // Cpu/Memory/Storage/Network/Logging are constructed before Summary, since Summary's
+        // Health Check card (#64) needs a live Network reference to read from.
         Cpu = new CpuViewModel(Performance);
         Memory = new MemoryViewModel(Performance, Processes);
         Storage = new StorageViewModel(Performance);
         Network = new NetworkViewModel(Performance);
         Logging = new LoggingViewModel(Performance, EnergyThermals);
+        Summary = new SummaryViewModel(Performance, Processes, Services, EnergyThermals, SystemSpecs, Network);
 
         ToggleSettingsCommand = new RelayCommand(_ => IsSettingsOpen = !IsSettingsOpen);
 
@@ -99,5 +101,6 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         EnergyThermals.Dispose();
         Network.Dispose();
         Logging.Dispose();
+        Summary.Dispose();
     }
 }

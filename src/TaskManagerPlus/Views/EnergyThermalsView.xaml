@@ -30,6 +30,26 @@
                            Text="Sensors unavailable — the hardware sensor driver couldn't be opened. This can happen under Smart App Control, a restrictive driver-signing policy, or on hardware LibreHardwareMonitor doesn't support." />
             </Border>
 
+            <!-- #41: a fan reading 0 RPM while the system is clearly running warm is a real
+                 "this fan stopped" signal - see EnergyThermalsViewModel.RefreshAsync. -->
+            <Border Background="{DynamicResource BgElevatedBrush}" BorderBrush="{DynamicResource WarningBrush}"
+                    BorderThickness="1" CornerRadius="8" Padding="14,10" Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding DeadFanDetected}" Value="True">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <TextBlock Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" FontSize="12.5">
+                    <Run Text="Possible stopped fan: " /><Run Text="{Binding DeadFanName, Mode=OneWay}" />
+                    <Run Text=" is reading 0 RPM while the system is running warm." />
+                </TextBlock>
+            </Border>
+
             <!-- Headline tiles -->
             <UniformGrid Columns="2" Margin="0,0,0,16">
                 <views:VfdMeter Title="CPU Package" Glow="True" Margin="0,0,8,0"
@@ -63,11 +83,21 @@
                 </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
                     <DataTemplate>
+                        <!-- #46: session min/max lets a reading answer "is this normal for my
+                             CPU" without an external baseline - see EnergyThermalsViewModel's
+                             WithSessionBaseline. -->
                         <views:VfdMeter Title="{Binding SensorName}" Glow="False" Width="172" Margin="0,0,8,8"
                                         Percent="{Binding Value, TargetNullValue=0}"
                                         ValueText="{Binding Value, StringFormat={}{0:0.#}, TargetNullValue=–}" Unit="°C"
-                                        SubText="{Binding HardwareName}"
-                                        AccentBrush="{Binding Value, Converter={StaticResource TemperatureToBrushConverter}}" />
+                                        AccentBrush="{Binding Value, Converter={StaticResource TemperatureToBrushConverter}}">
+                            <views:VfdMeter.SubText>
+                                <MultiBinding StringFormat="{}{0} • {1:0}–{2:0}°C session">
+                                    <Binding Path="HardwareName" />
+                                    <Binding Path="SessionMin" />
+                                    <Binding Path="SessionMax" />
+                                </MultiBinding>
+                            </views:VfdMeter.SubText>
+                        </views:VfdMeter>
                     </DataTemplate>
                 </ItemsControl.ItemTemplate>
             </ItemsControl>

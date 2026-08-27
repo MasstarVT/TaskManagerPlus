@@ -77,6 +77,29 @@
                                 AccentBrush="{Binding Performance.PageFilePercent, Converter={StaticResource PercentToBrushConverter}}" />
             </UniformGrid>
 
+            <!-- Diagnostics: standby (reclaimable) list (#22, explains "why does Windows show
+                 low free RAM when nothing is running" - this memory looks used but is instantly
+                 reclaimable), kernel pool usage (#24, a slow sustained climb usually means a
+                 leaking driver), and page fault rate (#20, hard faults spiking means heavy
+                 paging to disk; soft faults are cheap and normal). -->
+            <TextBlock Text="Diagnostics" Style="{StaticResource SubStat}" Margin="0,0,0,10" />
+            <UniformGrid Columns="4" Margin="0,0,0,16">
+                <views:VfdMeter Title="Standby list" Glow="False" Margin="0,0,6,0"
+                                Percent="{Binding Performance.StandbyPercent}"
+                                ValueText="{Binding Performance.StandbyGb, StringFormat={}{0:0.0}}" Unit="GB"
+                                SubText="Reclaimable cache" AccentBrush="{Binding Performance.RamColor, Converter={StaticResource ColorToBrushConverter}}" />
+                <views:VfdMeter Title="Nonpaged pool" Glow="False" Margin="3,0,3,0"
+                                ValueText="{Binding Performance.PoolNonpagedGb, StringFormat={}{0:0.00}}" Unit="GB"
+                                SubText="Kernel memory" AccentBrush="{DynamicResource AccentBrush}" />
+                <views:VfdMeter Title="Paged pool" Glow="False" Margin="3,0,3,0"
+                                ValueText="{Binding Performance.PoolPagedGb, StringFormat={}{0:0.00}}" Unit="GB"
+                                SubText="Kernel memory" AccentBrush="{DynamicResource AccentBrush}" />
+                <views:VfdMeter Title="Page faults" Glow="False" Margin="6,0,0,0"
+                                ValueText="{Binding Performance.HardFaultsPerSec, StringFormat={}{0:0}}" Unit="hard/s"
+                                SubText="{Binding Performance.SoftFaultsPerSec, StringFormat={}+{0:0} soft/s}"
+                                AccentBrush="{DynamicResource AccentBrush}" />
+            </UniformGrid>
+
             <!-- Committed trend -->
             <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
                 <StackPanel>
