@@ -30,6 +30,14 @@ public sealed class MinidumpInfo
     public string? BugcheckCode { get; init; }
 }
 
+/// <summary>One day's worth of Critical/Error event counts (#1 - Reliability History) - bucketed
+/// from the same 30-day event query everything else on this tab already runs, no second query.</summary>
+public sealed class DailyEventCount
+{
+    public DateTime Date { get; init; }
+    public int Count { get; init; }
+}
+
 /// <summary>Point-in-time result of querying the System/Application event logs for stability
 /// diagnostics. Queried on demand (event log reads aren't cheap), not on a live timer - see
 /// StabilityViewModel.</summary>
@@ -54,4 +62,10 @@ public sealed class StabilitySnapshot
     public DateTime? LastCrashTime { get; init; }
 
     public List<MinidumpInfo> Minidumps { get; init; } = new();
+
+    /// <summary>Daily Critical/Error counts across the lookback window (#1), oldest first - feeds
+    /// the Stability tab's Reliability History chart. Bucketed from the same capped event list
+    /// already read above (best-effort: a day busier than the per-log cap won't have every one of
+    /// its events counted, the same tradeoff RecentEvents itself already makes).</summary>
+    public List<DailyEventCount> DailyCounts { get; init; } = new();
 }

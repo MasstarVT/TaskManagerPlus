@@ -173,6 +173,65 @@
                 </StackPanel>
             </Border>
 
+            <!-- #84: throttle reason breakdown - the one combined "Thermal"/"Power"/"None" readout
+                 for the two banners above (see CpuViewModel.ThrottleReason's remarks - it's not a
+                 third independent signal, just IsThrottling/IsPowerLimited read together). -->
+            <UniformGrid Columns="2" Margin="0,16,0,0">
+                <views:VfdMeter Title="Throttle reason" Glow="False" Margin="0,0,6,0"
+                                ValueText="{Binding ThrottleReason}"
+                                SubText="Best-effort — no vendor limit-reason API available">
+                    <views:VfdMeter.Style>
+                        <Style TargetType="views:VfdMeter">
+                            <Setter Property="AccentBrush" Value="{DynamicResource TextSecondaryBrush}" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding ThrottleReason}" Value="Thermal">
+                                    <Setter Property="AccentBrush" Value="{DynamicResource DangerBrush}" />
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding ThrottleReason}" Value="Power">
+                                    <Setter Property="AccentBrush" Value="{DynamicResource WarningBrush}" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </views:VfdMeter.Style>
+                </views:VfdMeter>
+            </UniformGrid>
+
+            <!-- #83: C-state residency - a CPU idling deeply for power savings (high C2/C3) looks
+                 very different from one held at a low clock by real throttling, even though both
+                 can present as "the CPU seems slow". Collapsed entirely when the counters aren't
+                 exposed on this Windows/CPU generation. -->
+            <StackPanel Margin="0,16,0,0">
+                <StackPanel.Style>
+                    <Style TargetType="StackPanel">
+                        <Setter Property="Visibility" Value="Visible" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding Performance.CStatesAvailable}" Value="False">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </StackPanel.Style>
+                <TextBlock Text="C-state residency" Style="{StaticResource SubStat}" Margin="0,0,0,10" />
+                <UniformGrid Columns="4">
+                    <views:VfdMeter Title="Idle (C0/halt)" Glow="False" Margin="0,0,6,0"
+                                    Percent="{Binding Performance.CpuIdlePercent}"
+                                    ValueText="{Binding Performance.CpuIdlePercent, StringFormat={}{0:0.0}}" Unit="%"
+                                    AccentBrush="{DynamicResource TextSecondaryBrush}" />
+                    <views:VfdMeter Title="C1" Glow="False" Margin="3,0,3,0"
+                                    Percent="{Binding Performance.CpuC1Percent}"
+                                    ValueText="{Binding Performance.CpuC1Percent, StringFormat={}{0:0.0}}" Unit="%"
+                                    AccentBrush="{DynamicResource AccentBrush}" />
+                    <views:VfdMeter Title="C2" Glow="False" Margin="3,0,3,0"
+                                    Percent="{Binding Performance.CpuC2Percent}"
+                                    ValueText="{Binding Performance.CpuC2Percent, StringFormat={}{0:0.0}}" Unit="%"
+                                    AccentBrush="{DynamicResource AccentBrush}" />
+                    <views:VfdMeter Title="C3" Glow="False" Margin="6,0,0,0"
+                                    Percent="{Binding Performance.CpuC3Percent}"
+                                    ValueText="{Binding Performance.CpuC3Percent, StringFormat={}{0:0.0}}" Unit="%"
+                                    AccentBrush="{DynamicResource AccentBrush}" />
+                </UniformGrid>
+            </StackPanel>
+
             <!-- CPU diagnostics: interrupt/DPC time (#13, a sustained spike usually means a bad
                  driver, not app load), context-switch rate (#14, thrashing/livelock), queue
                  length (#15, threads waiting for a core - CpuQueueLengthGaugePercent is a rough

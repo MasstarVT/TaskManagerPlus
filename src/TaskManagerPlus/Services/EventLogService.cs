@@ -62,7 +62,27 @@ public sealed class EventLogService
             LastTdrEvent = tdrEvents.FirstOrDefault()?.TimeCreated,
             LastCrashTime = lastCrash?.TimeCreated,
             Minidumps = ReadMinidumps(shutdownEvents),
+            DailyCounts = BuildDailyCounts(events),
         };
+    }
+
+    /// <summary>#1: Reliability History - buckets the same events already read into one count per
+    /// calendar day across the full lookback window, zero-filled for days with no Critical/Error
+    /// entries at all (Reliability Monitor's own chart shows the flat baseline too, not just spikes).</summary>
+    private static List<DailyEventCount> BuildDailyCounts(List<StabilityEvent> events)
+    {
+        var counts = events
+            .GroupBy(e => e.TimeCreated.Date)
+            .ToDictionary(g => g.Key, g => g.Count());
+
+        var result = new List<DailyEventCount>();
+        var today = DateTime.Now.Date;
+        for (int i = LookbackDays - 1; i >= 0; i--)
+        {
+            var day = today.AddDays(-i);
+            result.Add(new DailyEventCount { Date = day, Count = counts.TryGetValue(day, out var c) ? c : 0 });
+        }
+        return result;
     }
 
     private static void ReadLog(string logName, List<StabilityEvent> into)

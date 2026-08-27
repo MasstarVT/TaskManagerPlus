@@ -3,6 +3,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="clr-namespace:TaskManagerPlus.ViewModels"
              xmlns:views="clr-namespace:TaskManagerPlus.Views"
+             xmlns:lvc="clr-namespace:LiveChartsCore.SkiaSharpView.WPF;assembly=LiveChartsCore.SkiaSharpView.WPF"
              d:DataContext="{d:DesignInstance Type=vm:StabilityViewModel}"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
@@ -54,6 +55,18 @@
                                 ValueText="{Binding Minidumps.Count}"
                                 SubText="%SystemRoot%\Minidump" AccentBrush="{DynamicResource AccentBrush}" />
             </UniformGrid>
+
+            <!-- #1: Reliability History - daily Critical/Error counts over the lookback window,
+                 the same "crash/failure events over time" chart Windows' own Reliability Monitor
+                 shows, bucketed from the same event query as everything else on this tab. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Reliability history" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Critical/Error events per day, last 30 days." Style="{StaticResource SubStat}" Margin="0,-4,0,10" />
+                    <lvc:CartesianChart Series="{Binding DailyEventSeries}" XAxes="{Binding DailyEventXAxes}" YAxes="{Binding DailyEventYAxes}"
+                                         Height="160" TooltipPosition="Top" LegendPosition="Hidden" Background="Transparent" />
+                </StackPanel>
+            </Border>
 
             <!-- #3: minidump files, timestamp + best-effort bugcheck code correlated from a
                  nearby Kernel-Power 41 event - see EventLogService.ReadMinidumps. -->

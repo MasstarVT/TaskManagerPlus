@@ -62,6 +62,17 @@ public sealed class CpuViewModel : ObservableObject, IDisposable
     private string _powerLimitText = string.Empty;
     public string PowerLimitText { get => _powerLimitText; private set => SetProperty(ref _powerLimitText, value); }
 
+    /// <summary>
+    /// #84: throttle reason breakdown - a single "Thermal" / "Power" / "None" readout combining
+    /// IsThrottling and IsPowerLimited above into the one question they're both really answering
+    /// ("why is this CPU running below base clock right now, if it is"). Not a third, independent
+    /// signal - LibreHardwareMonitorLib exposes no CPU "limit reason" API on most consumer
+    /// hardware (that's the vendor-proprietary MSR data HWiNFO reads directly, the same gap
+    /// IsThrottling/IsPowerLimited's own remarks document), so this is exactly as reliable as
+    /// those two heuristics, just presented as one readout instead of two separate flags.
+    /// </summary>
+    public string ThrottleReason => IsThrottling ? "Thermal" : IsPowerLimited ? "Power" : "None";
+
     /// <summary>Pass-through: true only on genuinely hybrid CPUs. The view should hide the
     /// P-core/E-core color distinction entirely when this is false.</summary>
     public bool HasHybridTopology => Performance.HasHybridTopology;
@@ -115,6 +126,8 @@ public sealed class CpuViewModel : ObservableObject, IDisposable
         PowerLimitText = IsPowerLimited
             ? $"{power:0.#} W (session high {powerMax:0.#} W) and {Performance.CpuVsBasePercent:0}% vs. base clock under load"
             : string.Empty;
+
+        OnPropertyChanged(nameof(ThrottleReason));
     }
 
     private void OnCoresCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)

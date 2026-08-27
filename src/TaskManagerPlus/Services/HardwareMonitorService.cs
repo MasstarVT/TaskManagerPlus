@@ -61,6 +61,17 @@ public sealed class HardwareMonitorService : IDisposable
     // "not available", and Sample() just reports 0 rather than throwing.
     private readonly PerformanceCounter? _tcpRetransmitsCounter;
 
+    // C-state residency (#83): "% C1/C2/C3 Time" on "Processor Information"\_Total - a power-
+    // related slowdown signal distinct from thermal throttling (a CPU stuck mostly in a deep
+    // C-state under light load is idling for power savings, not being held back). Each wrapped
+    // independently - not every CPU/chipset generation reports all three tiers (some modern
+    // platforms only ever populate C1), so a missing one just reports 0 rather than failing the
+    // whole group.
+    private readonly PerformanceCounter? _cIdleTimeCounter;
+    private readonly PerformanceCounter? _c1TimeCounter;
+    private readonly PerformanceCounter? _c2TimeCounter;
+    private readonly PerformanceCounter? _c3TimeCounter;
+
     private readonly string _cpuName;
     private readonly double _cpuBaseClockGhz;
     private readonly int _logicalProcessors;
@@ -172,6 +183,11 @@ public sealed class HardwareMonitorService : IDisposable
             _tcpRetransmitsCounter = null;
         }
 
+        _cIdleTimeCounter = TryCreateCounter("Processor Information", "% Idle Time", "_Total");
+        _c1TimeCounter = TryCreateCounter("Processor Information", "% C1 Time", "_Total");
+        _c2TimeCounter = TryCreateCounter("Processor Information", "% C2 Time", "_Total");
+        _c3TimeCounter = TryCreateCounter("Processor Information", "% C3 Time", "_Total");
+
         // Rate counters return 0 on their first read; prime them now so the
         // very first UI sample isn't a meaningless zero.
         _ = _cpuTotalCounter.NextValue();
@@ -189,6 +205,10 @@ public sealed class HardwareMonitorService : IDisposable
         _ = _contextSwitchesCounter.NextValue();
         _ = _pageFaultsCounter.NextValue();
         _ = _hardFaultsCounter.NextValue();
+        _ = _cIdleTimeCounter?.NextValue();
+        _ = _c1TimeCounter?.NextValue();
+        _ = _c2TimeCounter?.NextValue();
+        _ = _c3TimeCounter?.NextValue();
 
         (_lastBytesReceived, _lastBytesSent) = ReadTotalNetworkBytes();
         _lastNetSampleUtc = DateTime.UtcNow;
@@ -256,6 +276,12 @@ public sealed class HardwareMonitorService : IDisposable
             ContextSwitchesPerSec = Math.Round(Math.Max(0, _contextSwitchesCounter.NextValue()), 0),
             CpuQueueLength = Math.Round(Math.Max(0, _cpuQueueLengthCounter.NextValue()), 0),
 
+            CStatesAvailable = _cIdleTimeCounter is not null,
+            CpuIdlePercent = _cIdleTimeCounter is null ? 0 : Math.Round(Clamp(_cIdleTimeCounter.NextValue()), 1),
+            CpuC1Percent = _c1TimeCounter is null ? 0 : Math.Round(Clamp(_c1TimeCounter.NextValue()), 1),
+            CpuC2Percent = _c2TimeCounter is null ? 0 : Math.Round(Clamp(_c2TimeCounter.NextValue()), 1),
+            CpuC3Percent = _c3TimeCounter is null ? 0 : Math.Round(Clamp(_c3TimeCounter.NextValue()), 1),
+
             RamTotalBytes = totalBytes,
             RamUsedBytes = totalBytes - availBytes,
             RamAvailableBytes = availBytes,
@@ -293,6 +319,22 @@ public sealed class HardwareMonitorService : IDisposable
     }
 
     private static double Clamp(double v) => Math.Max(0, Math.Min(100, v));
+
+    /// <summary>Best-effort counter construction - some counter/instance combinations
+    /// (C-state tiers above being the main case in this app) legitimately don't exist on every
+    /// Windows/CPU generation, so a failure here just means "not available" rather than crashing
+    /// the whole service.</summary>
+    private static PerformanceCounter? TryCreateCounter(string category, string name, string instance)
+    {
+        try
+        {
+            return new PerformanceCounter(category, name, instance, readOnly: true);
+        }
+        catch
+        {
+            return null;
+        }
+    }
 
     /// <summary>Parses a "Processor Information" instance name ("&lt;node&gt;,&lt;core&gt;") into
     /// a sortable (node, core) key, defaulting to (0, 0) for any unexpected format.</summary>
@@ -447,5 +489,9 @@ public sealed class HardwareMonitorService : IDisposable
         _poolNonpagedCounter.Dispose();
         _poolPagedCounter.Dispose();
         _tcpRetransmitsCounter?.Dispose();
+        _cIdleTimeCounter?.Dispose();
+        _c1TimeCounter?.Dispose();
+        _c2TimeCounter?.Dispose();
+        _c3TimeCounter?.Dispose();
     }
 }

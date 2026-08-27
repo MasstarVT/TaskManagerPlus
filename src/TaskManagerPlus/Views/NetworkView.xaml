@@ -187,6 +187,49 @@
                 </StackPanel>
             </Border>
 
+            <!-- #87: top network processes by connection count - a "per-process bandwidth" proxy,
+                 since Windows exposes no public per-process byte-attribution API. See
+                 NetworkProcessUsage's remarks for why this is a connection count, not a byte rate. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Top network processes" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="By active connection count - not a true byte-rate figure, which Windows exposes no public API for."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+                    <ItemsControl ItemsSource="{Binding TopNetworkProcesses}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" FontSize="12.5">
+                                        <Run Text="{Binding ProcessName}" FontWeight="SemiBold" />
+                                        <Run Text=" (PID " /><Run Text="{Binding Pid}" /><Run Text=")" />
+                                    </TextBlock>
+                                    <TextBlock Grid.Column="1" FontSize="12.5" Foreground="{DynamicResource TextSecondaryBrush}">
+                                        <Run Text="{Binding ConnectionCount}" /><Run Text=" connections (" />
+                                        <Run Text="{Binding EstablishedCount}" /><Run Text=" established)" />
+                                    </TextBlock>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="No active connections.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding TopNetworkProcesses.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
             <!-- #21: active TCP connections with owning process - see NetworkConnectionsService. -->
             <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
                 <StackPanel>

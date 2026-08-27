@@ -148,6 +148,24 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
 
     private int _logicalProcessors = Environment.ProcessorCount;
 
+    // #83: C-state residency - a CPU idling deeply for power savings (high C2/C3) reads very
+    // differently from one thermal/power-throttled at a low clock under real load, even though
+    // both can look like "the CPU seems slow" from the outside.
+    private bool _cStatesAvailable;
+    public bool CStatesAvailable { get => _cStatesAvailable; private set => SetProperty(ref _cStatesAvailable, value); }
+
+    private double _cpuIdlePercent;
+    public double CpuIdlePercent { get => _cpuIdlePercent; private set => SetProperty(ref _cpuIdlePercent, value); }
+
+    private double _cpuC1Percent;
+    public double CpuC1Percent { get => _cpuC1Percent; private set => SetProperty(ref _cpuC1Percent, value); }
+
+    private double _cpuC2Percent;
+    public double CpuC2Percent { get => _cpuC2Percent; private set => SetProperty(ref _cpuC2Percent, value); }
+
+    private double _cpuC3Percent;
+    public double CpuC3Percent { get => _cpuC3Percent; private set => SetProperty(ref _cpuC3Percent, value); }
+
     private double _ramUsedGb;
     public double RamUsedGb { get => _ramUsedGb; private set => SetProperty(ref _ramUsedGb, value); }
 
@@ -495,6 +513,12 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
         CpuDpcPercent = snapshot.CpuDpcPercent;
         ContextSwitchesPerSec = snapshot.ContextSwitchesPerSec;
         CpuQueueLength = snapshot.CpuQueueLength;
+
+        CStatesAvailable = snapshot.CStatesAvailable;
+        CpuIdlePercent = snapshot.CpuIdlePercent;
+        CpuC1Percent = snapshot.CpuC1Percent;
+        CpuC2Percent = snapshot.CpuC2Percent;
+        CpuC3Percent = snapshot.CpuC3Percent;
 
         RamUsedGb = snapshot.RamUsedBytes / 1024.0 / 1024.0 / 1024.0;
         RamTotalGb = snapshot.RamTotalBytes / 1024.0 / 1024.0 / 1024.0;

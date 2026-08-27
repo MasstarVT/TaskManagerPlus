@@ -10,6 +10,18 @@ public sealed record TcpConnectionInfo(
     string LocalAddress, int LocalPort, string RemoteAddress, int RemotePort, string State, int Pid, string ProcessName);
 
 /// <summary>
+/// Per-process connection counts (#87 - a "per-process bandwidth" proxy). Windows exposes no
+/// public, stable API for true per-process byte-level network attribution - Task Manager's own
+/// per-process network column is built on an undocumented NSI (Network Store Interface) call, the
+/// same tier of undocumented interop this app has deliberately avoided elsewhere (see
+/// ProcessMonitorService's remarks on why per-process power draw isn't shown at all for a similar
+/// reason). A connection count from the same TCP table NetworkConnectionsService already reads is
+/// a reasonable, honest proxy instead: the process opening/holding the most simultaneous
+/// connections is very often the one saturating the link, even without a byte count attached.
+/// </summary>
+public sealed record NetworkProcessUsage(int Pid, string ProcessName, int ConnectionCount, int EstablishedCount);
+
+/// <summary>
 /// Lists active TCP connections with their owning process. .NET exposes no managed API for the
 /// owning PID of a connection (IPGlobalProperties.GetActiveTcpConnections() doesn't carry one) -
 /// this uses the same GetExtendedTcpTable native call `netstat -b` itself is built on. Same
@@ -42,6 +54,16 @@ public static class NetworkConnectionsService
         }
         return results;
     }
+
+    /// <summary>#87: groups an already-sampled connection list by owning process, sorted by
+    /// connection count descending - see NetworkProcessUsage's remarks for why this is a
+    /// connection-count proxy rather than a true byte-level figure.</summary>
+    public static List<NetworkProcessUsage> SummarizeByProcess(IEnumerable<TcpConnectionInfo> connections) =>
+        connections
+            .GroupBy(c => (c.Pid, c.ProcessName))
+            .Select(g => new NetworkProcessUsage(g.Key.Pid, g.Key.ProcessName, g.Count(), g.Count(c => c.State == "ESTABLISHED")))
+            .OrderByDescending(u => u.ConnectionCount)
+            .ToList();
 
     private static Dictionary<int, string> BuildProcessNameCache()
     {

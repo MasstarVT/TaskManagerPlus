@@ -266,6 +266,24 @@
                     </Style>
                 </StackPanel.Style>
                 <TextBlock Text="Battery" Style="{StaticResource SubStat}" Margin="0,0,0,10" />
+                <!-- #88: real-time drain rate, pulled out as its own headline tile - see
+                     EnergyThermalsViewModel.BatteryDrainRateW's remarks. -->
+                <views:VfdMeter Glow="True" Width="220" Margin="0,0,0,10"
+                                ValueText="{Binding BatteryDrainRateW, StringFormat={}{0:0.#}, TargetNullValue=–}" Unit="W"
+                                AccentBrush="{DynamicResource DangerBrush}">
+                    <views:VfdMeter.Style>
+                        <Style TargetType="views:VfdMeter">
+                            <Setter Property="Title" Value="Discharge rate" />
+                            <Setter Property="SubText" Value="Draining" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding BatteryIsCharging}" Value="True">
+                                    <Setter Property="Title" Value="Charge rate" />
+                                    <Setter Property="SubText" Value="Charging" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </views:VfdMeter.Style>
+                </views:VfdMeter>
                 <ItemsControl ItemsSource="{Binding Battery}">
                     <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>

@@ -53,6 +53,12 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
     // data that mostly matters when actively investigating something.
     public ObservableCollection<TcpConnectionInfo> Connections { get; } = new();
 
+    // #87: top network processes by connection count - a "per-process bandwidth" proxy, since
+    // Windows has no public API for true per-process byte attribution - see NetworkProcessUsage's
+    // remarks. Refreshed on the same slow timer as Connections itself, since it's derived from
+    // that same sample.
+    public ObservableCollection<NetworkProcessUsage> TopNetworkProcesses { get; } = new();
+
     // #23: current Wi-Fi association (SSID/signal/channel) - null (and the view hides the card)
     // on a wired connection, no Wi-Fi adapter, or a non-English Windows install (netsh's text
     // output is parsed by English field labels - see WifiDiagnosticsService's remarks).
@@ -119,6 +125,10 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
             Connections.Clear();
             foreach (var c in connections.OrderByDescending(c => c.State == "ESTABLISHED").ThenBy(c => c.ProcessName, StringComparer.OrdinalIgnoreCase))
                 Connections.Add(c);
+
+            TopNetworkProcesses.Clear();
+            foreach (var u in NetworkConnectionsService.SummarizeByProcess(connections).Take(8))
+                TopNetworkProcesses.Add(u);
 
             Wifi = await Task.Run(WifiDiagnosticsService.ReadCurrentWifi);
         }

@@ -65,6 +65,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         ApplyAxisThemeToEnergyThermals();
         Theme.ThemeModeChanged += ApplyAxisThemeToEnergyThermals;
+
+        ApplyAxisThemeToStability();
+        Theme.ThemeModeChanged += ApplyAxisThemeToStability;
     }
 
     private void ApplyThemeToPerformance()
@@ -93,11 +96,20 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         EnergyThermals.ApplyAxisTheme(TextOf("TextSecondaryBrush"), TextOf("BorderBrush2"));
     }
 
+    private void ApplyAxisThemeToStability()
+    {
+        var resources = Application.Current.Resources;
+        Color TextOf(string key) => (resources[key] as SolidColorBrush)?.Color ?? Colors.Gray;
+
+        Stability.ApplyAxisTheme(TextOf("TextSecondaryBrush"), TextOf("BorderBrush2"));
+    }
+
     public void Dispose()
     {
         Theme.ColorsChanged -= ApplyThemeToPerformance;
         Theme.ThemeModeChanged -= ApplyAxisThemeToPerformance;
         Theme.ThemeModeChanged -= ApplyAxisThemeToEnergyThermals;
+        Theme.ThemeModeChanged -= ApplyAxisThemeToStability;
         Processes.Dispose();
         Performance.Dispose();
         Services.Dispose();

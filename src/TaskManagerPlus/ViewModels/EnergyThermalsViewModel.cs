@@ -51,6 +51,20 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
     /// health" report from any other tool is ultimately built from.</summary>
     public ObservableCollection<SensorReading> Battery { get; } = new();
 
+    // #88: real-time battery drain rate - pulled out of the generic Battery tile list above into
+    // its own headline readout (same "find the one figure that matters, out of a generic sensor
+    // list" treatment CpuPackageTempC/TotalPackagePowerW already get), since "how fast is this
+    // draining right now" is the one question that directly answers "is some background process
+    // killing my battery life". LibreHardwareMonitorLib names/signs this per-vendor, not
+    // standardized the same way CPU sensor names aren't (see FindByNameContains's remarks) - name
+    // hints are tried first, falling back to sign alone (negative conventionally means charging)
+    // when no name match is found.
+    private double? _batteryDrainRateW;
+    public double? BatteryDrainRateW { get => _batteryDrainRateW; private set => SetProperty(ref _batteryDrainRateW, value); }
+
+    private bool _batteryIsCharging;
+    public bool BatteryIsCharging { get => _batteryIsCharging; private set => SetProperty(ref _batteryIsCharging, value); }
+
     public ObservableCollection<double> PowerHistory { get; } = NewHistory();
     private readonly LineSeries<double> _powerGlow;
     private readonly LineSeries<double> _powerCore;
@@ -329,6 +343,19 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         // normal readings for a battery, unlike a temperature/voltage/wattage sensor reading
         // exactly 0 (which usually means "unsupported", per the comment above).
         Replace(Battery, readings.Where(r => r.HardwareType == HardwareType.Battery && r.Value.HasValue));
+
+        // #88: real-time drain rate - see the property's remarks for the name/sign heuristic.
+        var dischargeReading = Battery.FirstOrDefault(r => r.Type == SensorType.Power &&
+            r.SensorName.Contains("discharge", StringComparison.OrdinalIgnoreCase) && r.Value is not 0f);
+        var chargeReading = Battery.FirstOrDefault(r => r.Type == SensorType.Power &&
+            r.SensorName.Contains("charge", StringComparison.OrdinalIgnoreCase) &&
+            !r.SensorName.Contains("discharge", StringComparison.OrdinalIgnoreCase) && r.Value is not 0f);
+        var anyPowerReading = Battery.FirstOrDefault(r => r.Type == SensorType.Power && r.Value is not 0f);
+
+        if (dischargeReading is not null) { BatteryDrainRateW = Math.Abs(dischargeReading.Value!.Value); BatteryIsCharging = false; }
+        else if (chargeReading is not null) { BatteryDrainRateW = Math.Abs(chargeReading.Value!.Value); BatteryIsCharging = true; }
+        else if (anyPowerReading is not null) { BatteryDrainRateW = Math.Abs(anyPowerReading.Value!.Value); BatteryIsCharging = anyPowerReading.Value!.Value < 0; }
+        else { BatteryDrainRateW = null; BatteryIsCharging = false; }
 
         // #41: a fan pinned at 0 RPM while some temperature reading is clearly under load is a
         // real "this fan stopped spinning" signal, not a normal idle/passive-cooling reading.

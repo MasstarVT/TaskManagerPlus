@@ -31,6 +31,16 @@ public sealed class HardwareSnapshot
     /// running ones), an over-subscription indicator independent of the vs busy percent.</summary>
     public double CpuQueueLength { get; init; }
 
+    /// <summary>C-state residency (#83, "Processor Information\% Idle|C1|C2|C3 Time", "_Total") -
+    /// distinguishes a CPU idling deeply for power savings from one held back by thermal/power
+    /// throttling. False when the counters aren't exposed at all on this Windows/CPU generation -
+    /// callers should hide the section rather than showing all-zero bars in that case.</summary>
+    public bool CStatesAvailable { get; init; }
+    public double CpuIdlePercent { get; init; }
+    public double CpuC1Percent { get; init; }
+    public double CpuC2Percent { get; init; }
+    public double CpuC3Percent { get; init; }
+
     public long RamUsedBytes { get; init; }
     public long RamTotalBytes { get; init; }
     public double RamPercent => RamTotalBytes == 0 ? 0 : (double)RamUsedBytes / RamTotalBytes * 100.0;
