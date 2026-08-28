@@ -32,6 +32,44 @@
                 </TextBlock>
             </Border>
 
+            <!-- #606: thermal-critical/shutdown event scan - a firmware thermal shutdown is
+                 otherwise indistinguishable in this log from a PSU death, so this gets its own
+                 explicit red banner rather than being folded into the generic event grid below. -->
+            <Border Background="{DynamicResource DangerMutedBrush}" BorderBrush="{DynamicResource DangerBrush}"
+                    BorderThickness="1" CornerRadius="8" Padding="14,10" Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding ThermalCriticalDetected}" Value="True">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <TextBlock Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" FontSize="12.5">
+                    <Run Text="Thermal-critical event found — a thermal zone exceeded its critical/passive trip point (or an ACPI thermal-shutdown record was logged) within the last 30 days. " />
+                    <Run Text="{Binding ThermalCriticalEvents[0].TimeCreated, StringFormat={}Most recent: {0:g}, Mode=OneWay}" />
+                </TextBlock>
+            </Border>
+
+            <!-- #610: throttle-to-stutter correlation - cross-references #604's persisted throttle
+                 episodes against the same recorded-events timestamps below. Hidden until there's
+                 both at least one throttle episode and one recorded event to compare. -->
+            <TextBlock Text="{Binding HitchThrottleCorrelationText}"
+                       FontSize="12.5" TextWrapping="Wrap" Margin="0,0,0,16">
+                <TextBlock.Style>
+                    <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                        <Setter Property="Visibility" Value="Visible" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding HitchThrottleCorrelationText}" Value="">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </TextBlock.Style>
+            </TextBlock>
+
             <Grid Margin="0,0,0,16">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />

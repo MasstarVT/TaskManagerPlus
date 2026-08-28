@@ -67,7 +67,120 @@ public sealed class EventLogService
             DailyCounts = BuildDailyCounts(events),
             LowMemoryEventCount = lowMemCount,
             LastLowMemoryEvent = lowMemLast,
+            ThermalCriticalEvents = ReadThermalCriticalEvents(),
         };
+    }
+
+    // #602: Kernel-Processor-Power event 37 ("the speed of processor N is being limited by system
+    // firmware... for X seconds") and its 38 recovery counterpart - the one authoritative,
+    // non-heuristic statement Windows itself makes about firmware-side CPU throttling.
+    private const string ProcessorPowerProvider = "Microsoft-Windows-Kernel-Processor-Power";
+    private const int FirmwareThrottleEventId = 37;
+    private const int FirmwareThrottleRecoveryEventId = 38;
+
+    public List<FirmwareThrottleEvent> ReadFirmwareThrottleEvents()
+    {
+        var result = new List<FirmwareThrottleEvent>();
+        try
+        {
+            long maxAgeMs = LookbackDays * 24L * 60 * 60 * 1000;
+            var query = new EventLogQuery("System", PathType.LogName,
+                $"*[System[Provider[@Name='{ProcessorPowerProvider}'] and (EventID={FirmwareThrottleEventId} or EventID={FirmwareThrottleRecoveryEventId}) and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]")
+            {
+                ReverseDirection = true,
+            };
+
+            using var reader = new EventLogReader(query);
+            int count = 0;
+            const int maxEvents = 200;
+            while (count < maxEvents && reader.ReadEvent() is { } record)
+            {
+                using (record)
+                {
+                    count++;
+                    string message;
+                    try { message = record.FormatDescription() ?? string.Empty; }
+                    catch { message = string.Empty; } // provider's message file isn't registered - a known, common gap
+
+                    result.Add(new FirmwareThrottleEvent
+                    {
+                        TimeCreated = record.TimeCreated ?? DateTime.MinValue,
+                        IsRecovery = record.Id == FirmwareThrottleRecoveryEventId,
+                        Message = Truncate(message, 240),
+                    });
+                }
+            }
+        }
+        catch
+        {
+            // Provider/log unavailable (older Windows builds don't log this provider at all) -
+            // degrade to "none found".
+        }
+        return result.OrderByDescending(e => e.TimeCreated).ToList();
+    }
+
+    // #606: the "a thermal zone exceeded its critical/passive trip point" family, plus ACPI
+    // thermal-shutdown records - matched by provider + a message keyword rather than a hardcoded
+    // event ID, since IDs for this family vary by Windows build (unlike Kernel-Power 41, which is
+    // stable across every build this app targets).
+    private static readonly string[] ThermalCriticalProviders =
+    {
+        "Microsoft-Windows-Kernel-Power",
+        "Microsoft-Windows-Kernel-Acpi",
+        "ACPI",
+    };
+
+    private static readonly string[] ThermalCriticalKeywords =
+    {
+        "thermal zone", "critical temperature", "critical trip point", "thermal shutdown", "thermal event",
+    };
+
+    public List<StabilityEvent> ReadThermalCriticalEvents()
+    {
+        var result = new List<StabilityEvent>();
+        try
+        {
+            long maxAgeMs = LookbackDays * 24L * 60 * 60 * 1000;
+            var providerFilter = string.Join(" or ", ThermalCriticalProviders.Select(p => $"Provider[@Name='{p}']"));
+            var query = new EventLogQuery("System", PathType.LogName,
+                $"*[System[({providerFilter}) and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]")
+            {
+                ReverseDirection = true,
+            };
+
+            using var reader = new EventLogReader(query);
+            int count = 0;
+            const int maxEvents = 500; // Kernel-Power alone can log a lot of unrelated entries over 30 days
+            while (count < maxEvents && reader.ReadEvent() is { } record)
+            {
+                using (record)
+                {
+                    count++;
+                    string message;
+                    try { message = record.FormatDescription() ?? string.Empty; }
+                    catch { continue; } // can't keyword-match without the formatted message
+
+                    if (!ThermalCriticalKeywords.Any(k => message.Contains(k, StringComparison.OrdinalIgnoreCase)))
+                        continue;
+
+                    result.Add(new StabilityEvent
+                    {
+                        TimeCreated = record.TimeCreated ?? DateTime.MinValue,
+                        LogName = "System",
+                        ProviderName = record.ProviderName ?? string.Empty,
+                        EventId = record.Id,
+                        Level = record.LevelDisplayName ?? string.Empty,
+                        Message = Truncate(message, 300),
+                    });
+                }
+            }
+        }
+        catch
+        {
+            // Provider/log unavailable - degrade to "none found", same as every other event-log
+            // read in this service.
+        }
+        return result.OrderByDescending(e => e.TimeCreated).ToList();
     }
 
     // Round 8 #40: low-memory resource-exhaustion events are logged by a dedicated Windows

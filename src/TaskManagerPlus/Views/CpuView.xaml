@@ -173,9 +173,11 @@
                 </StackPanel>
             </Border>
 
-            <!-- #84: throttle reason breakdown - the one combined "Thermal"/"Power"/"None" readout
-                 for the two banners above (see CpuViewModel.ThrottleReason's remarks - it's not a
-                 third independent signal, just IsThrottling/IsPowerLimited read together). -->
+            <!-- #84/#603: throttle reason breakdown - now a full Thermal/Power/Firmware/
+                 Core-parked/None classification (see CpuViewModel.ThrottleReason's remarks), plus
+                 the CPU thermal-headroom readout (#608, from EnergyThermalsViewModel) and a
+                 session-long dwell-time stacked bar answering "what is actually holding my clocks
+                 back" instead of just the instantaneous flag. -->
             <UniformGrid Columns="2" Margin="0,16,0,0">
                 <views:VfdMeter Title="Throttle reason" Glow="False" Margin="0,0,6,0"
                                 ValueText="{Binding ThrottleReason}"
@@ -190,11 +192,48 @@
                                 <DataTrigger Binding="{Binding ThrottleReason}" Value="Power">
                                     <Setter Property="AccentBrush" Value="{DynamicResource WarningBrush}" />
                                 </DataTrigger>
+                                <DataTrigger Binding="{Binding ThrottleReason}" Value="Firmware">
+                                    <Setter Property="AccentBrush" Value="{DynamicResource DangerBrush}" />
+                                    <Setter Property="SubText" Value="Confirmed by Windows (Kernel-Processor-Power 37)" />
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding ThrottleReason}" Value="Core-parked">
+                                    <Setter Property="AccentBrush" Value="{DynamicResource AccentBrush}" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </views:VfdMeter.Style>
+                </views:VfdMeter>
+
+                <!-- #608: thermal headroom - remaining °C before an inferred/reported throttle
+                     point, owned by EnergyThermalsViewModel (see its remarks) and exposed here via
+                     CpuViewModel.EnergyThermals. Hidden until a ceiling is available. -->
+                <views:VfdMeter Title="Thermal headroom" Glow="False" Margin="6,0,0,0"
+                                ValueText="{Binding EnergyThermals.CpuThermalHeadroomC, StringFormat={}{0:0.#}, TargetNullValue=–}" Unit="°C"
+                                SubText="Remaining before this CPU's known/inferred throttle point"
+                                AccentBrush="{DynamicResource AccentBrush}">
+                    <views:VfdMeter.Style>
+                        <Style TargetType="views:VfdMeter">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding EnergyThermals.CpuThermalHeadroomC}" Value="{x:Null}">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
                             </Style.Triggers>
                         </Style>
                     </views:VfdMeter.Style>
                 </views:VfdMeter>
             </UniformGrid>
+
+            <!-- #603: session-long dwell-time breakdown, stacked as one bar - answers "what is
+                 actually holding my clocks back" instead of a single instantaneous flag. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,10,0,0">
+                <StackPanel>
+                    <TextBlock Text="Throttle-reason dwell time (this session)" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Share of time since this tab was opened spent in each classified state - None/Thermal/Power/Firmware/Core-parked."
+                               Style="{StaticResource SubStat}" Margin="0,-6,0,10" TextWrapping="Wrap" />
+                    <lvc:CartesianChart Series="{Binding ThrottleDwellSeries}" XAxes="{Binding ThrottleDwellXAxes}" YAxes="{Binding ThrottleDwellYAxes}"
+                                         Height="140" TooltipPosition="Top" LegendPosition="Bottom" Background="Transparent" />
+                </StackPanel>
+            </Border>
 
             <!-- #83: C-state residency - a CPU idling deeply for power savings (high C2/C3) looks
                  very different from one held at a low clock by real throttling, even though both

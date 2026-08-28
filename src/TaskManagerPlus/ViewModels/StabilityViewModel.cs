@@ -64,6 +64,18 @@ public sealed class StabilityViewModel : ObservableObject
     private double _stabilityIndex = 10.0;
     public double StabilityIndex { get => _stabilityIndex; private set => SetProperty(ref _stabilityIndex, value); }
 
+    // #606: thermal-critical/shutdown event scan - a firmware thermal shutdown is otherwise
+    // indistinguishable in the reliability log from a PSU death, so this gets its own explicit
+    // red banner rather than being folded into RecentEvents.
+    public ObservableCollection<StabilityEvent> ThermalCriticalEvents { get; } = new();
+    public bool ThermalCriticalDetected => ThermalCriticalEvents.Count > 0;
+
+    // #610: throttle-to-stutter correlation - cross-references #604's persisted throttle episodes
+    // against the hitch/event timestamps this tab already holds (RecentEvents). Empty (banner
+    // hidden) until there's at least one recorded episode and one recorded event to compare.
+    private string _hitchThrottleCorrelationText = string.Empty;
+    public string HitchThrottleCorrelationText { get => _hitchThrottleCorrelationText; private set => SetProperty(ref _hitchThrottleCorrelationText, value); }
+
     public AsyncRelayCommand RefreshCommand { get; }
 
     // #1: Reliability History - daily Critical/Error counts over the lookback window, the same
@@ -190,6 +202,33 @@ public sealed class StabilityViewModel : ObservableObject
         }
 
         StabilityIndex = ComputeStabilityIndex(snapshot);
+
+        // #606: thermal-critical/shutdown events.
+        ThermalCriticalEvents.Clear();
+        foreach (var e in snapshot.ThermalCriticalEvents) ThermalCriticalEvents.Add(e);
+        OnPropertyChanged(nameof(ThermalCriticalDetected));
+
+        // #610: throttle-to-stutter correlation - cross-references #604's persisted throttle
+        // episodes against the same RecentEvents timestamps this tab already shows.
+        ComputeHitchThrottleCorrelation();
+    }
+
+    /// <summary>#610: "N of M recorded hitches occurred while thermally throttled - quick flag,
+    /// not a verdict" - a hitch (here, RecentEvents' Critical/Error timestamps, the same "hitch
+    /// and event-log timestamps" this tab already holds) counts as inside a throttle window when
+    /// it falls within [Start, End] of any persisted episode (#604).</summary>
+    private void ComputeHitchThrottleCorrelation()
+    {
+        var episodes = ThrottleHistoryService.Load();
+        if (episodes.Count == 0 || RecentEvents.Count == 0)
+        {
+            HitchThrottleCorrelationText = string.Empty;
+            return;
+        }
+
+        int total = RecentEvents.Count;
+        int inWindow = RecentEvents.Count(e => episodes.Any(ep => e.TimeCreated >= ep.Start && e.TimeCreated <= ep.End));
+        HitchThrottleCorrelationText = $"{inWindow} of {total} recorded hitches occurred while thermally throttled — quick flag, not a verdict.";
     }
 
     /// <summary>

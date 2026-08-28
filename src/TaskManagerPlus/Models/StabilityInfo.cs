@@ -76,6 +76,14 @@ public sealed class StabilitySnapshot
     /// bucket of RecentEvents above.</summary>
     public int LowMemoryEventCount { get; init; }
     public DateTime? LastLowMemoryEvent { get; init; }
+
+    /// <summary>#606: System-log entries matching the "a thermal zone exceeded its critical/passive
+    /// trip point" family (Kernel-Power/Kernel-Acpi/ACPI provider + a thermal-shutdown keyword in
+    /// the formatted message - matched by provider+keyword rather than a hardcoded event ID, since
+    /// IDs vary by Windows build) - see EventLogService.ReadThermalCriticalEvents. A firmware
+    /// thermal shutdown is otherwise indistinguishable in the reliability log from a PSU death, so
+    /// this is surfaced as its own explicit signal rather than folded into RecentEvents.</summary>
+    public List<StabilityEvent> ThermalCriticalEvents { get; init; } = new();
 }
 
 /// <summary>#66 (Round 10): repeated application crashes grouped by faulting module, with a count -

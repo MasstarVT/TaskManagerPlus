@@ -1,6 +1,10 @@
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.Windows.Threading;
+using LiveChartsCore;
+using LiveChartsCore.SkiaSharpView;
+using LiveChartsCore.SkiaSharpView.Painting;
+using SkiaSharp;
 using TaskManagerPlus.Common;
 using TaskManagerPlus.Models;
 using TaskManagerPlus.Services;
@@ -32,6 +36,12 @@ public sealed class CpuViewModel : ObservableObject, IDisposable
     private bool _affinityRefreshInFlight;
 
     public PerformanceViewModel Performance { get; }
+
+    /// <summary>#608/#603: exposes the shared EnergyThermalsViewModel instance so CpuView.xaml can
+    /// bind directly to its thermal-headroom/thermal-zone/firmware-event properties (e.g.
+    /// EnergyThermals.CpuThermalHeadroomC) without new cross-ViewModel plumbing - the same
+    /// "expose the composed instance as a public property" shape Performance above already uses.</summary>
+    public EnergyThermalsViewModel EnergyThermals => _energyThermals;
 
     /// <summary>Round 8 #25/#28/#29/#30: static CPU identification readouts (microcode,
     /// mitigation override status, instruction-set support, cache sizes) - queried once in the
@@ -78,15 +88,50 @@ public sealed class CpuViewModel : ObservableObject, IDisposable
     public string PowerLimitText { get => _powerLimitText; private set => SetProperty(ref _powerLimitText, value); }
 
     /// <summary>
-    /// #84: throttle reason breakdown - a single "Thermal" / "Power" / "None" readout combining
-    /// IsThrottling and IsPowerLimited above into the one question they're both really answering
-    /// ("why is this CPU running below base clock right now, if it is"). Not a third, independent
-    /// signal - LibreHardwareMonitorLib exposes no CPU "limit reason" API on most consumer
-    /// hardware (that's the vendor-proprietary MSR data HWiNFO reads directly, the same gap
-    /// IsThrottling/IsPowerLimited's own remarks document), so this is exactly as reliable as
-    /// those two heuristics, just presented as one readout instead of two separate flags.
+    /// #84/#603: throttle-reason breakdown - now a full Thermal/Power/Firmware/Core-parked/None
+    /// classification (ThrottleClassificationService.Classify, shared with
+    /// EnergyThermalsViewModel's own episode tracking, #604) rather than just the two-way
+    /// Thermal/Power/None readout this was before. Still exactly as reliable as before for the
+    /// Thermal/Power/Core-parked cases - this app has no access to the vendor-proprietary "limit
+    /// reason" MSR data HWiNFO reads directly - except Firmware, which is corroborated by an
+    /// authoritative Windows event (#602) rather than a pattern match.
     /// </summary>
-    public string ThrottleReason => IsThrottling ? "Thermal" : IsPowerLimited ? "Power" : "None";
+    private ThrottleReasonClass _currentThrottleClass = ThrottleReasonClass.None;
+    public ThrottleReasonClass CurrentThrottleClass { get => _currentThrottleClass; private set => SetProperty(ref _currentThrottleClass, value); }
+
+    public string ThrottleReason => CurrentThrottleClass switch
+    {
+        ThrottleReasonClass.Thermal => "Thermal",
+        ThrottleReasonClass.Power => "Power",
+        ThrottleReasonClass.Firmware => "Firmware",
+        ThrottleReasonClass.CoreParked => "Core-parked",
+        _ => "None",
+    };
+
+    // #603: dwell time per reason class, accumulated across the session on this view-model's own
+    // 2s timer, presented as a single stacked bar ("what is actually holding my clocks back")
+    // rather than just the instantaneous flags above.
+    private readonly Dictionary<ThrottleReasonClass, double> _dwellSeconds = new()
+    {
+        [ThrottleReasonClass.None] = 0,
+        [ThrottleReasonClass.Thermal] = 0,
+        [ThrottleReasonClass.Power] = 0,
+        [ThrottleReasonClass.Firmware] = 0,
+        [ThrottleReasonClass.CoreParked] = 0,
+    };
+    private DateTime _lastDwellTick = DateTime.Now;
+
+    public ObservableCollection<double> NoneDwellShare { get; } = new() { 100 };
+    public ObservableCollection<double> ThermalDwellShare { get; } = new() { 0 };
+    public ObservableCollection<double> PowerDwellShare { get; } = new() { 0 };
+    public ObservableCollection<double> FirmwareDwellShare { get; } = new() { 0 };
+    public ObservableCollection<double> CoreParkedDwellShare { get; } = new() { 0 };
+    public ISeries[] ThrottleDwellSeries { get; }
+    public Axis[] ThrottleDwellXAxes { get; }
+    public Axis[] ThrottleDwellYAxes { get; }
+
+    private static readonly SKColor AxisTextColor = new(0x9A, 0x9A, 0xA2);
+    private static readonly SKColor AxisSeparatorColor = new(0x33, 0x33, 0x3A, 160);
 
     /// <summary>Pass-through: true only on genuinely hybrid CPUs. The view should hide the
     /// P-core/E-core color distinction entirely when this is false.</summary>
@@ -115,9 +160,36 @@ public sealed class CpuViewModel : ObservableObject, IDisposable
         performance.Cores.CollectionChanged += OnCoresCollectionChanged;
         RebuildGroups();
 
+        // #603: single-category stacked bar - one "Session" column, five stacked segments (one
+        // per reason class) sized by that class's share of dwell time so far. StackedColumnSeries
+        // instances sharing no explicit StackGroup stack together by default.
+        ThrottleDwellXAxes = new[]
+        {
+            new Axis { Labels = new[] { "Session" }, LabelsPaint = new SolidColorPaint(AxisTextColor), SeparatorsPaint = null },
+        };
+        ThrottleDwellYAxes = new[]
+        {
+            new Axis
+            {
+                MinLimit = 0, MaxLimit = 100,
+                Labeler = v => $"{v:0}%",
+                LabelsPaint = new SolidColorPaint(AxisTextColor),
+                SeparatorsPaint = new SolidColorPaint(AxisSeparatorColor) { StrokeThickness = 1 },
+            },
+        };
+        ThrottleDwellSeries = new ISeries[]
+        {
+            new StackedColumnSeries<double> { Values = NoneDwellShare, Name = "None", Fill = new SolidColorPaint(SKColors.Gray.WithAlpha(130)), Stroke = null, MaxBarWidth = 70 },
+            new StackedColumnSeries<double> { Values = ThermalDwellShare, Name = "Thermal", Fill = new SolidColorPaint(SKColors.OrangeRed), Stroke = null, MaxBarWidth = 70 },
+            new StackedColumnSeries<double> { Values = PowerDwellShare, Name = "Power", Fill = new SolidColorPaint(SKColors.Goldenrod), Stroke = null, MaxBarWidth = 70 },
+            new StackedColumnSeries<double> { Values = FirmwareDwellShare, Name = "Firmware", Fill = new SolidColorPaint(SKColors.MediumPurple), Stroke = null, MaxBarWidth = 70 },
+            new StackedColumnSeries<double> { Values = CoreParkedDwellShare, Name = "Core-parked", Fill = new SolidColorPaint(SKColors.DeepSkyBlue), Stroke = null, MaxBarWidth = 70 },
+        };
+
         _throttleTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(2) };
         _throttleTimer.Tick += (_, _) => { RefreshThrottleStatus(); _ = RefreshCoreAffinityAsync(); };
         _throttleTimer.Start();
+        _lastDwellTick = DateTime.Now;
         RefreshThrottleStatus();
 
         // #25/#28/#29/#30: static, so read once in the background rather than adding this to the
@@ -206,7 +278,52 @@ public sealed class CpuViewModel : ObservableObject, IDisposable
             ? $"{power:0.#} W (session high {powerMax:0.#} W) and {Performance.CpuVsBasePercent:0}% vs. base clock under load"
             : string.Empty;
 
+        // #603: full reason-class verdict, using the shared classifier so this agrees with
+        // EnergyThermalsViewModel's own episode-tracking classification (#604/#601/#602) - pulls
+        // in the thermal-zone throttle% (#601) and firmware-limit-active snapshot (#602)
+        // EnergyThermalsViewModel already owns, plus this view-model's own Performance reference
+        // for parked-core count.
+        var zoneThrottlePercents = _energyThermals.ThermalZones.Where(z => z.ThrottlePercent.HasValue).Select(z => z.ThrottlePercent!.Value).ToList();
+        double? maxZoneThrottle = zoneThrottlePercents.Count > 0 ? zoneThrottlePercents.Max() : null;
+        CurrentThrottleClass = ThrottleClassificationService.Classify(
+            temp, Performance.CpuCurrentPercent, Performance.CpuVsBasePercent,
+            power, powerMax, Performance.ParkedCoreCount, Performance.Cores.Count,
+            maxZoneThrottle, _energyThermals.FirmwareLimitActive);
+
+        // #603: accumulate dwell time per class since this view-model was constructed.
+        var now = DateTime.Now;
+        double elapsed = Math.Max(0, (now - _lastDwellTick).TotalSeconds);
+        _lastDwellTick = now;
+        _dwellSeconds[CurrentThrottleClass] += elapsed;
+        UpdateDwellShares();
+
         OnPropertyChanged(nameof(ThrottleReason));
+    }
+
+    /// <summary>#603: recomputes each reason class's share of total dwell time (0-100) and pushes
+    /// the new values into the stacked-bar series' backing collections.</summary>
+    private void UpdateDwellShares()
+    {
+        double total = _dwellSeconds.Values.Sum();
+        if (total <= 0) return;
+
+        NoneDwellShare[0] = Math.Round(_dwellSeconds[ThrottleReasonClass.None] / total * 100, 1);
+        ThermalDwellShare[0] = Math.Round(_dwellSeconds[ThrottleReasonClass.Thermal] / total * 100, 1);
+        PowerDwellShare[0] = Math.Round(_dwellSeconds[ThrottleReasonClass.Power] / total * 100, 1);
+        FirmwareDwellShare[0] = Math.Round(_dwellSeconds[ThrottleReasonClass.Firmware] / total * 100, 1);
+        CoreParkedDwellShare[0] = Math.Round(_dwellSeconds[ThrottleReasonClass.CoreParked] / total * 100, 1);
+    }
+
+    /// <summary>Repaints the dwell-breakdown chart's axis text/gridlines to match the active theme
+    /// family - see PerformanceViewModel.ApplyAxisTheme's remarks; same SkiaSharp-outside-WPF-
+    /// resources gap.</summary>
+    public void ApplyAxisTheme(System.Windows.Media.Color text, System.Windows.Media.Color separator)
+    {
+        var textSk = new SKColor(text.R, text.G, text.B);
+        var sepSk = new SKColor(separator.R, separator.G, separator.B, separator.A);
+        ThrottleDwellXAxes[0].LabelsPaint = new SolidColorPaint(textSk);
+        ThrottleDwellYAxes[0].LabelsPaint = new SolidColorPaint(textSk);
+        ThrottleDwellYAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
     }
 
     private void OnCoresCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)

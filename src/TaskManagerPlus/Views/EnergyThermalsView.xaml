@@ -50,6 +50,11 @@
                 </TextBlock>
             </Border>
 
+            <!-- #605: time-to-throttle header readout - falling time-to-throttle across weeks is
+                 the clearest single signal of degrading cooling. -->
+            <TextBlock Text="{Binding TimeToThrottleText}" FontSize="13" FontWeight="SemiBold"
+                       Foreground="{DynamicResource TextPrimaryBrush}" Margin="0,0,0,12" TextWrapping="Wrap" />
+
             <!-- Headline tiles -->
             <UniformGrid Columns="2" Margin="0,0,0,16">
                 <views:VfdMeter Title="CPU Package" Glow="True" Margin="0,0,8,0"
@@ -62,6 +67,43 @@
                                 SubText="CPU package"
                                 AccentBrush="{DynamicResource DangerBrush}" />
             </UniformGrid>
+
+            <!-- #607: per-core temperature spread - a persistently large spread on a desktop
+                 points at uneven cooler mount or poor pump contact. Hidden entirely until at
+                 least two per-core temperature sensors are reported. -->
+            <views:VfdMeter Title="Core spread" Glow="False" Margin="0,0,0,16"
+                            ValueText="{Binding CoreTempSpreadC, StringFormat={}{0:0.#}, TargetNullValue=–}" Unit="°C"
+                            SubText="Max − min across per-core temperatures"
+                            AccentBrush="{DynamicResource WarningBrush}">
+                <views:VfdMeter.Style>
+                    <Style TargetType="views:VfdMeter">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding CoreTempSpreadC}" Value="{x:Null}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </views:VfdMeter.Style>
+            </views:VfdMeter>
+
+            <!-- #608: thermal headroom - remaining °C before an inferred/reported throttle point,
+                 which predicts "will this throttle under more load" better than an absolute
+                 reading alone. Hidden until a ceiling (reported or inferred from this machine's
+                 own throttle history) is available. -->
+            <views:VfdMeter Title="CPU thermal headroom" Glow="False" Margin="0,0,0,16"
+                            ValueText="{Binding CpuThermalHeadroomC, StringFormat={}{0:0.#}, TargetNullValue=–}" Unit="°C"
+                            SubText="Remaining before this CPU's known/inferred throttle point"
+                            AccentBrush="{DynamicResource AccentBrush}">
+                <views:VfdMeter.Style>
+                    <Style TargetType="views:VfdMeter">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding CpuThermalHeadroomC}" Value="{x:Null}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </views:VfdMeter.Style>
+            </views:VfdMeter>
 
             <!-- Round 12, #93: GPU power-limit/TDP readout, alongside the headline power draw
                  tile above - hidden entirely when the GPU backend reports no distinct limit/TDP
@@ -160,6 +202,201 @@
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
                     </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- #601: Thermal zones - Windows' own built-in "Thermal Zone Information" perf
+                 counters, a genuine ACPI-sourced throttle source independent of
+                 LibreHardwareMonitorLib (still works when SensorsAvailable is false). Hidden
+                 entirely when the category itself isn't exposed on this system. -->
+            <Border Margin="0,16,0,0">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding ThermalZonesAvailable}" Value="False">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Thermal zones (Windows ACPI)" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Windows' own driver-free throttle source - a genuine ACPI throttle percentage the OS itself acts on, independent of the sensor driver above."
+                               Style="{StaticResource SubStat}" Margin="0,-6,0,10" TextWrapping="Wrap" />
+                    <ItemsControl ItemsSource="{Binding ThermalZones}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock Text="{Binding ZoneName}" FontSize="12" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Style="{StaticResource SubStat}">
+                                            <Run Text="{Binding TemperatureC, StringFormat={}{0:0.#}°C, TargetNullValue=Temperature: Unknown}" />
+                                            <Run Text=" · Passive limit " /><Run Text="{Binding PassiveLimitPercent, StringFormat={}{0:0}%, TargetNullValue=Unknown}" />
+                                        </TextBlock>
+                                    </StackPanel>
+                                    <Border Grid.Column="1" CornerRadius="10" Padding="8,3" VerticalAlignment="Center"
+                                            Background="{DynamicResource BgElevatedBrush}">
+                                        <Border.Style>
+                                            <Style TargetType="Border">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding ThrottlePercent}" Value="{x:Null}">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Border.Style>
+                                        <TextBlock FontSize="11.5" FontWeight="SemiBold" Foreground="{DynamicResource WarningBrush}">
+                                            <Run Text="{Binding ThrottlePercent, StringFormat={}{0:0}%, Mode=OneWay}" /><Run Text=" throttle" />
+                                        </TextBlock>
+                                    </Border>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="No thermal zones currently reporting data.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding ThermalZones.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- #602: firmware-limited-processor event attribution (Kernel-Processor-Power 37/38) -
+                 the one authoritative, non-heuristic statement Windows itself makes about
+                 firmware-side CPU throttling, labelled "confirmed by Windows" rather than this
+                 app's usual quick-flag wording. On-demand (event-log query), loaded once at
+                 startup plus a manual refresh button. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Firmware-limited processor events" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Check firmware events" Command="{Binding LoadFirmwareEventsCommand}" />
+                    </Grid>
+                    <TextBlock Text="Confirmed by Windows — Kernel-Processor-Power event 37/38, the one authoritative statement Windows itself makes about firmware-side CPU throttling."
+                               Style="{StaticResource SubStat}" Margin="0,-2,0,10" TextWrapping="Wrap" />
+                    <ItemsControl ItemsSource="{Binding FirmwareThrottleEvents}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Border Grid.Column="0" CornerRadius="10" Padding="7,2" Margin="0,0,8,0" VerticalAlignment="Center"
+                                            Background="{DynamicResource DangerMutedBrush}">
+                                        <TextBlock FontSize="10.5" FontWeight="SemiBold" Foreground="{DynamicResource DangerBrush}" Text="Confirmed by Windows" />
+                                    </Border>
+                                    <TextBlock Grid.Column="1" FontSize="11.5" VerticalAlignment="Center">
+                                        <Run Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}" />
+                                        <Run Text=" — " />
+                                        <Run Text="{Binding IsRecovery, Converter={StaticResource BoolToFirmwareEventTextConverter}, Mode=OneWay}" />
+                                    </TextBlock>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="No firmware-limit events found in the last 30 days.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding FirmwareThrottleEvents.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- #604: persisted throttle-episode history - turns the throttle list above from "the
+                 10 most recent in-memory entries" into a rolling, cross-session record, plus a
+                 per-week episode-count sparkline ("has this been getting worse?"). -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <TextBlock Text="Throttle history (persisted across sessions)" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Episode count per week, last 12 weeks." Style="{StaticResource SubStat}" Margin="0,-4,0,10" />
+                    <lvc:CartesianChart Series="{Binding WeeklyEpisodeSeries}" XAxes="{Binding HiddenXAxes}" YAxes="{Binding WeeklyEpisodeYAxes}"
+                                         Height="120" TooltipPosition="Hidden" LegendPosition="Hidden" Background="Transparent" Margin="0,0,0,10" />
+                    <ItemsControl ItemsSource="{Binding RecentThrottleEpisodes}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock FontSize="12">
+                                            <Run Text="{Binding Start, StringFormat={}{0:g}, Mode=OneWay}" />
+                                            <Run Text=" — " /><Run Text="{Binding ReasonClass, Mode=OneWay}" />
+                                        </TextBlock>
+                                        <TextBlock Style="{StaticResource SubStat}">
+                                            <Run Text="{Binding PeakTempC, StringFormat={}Peak {0:0.#}°C, Mode=OneWay}" />
+                                            <Run Text=" · " /><Run Text="{Binding PeakPackagePowerW, StringFormat={}{0:0.#}W, Mode=OneWay}" />
+                                            <Run Text=" · " /><Run Text="{Binding MeanEffectiveMhz, StringFormat={}{0:0} MHz avg, Mode=OneWay}" />
+                                        </TextBlock>
+                                    </StackPanel>
+                                    <TextBlock Grid.Column="1" VerticalAlignment="Center" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}"
+                                               Text="{Binding Converter={StaticResource EpisodeDurationConverter}, Mode=OneWay}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="No throttle episodes recorded yet.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding RecentThrottleEpisodes.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- #609: idle-temperature baseline drift - median CPU package temp during genuinely
+                 idle windows (CPU < 5% for 60s), one entry per day, charted "since first run". A
+                 rising idle floor at unchanged ambient is a cleaner dust/pump-failure signal than
+                 load temps. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <TextBlock Text="Idle-temperature baseline" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Median CPU package temperature during genuinely idle windows, one point per day since first run. A rising floor at similar ambient conditions is a cleaner dust/pump-failure signal than load temps."
+                               Style="{StaticResource SubStat}" Margin="0,-6,0,10" TextWrapping="Wrap" />
+                    <lvc:CartesianChart Series="{Binding IdleBaselineSeries}" XAxes="{Binding IdleBaselineXAxes}" YAxes="{Binding IdleBaselineYAxes}"
+                                         Height="160" TooltipPosition="Top" LegendPosition="Hidden" Background="Transparent" />
+                    <TextBlock Text="No idle baseline recorded yet - stays idle (under 5% CPU) for 60 seconds to record the first point.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IdleBaselineHistory.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
                 </StackPanel>
             </Border>
 

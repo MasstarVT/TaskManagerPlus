@@ -198,7 +198,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Memory = new MemoryViewModel(Performance, Processes);
         Storage = new StorageViewModel(Performance, EnergyThermals);
         Network = new NetworkViewModel(Performance);
-        Gpu = new GpuViewModel(Processes);
+        Gpu = new GpuViewModel(Processes, EnergyThermals);
         Logging = new LoggingViewModel(Performance, EnergyThermals);
         Summary = new SummaryViewModel(Performance, Processes, Services, EnergyThermals, SystemSpecs, Network, Stability);
         Search = new GlobalSearchViewModel(Processes, Services, Startup, SystemSpecs);
@@ -225,6 +225,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         ApplyAxisThemeToEnergyThermals();
         Theme.ThemeModeChanged += ApplyAxisThemeToEnergyThermals;
+
+        ApplyAxisThemeToCpu();
+        Theme.ThemeModeChanged += ApplyAxisThemeToCpu;
 
         ApplyAxisThemeToStability();
         Theme.ThemeModeChanged += ApplyAxisThemeToStability;
@@ -260,6 +263,16 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Color TextOf(string key) => (resources[key] as SolidColorBrush)?.Color ?? Colors.Gray;
 
         EnergyThermals.ApplyAxisTheme(TextOf("TextSecondaryBrush"), TextOf("BorderBrush2"));
+    }
+
+    /// <summary>#603: repaints CpuViewModel's own throttle-dwell stacked-bar chart axes - same
+    /// SkiaSharp-outside-WPF-resources gap as every other chart axis theme hook.</summary>
+    private void ApplyAxisThemeToCpu()
+    {
+        var resources = Application.Current.Resources;
+        Color TextOf(string key) => (resources[key] as SolidColorBrush)?.Color ?? Colors.Gray;
+
+        Cpu.ApplyAxisTheme(TextOf("TextSecondaryBrush"), TextOf("BorderBrush2"));
     }
 
     private void ApplyAxisThemeToStability()
@@ -355,6 +368,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Theme.ColorsChanged -= ApplyThemeToPerformance;
         Theme.ThemeModeChanged -= ApplyAxisThemeToPerformance;
         Theme.ThemeModeChanged -= ApplyAxisThemeToEnergyThermals;
+        Theme.ThemeModeChanged -= ApplyAxisThemeToCpu;
         Theme.ThemeModeChanged -= ApplyAxisThemeToStability;
         Theme.ThemeModeChanged -= ApplyAxisThemeToStartup;
         Theme.ThemeModeChanged -= ApplyAxisThemeToLogging;

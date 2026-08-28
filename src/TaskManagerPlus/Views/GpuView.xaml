@@ -29,6 +29,26 @@
                            Text="No GPU adapter or GPU perf-counter data could be found on this system." />
             </Border>
 
+            <!-- #608: GPU thermal headroom - remaining °C before a reported throttle point, owned
+                 by EnergyThermalsViewModel (see its remarks) and exposed here via
+                 GpuViewModel.EnergyThermals. This round doesn't add a separate GPU throttle-episode
+                 detector, so unlike the CPU tab's headroom tile there's no inferred fallback -
+                 hidden whenever no GPU sensor reports a distinct ceiling/limit value. -->
+            <views:VfdMeter Title="GPU thermal headroom" Glow="False" Margin="0,0,0,16"
+                            ValueText="{Binding EnergyThermals.GpuThermalHeadroomC, StringFormat={}{0:0.#}, TargetNullValue=–}" Unit="°C"
+                            SubText="Remaining before this GPU's reported throttle point"
+                            AccentBrush="{DynamicResource AccentBrush}">
+                <views:VfdMeter.Style>
+                    <Style TargetType="views:VfdMeter">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding EnergyThermals.GpuThermalHeadroomC}" Value="{x:Null}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </views:VfdMeter.Style>
+            </views:VfdMeter>
+
             <!-- #55/#56: installed adapters - driver version/date, best-effort WDDM version, and
                  whether it looks integrated vs. discrete. Always shows every adapter Windows knows
                  about, independent of whether live utilization data below could be paired with it. -->

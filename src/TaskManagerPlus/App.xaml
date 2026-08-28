@@ -29,6 +29,8 @@
             <conv:IntEqualsConverter x:Key="IntEqualsConverter" />
             <conv:BoolToVisibilityConverter x:Key="BoolToVisibilityConverter" />
             <conv:ActivePlanSuffixConverter x:Key="ActivePlanSuffixConverter" />
+            <conv:BoolToFirmwareEventTextConverter x:Key="BoolToFirmwareEventTextConverter" />
+            <conv:EpisodeDurationConverter x:Key="EpisodeDurationConverter" />
         </ResourceDictionary>
     </Application.Resources>
 </Application>

@@ -21,8 +21,14 @@ public sealed class GpuViewModel : ObservableObject, IDisposable
     private readonly GpuMonitorService _service = new();
     private readonly DispatcherTimer _timer;
     private bool _isRefreshing;
+    private readonly EnergyThermalsViewModel _energyThermals;
 
     public bool IsAvailable => _service.IsAvailable;
+
+    /// <summary>#608: exposes the shared EnergyThermalsViewModel instance so GpuView.xaml can bind
+    /// directly to EnergyThermals.GpuThermalHeadroomC/GpuTempC without new cross-ViewModel plumbing -
+    /// same shape as CpuViewModel.EnergyThermals.</summary>
+    public EnergyThermalsViewModel EnergyThermals => _energyThermals;
 
     public ObservableCollection<GpuAdapterIdentity> InstalledAdapters { get; } = new();
     public ObservableCollection<GpuAdapterSnapshot> LiveAdapters { get; } = new();
@@ -33,8 +39,9 @@ public sealed class GpuViewModel : ObservableObject, IDisposable
     /// MemoryViewModel.TopMemoryProcesses already established.</summary>
     public ICollectionView TopGpuProcesses { get; }
 
-    public GpuViewModel(ProcessesViewModel processes)
+    public GpuViewModel(ProcessesViewModel processes, EnergyThermalsViewModel energyThermals)
     {
+        _energyThermals = energyThermals;
         foreach (var a in _service.Adapters) InstalledAdapters.Add(a);
 
         var view = new CollectionViewSource { Source = processes.Processes }.View;

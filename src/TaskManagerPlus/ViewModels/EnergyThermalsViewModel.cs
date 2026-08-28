@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Text.RegularExpressions;
 using System.Windows.Media;
 using System.Windows.Threading;
 using LibreHardwareMonitor.Hardware;
@@ -27,6 +28,89 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
     private readonly SensorMonitorService _sensors = new();
     private readonly DispatcherTimer _timer;
     private bool _isRefreshing;
+
+    // #601: a second, driver-free throttle source (Windows' own "Thermal Zone Information" perf
+    // counters) - kept as a separate service/collection from SensorMonitorService's Temperatures
+    // above since it works even when SensorsAvailable is false.
+    private readonly ThermalZoneService _thermalZones = new();
+    public bool ThermalZonesAvailable => _thermalZones.IsAvailable;
+    public ObservableCollection<ThermalZoneReading> ThermalZones { get; } = new();
+
+    // #602: firmware-limit events (Kernel-Processor-Power 37/38) - an event-log query, so this is
+    // loaded once at startup plus on-demand via LoadFirmwareEventsCommand, never on the tick timer
+    // (see CLAUDE.md's on-demand-vs-polled convention).
+    private readonly EventLogService _eventLog = new();
+    public ObservableCollection<FirmwareThrottleEvent> FirmwareThrottleEvents { get; } = new();
+    public AsyncRelayCommand LoadFirmwareEventsCommand { get; }
+
+    /// <summary>Best-effort "is a firmware limit active right now" snapshot (#602/#603) - true
+    /// only when the most recently loaded firmware event is an unrecovered 37 (no later 38). Only
+    /// as fresh as the last load (startup + manual refresh), not live - an event-log query isn't
+    /// cheap enough to run on the tick timer.</summary>
+    private bool _firmwareLimitActive;
+    public bool FirmwareLimitActive { get => _firmwareLimitActive; private set => SetProperty(ref _firmwareLimitActive, value); }
+
+    // #604: persisted throttle-episode history - loaded once at startup and kept in memory
+    // (updated in place as new episodes close) rather than re-read from disk every tick.
+    private List<ThrottleEpisode> _persistedEpisodes = new();
+    public ObservableCollection<ThrottleEpisode> RecentThrottleEpisodes { get; } = new();
+
+    private ThrottleEpisode? _activeEpisode;
+    private readonly List<double> _activeEpisodeClockSamples = new();
+    private DateTime? _sustainedLoadStartedAt;
+
+    private double? _currentTimeToThrottleSeconds;
+    public double? CurrentTimeToThrottleSeconds { get => _currentTimeToThrottleSeconds; private set => SetProperty(ref _currentTimeToThrottleSeconds, value); }
+
+    private string _timeToThrottleText = "No throttle observed yet this session";
+    /// <summary>#605: "Time to throttle: 4m 10s (was 11m 30s in May)" - the header readout on this
+    /// tab. Falling time-to-throttle across weeks is the clearest single signal of degrading
+    /// cooling, more legible at a glance than the raw episode history below.</summary>
+    public string TimeToThrottleText { get => _timeToThrottleText; private set => SetProperty(ref _timeToThrottleText, value); }
+
+    // #604: per-week episode-count sparkline, same glow+core LineOf pattern as every other history
+    // chart on this tab.
+    private const int WeeklySparklineWeeks = 12;
+    public ObservableCollection<double> WeeklyEpisodeCounts { get; } = NewFixedSeries(WeeklySparklineWeeks);
+    private readonly LineSeries<double> _weeklyEpisodeGlow;
+    private readonly LineSeries<double> _weeklyEpisodeCore;
+    public ISeries[] WeeklyEpisodeSeries { get; }
+    public Axis[] WeeklyEpisodeXAxes { get; }
+    public Axis[] WeeklyEpisodeYAxes { get; }
+
+    // #609: idle-temperature baseline drift - one median-idle-temp sample per calendar day,
+    // charted "since first run" rather than a fixed recent window (the whole point is seeing a
+    // slow, multi-month drift).
+    private readonly List<double> _idleTempSamples = new();
+    private DateTime? _idleWindowStartedAt;
+    private const double IdleCpuThresholdPercent = 5.0;
+    private const double IdleWindowSeconds = 60.0;
+
+    public ObservableCollection<double> IdleBaselineHistory { get; } = new();
+    private readonly LineSeries<double> _idleBaselineGlow;
+    private readonly LineSeries<double> _idleBaselineCore;
+    public ISeries[] IdleBaselineSeries { get; }
+    public Axis[] IdleBaselineXAxes { get; }
+    public Axis[] IdleBaselineYAxes { get; }
+
+    // #607: per-core temperature spread (max - min across "Core #N" sensors) - a persistently
+    // large spread on a desktop points at uneven cooler mount or poor pump contact rather than
+    // general heat.
+    private static readonly Regex CoreTempNameRegex = new(@"Core\s*#\d+", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private double? _coreTempSpreadC;
+    public double? CoreTempSpreadC { get => _coreTempSpreadC; private set => SetProperty(ref _coreTempSpreadC, value); }
+
+    // #608: thermal-headroom - remaining °C before an inferred/reported throttle point, which is
+    // what actually predicts "will this throttle under a heavier load" rather than an absolute
+    // temperature reading alone.
+    private double? _cpuThermalHeadroomC;
+    public double? CpuThermalHeadroomC { get => _cpuThermalHeadroomC; private set => SetProperty(ref _cpuThermalHeadroomC, value); }
+
+    private double? _gpuTempC;
+    public double? GpuTempC { get => _gpuTempC; private set => SetProperty(ref _gpuTempC, value); }
+
+    private double? _gpuThermalHeadroomC;
+    public double? GpuThermalHeadroomC { get => _gpuThermalHeadroomC; private set => SetProperty(ref _gpuThermalHeadroomC, value); }
 
     // #25: needed to know whether the CPU is actually running below its rated base clock under
     // load (a real throttle signal), not just "hot" - CpuViewModel's own thermal-throttle flag
@@ -365,6 +449,92 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         LoadPowerInfoCommand = new AsyncRelayCommand(_ => LoadPowerInfoAsync());
         SetPowerPlanCommand = new AsyncRelayCommand(SetPowerPlanAsync);
         LoadUsbDevicesCommand = new AsyncRelayCommand(_ => LoadUsbDevicesAsync());
+        LoadFirmwareEventsCommand = new AsyncRelayCommand(_ => LoadFirmwareEventsAsync());
+
+        // #604: per-week episode-count sparkline - same glow+core LineOf pattern as every other
+        // history chart on this tab.
+        WeeklyEpisodeXAxes = new[]
+        {
+            new Axis { IsVisible = false, MinLimit = 0, MaxLimit = WeeklySparklineWeeks - 1, ShowSeparatorLines = false },
+        };
+        WeeklyEpisodeYAxes = new[]
+        {
+            new Axis
+            {
+                MinLimit = 0,
+                MinStep = 1,
+                Labeler = v => $"{v:0}",
+                LabelsPaint = new SolidColorPaint(AxisTextColor),
+                SeparatorsPaint = new SolidColorPaint(AxisSeparatorColor) { StrokeThickness = 1 },
+            },
+        };
+        var weeklyColor = SKColors.MediumPurple;
+        _weeklyEpisodeGlow = new LineSeries<double>
+        {
+            Values = WeeklyEpisodeCounts,
+            Stroke = new SolidColorPaint(weeklyColor.WithAlpha(70), GlowStrokeWidth),
+            Fill = null, GeometryStroke = null, GeometryFill = null,
+            LineSmoothness = 0.3, IsHoverable = false, IsVisibleAtLegend = false,
+        };
+        _weeklyEpisodeCore = new LineSeries<double>
+        {
+            Values = WeeklyEpisodeCounts,
+            Stroke = new SolidColorPaint(weeklyColor, CoreStrokeWidth),
+            Fill = new LinearGradientPaint(weeklyColor.WithAlpha(90), weeklyColor.WithAlpha(0), new SKPoint(0, 0), new SKPoint(0, 1)),
+            GeometryStroke = null, GeometryFill = null, LineSmoothness = 0.3,
+        };
+        WeeklyEpisodeSeries = new ISeries[] { _weeklyEpisodeGlow, _weeklyEpisodeCore };
+
+        // #609: idle-baseline chart, X axis labeled by calendar date ("since first run") rather
+        // than a fixed sample count - built as a categorical axis the same way StabilityViewModel's
+        // Reliability History chart labels its daily buckets.
+        IdleBaselineXAxes = new[]
+        {
+            new Axis
+            {
+                Labels = Array.Empty<string>(),
+                LabelsRotation = 0,
+                LabelsPaint = new SolidColorPaint(AxisTextColor),
+                SeparatorsPaint = null,
+            },
+        };
+        IdleBaselineYAxes = new[]
+        {
+            new Axis
+            {
+                Labeler = v => $"{v:0.#}°C",
+                LabelsPaint = new SolidColorPaint(AxisTextColor),
+                SeparatorsPaint = new SolidColorPaint(AxisSeparatorColor) { StrokeThickness = 1 },
+            },
+        };
+        var idleColor = SKColors.CadetBlue;
+        _idleBaselineGlow = new LineSeries<double>
+        {
+            Values = IdleBaselineHistory,
+            Stroke = new SolidColorPaint(idleColor.WithAlpha(70), GlowStrokeWidth),
+            Fill = null, GeometryStroke = null, GeometryFill = null,
+            LineSmoothness = 0.3, IsHoverable = false, IsVisibleAtLegend = false,
+        };
+        _idleBaselineCore = new LineSeries<double>
+        {
+            Values = IdleBaselineHistory,
+            Stroke = new SolidColorPaint(idleColor, CoreStrokeWidth),
+            Fill = new LinearGradientPaint(idleColor.WithAlpha(90), idleColor.WithAlpha(0), new SKPoint(0, 0), new SKPoint(0, 1)),
+            GeometryStroke = null, GeometryFill = null, LineSmoothness = 0.3,
+        };
+        IdleBaselineSeries = new ISeries[] { _idleBaselineGlow, _idleBaselineCore };
+
+        // #604/#605: load persisted throttle-episode history once at startup (kept in memory and
+        // updated in place as new episodes close, rather than re-read from disk every tick).
+        _persistedEpisodes = ThrottleHistoryService.Load();
+        foreach (var ep in _persistedEpisodes.OrderByDescending(e => e.Start).Take(10)) RecentThrottleEpisodes.Add(ep);
+        RebuildWeeklyEpisodeSparkline();
+
+        // #609: initial idle-baseline chart populate from whatever history already exists.
+        RefreshIdleBaselineChart();
+
+        // #602: cheap enough for a one-time startup read (not per-tick) - see LoadFirmwareEventsAsync.
+        _ = LoadFirmwareEventsAsync();
 
         // Round 12, #100: configurable poll interval - see PollIntervalSettingsService's remarks.
         // Loaded fresh (not cached in a field) on every read/write so a slider change here can
@@ -445,6 +615,13 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         return col;
     }
 
+    private static ObservableCollection<double> NewFixedSeries(int length)
+    {
+        var col = new ObservableCollection<double>();
+        for (int i = 0; i < length; i++) col.Add(0);
+        return col;
+    }
+
     /// <summary>Repaints chart axis text/gridlines to match the active theme family - see
     /// PerformanceViewModel.ApplyAxisTheme's remarks; same SkiaSharp-outside-WPF-resources gap.</summary>
     public void ApplyAxisTheme(Color text, Color separator)
@@ -463,6 +640,11 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         FanCurveYAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
         FanRpmYAxes[0].LabelsPaint = new SolidColorPaint(textSk);
         FanRpmYAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
+        WeeklyEpisodeYAxes[0].LabelsPaint = new SolidColorPaint(textSk);
+        WeeklyEpisodeYAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
+        IdleBaselineXAxes[0].LabelsPaint = new SolidColorPaint(textSk);
+        IdleBaselineYAxes[0].LabelsPaint = new SolidColorPaint(textSk);
+        IdleBaselineYAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
     }
 
     private async Task RefreshAsync()
@@ -490,6 +672,15 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         {
             return;
         }
+
+        // #601: a second, driver-free throttle source - sampled independently of
+        // SensorMonitorService above (and unaffected by SensorsAvailable), so it still works when
+        // the LibreHardwareMonitorLib driver couldn't open at all.
+        List<ThermalZoneReading> zoneReadings;
+        try { zoneReadings = await Task.Run(() => _thermalZones.Sample()); }
+        catch { zoneReadings = new List<ThermalZoneReading>(); }
+        ThermalZones.Clear();
+        foreach (var z in zoneReadings.OrderBy(z => z.ZoneName)) ThermalZones.Add(z);
 
         // LibreHardwareMonitorLib reports an exact 0 (not null) for a fair number of sensors it
         // enumerates but doesn't actually have working support for on a given board/CPU/drive
@@ -554,6 +745,38 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         var gpuHotspot = FindByNameContains(gpuTemps, "Hot Spot", "Junction");
         GpuHotspotDeltaC = gpuEdge.HasValue && gpuHotspot.HasValue && gpuHotspot > gpuEdge
             ? gpuHotspot - gpuEdge : null;
+        GpuTempC = gpuEdge;
+
+        // #607: per-core temperature spread (max - min across "Core #N" sensors) - a persistently
+        // large spread on a desktop points at uneven cooler mount or poor pump contact rather than
+        // general heat.
+        var coreTemps = tempReadings
+            .Where(r => r.HardwareType == HardwareType.Cpu && r.Value.HasValue && CoreTempNameRegex.IsMatch(r.SensorName))
+            .Select(r => (double)r.Value!.Value)
+            .ToList();
+        CoreTempSpreadC = coreTemps.Count >= 2 ? coreTemps.Max() - coreTemps.Min() : null;
+
+        // #608: thermal headroom - remaining °C before an inferred/reported throttle point, which
+        // predicts "will this throttle under more load" better than an absolute reading alone.
+        // Prefer a directly reported ceiling (rare - most LibreHardwareMonitorLib backends don't
+        // expose TjMax), falling back to the lowest peak temperature ever recorded across this
+        // machine's own persisted Thermal episodes (#604) as the closest available proxy for
+        // "the temperature this CPU actually starts throttling at". Null (tile hidden) when
+        // neither is available yet - never a fabricated ceiling.
+        var cpuTempsForCeiling = tempReadings.Where(r => r.HardwareType == HardwareType.Cpu);
+        double? cpuCeiling = FindByNameContains(cpuTempsForCeiling, "TjMax", "Tj Max", "Max Temperature", "Temperature Limit");
+        if (cpuCeiling is null)
+        {
+            var thermalEpisodes = _persistedEpisodes.Where(e => e.ReasonClass == ThrottleReasonClass.Thermal).ToList();
+            if (thermalEpisodes.Count > 0) cpuCeiling = thermalEpisodes.Min(e => e.PeakTempC);
+        }
+        CpuThermalHeadroomC = cpuCeiling.HasValue && CpuPackageTempC.HasValue ? cpuCeiling - CpuPackageTempC : null;
+
+        // GPU headroom relies on a directly reported ceiling only - this round doesn't add a
+        // separate GPU throttle-episode detector, so there's no inferred fallback the way the CPU
+        // side has one; degrades to null (tile hidden) rather than guess.
+        double? gpuCeiling = FindByNameContains(gpuTemps, "TjMax", "Tj Max", "Max Temperature", "Temperature Limit", "Throttle Point");
+        GpuThermalHeadroomC = gpuCeiling.HasValue && GpuTempC.HasValue ? gpuCeiling - GpuTempC : null;
 
         // #93: GPU power-limit/TDP readout - restricted to GPU hardware entries (same reasoning
         // as the hotspot lookup above) since "Power Limit"/"TDP" style names could otherwise
@@ -612,23 +835,215 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
             if (FanRpmHistory.Count > HistoryLength) FanRpmHistory.RemoveAt(0);
         }
 
+        // #603/#604: full reason-class verdict for this tick, using the same shared classifier
+        // CpuViewModel's own dwell breakdown uses - see ThrottleClassificationService's remarks
+        // for why this deliberately duplicates CpuViewModel's own per-tick classification rather
+        // than sharing a live instance (no circular ViewModel reference), the same "two
+        // independent samplers, one shared formula" shape the pre-existing throttlingNow local
+        // already established for this exact condition.
+        var zoneThrottlePercents = ThermalZones.Where(z => z.ThrottlePercent.HasValue).Select(z => z.ThrottlePercent!.Value).ToList();
+        double? maxZoneThrottle = zoneThrottlePercents.Count > 0 ? zoneThrottlePercents.Max() : null;
+        var reasonClass = ThrottleClassificationService.Classify(
+            CpuPackageTempC, _performance.CpuCurrentPercent, _performance.CpuVsBasePercent,
+            TotalPackagePowerW, PowerSessionMaxW, _performance.ParkedCoreCount, _performance.Cores.Count,
+            maxZoneThrottle, FirmwareLimitActive);
+        bool throttlingNow = reasonClass != ThrottleReasonClass.None;
+
         if (CpuPackageTempC is { } cpuTemp)
         {
             CpuTempHistory.Add(cpuTemp);
             if (CpuTempHistory.Count > HistoryLength) CpuTempHistory.RemoveAt(0);
 
             // #25: log (at most once per 30s, to avoid spamming the list) whenever the CPU is
-            // both running hot and meaningfully below its rated base clock under load - the same
-            // "hot AND actually throttled" condition CpuViewModel flags for its own banner, just
-            // recorded here as a timestamped history rather than a live flag.
-            bool throttlingNow = cpuTemp >= 85 && _performance.CpuVsBasePercent <= -8 && _performance.CpuCurrentPercent >= 60;
+            // throttling for any classified reason - a timestamped history, not just a live flag.
             if (throttlingNow && (_lastThrottleLogged is null || (DateTime.Now - _lastThrottleLogged.Value).TotalSeconds >= 30))
             {
                 _lastThrottleLogged = DateTime.Now;
-                ThrottleEvents.Insert(0, $"{DateTime.Now:T} — {cpuTemp:0}°C, {_performance.CpuVsBasePercent:0}% vs. base clock");
+                ThrottleEvents.Insert(0, $"{DateTime.Now:T} — {cpuTemp:0}°C, {_performance.CpuVsBasePercent:0}% vs. base clock ({DescribeReasonClass(reasonClass)})");
                 while (ThrottleEvents.Count > 10) ThrottleEvents.RemoveAt(ThrottleEvents.Count - 1);
             }
         }
+
+        // #604/#605: sustained-load stopwatch + episode open/close/persist tracking.
+        TrackSustainedLoadAndEpisode(throttlingNow, reasonClass, CpuPackageTempC);
+
+        // #609: idle-temperature baseline drift.
+        TrackIdleBaseline(CpuPackageTempC);
+    }
+
+    private static string DescribeReasonClass(ThrottleReasonClass c) => c switch
+    {
+        ThrottleReasonClass.Thermal => "thermal",
+        ThrottleReasonClass.Power => "power",
+        ThrottleReasonClass.Firmware => "firmware — confirmed by Windows",
+        ThrottleReasonClass.CoreParked => "core-parked",
+        _ => "none",
+    };
+
+    /// <summary>#605: tracks a sustained-load stopwatch (CPU &gt; 80% for &gt; 15s) and, on top of
+    /// it, #604's episode open/close/persist lifecycle - the two share one tracking pass since an
+    /// episode's TimeToThrottleSeconds is only meaningful measured from a freshly tracked
+    /// sustained-load start.</summary>
+    private void TrackSustainedLoadAndEpisode(bool throttlingNow, ThrottleReasonClass reasonClass, double? cpuTemp)
+    {
+        var now = DateTime.Now;
+
+        if (_performance.CpuCurrentPercent > 80) _sustainedLoadStartedAt ??= now;
+        else _sustainedLoadStartedAt = null;
+
+        if (throttlingNow)
+        {
+            if (_activeEpisode is null)
+            {
+                double? timeToThrottle = _sustainedLoadStartedAt is { } loadStart && (now - loadStart).TotalSeconds >= 15
+                    ? (now - loadStart).TotalSeconds
+                    : null;
+
+                _activeEpisode = new ThrottleEpisode
+                {
+                    Start = now,
+                    End = now,
+                    ReasonClass = reasonClass,
+                    PeakTempC = cpuTemp ?? 0,
+                    PeakPackagePowerW = TotalPackagePowerW ?? 0,
+                    TimeToThrottleSeconds = timeToThrottle,
+                };
+                _activeEpisodeClockSamples.Clear();
+
+                if (timeToThrottle is { } ttt)
+                {
+                    CurrentTimeToThrottleSeconds = ttt;
+                    UpdateTimeToThrottleText();
+                }
+            }
+
+            _activeEpisode.End = now;
+            _activeEpisode.PeakTempC = Math.Max(_activeEpisode.PeakTempC, cpuTemp ?? _activeEpisode.PeakTempC);
+            _activeEpisode.PeakPackagePowerW = Math.Max(_activeEpisode.PeakPackagePowerW, TotalPackagePowerW ?? _activeEpisode.PeakPackagePowerW);
+            _activeEpisodeClockSamples.Add(_performance.CpuCurrentClockGhz * 1000.0);
+        }
+        else if (_activeEpisode is not null)
+        {
+            _activeEpisode.MeanEffectiveMhz = _activeEpisodeClockSamples.Count > 0 ? _activeEpisodeClockSamples.Average() : 0;
+            var closed = _activeEpisode;
+            _activeEpisode = null;
+
+            ThrottleHistoryService.Append(closed);
+            _persistedEpisodes.Add(closed);
+            RecentThrottleEpisodes.Insert(0, closed);
+            while (RecentThrottleEpisodes.Count > 10) RecentThrottleEpisodes.RemoveAt(RecentThrottleEpisodes.Count - 1);
+            RebuildWeeklyEpisodeSparkline();
+        }
+    }
+
+    /// <summary>#605: "Time to throttle: 4m 10s (was 11m 30s in May)" - compares this session's
+    /// most recent measured time-to-throttle against the average recorded in the most recent
+    /// earlier calendar month that actually has data (comparing against partial data from earlier
+    /// in the *same* month would just be noise).</summary>
+    private void UpdateTimeToThrottleText()
+    {
+        if (CurrentTimeToThrottleSeconds is not { } current)
+        {
+            TimeToThrottleText = "No throttle observed yet this session";
+            return;
+        }
+
+        string nowText = FormatDuration(current);
+
+        int thisMonth = DateTime.Now.Month, thisYear = DateTime.Now.Year;
+        var priorMonthEpisodes = _persistedEpisodes
+            .Where(e => e.TimeToThrottleSeconds.HasValue && (e.Start.Year != thisYear || e.Start.Month != thisMonth))
+            .OrderByDescending(e => e.Start)
+            .ToList();
+
+        if (priorMonthEpisodes.Count == 0)
+        {
+            TimeToThrottleText = $"Time to throttle: {nowText}";
+            return;
+        }
+
+        var latest = priorMonthEpisodes[0].Start;
+        var sameMonth = priorMonthEpisodes.Where(e => e.Start.Year == latest.Year && e.Start.Month == latest.Month).ToList();
+        double avg = sameMonth.Average(e => e.TimeToThrottleSeconds!.Value);
+
+        TimeToThrottleText = $"Time to throttle: {nowText} (was {FormatDuration(avg)} in {latest:MMMM})";
+    }
+
+    private static string FormatDuration(double seconds)
+    {
+        var ts = TimeSpan.FromSeconds(Math.Max(0, seconds));
+        return ts.TotalMinutes >= 1 ? $"{(int)ts.TotalMinutes}m {ts.Seconds}s" : $"{ts.Seconds}s";
+    }
+
+    /// <summary>#604: per-week episode count over the last <see cref="WeeklySparklineWeeks"/>
+    /// weeks, oldest first, zero-filled for weeks with no episodes at all.</summary>
+    private void RebuildWeeklyEpisodeSparkline()
+    {
+        var today = DateTime.Now.Date;
+        var counts = new double[WeeklySparklineWeeks];
+        foreach (var ep in _persistedEpisodes)
+        {
+            int weeksAgo = (int)((today - ep.Start.Date).TotalDays / 7);
+            int idx = WeeklySparklineWeeks - 1 - weeksAgo;
+            if (idx >= 0 && idx < WeeklySparklineWeeks) counts[idx]++;
+        }
+        for (int i = 0; i < WeeklySparklineWeeks && i < WeeklyEpisodeCounts.Count; i++)
+            WeeklyEpisodeCounts[i] = counts[i];
+    }
+
+    /// <summary>#609: tracks a genuinely-idle window (CPU &lt; 5% for 60s) and, once one completes,
+    /// records that window's median CPU package temperature as today's baseline entry.</summary>
+    private void TrackIdleBaseline(double? cpuTemp)
+    {
+        bool idleNow = _performance.CpuCurrentPercent < IdleCpuThresholdPercent;
+        if (!idleNow || cpuTemp is not { } temp)
+        {
+            _idleWindowStartedAt = null;
+            _idleTempSamples.Clear();
+            return;
+        }
+
+        _idleWindowStartedAt ??= DateTime.Now;
+        _idleTempSamples.Add(temp);
+
+        if ((DateTime.Now - _idleWindowStartedAt.Value).TotalSeconds < IdleWindowSeconds) return;
+
+        var sorted = _idleTempSamples.OrderBy(v => v).ToList();
+        double median = sorted.Count % 2 == 1
+            ? sorted[sorted.Count / 2]
+            : (sorted[sorted.Count / 2 - 1] + sorted[sorted.Count / 2]) / 2.0;
+
+        ThermalBaselineService.RecordToday(median);
+        RefreshIdleBaselineChart();
+
+        // Reset so a long idle stretch records one entry per 60s window, not a continuous
+        // re-trigger every tick past the first qualifying window.
+        _idleWindowStartedAt = DateTime.Now;
+        _idleTempSamples.Clear();
+    }
+
+    private void RefreshIdleBaselineChart()
+    {
+        var entries = ThermalBaselineService.Load();
+        IdleBaselineHistory.Clear();
+        foreach (var e in entries) IdleBaselineHistory.Add(e.MedianIdleTempC);
+
+        int labelStep = entries.Count <= 6 ? 1 : Math.Max(1, entries.Count / 6);
+        IdleBaselineXAxes[0].Labels = entries
+            .Select((e, i) => i == 0 || i == entries.Count - 1 || i % labelStep == 0 ? e.Date.ToString("M/d/yy") : string.Empty)
+            .ToArray();
+    }
+
+    /// <summary>#602: loads firmware-limit events once at startup, plus on-demand via
+    /// LoadFirmwareEventsCommand - an event-log query, so never on the tick timer.</summary>
+    private async Task LoadFirmwareEventsAsync()
+    {
+        var events = await Task.Run(() => _eventLog.ReadFirmwareThrottleEvents());
+        FirmwareThrottleEvents.Clear();
+        foreach (var e in events) FirmwareThrottleEvents.Add(e);
+
+        var latest = events.OrderByDescending(e => e.TimeCreated).FirstOrDefault();
+        FirmwareLimitActive = latest is not null && !latest.IsRecovery;
     }
 
     private static bool IsGpu(HardwareType type) => type is HardwareType.GpuAmd or HardwareType.GpuNvidia;
@@ -721,5 +1136,6 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
     {
         _timer.Stop();
         _sensors.Dispose();
+        _thermalZones.Dispose();
     }
 }
