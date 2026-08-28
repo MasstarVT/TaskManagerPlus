@@ -433,6 +433,37 @@ public sealed class NtfsBehaviorSettingRow : ObservableObject
     public string ActionStatusText { get => _actionStatusText; set => SetProperty(ref _actionStatusText, value); }
 }
 
+/// <summary>Round 18, #376: one process the on-demand eject-blocker check found holding this
+/// removable volume open, via FileLockLookupService.FindProcessesWithPathOpen - augmented with a
+/// per-process open-file-handle count from HandleInspectionService (reused as-is, keyed by PID)
+/// purely as extra color on how "busy" that process looks, not a claim that those specific handles
+/// are the ones on this volume (HandleInspectionService only resolves handle *types*, not the
+/// object each handle points at - see its own remarks on why).</summary>
+public sealed class EjectBlockerRow
+{
+    public int Pid { get; init; }
+    public string ProcessName { get; init; } = string.Empty;
+    public bool Restartable { get; init; }
+    public int OpenFileHandleCount { get; init; }
+}
+
+/// <summary>Round 18, #376: wraps one immutable RemovableDriveFacts row with this row's mutable
+/// on-demand eject-blocker check state - same "wrap the immutable fact, add mutable UI state" shape
+/// VolumeFilesystemRow/NtfsBehaviorSettingRow above use.</summary>
+public sealed class RemovableDriveRow : ObservableObject
+{
+    public RemovableDriveFacts Facts { get; }
+    public RemovableDriveRow(RemovableDriveFacts facts) => Facts = facts;
+
+    public ObservableCollection<EjectBlockerRow> EjectBlockers { get; } = new();
+
+    private bool _isCheckingEjectBlockers;
+    public bool IsCheckingEjectBlockers { get => _isCheckingEjectBlockers; set => SetProperty(ref _isCheckingEjectBlockers, value); }
+
+    private string _ejectBlockerStatusText = string.Empty;
+    public string EjectBlockerStatusText { get => _ejectBlockerStatusText; set => SetProperty(ref _ejectBlockerStatusText, value); }
+}
+
 /// <summary>
 /// Backs the Storage tab. Thin composition over the shared PerformanceViewModel sampler -
 /// see CpuViewModel's remarks for why this doesn't own its own timer. Also takes the shared
@@ -1150,6 +1181,85 @@ public sealed class StorageViewModel : ObservableObject
 
     public AsyncRelayCommand CheckMinifiltersCommand { get; }
 
+    // ================================================================================
+    // Round 18, #370-#374: unified storage event timeline (disk/Ntfs/volmgr/partmgr/storahci/
+    // stornvme/iaStorAC/Kernel-PnP) - one manual "Check now" scan across a 30-day lookback (see
+    // StorageEventTimelineService's remarks on why this is a single combined read rather than five
+    // separate ones), fanned out into #371-#374's own filtered sub-views below.
+    // ================================================================================
+    public ObservableCollection<StorageTimelineEvent> StorageEventTimeline { get; } = new();
+
+    private string _storageEventTimelineStatusText = "Not checked";
+    public string StorageEventTimelineStatusText { get => _storageEventTimelineStatusText; private set => SetProperty(ref _storageEventTimelineStatusText, value); }
+
+    private bool _isCheckingStorageEventTimeline;
+    public bool IsCheckingStorageEventTimeline { get => _isCheckingStorageEventTimeline; private set => SetProperty(ref _isCheckingStorageEventTimeline, value); }
+
+    public AsyncRelayCommand CheckStorageEventTimelineCommand { get; }
+
+    // #371: event 153 ("I/O operation ... was retried") per-device timeline + daily-count trend
+    // chart - same ColumnSeries styling as the Stability tab's Reliability History (the only bar
+    // chart in the app, per CLAUDE.md; this follows that exact choice rather than inventing a
+    // second chart type).
+    public ObservableCollection<StorageTimelineEvent> Retry153Events { get; } = new();
+    public ObservableCollection<double> Retry153DailyCounts { get; } = new();
+    private readonly ColumnSeries<double> _retry153Columns;
+    public ISeries[] Retry153Series { get; }
+    public Axis[] Retry153XAxes { get; }
+    public Axis[] Retry153YAxes { get; }
+
+    private string _retry153SummaryText = string.Empty;
+    public string Retry153SummaryText { get => _retry153SummaryText; private set => SetProperty(ref _retry153SummaryText, value); }
+
+    // #372: event 51 ("error ... during a paging operation") per-device timeline - cross-linked
+    // (by a text note in the view, not navigation) to the #359 page-file-placement card, since a
+    // paging-operation error means the page file's backing store failed a read/write.
+    public ObservableCollection<StorageTimelineEvent> PagingErrorEvents { get; } = new();
+
+    private string _pagingErrorSummaryText = string.Empty;
+    public string PagingErrorSummaryText { get => _pagingErrorSummaryText; private set => SetProperty(ref _pagingErrorSummaryText, value); }
+
+    // #373: storahci/stornvme/iaStorAC event 129 (controller reset) - counted per device with
+    // timestamps, and surfaced as a Summary HealthIssue when recent (see SummaryViewModel.
+    // RefreshHealthIssues, which reads this collection directly - same "read a StorageViewModel-
+    // exposed collection each tick" shape #314/#317 already use for NvmeCriticalWarnings).
+    public ObservableCollection<StorageTimelineEvent> ControllerResetEvents { get; } = new();
+
+    private string _controllerResetSummaryText = string.Empty;
+    public string ControllerResetSummaryText { get => _controllerResetSummaryText; private set => SetProperty(ref _controllerResetSummaryText, value); }
+
+    // #374: Ntfs 140/142 + disk 157 + Kernel-PnP 219/225 correlated into one "drive vanished while
+    // in use" list.
+    public ObservableCollection<StorageTimelineEvent> SurpriseRemovalEvents { get; } = new();
+
+    private string _surpriseRemovalSummaryText = string.Empty;
+    public string SurpriseRemovalSummaryText { get => _surpriseRemovalSummaryText; private set => SetProperty(ref _surpriseRemovalSummaryText, value); }
+
+    private static readonly SKColor StorageEventAxisTextColor = new(0x9A, 0x9A, 0xA2);
+    private static readonly SKColor StorageEventAxisSeparatorColor = new(0x33, 0x33, 0x3A, 160);
+
+    // ================================================================================
+    // Round 18, #375: external-drive connection history (USBSTOR / SWD\WPDBUSENUM registry sweep) -
+    // a one-time-at-tab-load read, same tier as the page-file/reclaimable-space loads above (a
+    // registry walk over a handful of device keys, not a multi-provider 30-day event scan).
+    // ================================================================================
+    public ObservableCollection<RemovableDriveHistoryEntry> RemovableDriveHistory { get; } = new();
+
+    private string _removableDriveHistoryStatusText = "Loading...";
+    public string RemovableDriveHistoryStatusText { get => _removableDriveHistoryStatusText; private set => SetProperty(ref _removableDriveHistoryStatusText, value); }
+
+    // ================================================================================
+    // Round 18, #376: currently-attached removable drives' removal policy, plus an on-demand
+    // per-drive eject-blocker check (reuses FileLockLookupService + HandleInspectionService rather
+    // than a new handle-walk). Same "external drives" card as #375 above.
+    // ================================================================================
+    public ObservableCollection<RemovableDriveRow> RemovableDrives { get; } = new();
+
+    private string _removableDrivesStatusText = "Loading...";
+    public string RemovableDrivesStatusText { get => _removableDrivesStatusText; private set => SetProperty(ref _removableDrivesStatusText, value); }
+
+    public AsyncRelayCommand CheckEjectBlockersCommand { get; }
+
     private readonly ProcessesViewModel _processes;
 
     public StorageViewModel(PerformanceViewModel performance, EnergyThermalsViewModel energyThermals, ProcessesViewModel processes)
@@ -1257,6 +1367,46 @@ public sealed class StorageViewModel : ObservableObject
         // Round 18, #369
         CheckMinifiltersCommand = new AsyncRelayCommand(CheckMinifiltersAsync, () => !IsCheckingMinifilters);
 
+        // Round 18, #370-#374: single combined event-timeline scan.
+        CheckStorageEventTimelineCommand = new AsyncRelayCommand(CheckStorageEventTimelineAsync, () => !IsCheckingStorageEventTimeline);
+
+        // #371: daily retry-count column chart - same construction shape as StabilityViewModel's
+        // Reliability History chart (ColumnSeries, hidden-until-theme-applied default colors).
+        _retry153Columns = new ColumnSeries<double>
+        {
+            Values = Retry153DailyCounts,
+            Fill = new SolidColorPaint(SKColors.OrangeRed.WithAlpha(200)),
+            Stroke = null,
+            MaxBarWidth = 12,
+        };
+        Retry153Series = new ISeries[] { _retry153Columns };
+        Retry153XAxes = new[]
+        {
+            new Axis
+            {
+                Labels = Array.Empty<string>(),
+                LabelsRotation = 0,
+                MinStep = 1,
+                ForceStepToMin = true,
+                LabelsPaint = new SolidColorPaint(StorageEventAxisTextColor),
+                SeparatorsPaint = null,
+            },
+        };
+        Retry153YAxes = new[]
+        {
+            new Axis
+            {
+                MinLimit = 0,
+                MinStep = 1,
+                Labeler = v => $"{v:0}",
+                LabelsPaint = new SolidColorPaint(StorageEventAxisTextColor),
+                SeparatorsPaint = new SolidColorPaint(StorageEventAxisSeparatorColor) { StrokeThickness = 1 },
+            },
+        };
+
+        // Round 18, #376
+        CheckEjectBlockersCommand = new AsyncRelayCommand(param => CheckEjectBlockersAsync(param as RemovableDriveRow));
+
         // #324: subscribe to the shared sampler's tick rather than owning a new heavy timer -
         // see PerformanceViewModel.Sampled's remarks.
         Performance.Sampled += OnPerformanceSampled;
@@ -1345,6 +1495,28 @@ public sealed class StorageViewModel : ObservableObject
         // store analysis (explicitly on-demand only, see AnalyzeComponentStoreAsync) is a one-time
         // read at tab load, same tier as the page-file load above.
         _ = RefreshReclaimableSpaceAsync();
+
+        // #375: USBSTOR/SWD registry sweep - narrow enough (a handful of device keys, no event log
+        // involved) to load once at tab construction rather than needing its own button, per this
+        // round's brief.
+        _ = LoadRemovableDriveHistoryAsync();
+
+        // #376: current removable-drive inventory + removal policy - same one-time-at-load tier as
+        // #375 above; only the per-row eject-blocker check (CheckEjectBlockersCommand) is gated
+        // behind an explicit button, since that one does a real Restart Manager + handle-table walk.
+        _ = LoadRemovableDrivesAsync();
+    }
+
+    /// <summary>#371: repaints the retry-trend chart's axis text/gridlines to match the active
+    /// theme family - same shape as StabilityViewModel.ApplyAxisTheme, wired from MainViewModel.
+    /// </summary>
+    public void ApplyAxisTheme(System.Windows.Media.Color text, System.Windows.Media.Color separator)
+    {
+        var textSk = new SKColor(text.R, text.G, text.B);
+        var sepSk = new SKColor(separator.R, separator.G, separator.B, separator.A);
+        Retry153XAxes[0].LabelsPaint = new SolidColorPaint(textSk);
+        Retry153YAxes[0].LabelsPaint = new SolidColorPaint(textSk);
+        Retry153YAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
     }
 
     /// <summary>#324: fired once per PerformanceViewModel sample tick. Throttled to roughly once
@@ -3671,6 +3843,207 @@ public sealed class StorageViewModel : ObservableObject
         catch (Exception ex)
         {
             PageFileStatusText = $"Failed: {ex.Message}";
+        }
+    }
+
+    // ================================================================================
+    // Round 18, #370-#374: unified storage event timeline.
+    // ================================================================================
+
+    private async Task CheckStorageEventTimelineAsync()
+    {
+        IsCheckingStorageEventTimeline = true;
+        StorageEventTimelineStatusText = "Scanning disk/Ntfs/volmgr/partmgr/storahci/stornvme/iaStorAC/Kernel-PnP events (last 30 days - Ntfs corruption events look back 60 days)...";
+        try
+        {
+            var all = await Task.Run(() => StorageEventTimelineService.ReadUnifiedTimeline());
+
+            StorageEventTimeline.Clear();
+            foreach (var e in all) StorageEventTimeline.Add(e);
+            StorageEventTimelineStatusText = all.Count == 0
+                ? "No storage-related events found across any of the covered providers."
+                : $"{all.Count} event(s) across all covered providers (most recent first). Overlaps with the Disk-diagnosis and NTFS-corruption cards above are expected - this view folds those same reads in rather than querying a third time.";
+
+            // #371: event 153 (I/O retried) - per-device list + 30-day daily-count trend chart.
+            var retries = all.Where(e => e.EventId == 153 && e.Category == "I/O retried").ToList();
+            Retry153Events.Clear();
+            foreach (var e in retries) Retry153Events.Add(e);
+            Retry153SummaryText = retries.Count == 0
+                ? "No I/O-retry (event 153) events in the last 30 days."
+                : $"{retries.Count} retry event(s) across {retries.Select(e => e.DeviceText).Distinct().Count()} device(s): " +
+                  string.Join(", ", retries.GroupBy(e => e.DeviceText).Select(g => $"{g.Key} ({g.Count()})"));
+
+            var dailyCounts = BuildDailyCounts(retries, StorageEventLookbackDays);
+            Retry153DailyCounts.Clear();
+            foreach (var c in dailyCounts) Retry153DailyCounts.Add(c.Count);
+            Retry153XAxes[0].Labels = dailyCounts
+                .Select((d, i) => i % 5 == 0 ? d.Date.ToString("M/d") : string.Empty)
+                .ToArray();
+
+            // #372: event 51 (paging-operation error) - per-device list.
+            var pagingErrors = all.Where(e => e.EventId == 51 && e.Category == "Paging error").ToList();
+            PagingErrorEvents.Clear();
+            foreach (var e in pagingErrors) PagingErrorEvents.Add(e);
+            PagingErrorSummaryText = pagingErrors.Count == 0
+                ? "No paging-operation error (event 51) events in the last 30 days."
+                : $"{pagingErrors.Count} paging-operation error(s): " +
+                  string.Join(", ", pagingErrors.GroupBy(e => e.DeviceText).Select(g => $"{g.Key} ({g.Count()})")) +
+                  " - see the Page File Placement card above for where your page file(s) currently live.";
+
+            // #373: controller reset (storahci/stornvme/iaStorAC 129) - per-device list, and
+            // recent-reset detection for SummaryViewModel.RefreshHealthIssues to read directly.
+            var resets = all.Where(e => e.Category == "Controller reset").ToList();
+            ControllerResetEvents.Clear();
+            foreach (var e in resets) ControllerResetEvents.Add(e);
+            ControllerResetSummaryText = resets.Count == 0
+                ? "No controller-reset (storahci/stornvme/iaStorAC event 129) events in the last 30 days."
+                : $"{resets.Count} controller reset(s): " +
+                  string.Join(", ", resets.GroupBy(e => e.DeviceText).Select(g => $"{g.Key} ({g.Count()})")) +
+                  " - the classic signature of a controller/drive that stopped responding, and a common cause of whole-system freezes.";
+
+            // #374: Ntfs 140/142 + disk 157 + Kernel-PnP 219/225 correlated into one list.
+            var surpriseRemovals = all.Where(e =>
+                (e.Provider == "Ntfs" && e.EventId is 140 or 142) ||
+                (e.Provider == DiskDiagnosisProviderLabel && e.EventId == 157) ||
+                (e.Provider == "Microsoft-Windows-Kernel-PnP" && e.EventId is 219 or 225))
+                .ToList();
+            SurpriseRemovalEvents.Clear();
+            foreach (var e in surpriseRemovals) SurpriseRemovalEvents.Add(e);
+            SurpriseRemovalSummaryText = surpriseRemovals.Count == 0
+                ? "No surprise-removal / volume-no-longer-writable events found."
+                : $"{surpriseRemovals.Count} event(s) consistent with a drive vanishing while still in use - the history behind \"my external drive keeps corrupting itself\".";
+        }
+        catch (Exception ex)
+        {
+            StorageEventTimelineStatusText = $"Failed: {ex.Message}";
+        }
+        finally
+        {
+            IsCheckingStorageEventTimeline = false;
+        }
+    }
+
+    private const string DiskDiagnosisProviderLabel = "Disk";
+    private const int StorageEventLookbackDays = 30;
+
+    /// <summary>Buckets a list of events into one count per calendar day across the lookback
+    /// window, zero-filled for days with no events at all - same shape EventLogService.
+    /// BuildDailyCounts already uses for the Stability tab's Reliability History chart.</summary>
+    private static List<DailyEventCount> BuildDailyCounts(List<StorageTimelineEvent> events, int lookbackDays)
+    {
+        var counts = events
+            .GroupBy(e => e.TimeCreated.Date)
+            .ToDictionary(g => g.Key, g => g.Count());
+
+        var result = new List<DailyEventCount>();
+        var today = DateTime.Now.Date;
+        for (int i = lookbackDays - 1; i >= 0; i--)
+        {
+            var day = today.AddDays(-i);
+            result.Add(new DailyEventCount { Date = day, Count = counts.TryGetValue(day, out var c) ? c : 0 });
+        }
+        return result;
+    }
+
+    // ================================================================================
+    // Round 18, #375: external-drive connection history.
+    // ================================================================================
+
+    private async Task LoadRemovableDriveHistoryAsync()
+    {
+        RemovableDriveHistoryStatusText = "Loading...";
+        try
+        {
+            var entries = await Task.Run(() => RemovableDriveHistoryService.ReadHistory());
+            RemovableDriveHistory.Clear();
+            foreach (var e in entries) RemovableDriveHistory.Add(e);
+            RemovableDriveHistoryStatusText = entries.Count == 0
+                ? "No USB mass-storage or portable-device history recorded on this PC."
+                : $"{entries.Count} device(s) ever recorded (USBSTOR + portable devices). Connection timestamps are best-effort and may be missing for some devices - see the note below.";
+        }
+        catch (Exception ex)
+        {
+            RemovableDriveHistoryStatusText = $"Failed: {ex.Message}";
+        }
+    }
+
+    // ================================================================================
+    // Round 18, #376: removal policy + eject blockers.
+    // ================================================================================
+
+    private async Task LoadRemovableDrivesAsync()
+    {
+        RemovableDrivesStatusText = "Loading...";
+        try
+        {
+            var drives = await Task.Run(() => RemovalPolicyService.ReadCurrentRemovableDrives());
+            RemovableDrives.Clear();
+            foreach (var d in drives) RemovableDrives.Add(new RemovableDriveRow(d));
+            RemovableDrivesStatusText = drives.Count == 0
+                ? "No removable drives currently attached."
+                : $"{drives.Count} removable drive(s) currently attached.";
+        }
+        catch (Exception ex)
+        {
+            RemovableDrivesStatusText = $"Failed: {ex.Message}";
+        }
+    }
+
+    /// <summary>#376: "when an eject would fail, list the processes holding handles on the volume" -
+    /// reuses FileLockLookupService (Restart Manager, generalized to accept a volume-root directory
+    /// rather than just one file - see FindProcessesWithPathOpen's remarks) to find candidate
+    /// processes, then HandleInspectionService to show each one's open-file-handle count as extra
+    /// context. This is a read-only diagnostic check, not an actual eject action - it never touches
+    /// the device itself.</summary>
+    private async Task CheckEjectBlockersAsync(RemovableDriveRow? row)
+    {
+        if (row is null || row.IsCheckingEjectBlockers) return;
+        if (string.IsNullOrEmpty(row.Facts.DriveLetter))
+        {
+            row.EjectBlockerStatusText = "No drive letter resolved for this disk - can't check for open handles.";
+            return;
+        }
+
+        row.IsCheckingEjectBlockers = true;
+        row.EjectBlockerStatusText = "Checking for processes with files open on this volume (Restart Manager)...";
+        row.EjectBlockers.Clear();
+        try
+        {
+            string root = row.Facts.DriveLetter.TrimEnd('\\') + @"\";
+            var owners = await Task.Run(() => FileLockLookupService.FindProcessesWithPathOpen(root));
+
+            var blockers = new List<EjectBlockerRow>();
+            foreach (var owner in owners)
+            {
+                int fileHandles = 0;
+                try
+                {
+                    var counts = await Task.Run(() => HandleInspectionService.ReadHandleTypeCounts(owner.Pid));
+                    fileHandles = counts.FirstOrDefault(c => c.TypeName == "File").Count;
+                }
+                catch { /* leave 0 - the row still shows without a handle count */ }
+
+                blockers.Add(new EjectBlockerRow
+                {
+                    Pid = owner.Pid,
+                    ProcessName = owner.AppName,
+                    Restartable = owner.Restartable,
+                    OpenFileHandleCount = fileHandles,
+                });
+            }
+
+            foreach (var b in blockers) row.EjectBlockers.Add(b);
+            row.EjectBlockerStatusText = blockers.Count == 0
+                ? "Restart Manager found no processes with files open on this volume - an eject should succeed, though this isn't a guarantee (it only sees file handles, not every possible handle type)."
+                : $"{blockers.Count} process(es) may be holding this volume open - close them before ejecting.";
+        }
+        catch (Exception ex)
+        {
+            row.EjectBlockerStatusText = $"Failed: {ex.Message}";
+        }
+        finally
+        {
+            row.IsCheckingEjectBlockers = false;
         }
     }
 }

@@ -1862,6 +1862,161 @@
                 </StackPanel>
             </Border>
 
+            <!-- Round 18, #370-#374: unified storage event timeline across disk/Ntfs/volmgr/
+                 partmgr/storahci/stornvme/iaStorAC/Kernel-PnP, folding the Disk-diagnosis (above)
+                 and NTFS-corruption (above) cards' own reads back in rather than a third
+                 disconnected list - see StorageEventTimelineService's remarks. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Storage events" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Check now" Padding="10,4" Command="{Binding CheckStorageEventTimelineCommand}" />
+                    </Grid>
+                    <TextBlock Text="One chronological scan across disk (11/15/51/157), volmgr, partmgr, storahci/stornvme/iaStorAC (129), and Microsoft-Windows-Kernel-PnP (219/225) - last 30 days - plus the Disk-diagnosis and NTFS-corruption events already shown above, folded in here rather than queried a third time."
+                               Style="{StaticResource SubStat}" Margin="0,-6,0,10" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding StorageEventTimelineStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" />
+                    <DataGrid ItemsSource="{Binding StorageEventTimeline}" IsReadOnly="True" MaxHeight="240" AutoGenerateColumns="False" Margin="0,0,0,16">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Time" Binding="{Binding TimeCreated, StringFormat={}{0:g}}" Width="130" />
+                            <DataGridTextColumn Header="Provider" Binding="{Binding Provider}" Width="110" />
+                            <DataGridTextColumn Header="Event ID" Binding="{Binding EventId}" Width="70" />
+                            <DataGridTextColumn Header="Category" Binding="{Binding Category}" Width="120" />
+                            <DataGridTextColumn Header="Device" Binding="{Binding DeviceText}" Width="1.2*" />
+                            <DataGridTextColumn Header="Message" Binding="{Binding Message}" Width="2.2*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+
+                    <!-- #371: event 153 (I/O retried) - per-device timeline + daily-count trend. -->
+                    <TextBlock Text="Event 153 - I/O retries (early drive/cable warning)" FontWeight="SemiBold" FontSize="13" Margin="0,0,0,4" />
+                    <TextBlock Text="{Binding Retry153SummaryText}" Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" />
+                    <lvc:CartesianChart Series="{Binding Retry153Series}" XAxes="{Binding Retry153XAxes}" YAxes="{Binding Retry153YAxes}"
+                                         Height="120" TooltipPosition="Top" LegendPosition="Hidden" Background="Transparent" Margin="0,0,0,10" />
+                    <DataGrid ItemsSource="{Binding Retry153Events}" IsReadOnly="True" MaxHeight="160" AutoGenerateColumns="False" Margin="0,0,0,16">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Time" Binding="{Binding TimeCreated, StringFormat={}{0:g}}" Width="130" />
+                            <DataGridTextColumn Header="Device" Binding="{Binding DeviceText}" Width="1.4*" />
+                            <DataGridTextColumn Header="Message" Binding="{Binding Message}" Width="2.4*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+
+                    <!-- #372: event 51 (paging-operation error) - cross-linked to the page-file
+                         placement card (#359) above by a text note, not navigation. -->
+                    <TextBlock Text="Event 51 - Paging-operation errors" FontWeight="SemiBold" FontSize="13" Margin="0,0,0,4" />
+                    <TextBlock Text="{Binding PagingErrorSummaryText}" Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" />
+                    <DataGrid ItemsSource="{Binding PagingErrorEvents}" IsReadOnly="True" MaxHeight="160" AutoGenerateColumns="False" Margin="0,0,0,16">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Time" Binding="{Binding TimeCreated, StringFormat={}{0:g}}" Width="130" />
+                            <DataGridTextColumn Header="Device" Binding="{Binding DeviceText}" Width="1.4*" />
+                            <DataGridTextColumn Header="Message" Binding="{Binding Message}" Width="2.4*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+
+                    <!-- #373: storahci/stornvme/iaStorAC event 129 - also raised as a Summary
+                         HealthIssue when recent (see SummaryViewModel.RefreshHealthIssues). -->
+                    <TextBlock Text="Controller resets" FontWeight="SemiBold" FontSize="13" Margin="0,0,0,4" />
+                    <TextBlock Text="{Binding ControllerResetSummaryText}" Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" />
+                    <DataGrid ItemsSource="{Binding ControllerResetEvents}" IsReadOnly="True" MaxHeight="160" AutoGenerateColumns="False" Margin="0,0,0,16">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Time" Binding="{Binding TimeCreated, StringFormat={}{0:g}}" Width="130" />
+                            <DataGridTextColumn Header="Provider" Binding="{Binding Provider}" Width="100" />
+                            <DataGridTextColumn Header="Device" Binding="{Binding DeviceText}" Width="1.2*" />
+                            <DataGridTextColumn Header="Message" Binding="{Binding Message}" Width="2.2*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+
+                    <!-- #374: Ntfs 140/142 + disk 157 + Kernel-PnP 219/225 correlated. -->
+                    <TextBlock Text="Surprise-removal history" FontWeight="SemiBold" FontSize="13" Margin="0,0,0,4" />
+                    <TextBlock Text="{Binding SurpriseRemovalSummaryText}" Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" />
+                    <DataGrid ItemsSource="{Binding SurpriseRemovalEvents}" IsReadOnly="True" MaxHeight="160" AutoGenerateColumns="False">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Time" Binding="{Binding TimeCreated, StringFormat={}{0:g}}" Width="130" />
+                            <DataGridTextColumn Header="Provider" Binding="{Binding Provider}" Width="100" />
+                            <DataGridTextColumn Header="Device" Binding="{Binding DeviceText}" Width="1.2*" />
+                            <DataGridTextColumn Header="Message" Binding="{Binding Message}" Width="2.2*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- Round 18, #375/#376: external-drive connection history + currently-attached
+                 removal policy / eject blockers. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="External drives seen on this PC" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Every USB mass-storage/portable device Windows has ever recorded (USBSTOR + SWD\WPDBUSENUM registry history), plus removal-policy and eject-blocker details for whatever's attached right now."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+
+                    <!-- #375: read-only connection history. -->
+                    <TextBlock Text="Connection history" FontWeight="SemiBold" FontSize="13" Margin="0,0,0,4" />
+                    <TextBlock Text="{Binding RemovableDriveHistoryStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,4" TextWrapping="Wrap" />
+                    <TextBlock Text="First/last-connected timestamps are read from an undocumented registry layout and may be blank for some devices even though the device itself is listed correctly - friendly name and serial are the reliable part."
+                               Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" />
+                    <DataGrid ItemsSource="{Binding RemovableDriveHistory}" IsReadOnly="True" MaxHeight="240" AutoGenerateColumns="False" Margin="0,0,0,16">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Device" Binding="{Binding FriendlyName}" Width="1.6*" />
+                            <DataGridTextColumn Header="Serial" Binding="{Binding Serial}" Width="1.4*" />
+                            <DataGridTextColumn Header="Kind" Binding="{Binding Source}" Width="140" />
+                            <DataGridTextColumn Header="First connected" Binding="{Binding FirstConnected, StringFormat={}{0:g}, TargetNullValue=Unknown}" Width="130" />
+                            <DataGridTextColumn Header="Last connected" Binding="{Binding LastConnected, StringFormat={}{0:g}, TargetNullValue=Unknown}" Width="130" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+
+                    <!-- #376: currently-attached removable drives - removal policy + eject-blocker
+                         check (read-only diagnostic, never actually ejects anything). -->
+                    <TextBlock Text="Currently attached - removal policy" FontWeight="SemiBold" FontSize="13" Margin="0,0,0,4" />
+                    <TextBlock Text="{Binding RemovableDrivesStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" />
+                    <ItemsControl ItemsSource="{Binding RemovableDrives}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border BorderThickness="0,0,0,1" BorderBrush="{DynamicResource BorderSubtleBrush}" Padding="0,0,0,10" Margin="0,0,0,10">
+                                    <StackPanel>
+                                        <TextBlock TextWrapping="Wrap" FontSize="12.5">
+                                            <Run Text="{Binding Facts.DriveLetter, Mode=OneWay, StringFormat={}{0}: }" FontWeight="SemiBold" />
+                                            <Run Text="{Binding Facts.Model, Mode=OneWay}" />
+                                        </TextBlock>
+                                        <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,2,0,2">
+                                            <Run Text="Interface: " /><Run Text="{Binding Facts.InterfaceType, Mode=OneWay}" />
+                                            <Run Text=" · Size: " /><Run Text="{Binding Facts.SizeBytes, Mode=OneWay, Converter={StaticResource BytesToReadableConverter}}" />
+                                        </TextBlock>
+                                        <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,6">
+                                            <Run Text="Removal policy: " /><Run Text="{Binding Facts.RemovalPolicyText, Mode=OneWay}" FontWeight="SemiBold" />
+                                        </TextBlock>
+                                        <Grid Margin="0,0,0,4">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" Text="Check for processes that would block an eject (read-only - never ejects the drive itself)."
+                                                       Style="{StaticResource SubStat}" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,10,0" />
+                                            <Button Grid.Column="1" Content="Check eject blockers" Padding="8,3" FontSize="11.5"
+                                                    Command="{Binding DataContext.CheckEjectBlockersCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                    CommandParameter="{Binding}" />
+                                        </Grid>
+                                        <TextBlock Text="{Binding EjectBlockerStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,4" TextWrapping="Wrap"
+                                                   Visibility="{Binding EjectBlockerStatusText, Converter={StaticResource StringToVisibilityConverter}}" />
+                                        <ItemsControl ItemsSource="{Binding EjectBlockers}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock FontSize="11.5" Margin="0,0,0,2" TextWrapping="Wrap">
+                                                        <Run Text="{Binding ProcessName, Mode=OneWay}" FontWeight="SemiBold" />
+                                                        <Run Text="{Binding Pid, Mode=OneWay, StringFormat=(PID {0})}" />
+                                                        <Run Text="{Binding OpenFileHandleCount, Mode=OneWay, StringFormat=- {0} open file handle(s)}" />
+                                                    </TextBlock>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
         </StackPanel>
     </ScrollViewer>
 </UserControl>

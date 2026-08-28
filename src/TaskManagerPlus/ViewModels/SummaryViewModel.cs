@@ -775,6 +775,24 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         // one-time System-tab inventory sweep taken at startup.
         foreach (var alert in _storage.DriveFailureAlerts) issues.Add(alert);
 
+        // Round 18, #373: storahci/stornvme/iaStorAC controller-reset events (storport event 129) -
+        // the classic signature of a controller/drive that stopped responding, a common cause of
+        // whole-system freezes. Reads _storage.ControllerResetEvents directly, the same "reflects
+        // whatever the last on-demand read found, empty until that read has actually happened"
+        // shape #314/#317 already use for NvmeCriticalWarnings/NvmeMediaErrorsPresent above -
+        // populated by the Storage tab's "Check now" unified event-timeline scan (#370), not a live
+        // poll (an event-log query isn't cheap enough for the 2s health timer).
+        var recentReset = _storage.ControllerResetEvents
+            .Where(e => e.TimeCreated >= DateTime.Now.AddHours(-48))
+            .OrderByDescending(e => e.TimeCreated)
+            .FirstOrDefault();
+        if (recentReset is not null)
+            issues.Add(new HealthIssue
+            {
+                Message = $"Storage controller reset detected on {recentReset.DeviceText} at {recentReset.TimeCreated:g} - possible controller/drive freeze",
+                IsCritical = true,
+            });
+
         if (_energyThermals.CpuPackageTempC is { } cpuTemp && cpuTemp >= HotCpuTempC)
             issues.Add(new HealthIssue { Message = $"CPU running hot ({cpuTemp:0}°C)", IsCritical = cpuTemp >= 100 });
 

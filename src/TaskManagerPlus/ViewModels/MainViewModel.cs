@@ -229,6 +229,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         ApplyAxisThemeToStability();
         Theme.ThemeModeChanged += ApplyAxisThemeToStability;
 
+        // Round 18, #371: Storage tab's event-153 retry-trend chart - same ColumnSeries theming
+        // shape as Stability's Reliability History chart above.
+        ApplyAxisThemeToStorage();
+        Theme.ThemeModeChanged += ApplyAxisThemeToStorage;
+
         ApplyAxisThemeToStartup();
         Theme.ThemeModeChanged += ApplyAxisThemeToStartup;
 
@@ -268,6 +273,14 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Color TextOf(string key) => (resources[key] as SolidColorBrush)?.Color ?? Colors.Gray;
 
         Stability.ApplyAxisTheme(TextOf("TextSecondaryBrush"), TextOf("BorderBrush2"));
+    }
+
+    private void ApplyAxisThemeToStorage()
+    {
+        var resources = Application.Current.Resources;
+        Color TextOf(string key) => (resources[key] as SolidColorBrush)?.Color ?? Colors.Gray;
+
+        Storage.ApplyAxisTheme(TextOf("TextSecondaryBrush"), TextOf("BorderBrush2"));
     }
 
     private void ApplyAxisThemeToStartup()
@@ -356,6 +369,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Theme.ThemeModeChanged -= ApplyAxisThemeToPerformance;
         Theme.ThemeModeChanged -= ApplyAxisThemeToEnergyThermals;
         Theme.ThemeModeChanged -= ApplyAxisThemeToStability;
+        Theme.ThemeModeChanged -= ApplyAxisThemeToStorage;
         Theme.ThemeModeChanged -= ApplyAxisThemeToStartup;
         Theme.ThemeModeChanged -= ApplyAxisThemeToLogging;
         Processes.Dispose();

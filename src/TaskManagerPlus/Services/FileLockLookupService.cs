@@ -26,10 +26,22 @@ public sealed record FileLockOwner(int Pid, string AppName, bool Restartable);
 public static class FileLockLookupService
 {
     public static List<FileLockOwner> FindProcessesWithFileOpen(string path)
+        => File.Exists(path) ? FindProcessesWithResourceOpen(path) : new List<FileLockOwner>();
+
+    /// <summary>Round 18, #376: same Restart Manager session as FindProcessesWithFileOpen above,
+    /// just accepting a directory (a removable volume's root, e.g. "E:\") as well as a single file -
+    /// used for "which processes might be blocking an eject", where there's no one specific file to
+    /// name. Registering a directory with RmRegisterResources is undocumented for this exact case,
+    /// but is the same technique Explorer-adjacent "who's using this folder" tools rely on in
+    /// practice; when it finds nothing, that's reported as "Restart Manager found nothing", not a
+    /// guaranteed-safe-to-eject verdict - the same honest limitation FindProcessesWithFileOpen's own
+    /// remarks already document for the single-file case.</summary>
+    public static List<FileLockOwner> FindProcessesWithPathOpen(string path)
+        => (File.Exists(path) || Directory.Exists(path)) ? FindProcessesWithResourceOpen(path) : new List<FileLockOwner>();
+
+    private static List<FileLockOwner> FindProcessesWithResourceOpen(string path)
     {
         var result = new List<FileLockOwner>();
-        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
-            return result;
 
         uint session = 0;
         var sessionKey = new StringBuilder(CchRmSessionKey + 1);

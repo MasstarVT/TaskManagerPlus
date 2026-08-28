@@ -1,8 +1,4 @@
 using System.Diagnostics.Eventing.Reader;
-using System.IO;
-using System.Runtime.InteropServices;
-using System.Text;
-using System.Text.RegularExpressions;
 using TaskManagerPlus.Models;
 
 namespace TaskManagerPlus.Services;
@@ -11,8 +7,12 @@ namespace TaskManagerPlus.Services;
 /// Round 15, #344: the System log's "Ntfs" provider corruption/resource-exhaustion signals - 55
 /// (corruption detected), 98 (unable to write to the transaction log), 130/137 (volume resource
 /// exhaustion / transaction log full), 140/142 (volume no longer writable). A sibling to
-/// DiskDiagnosisEventService rather than an extension of it (different provider/event family) - per
-/// this round's brief, a future chunk (#370) folds both into one unified storage event timeline.
+/// DiskDiagnosisEventService rather than an extension of it (different provider/event family).
+/// Round 18, #370 folds this list into a broader unified storage event timeline
+/// (StorageEventTimelineService) rather than replacing it - this stays its own simple,
+/// per-volume-grouped list, and the drive-letter resolver it needs is now shared (see
+/// DevicePathResolver) rather than owned privately, so the unified timeline can reuse the exact
+/// same QueryDosDeviceW-based lookup instead of a second copy.
 /// Same EventLogQuery/EventLogReader shape, degrading to empty rather than throwing when the
 /// provider has simply never logged anything (the common case on a healthy system).
 /// </summary>
@@ -28,7 +28,7 @@ public static class NtfsCorruptionEventService
     /// clearly as a cluster rather than interleaved with unrelated volumes' events.</summary>
     public static List<NtfsCorruptionEvent> ReadEvents()
     {
-        var deviceToLetter = BuildDeviceToLetterMap();
+        var deviceToLetter = DevicePathResolver.BuildDeviceToLetterMap();
         var events = new List<NtfsCorruptionEvent>();
         foreach (int eventId in EventIds)
             ReadFromProviderEventId(events, eventId, deviceToLetter);
@@ -64,7 +64,7 @@ public static class NtfsCorruptionEventService
                     {
                         TimeCreated = record.TimeCreated ?? DateTime.MinValue,
                         EventId = eventId,
-                        VolumeText = ResolveVolume(message, deviceToLetter),
+                        VolumeText = DevicePathResolver.ResolveVolumeFromMessage(message, deviceToLetter),
                         Message = Truncate(message, 300),
                     });
                 }
@@ -76,44 +76,6 @@ public static class NtfsCorruptionEventService
             // contribute nothing for this ID.
         }
     }
-
-    private static readonly Regex HarddiskVolumeRegex = new(@"\\Device\\HarddiskVolume(\d+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
-    private static string ResolveVolume(string message, Dictionary<string, string> deviceToLetter)
-    {
-        var match = HarddiskVolumeRegex.Match(message);
-        if (!match.Success) return "Unknown volume";
-        string devicePath = $@"\Device\HarddiskVolume{match.Groups[1].Value}";
-        return deviceToLetter.TryGetValue(devicePath, out var letter) ? $"{letter}:" : "Unknown volume";
-    }
-
-    /// <summary>Maps every fixed drive's letter to its NT device path (e.g. "C:" ->
-    /// "\Device\HarddiskVolume3") via QueryDosDeviceW - the standard, minimal Win32 call for this;
-    /// there's no WMI class that exposes a volume's raw NT device path directly, so this is one of
-    /// the few raw-interop cases in this app (alongside CpuTopologyService/the PEB walk/the
-    /// handle-table walk), reserved for exactly that "no tool or WMI class available" situation per
-    /// CLAUDE.md. Best-effort: a drive this can't resolve just doesn't appear in the map, so
-    /// ResolveVolume above falls back to "Unknown volume" rather than guessing.</summary>
-    private static Dictionary<string, string> BuildDeviceToLetterMap()
-    {
-        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        try
-        {
-            foreach (var drive in DriveInfo.GetDrives())
-            {
-                if (drive.DriveType != DriveType.Fixed) continue;
-                string letter = drive.Name.TrimEnd('\\', ':');
-                var buffer = new StringBuilder(260);
-                uint len = QueryDosDeviceW($"{letter}:", buffer, (uint)buffer.Capacity);
-                if (len > 0) map[buffer.ToString()] = letter;
-            }
-        }
-        catch { /* best-effort - an empty map just means every event shows "Unknown volume" */ }
-        return map;
-    }
-
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    private static extern uint QueryDosDeviceW(string lpDeviceName, StringBuilder lpTargetPath, uint ucchMax);
 
     private static string Truncate(string s, int maxLen) => s.Length <= maxLen ? s : s[..maxLen] + "…";
 }
