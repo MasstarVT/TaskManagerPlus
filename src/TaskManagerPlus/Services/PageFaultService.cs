@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using TaskManagerPlus.Models;
 
 namespace TaskManagerPlus.Services;
@@ -35,10 +35,13 @@ public sealed class PageFaultService : IDisposable
     private PerformanceCounter? _pageReadsCounter;
     public bool HardFaultRateAvailable { get; private set; }
 
-    // Cached per-instance PerformanceCounter objects, same "construct lazily, prune when the
-    // instance disappears" shape DotNetPerfCounterService.ReadCounter/PruneStaleCounters use for
-    // the same kind of process-instance churn.
-    private readonly Dictionary<string, PerformanceCounter> _processCounters = new();
+    // #279: previous raw "Page Faults/sec" reading per process instance, for the rate the
+    // counter's own NextValue() would otherwise compute for us - see SampleTopProcesses for why
+    // this reads the category directly instead. Keyed by instance name; the PID is stored
+    // alongside so a recycled instance name ("chrome#7" becoming a different process) resets its
+    // baseline instead of reporting a nonsense spike from subtracting an unrelated process's
+    // counter.
+    private readonly Dictionary<string, (int Pid, long RawFaults, DateTime AtUtc)> _faultBaseline = new();
     public bool PerProcessAvailable { get; private set; }
 
     public PageFaultService()
@@ -97,7 +100,24 @@ public sealed class PageFaultService : IDisposable
     }
 
     /// <summary>#279 fallback: per-process Process(*)\Page Faults/sec, ranked descending, top N -
-    /// see the class remarks for why this is explicitly an approximation.</summary>
+    /// see the class remarks for why this is explicitly an approximation.
+    ///
+    /// Reads the whole "Process" category ONCE per call (PerformanceCounterCategory.ReadCategory)
+    /// rather than holding a PerformanceCounter per instance and calling NextValue() on each.
+    /// That is not a micro-optimisation: every NextValue() on a multi-instance category re-reads
+    /// the entire category blob from the registry/PDH, which for the Process category on a busy
+    /// machine is multiple megabytes - large enough to land straight on the Large Object Heap. At
+    /// ~400 process instances x 2 counters that was ~800 whole-category reads per call, on
+    /// ResponsivenessViewModel's always-on 2s timer, and it dominated this process: a trace showed
+    /// SampleLight occupying ~84% of wall clock and the GC holding well over a gigabyte of LOH
+    /// garbage, on every tab, whether or not the Responsiveness tab was even open. One
+    /// ReadCategory() call returns the same data for every instance and counter at once.
+    ///
+    /// ReadCategory gives raw counter values, not computed rates, so the per-second figure is
+    /// derived here from the delta against the previous sample - which is exactly what
+    /// NextValue() was doing internally. The first call after startup (or after an instance
+    /// appears) has no baseline to subtract and so reports nothing for it rather than a fabricated
+    /// number, per CLAUDE.md's degrade-never-fabricate rule.</summary>
     public List<ProcessPageFaultRow> SampleTopProcesses(int top = 15)
     {
         var rows = new List<ProcessPageFaultRow>();
@@ -105,14 +125,40 @@ public sealed class PageFaultService : IDisposable
         try
         {
             var category = new PerformanceCounterCategory("Process");
-            var instances = category.GetInstanceNames().Where(n => n != "_Total" && n != "Idle").ToList();
-            var liveKeys = new HashSet<string>();
+            InstanceDataCollectionCollection data = category.ReadCategory();
 
-            foreach (var inst in instances)
+            var idData = data["ID Process"];
+            var faultData = data["Page Faults/sec"];
+            if (idData is null || faultData is null) return rows;
+
+            var now = DateTime.UtcNow;
+            var live = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (string inst in faultData.Keys)
             {
-                int pid = (int)ReadCounter("ID Process", inst, liveKeys);
+                if (inst is "_Total" or "Idle") continue;
+
+                var faultEntry = faultData[inst];
+                var idEntry = idData[inst];
+                if (faultEntry is null || idEntry is null) continue;
+
+                int pid = unchecked((int)idEntry.RawValue);
                 if (pid <= 0) continue;
-                double faultsPerSec = ReadCounter("Page Faults/sec", inst, liveKeys);
+                long rawFaults = faultEntry.RawValue;
+                live.Add(inst);
+
+                bool haveBaseline = _faultBaseline.TryGetValue(inst, out var prev);
+                _faultBaseline[inst] = (pid, rawFaults, now);
+
+                // No baseline, a recycled instance name, or a counter that went backwards (process
+                // restarted under the same instance name) - record the baseline and report nothing
+                // for this instance this pass rather than a bogus rate.
+                if (!haveBaseline || prev.Pid != pid || rawFaults < prev.RawFaults) continue;
+
+                double seconds = (now - prev.AtUtc).TotalSeconds;
+                if (seconds <= 0) continue;
+
+                double faultsPerSec = (rawFaults - prev.RawFaults) / seconds;
 
                 // Instance names are the bare process name, or "name#N" for the Nth instance of a
                 // process with multiple running copies - strip the suffix for display.
@@ -120,7 +166,7 @@ public sealed class PageFaultService : IDisposable
                 rows.Add(new ProcessPageFaultRow { Pid = pid, ProcessName = name, PageFaultsPerSec = Math.Round(Math.Max(0, faultsPerSec), 0) });
             }
 
-            PruneStale(liveKeys);
+            PruneStale(live);
         }
         catch
         {
@@ -129,43 +175,19 @@ public sealed class PageFaultService : IDisposable
         return rows.OrderByDescending(r => r.PageFaultsPerSec).Take(top).ToList();
     }
 
-    private double ReadCounter(string counterName, string instance, HashSet<string> liveKeys)
+    /// <summary>Drops baselines for process instances that no longer exist, so this dictionary
+    /// tracks the live process set rather than growing for the life of the app.</summary>
+    private void PruneStale(HashSet<string> live)
     {
-        string key = $"{counterName}|{instance}";
-        liveKeys.Add(key);
-
-        if (!_processCounters.TryGetValue(key, out var counter))
-        {
-            try
-            {
-                counter = new PerformanceCounter("Process", counterName, instance, readOnly: true);
-                _processCounters[key] = counter;
-            }
-            catch
-            {
-                return 0;
-            }
-        }
-
-        try { return counter.NextValue(); }
-        catch { return 0; }
-    }
-
-    private void PruneStale(HashSet<string> liveKeys)
-    {
-        foreach (var key in _processCounters.Keys.ToList())
-        {
-            if (liveKeys.Contains(key)) continue;
-            try { _processCounters[key].Dispose(); } catch { /* ignore */ }
-            _processCounters.Remove(key);
-        }
+        if (_faultBaseline.Count == live.Count) return;
+        foreach (var key in _faultBaseline.Keys.ToList())
+            if (!live.Contains(key)) _faultBaseline.Remove(key);
     }
 
     public void Dispose()
     {
         _pagesInputCounter?.Dispose();
         _pageReadsCounter?.Dispose();
-        foreach (var c in _processCounters.Values) c.Dispose();
-        _processCounters.Clear();
+        _faultBaseline.Clear();
     }
 }

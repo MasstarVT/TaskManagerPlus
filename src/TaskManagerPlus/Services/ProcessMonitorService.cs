@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.IO;
 using System.Management;
 using System.Runtime.InteropServices;
@@ -98,6 +98,7 @@ public sealed class ProcessMonitorService : IDisposable
         // #410/#412: read once per tick for the whole batch, same "one pass, not one PerformanceCounter per process" shape as gpuUsageByPid above.
         var pageFaultsByPid = _pageFaultCounters.ReadByPid();
         var privateWorkingSetByPid = _privateWorkingSetCounters.ReadByPid();
+        PrimeWmiCachesForNewPids(processes);
 
         foreach (var proc in processes)
         {
@@ -608,6 +609,81 @@ public sealed class ProcessMonitorService : IDisposable
     {
         try { return proc.ProcessName; }
         catch { return "(unknown)"; }
+    }
+
+    /// <summary>Fills the owner / command-line / parent-pid caches for any pid that doesn't have
+    /// them yet, using ONE Win32_Process query for the whole machine instead of the three
+    /// per-pid queries GetOwnerCached/GetCommandLineCached/GetParentPidCached would otherwise
+    /// each issue on a cache miss.
+    ///
+    /// Those three caches are per-pid and correct, but Windows churns processes constantly, so
+    /// every tick brings new pids and each one cost three separate WMI round-trips - a trace put
+    /// GetOwnerCached alone at ~33s of a 60s window, with GetParentPidCached and
+    /// GetCommandLineCached adding ~27s more. WMI charges per query far more than it charges per
+    /// row, so one unfiltered query returning every process is dramatically cheaper than N
+    /// filtered ones. This is the same "read once per tick for the whole batch, not one lookup
+    /// per process" shape gpuUsageByPid/pageFaultsByPid above already use.
+    ///
+    /// GetOwner is a per-instance method call and can't be selected in the projection, so it is
+    /// still invoked one object at a time - but only for pids genuinely missing from the cache,
+    /// and against the objects this single query already returned, so it costs no extra query.
+    /// Skips the sweep entirely when every live pid is already cached, which is the steady
+    /// state.</summary>
+    private void PrimeWmiCachesForNewPids(Process[] processes)
+    {
+        var missing = new HashSet<int>();
+        foreach (var proc in processes)
+        {
+            int pid;
+            try { pid = proc.Id; }
+            catch { continue; }
+            if (!_ownerCache.ContainsKey(pid) || !_commandLineCache.ContainsKey(pid) || !_parentPidCache.ContainsKey(pid))
+                missing.Add(pid);
+        }
+        if (missing.Count == 0) return;
+
+        try
+        {
+            using var searcher = new ManagementObjectSearcher(
+                "SELECT ProcessId, ParentProcessId, CommandLine FROM Win32_Process");
+            foreach (ManagementObject mo in searcher.Get())
+            {
+                using (mo)
+                {
+                    int pid;
+                    try { pid = Convert.ToInt32(mo["ProcessId"] ?? 0); }
+                    catch { continue; }
+                    if (pid == 0 || !missing.Contains(pid)) continue;
+
+                    if (!_commandLineCache.ContainsKey(pid))
+                        _commandLineCache[pid] = mo["CommandLine"] as string;
+
+                    if (!_parentPidCache.ContainsKey(pid))
+                    {
+                        try { _parentPidCache[pid] = Convert.ToInt32(mo["ParentProcessId"] ?? 0); }
+                        catch { _parentPidCache[pid] = 0; }
+                    }
+
+                    if (!_ownerCache.ContainsKey(pid))
+                    {
+                        string owner = "SYSTEM";
+                        try
+                        {
+                            var args = new object[] { string.Empty, string.Empty };
+                            if ((uint)mo.InvokeMethod("GetOwner", args) == 0 && args[0] is string s && s.Length > 0)
+                                owner = s;
+                        }
+                        catch { owner = "N/A"; }
+                        _ownerCache[pid] = owner;
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // WMI unavailable/denied for this pass - the per-pid fallbacks below still run and the
+            // caches just fill in more slowly, same degrade-never-fail rule as everywhere else.
+        }
     }
 
     private string GetOwnerCached(int pid)

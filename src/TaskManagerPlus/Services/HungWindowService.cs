@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -59,6 +59,18 @@ public sealed class HungWindowService : IDisposable
     // ConcurrentDictionary since RecordStall/GetRankedStalls both need to touch several fields of
     // the same row atomically.
     private readonly Dictionary<string, ForegroundStallRow> _stallsByApp = new(StringComparer.OrdinalIgnoreCase);
+
+    // #244: hard floor between two hang-chain resolutions, process-wide. The per-hwnd _chainCache
+    // above stops the same *stable* hang being re-resolved, but it is dropped as soon as a window
+    // stops reporting hung (see SampleWindows), so a window that flickers in and out of
+    // IsHungAppWindow - exactly what a briefly-busy UI thread looks like - invalidates its entry
+    // every few seconds and re-triggers a full system-wide handle-table walk each probe cycle. A
+    // trace showed FindHandleSharers occupying ~80% of the probe thread's wall clock that way,
+    // which is precisely the "never on a tick" cost CLAUDE.md reserves the handle-table walk from.
+    // The chain text is a "quick flag, not a verdict" hint on an app that is already hung, so
+    // resolving it up to this much later costs nothing a user would notice.
+    private static readonly TimeSpan ChainResolveMinInterval = TimeSpan.FromSeconds(30);
+    private DateTime _lastChainResolveUtc = DateTime.MinValue;
 
     private WinEventDelegate? _winEventDelegate;
     private IntPtr _hookHandle = IntPtr.Zero;
@@ -204,12 +216,18 @@ public sealed class HungWindowService : IDisposable
         }
 
         // #244: resolve at most one still-hung, not-yet-resolved window's chain per cycle - capped
-        // so a burst of simultaneously-hung windows can't multiply this loop's cost.
-        var pending = raw.FirstOrDefault(w => w.IsHung && _hangStart.ContainsKey(w.Hwnd) && !_chainCache.ContainsKey(w.Hwnd));
-        if (pending.Hwnd != IntPtr.Zero)
+        // so a burst of simultaneously-hung windows can't multiply this loop's cost - and at most
+        // one every ChainResolveMinInterval process-wide, so window flicker cannot turn the
+        // handle-table walk into a continuous background cost (see that field's remarks).
+        if (DateTime.UtcNow - _lastChainResolveUtc >= ChainResolveMinInterval)
         {
-            string appName = TryGetProcessName(pending.Pid) ?? pending.Title;
-            _chainCache[pending.Hwnd] = ResolveHangChain(pending.Pid, appName);
+            var pending = raw.FirstOrDefault(w => w.IsHung && _hangStart.ContainsKey(w.Hwnd) && !_chainCache.ContainsKey(w.Hwnd));
+            if (pending.Hwnd != IntPtr.Zero)
+            {
+                _lastChainResolveUtc = DateTime.UtcNow;
+                string appName = TryGetProcessName(pending.Pid) ?? pending.Title;
+                _chainCache[pending.Hwnd] = ResolveHangChain(pending.Pid, appName);
+            }
         }
 
         // Prune response-time entries for windows that no longer exist - otherwise this dictionary
