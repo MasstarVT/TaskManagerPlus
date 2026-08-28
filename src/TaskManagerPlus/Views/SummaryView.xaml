@@ -283,6 +283,58 @@
                 </StackPanel>
             </Border>
 
+            <!-- #295: system-wide responsiveness index - sits alongside Health Check above and
+                 reuses its exact critical/warning colour palette (SuccessBrush/WarningBrush/
+                 DangerBrush via DataTriggers keyed off Responsiveness.SystemScore.Band), the same
+                 idiom Health Check's own IsCritical trigger uses, not a new palette. Explicitly a
+                 composite heuristic, labelled as such in the sub-text below the number - see
+                 ResponsivenessScoreService's remarks for the underlying math. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding Responsiveness.SystemScore.Band}" Value="Good">
+                                <Setter Property="BorderBrush" Value="{DynamicResource SuccessBrush}" />
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding Responsiveness.SystemScore.Band}" Value="Fair">
+                                <Setter Property="BorderBrush" Value="{DynamicResource WarningBrush}" />
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding Responsiveness.SystemScore.Band}" Value="Poor">
+                                <Setter Property="BorderBrush" Value="{DynamicResource DangerBrush}" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="System Responsiveness" Style="{StaticResource CardTitle}" />
+                    <StackPanel Orientation="Horizontal" Margin="0,8,0,4">
+                        <TextBlock Text="{Binding Responsiveness.SystemScore.Score, StringFormat={}{0:0}}" FontSize="34" FontWeight="Bold" VerticalAlignment="Center">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding Responsiveness.SystemScore.Band}" Value="Good">
+                                            <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding Responsiveness.SystemScore.Band}" Value="Fair">
+                                            <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding Responsiveness.SystemScore.Band}" Value="Poor">
+                                            <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                        <StackPanel Margin="10,0,0,0" VerticalAlignment="Center">
+                            <TextBlock Text="{Binding Responsiveness.SystemScore.Band}" FontWeight="SemiBold" FontSize="14" />
+                            <TextBlock Text="out of 100 — composite heuristic, not a diagnosis" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" />
+                        </StackPanel>
+                    </StackPanel>
+                    <TextBlock Text="{Binding Responsiveness.SystemScore.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+
             <!-- #72: configurable threshold alerts - a toast fires once when CPU/Memory/CPU-temp
                  crosses above its threshold, reusing the same already-polled data the logging
                  infrastructure and Health Check card read. -->

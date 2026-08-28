@@ -1979,6 +1979,167 @@
                 </StackPanel>
             </Border>
 
+            <!-- ============================================================================
+                 #294-300: Responsiveness scoring capstone - the composite score cards live on
+                 the Processes tab (#294, a sortable column) and Summary tab (#295, a headline
+                 tile); everything below is the flight recorder (#296) and what's built on it
+                 (#297-300).
+                 ============================================================================ -->
+
+            <!-- #296: flight recorder - "always running once armed, costs nothing to keep";
+                 armed/disarmed is the only thing persisted, never the buffer's contents. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <Grid Margin="0,0,0,6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Flight recorder" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <CheckBox Grid.Column="1" Content="Armed" IsChecked="{Binding FlightRecorderArmed}" VerticalAlignment="Center" />
+                    </Grid>
+                    <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5" TextWrapping="Wrap" Margin="0,0,0,8"
+                               Text="A rolling 60-second, 10Hz buffer of CPU%, max per-core DPC%, run-queue length, hard-fault rate, frame time, input delay, and the foreground/top processes - all already sampled elsewhere on this tab, never resampled independently. The substrate for the trigger rules, ETW capture, and incident export/replay cards below." />
+                    <TextBlock Text="{Binding FlightRecorderStatusText}" FontSize="12.5" TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+
+            <!-- #297: user-configurable trigger conditions that dump #296's ring buffer when
+                 tripped - plus a manual trigger, either via the button here or Ctrl+Alt+F
+                 (extends the existing GlobalHotkeyService plumbing), both calling the exact same
+                 HandleTriggerAsync path #298/#299 build on. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <Grid Margin="0,0,0,6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Stutter trigger rules" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <StackPanel Grid.Column="1" Orientation="Horizontal">
+                            <Button Content="Trigger now" Command="{Binding TriggerNowCommand}" Margin="0,0,8,0"
+                                    ToolTip="Same as pressing Ctrl+Alt+F anywhere - both call the exact same trigger handler." />
+                            <Button Content="Add rule" Command="{Binding AddTriggerRuleCommand}" Margin="0,0,8,0" />
+                            <Button Content="Save rules" Command="{Binding SaveTriggerRulesCommand}" ToolTip="Rule edits (threshold/enabled) aren't auto-saved - click after editing, or Add/Remove which save automatically." />
+                        </StackPanel>
+                    </Grid>
+                    <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5" TextWrapping="Wrap" Margin="0,0,0,10"
+                               Text="When an enabled rule trips, this exports an incident bundle (#299) automatically - the ring buffer, hung windows, top DPC drivers, running scheduled tasks, foreground app, and (if armed below) an ETW capture. An 8-second cooldown keeps one sustained condition from exporting repeatedly." />
+                    <ItemsControl ItemsSource="{Binding TriggerRules}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="180" />
+                                        <ColumnDefinition Width="90" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <CheckBox Grid.Column="0" IsChecked="{Binding IsEnabled}" VerticalAlignment="Center" Margin="0,0,10,0" />
+                                    <ComboBox Grid.Column="1" SelectedItem="{Binding Kind}" VerticalAlignment="Center" Margin="0,0,10,0"
+                                              ItemsSource="{Binding DataContext.TriggerKinds, RelativeSource={RelativeSource AncestorType=UserControl}}" />
+                                    <TextBox Grid.Column="2" Text="{Binding Threshold, UpdateSourceTrigger=PropertyChanged}" VerticalAlignment="Center" Margin="0,0,10,0"
+                                             ToolTip="Threshold (ms/µs/faults-per-sec/queue-length depending on the rule kind - ignored for &quot;WindowHung&quot;)." />
+                                    <Button Grid.Column="3" Content="Remove" FontSize="10" Padding="6,1" VerticalAlignment="Center"
+                                            Command="{Binding DataContext.RemoveTriggerRuleCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                            CommandParameter="{Binding}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="{Binding LastTriggerStatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0" />
+                </StackPanel>
+            </Border>
+
+            <!-- #298: optional in-memory circular ETW capture, extending WprCaptureService's
+                 (#210) existing file-mode capture with a buffer-mode start/stop pair - off by
+                 default, its overhead stated plainly, disabled with an explanation if wpr.exe is
+                 missing. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <Grid Margin="0,0,0,6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="ETW circular capture" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <CheckBox Grid.Column="1" Content="Keep running" IsChecked="{Binding EtwCircularCaptureEnabled}" IsEnabled="{Binding WprToolsAvailable}" VerticalAlignment="Center" />
+                    </Grid>
+                    <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5" TextWrapping="Wrap" Margin="0,0,0,6"
+                               Text="Off by default - has real background CPU/disk overhead while running. Keeps an in-memory circular wpr.exe trace so a trigger above can save the moment of a stutter to a real .etl for Windows Performance Analyzer, instead of just this app's own approximate numbers. Only one ETW session is allowed system-wide, so this competes with the DPC/present/hard-fault measurement sessions elsewhere on this tab." />
+                    <TextBlock Foreground="{DynamicResource DangerBrush}" FontSize="11.5" TextWrapping="Wrap" Margin="0,0,0,6"
+                               Text="wpr.exe/tracerpt.exe weren't found on this system - ETW circular capture isn't available.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding WprToolsAvailable}" Value="False">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <TextBlock Text="{Binding EtwCircularCaptureStatusText}" FontSize="12" TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+
+            <!-- #299: incident bundle export - the exact same handler a #297 trigger uses, also
+                 reachable manually any time. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <Grid Margin="0,0,0,6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Incident bundle" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <StackPanel Grid.Column="1" Orientation="Horizontal">
+                            <Button Content="Export incident" Command="{Binding ExportIncidentCommand}" Margin="0,0,8,0" />
+                            <Button Content="Reveal in Explorer" Command="{Binding RevealIncidentCommand}" />
+                        </StackPanel>
+                    </Grid>
+                    <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5" TextWrapping="Wrap" Margin="0,0,0,8"
+                               Text="Writes a timestamped folder under %AppData%\TaskManagerPlus\IncidentBundles containing the ring-buffer CSV, a JSON snapshot of hung windows/top DPC drivers/running scheduled tasks/the foreground app, any saved ETW capture, and a Markdown summary. Fires automatically on a trigger above, or click Export incident any time." />
+                    <TextBlock Text="{Binding IncidentExportStatusText}" FontSize="12" TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+
+            <!-- #300: incident timeline replay - built on LogReplayService.ParseFlightRecorderCsv
+                 (see that method's remarks for why it's a second parse method rather than reusing
+                 Parse() as-is) and charted with the same simple LineSeries idiom LoggingViewModel's
+                 own #96 log replay already uses. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <Grid Margin="0,0,0,6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Incident timeline replay" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Load incident CSV..." Command="{Binding LoadIncidentReplayCommand}" />
+                    </Grid>
+                    <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5" TextWrapping="Wrap" Margin="0,0,0,8"
+                               Text="Loads a ring-buffer.csv from an exported incident bundle above and lines CPU/DPC/run-queue/hard-fault-rate up on one shared time axis - a past incident re-examined without reproducing it. Drag the scrubber for the foreground app and top processes at that exact point." />
+                    <lvc:CartesianChart Series="{Binding IncidentReplaySeries}" XAxes="{Binding IncidentReplayXAxes}" YAxes="{Binding IncidentReplayYAxes}"
+                                         Height="200" TooltipPosition="Top" LegendPosition="Bottom" Background="Transparent" Margin="0,0,0,8">
+                        <lvc:CartesianChart.Style>
+                            <Style TargetType="lvc:CartesianChart">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IncidentReplaySeries}" Value="{x:Null}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </lvc:CartesianChart.Style>
+                    </lvc:CartesianChart>
+                    <Slider Minimum="0" Maximum="{Binding IncidentReplayMaxIndex}" Value="{Binding IncidentReplayScrubberIndex}" Margin="0,0,0,6" />
+                    <TextBlock Text="{Binding IncidentReplayScrubberText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5" TextWrapping="Wrap" Margin="0,0,0,6" />
+                    <TextBlock Text="{Binding IncidentReplayStatusText}" FontSize="12" TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+
         </StackPanel>
     </ScrollViewer>
 </UserControl>

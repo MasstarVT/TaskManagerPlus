@@ -160,6 +160,26 @@
                         </DataTemplate>
                     </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>
+                <!-- #294: composite 0-100 responsiveness score - a colour dot (same visual idiom
+                     as ServiceStatusToBrushConverter's status dot) plus the number, sortable so a
+                     user can find "which app is actually making this PC feel bad" instead of just
+                     sorting by CPU%. Deliberately a composite heuristic - the header and per-row
+                     tooltip both say so plainly. -->
+                <DataGridTemplateColumn Width="110" SortMemberPath="ResponsivenessScore">
+                    <DataGridTemplateColumn.Header>
+                        <TextBlock Text="Resp. score"
+                                   ToolTip="Composite 0-100 heuristic (not a verdict): message-pump latency, hung-window time, thread scheduling pressure, page-fault rate, and GC pause time (managed processes only). Higher is better - lower means more signal that this process is contributing to system lag." />
+                    </DataGridTemplateColumn.Header>
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center" ToolTip="{Binding ResponsivenessScoreTooltip}">
+                                <Ellipse Width="9" Height="9" Margin="0,0,6,0" VerticalAlignment="Center"
+                                         Fill="{Binding ResponsivenessScore, Converter={StaticResource ResponsivenessScoreToBrushConverter}}" />
+                                <TextBlock Text="{Binding ResponsivenessScoreText}" FontSize="11.5" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
                 <DataGridTextColumn Header="Memory" Binding="{Binding MemoryBytes, Converter={StaticResource BytesToReadableConverter}}" Width="100" />
                 <!-- Round 8 #38: working set (above) vs. private bytes vs. virtual size, side by
                      side - see ProcessRow's remarks for why virtual size fills the third slot

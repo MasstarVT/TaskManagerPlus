@@ -27,6 +27,7 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
     private readonly SystemSpecsViewModel _systemSpecs;
     private readonly NetworkViewModel _network;
     private readonly StabilityViewModel _stability;
+    private readonly ResponsivenessViewModel _responsiveness;
     private readonly DispatcherTimer _healthTimer;
 
     /// <summary>Round 10, #67: exposed publicly (the field above stays for this class's own
@@ -34,6 +35,12 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
     /// #68 stability index directly, without SummaryViewModel needing to re-expose each one as its
     /// own wrapper property.</summary>
     public StabilityViewModel Stability => _stability;
+
+    /// <summary>#295: exposed the same way Stability is above, so SummaryView.xaml can bind
+    /// {Binding Responsiveness.SystemScore.*} directly for the system-responsiveness-index tile
+    /// rather than SummaryViewModel re-deriving or re-exposing the score itself - ResponsivenessViewModel
+    /// already owns computing it (SampleLight, every light tick).</summary>
+    public ResponsivenessViewModel Responsiveness => _responsiveness;
 
     public PerformanceViewModel Performance { get; }
     public ProcessesViewModel Processes { get; }
@@ -168,7 +175,8 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
 
     public SummaryViewModel(PerformanceViewModel performance, ProcessesViewModel processes,
         ServicesViewModel services, EnergyThermalsViewModel energyThermals,
-        SystemSpecsViewModel systemSpecs, NetworkViewModel network, StabilityViewModel stability)
+        SystemSpecsViewModel systemSpecs, NetworkViewModel network, StabilityViewModel stability,
+        ResponsivenessViewModel responsiveness)
     {
         Performance = performance;
         Processes = processes;
@@ -177,6 +185,7 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         _systemSpecs = systemSpecs;
         _network = network;
         _stability = stability;
+        _responsiveness = responsiveness;
 
         GenerateReportCommand = new RelayCommand(_ => GenerateReport());
         GenerateHtmlReportCommand = new RelayCommand(_ => GenerateHtmlReport());

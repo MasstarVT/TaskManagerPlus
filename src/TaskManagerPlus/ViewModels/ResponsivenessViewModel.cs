@@ -716,6 +716,159 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
     private StorageSenseInfo _storageSense = new() { StatusText = "Loading..." };
     public StorageSenseInfo StorageSense { get => _storageSense; private set => SetProperty(ref _storageSense, value); }
 
+    // ================================================================================================
+    // #294-300 (Responsiveness scoring, flight recorder, stutter triggers, incident capture/replay) -
+    // the capstone of this whole domain. Pure scoring math lives in ResponsivenessScoreService (294/
+    // 295); everything below just gathers already-computed inputs from collections/services this
+    // class already owns (or, for #294's per-process score, is called on demand by ProcessesViewModel
+    // per row - see GetProcessResponsivenessScore).
+    // ================================================================================================
+
+    // #295: system-wide responsiveness index - recomputed once per light tick (SampleLight), the
+    // same 2s cadence as every other "combine several already-sampled signals" card in this class
+    // (e.g. #280's standby-thrashing flag). SummaryViewModel reads this directly (Responsiveness.
+    // SystemScore) rather than duplicating the math - see SummaryViewModel's own remarks.
+    private SystemResponsivenessScore _systemScore = new() { HasData = false, StatusText = "Not enough data yet." };
+    public SystemResponsivenessScore SystemScore { get => _systemScore; private set => SetProperty(ref _systemScore, value); }
+
+    // #296: flight recorder - a 10Hz ring buffer of cheap already-sampled data, "always running
+    // once armed, costs nothing to keep" per the item's own framing. Armed/disarmed is the user's
+    // on-demand gate (persisted); the sampling tick itself is unconditional once armed.
+    private readonly FlightRecorderService _flightRecorder = new();
+    private readonly DispatcherTimer _flightRecorderTimer;
+    private readonly FlightRecorderSettings _flightRecorderSettings = FlightRecorderSettingsService.Load();
+
+    public bool FlightRecorderArmed
+    {
+        get => _flightRecorderSettings.Armed;
+        set
+        {
+            if (_flightRecorderSettings.Armed == value) return;
+            _flightRecorderSettings.Armed = value;
+            FlightRecorderSettingsService.Save(_flightRecorderSettings);
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(FlightRecorderStatusText));
+            if (value) _flightRecorderTimer.Start(); else _flightRecorderTimer.Stop();
+        }
+    }
+
+    public string FlightRecorderStatusText
+    {
+        get
+        {
+            if (!FlightRecorderArmed) return "Disarmed - arm to start buffering the last 60s of CPU/DPC/queue/fault/frame-time/foreground-app data at 10Hz.";
+            var (oldest, newest) = _flightRecorder.Span;
+            return oldest is null || newest is null
+                ? "Armed - buffering..."
+                : $"Armed - {_flightRecorder.Count} sample(s), covering the last {(newest.Value - oldest.Value).TotalSeconds:0.#}s.";
+        }
+    }
+
+    // #297: stutter trigger rules - evaluated every flight-recorder tick (10Hz, the freshest data
+    // this class has), edge-triggered with a cooldown (TriggerCooldown) so one sustained condition
+    // doesn't re-export an incident bundle every 100ms.
+    public ObservableCollection<StutterTriggerRule> TriggerRules { get; } = new();
+    private readonly StutterTriggerRulesSettings _triggerRulesSettings = StutterTriggerRulesService.Load();
+    private DateTime _lastTriggerUtc = DateTime.MinValue;
+    private static readonly TimeSpan TriggerCooldown = TimeSpan.FromSeconds(8);
+    private bool _isHandlingTrigger;
+
+    private string _lastTriggerStatusText = "No trigger has fired yet this session.";
+    public string LastTriggerStatusText { get => _lastTriggerStatusText; private set => SetProperty(ref _lastTriggerStatusText, value); }
+
+    public RelayCommand TriggerNowCommand { get; }
+    public RelayCommand AddTriggerRuleCommand { get; }
+    public RelayCommand RemoveTriggerRuleCommand { get; }
+    public RelayCommand SaveTriggerRulesCommand { get; }
+
+    public IReadOnlyList<StutterTriggerKind> TriggerKinds { get; } = Enum.GetValues<StutterTriggerKind>();
+
+    // #298: ETW circular capture - off by default every launch (never persisted, see
+    // StutterTriggerRulesSettings' remarks), extends WprCaptureService's #210 file-mode capture
+    // with a circular/buffer-mode start/stop pair.
+    private bool _etwCircularCaptureEnabled;
+    public bool EtwCircularCaptureEnabled
+    {
+        get => _etwCircularCaptureEnabled;
+        set
+        {
+            if (_etwCircularCaptureEnabled == value) return;
+            _etwCircularCaptureEnabled = value;
+            OnPropertyChanged();
+            _ = ToggleEtwCircularCaptureAsync(value);
+        }
+    }
+
+    private string _etwCircularCaptureStatusText = string.Empty;
+    public string EtwCircularCaptureStatusText { get => _etwCircularCaptureStatusText; private set => SetProperty(ref _etwCircularCaptureStatusText, value); }
+
+    // #299: incident bundle export - both the automatic (from a #297 trigger) and manual paths
+    // funnel through the same ExportIncidentAsync, per the item's "one shared handler" framing.
+    private bool _isExportingIncident;
+    public bool IsExportingIncident { get => _isExportingIncident; private set => SetProperty(ref _isExportingIncident, value); }
+
+    private string _incidentExportStatusText = string.Empty;
+    public string IncidentExportStatusText { get => _incidentExportStatusText; private set => SetProperty(ref _incidentExportStatusText, value); }
+
+    private string? _lastIncidentFolder;
+
+    public AsyncRelayCommand ExportIncidentCommand { get; }
+    public RelayCommand RevealIncidentCommand { get; }
+
+    /// <summary>Where #299's incident bundles (and any #298 .etl saved into one) are written -
+    /// no folder-picker precedent exists elsewhere in this app (SaveFileDialog is always used for
+    /// a single file, e.g. #242's process dump), so this follows that same "app-managed folder
+    /// under AppPaths.SettingsDirectory" tier rather than adding a new dialog type; "reveal in
+    /// Explorer" (RevealIncidentCommand) is the way back to it.</summary>
+    private static string IncidentBundlesFolder => AppPaths.GetPath("IncidentBundles");
+
+    // #300: incident timeline replay - built on LogReplayService.ParseFlightRecorderCsv (see that
+    // method's own remarks for why it's a second parse method rather than reusing Parse() as-is),
+    // charted with the same simple (non glow/core) LineSeries LoggingViewModel's own #96 log replay
+    // already uses - a past/replayed chart, not a live gauge, so it deliberately doesn't borrow the
+    // glow+core "live meter" styling the rest of this tab's charts use.
+    private FlightRecorderReplayResult? _incidentReplay;
+
+    private ISeries[]? _incidentReplaySeries;
+    public ISeries[]? IncidentReplaySeries { get => _incidentReplaySeries; private set => SetProperty(ref _incidentReplaySeries, value); }
+    public Axis[] IncidentReplayXAxes { get; }
+    public Axis[] IncidentReplayYAxes { get; }
+
+    private string _incidentReplayStatusText = string.Empty;
+    public string IncidentReplayStatusText { get => _incidentReplayStatusText; private set => SetProperty(ref _incidentReplayStatusText, value); }
+
+    public int IncidentReplayMaxIndex => _incidentReplay is null ? 0 : Math.Max(0, _incidentReplay.RowCount - 1);
+
+    private int _incidentReplayScrubberIndex;
+    public int IncidentReplayScrubberIndex
+    {
+        get => _incidentReplayScrubberIndex;
+        set
+        {
+            int clamped = Math.Clamp(value, 0, IncidentReplayMaxIndex);
+            if (SetProperty(ref _incidentReplayScrubberIndex, clamped)) OnPropertyChanged(nameof(IncidentReplayScrubberText));
+        }
+    }
+
+    /// <summary>The full row of #296-shaped data at the scrubber's current position - text rather
+    /// than a second mini-chart, since it needs to show the foreground-app/top-processes text
+    /// fields a line chart can't plot.</summary>
+    public string IncidentReplayScrubberText
+    {
+        get
+        {
+            if (_incidentReplay is not { RowCount: > 0 } r) return string.Empty;
+            int i = Math.Clamp(IncidentReplayScrubberIndex, 0, r.RowCount - 1);
+            string frame = r.FrameTimeMs[i] is { } ft ? $"{ft:0.#} ms" : "not measured";
+            string input = r.InputDelayMs[i] is { } id ? $"{id:0.#} ms" : "not measured";
+            return $"{r.Timestamps[i].ToLocalTime():HH:mm:ss.ff} — CPU {r.CpuPercent[i]:0.#}%, max core DPC {r.MaxCoreDpcPercent[i]:0.#}%, " +
+                   $"run queue {r.ProcessorQueueLength[i]:0.#}, hard faults {r.HardFaultsPerSec[i]:0.#}/s, frame time {frame}, input delay {input} — " +
+                   $"foreground: {r.ForegroundProcessName[i]} (\"{r.ForegroundWindowTitle[i]}\") — top processes: {r.TopProcessesText[i]}";
+        }
+    }
+
+    public RelayCommand LoadIncidentReplayCommand { get; }
+
     public ResponsivenessViewModel(ProcessesViewModel processes, PerformanceViewModel performance)
     {
         _processes = processes;
@@ -999,6 +1152,41 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
         _ = LoadScheduledTasksRunningAsync();
 
         RebuildBackgroundActivityRows();
+
+        // #296: flight recorder tick - 10Hz once armed, matching FlightRecorderService.SampleHz.
+        // Started immediately if the persisted preference was armed; SampleFlightRecorder itself
+        // also drives #297's trigger-rule evaluation each tick, since that's the freshest data
+        // this class produces.
+        _flightRecorderTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(1000.0 / FlightRecorderService.SampleHz) };
+        _flightRecorderTimer.Tick += (_, _) => SampleFlightRecorder();
+        if (FlightRecorderArmed) _flightRecorderTimer.Start();
+
+        // #297: rule list - loaded from disk, auto-saved on add/remove; in-place edits (threshold/
+        // enabled) are saved via SaveTriggerRulesCommand - see the field remarks.
+        foreach (var r in _triggerRulesSettings.Rules) TriggerRules.Add(r);
+        TriggerRules.CollectionChanged += (_, _) => PersistTriggerRulesSettings();
+        TriggerNowCommand = new RelayCommand(() => _ = HandleTriggerAsync("Manual trigger"));
+        AddTriggerRuleCommand = new RelayCommand(() => TriggerRules.Add(StutterTriggerRule.Default(StutterTriggerKind.FrameTimeOverMs)));
+        RemoveTriggerRuleCommand = new RelayCommand(param => { if (param is StutterTriggerRule r) TriggerRules.Remove(r); });
+        SaveTriggerRulesCommand = new RelayCommand(PersistTriggerRulesSettings);
+
+        // #299: incident export - the same handler #297's automatic trigger path calls.
+        ExportIncidentCommand = new AsyncRelayCommand(() => ExportIncidentAsync("Manual export"), () => !IsExportingIncident);
+        RevealIncidentCommand = new RelayCommand(() => { if (_lastIncidentFolder is not null) IncidentBundleService.RevealInExplorer(_lastIncidentFolder); }, () => _lastIncidentFolder is not null);
+
+        // #300: incident replay chart - same simple (non glow/core) LineSeries axis setup
+        // LoggingViewModel's own #96 log-replay chart uses.
+        IncidentReplayXAxes = new[] { new Axis { Labels = Array.Empty<string>(), LabelsPaint = new SolidColorPaint(AxisTextColor), SeparatorsPaint = null } };
+        IncidentReplayYAxes = new[]
+        {
+            new Axis
+            {
+                MinLimit = 0,
+                LabelsPaint = new SolidColorPaint(AxisTextColor),
+                SeparatorsPaint = new SolidColorPaint(AxisSeparatorColor) { StrokeThickness = 1 },
+            },
+        };
+        LoadIncidentReplayCommand = new RelayCommand(LoadIncidentReplay);
     }
 
     /// <summary>#211/#216: driver metadata join plus the best-effort driver-file -> device-name
@@ -1462,6 +1650,22 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
         // above rather than a second counter instance (see MemoryCompressionInfo's remarks).
         long totalRamBytesForCompression = (long)(_performance.RamTotalGb * 1024.0 * 1024.0 * 1024.0);
         MemoryCompression = MemoryCompressionService.Sample(StandbyListInfo.ModifiedPageListBytes, totalRamBytesForCompression);
+
+        // #295: system-wide responsiveness index - combines several factors already sampled above
+        // this tick (run-queue pressure, DPC latency, composition drops, hard-fault rate, hung-
+        // window count). A not-yet-measured factor (e.g. DPC latency before the #213 measurement
+        // session has ever run this session - HighestDpcUs defaults to 0, which would otherwise
+        // read as a suspiciously perfect reading) is excluded rather than defaulted - see
+        // ResponsivenessScoreService's remarks.
+        var systemScoreInputs = new ResponsivenessScoreService.SystemScoreInputs(
+            _performance.CpuQueueLength,
+            logicalCount,
+            HighestDpcUs > 0 ? HighestDpcUs : (double?)null,
+            AudioGlitchThresholdUs,
+            DwmComposition.IsAvailable ? DwmComposition.DroppedMissedPerSec : (double?)null,
+            HardFaultRate.IsAvailable ? HardFaultRate.PagesInputPerSec : (double?)null,
+            HungWindowRows.Count(r => r.IsHung));
+        SystemScore = ResponsivenessScoreService.ComputeSystemScore(systemScoreInputs);
 
         // #284-293: the cheap half of the background-activity ribbon - see the method remarks.
         SampleBackgroundActivityLight();
@@ -2423,12 +2627,316 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
         return col;
     }
 
+    // ----- #294: per-process responsiveness score --------------------------------------------------
+
+    /// <summary>#294: called on demand by ProcessesViewModel for every row, each of its own poll
+    /// ticks - the same cross-viewmodel-read shape GetThreadWaitBreakdown/GetStuckThreadFlag above
+    /// already establish for #261/#272. Gathers each factor from whichever collection this class
+    /// already refreshes on its own cadence (HungWindowRows/the shared scheduler sweep/
+    /// TopPageFaultProcesses/GcProcessRows), then hands off to the pure scoring function - see
+    /// ResponsivenessScoreService.ComputeProcessScore's remarks for exactly what "no data" means
+    /// per factor.</summary>
+    public ProcessResponsivenessScore? GetProcessResponsivenessScore(int pid)
+    {
+        double? respMs = null, hungShare = null, hungForSeconds = null;
+        var windows = HungWindowRows.Where(w => w.Pid == pid).ToList();
+        if (windows.Count > 0)
+        {
+            var measured = windows.Where(w => w.ResponseMs.HasValue).ToList();
+            if (measured.Count > 0) respMs = measured.Max(w => w.ResponseMs!.Value);
+
+            hungShare = windows.Count(w => w.IsHung) / (double)windows.Count;
+            var hungWithDuration = windows.Where(w => w.IsHung && w.HungFor.HasValue).ToList();
+            if (hungWithDuration.Count > 0) hungForSeconds = hungWithDuration.Max(w => w.HungFor!.Value.TotalSeconds);
+        }
+
+        double? readyRatio = null;
+        var threads = _lastSchedulerSweep.Count > 0 ? _lastSchedulerSweep.Where(t => t.Pid == pid).ToList() : new List<SchedulerService.ThreadSnapshot>();
+        if (threads.Count > 0)
+        {
+            const int ThreadStateReady = 1, ThreadStateDeferredReady = 7;
+            int readyCount = threads.Count(t => t.ThreadState is ThreadStateReady or ThreadStateDeferredReady);
+            readyRatio = readyCount / (double)threads.Count;
+        }
+
+        // #279 fallback: TopPageFaultProcesses only ever holds the top 15 by rate (see
+        // PageFaultService.SampleTopProcesses) - a pid outside that list genuinely has a low rate
+        // relative to its peers, so it's scored 0 rather than excluded (unlike the other factors
+        // here); only excluded entirely when the underlying perf-counter category itself isn't
+        // published on this machine at all.
+        double? pageFaultRate = _pageFaults.PerProcessAvailable
+            ? (TopPageFaultProcesses.FirstOrDefault(r => r.Pid == pid)?.PageFaultsPerSec ?? 0)
+            : null;
+
+        double? gcPercent = GcProcessRows.FirstOrDefault(r => r.Pid == pid)?.PercentTimeInGc;
+
+        var inputs = new ResponsivenessScoreService.ProcessScoreInputs(respMs, hungShare, hungForSeconds, readyRatio, pageFaultRate, gcPercent);
+        return ResponsivenessScoreService.ComputeProcessScore(inputs);
+    }
+
+    // ----- #296: flight recorder ----------------------------------------------------------------
+
+    /// <summary>#296: one 10Hz tick - every field is read from a property some earlier chunk in
+    /// this domain already computes, never resampled independently (see FlightRecorderSample's own
+    /// remarks). Also drives #297's trigger-rule evaluation, since this is the freshest data this
+    /// class produces.</summary>
+    private void SampleFlightRecorder()
+    {
+        var (fgProcess, fgTitle) = ForegroundContextService.GetForegroundContext();
+        string topProcesses = string.Join(", ", _processes.Processes
+            .OrderByDescending(p => p.CpuPercent)
+            .Take(3)
+            .Select(p => $"{p.Name} {p.CpuPercent:0.#}%"));
+
+        // #204-206: max per-core "% DPC time" (PerCoreDpcService, always live) - distinct from the
+        // ETW-measured microsecond figure (#202's HighestDpcUs), which only exists while the opt-in
+        // measurement session is running - see FlightRecorderSample's remarks.
+        double maxCoreDpcPercent = CoreDpcRows.Count > 0 ? CoreDpcRows.Max(r => r.DpcPercent) : 0;
+
+        // #250/#256: both opt-in probes - null (not 0) whenever they aren't currently running,
+        // per CLAUDE.md's degrade rule.
+        double? frameTimeMs = IsMeasuringPresent && HeadlinePresentRow is { } headline ? headline.AvgFrameTimeMs : null;
+        double? inputDelayMs = IsMeasuringInput && InputLatencySnapshot.SampleCount > 0 ? InputLatencySnapshot.P99DelayMs : null;
+
+        var sample = new FlightRecorderSample(
+            DateTime.UtcNow,
+            _performance.CpuCurrentPercent,
+            maxCoreDpcPercent,
+            _performance.CpuQueueLength,
+            HardFaultRate.IsAvailable ? HardFaultRate.PagesInputPerSec : 0,
+            frameTimeMs,
+            inputDelayMs,
+            fgProcess,
+            fgTitle,
+            topProcesses);
+
+        _flightRecorder.Snapshot(sample);
+        OnPropertyChanged(nameof(FlightRecorderStatusText));
+
+        EvaluateTriggerRules(sample);
+    }
+
+    // ----- #297: stutter trigger rules ------------------------------------------------------------
+
+    /// <summary>#297: checks every enabled rule against this tick's sample plus whatever other
+    /// already-live properties the rule needs (DPC latency/hung windows aren't part of the sample
+    /// itself). Edge-triggered via TriggerCooldown, not per-condition latching - simple, and 8s is
+    /// short enough that a second genuinely distinct stutter a few seconds later still gets its own
+    /// incident bundle.</summary>
+    private void EvaluateTriggerRules(FlightRecorderSample sample)
+    {
+        if (_isHandlingTrigger || DateTime.UtcNow - _lastTriggerUtc < TriggerCooldown) return;
+
+        foreach (var rule in TriggerRules)
+        {
+            if (!rule.IsEnabled) continue;
+            bool tripped = rule.Kind switch
+            {
+                StutterTriggerKind.FrameTimeOverMs => sample.FrameTimeMs is { } ft && ft > rule.Threshold,
+                StutterTriggerKind.DpcLatencyOverUs => HighestDpcUs > 0 && HighestDpcUs > rule.Threshold,
+                StutterTriggerKind.WindowHung => HungWindowRows.Any(r => r.IsHung),
+                StutterTriggerKind.HardFaultsOverPerSec => HardFaultRate.IsAvailable && HardFaultRate.PagesInputPerSec > rule.Threshold,
+                StutterTriggerKind.RunQueueOver => sample.ProcessorQueueLength > rule.Threshold,
+                _ => false,
+            };
+            if (!tripped) continue;
+
+            _ = HandleTriggerAsync(DescribeRule(rule));
+            break;
+        }
+    }
+
+    private static string DescribeRule(StutterTriggerRule rule) => rule.Kind switch
+    {
+        StutterTriggerKind.FrameTimeOverMs => $"Frame time over {rule.Threshold:0} ms",
+        StutterTriggerKind.DpcLatencyOverUs => $"DPC latency over {rule.Threshold:0} µs",
+        StutterTriggerKind.WindowHung => "A window went hung",
+        StutterTriggerKind.HardFaultsOverPerSec => $"Hard faults over {rule.Threshold:0}/sec",
+        StutterTriggerKind.RunQueueOver => $"Run queue over {rule.Threshold:0}",
+        _ => "Trigger rule",
+    };
+
+    private void PersistTriggerRulesSettings()
+    {
+        _triggerRulesSettings.Rules = TriggerRules.ToList();
+        StutterTriggerRulesService.Save(_triggerRulesSettings);
+    }
+
+    /// <summary>#297: the one shared "handle a trigger" method - called from EvaluateTriggerRules'
+    /// automatic path, TriggerNowCommand's manual button, and GlobalHotkeyService's optional
+    /// Ctrl+Alt+F hotkey (wired in MainWindow.xaml.cs) alike, per the item's own "one shared
+    /// handler, not necessarily a second physical hotkey" framing.</summary>
+    public async Task HandleTriggerAsync(string reason)
+    {
+        if (_isHandlingTrigger) return;
+        _isHandlingTrigger = true;
+        _lastTriggerUtc = DateTime.UtcNow;
+        LastTriggerStatusText = $"Trigger fired ({reason}) at {DateTime.Now:T} — exporting incident bundle...";
+        try
+        {
+            await ExportIncidentAsync(reason);
+        }
+        finally
+        {
+            _isHandlingTrigger = false;
+        }
+    }
+
+    // ----- #298: ETW circular capture -------------------------------------------------------------
+
+    private async Task ToggleEtwCircularCaptureAsync(bool enable)
+    {
+        if (enable)
+        {
+            if (!WprCaptureService.IsAvailable)
+            {
+                EtwCircularCaptureStatusText = "wpr.exe/tracerpt.exe weren't found on this system - ETW circular capture isn't available.";
+                _etwCircularCaptureEnabled = false;
+                OnPropertyChanged(nameof(EtwCircularCaptureEnabled));
+                return;
+            }
+
+            var (ok, message) = await WprCaptureService.StartCircularAsync(CancellationToken.None);
+            EtwCircularCaptureStatusText = message;
+            if (!ok)
+            {
+                _etwCircularCaptureEnabled = false;
+                OnPropertyChanged(nameof(EtwCircularCaptureEnabled));
+            }
+        }
+        else
+        {
+            await WprCaptureService.CancelCircularAsync();
+            EtwCircularCaptureStatusText = "Circular capture stopped (not saved - use a trigger, or Export incident, to save one).";
+        }
+    }
+
+    // ----- #299: incident bundle export -----------------------------------------------------------
+
+    /// <summary>#299: the one export path both the automatic (#297) and manual ("Export incident"
+    /// button) triggers use. Snapshots every ObservableCollection this needs into plain lists
+    /// *before* the first await (still on the UI thread here), since IncidentBundleService.ExportAsync
+    /// does its file I/O via Task.Run and must never touch a live UI-bound collection off-thread.</summary>
+    private async Task ExportIncidentAsync(string reason)
+    {
+        if (IsExportingIncident) return;
+        IsExportingIncident = true;
+        IncidentExportStatusText = "Exporting incident bundle...";
+        try
+        {
+            var (fgProcess, fgTitle) = ForegroundContextService.GetForegroundContext();
+            var runningTasks = ScheduledTasksRunning.Select(t => new IncidentBundleService.ScheduledTaskSnapshot(t.Name, t.Status)).ToList();
+            var hungWindows = HungWindowRows.Where(w => w.IsHung)
+                .Select(w => new IncidentBundleService.HungWindowSnapshot(w.ProcessName, w.Pid, w.WindowTitle, w.ResponseMs, w.HungFor?.TotalSeconds))
+                .ToList();
+            var topDrivers = DriverDpcRows.OrderByDescending(d => d.MaxTimeUs).Take(10)
+                .Select(d => new IncidentBundleService.DpcDriverSnapshot(d.DriverName, d.MaxTimeUs, d.AvgTimeUs, d.EventCount))
+                .ToList();
+            var ring = _flightRecorder.GetLast(FlightRecorderService.MaxWindow);
+
+            string? etlPath = null;
+            if (WprCaptureService.IsCircularCaptureRunning)
+            {
+                string tmpEtl = Path.Combine(IncidentBundlesFolder, $"trigger_{DateTime.Now:yyyyMMdd_HHmmss}.etl");
+                var (stopOk, stopMsg, savedPath) = await WprCaptureService.StopCircularAsync(tmpEtl);
+                EtwCircularCaptureStatusText = stopMsg;
+                if (stopOk) etlPath = savedPath;
+                if (_etwCircularCaptureEnabled)
+                {
+                    _etwCircularCaptureEnabled = false;
+                    OnPropertyChanged(nameof(EtwCircularCaptureEnabled));
+                }
+            }
+
+            var state = new IncidentBundleService.SystemStateSnapshot(DateTime.UtcNow, reason, fgProcess, fgTitle, runningTasks, hungWindows, topDrivers);
+            var (ok, message, folder) = await IncidentBundleService.ExportAsync(state, ring, etlPath, IncidentBundlesFolder);
+
+            IncidentExportStatusText = message;
+            _lastIncidentFolder = ok ? folder : _lastIncidentFolder;
+            RevealIncidentCommand.RaiseCanExecuteChanged();
+            LastTriggerStatusText = ok ? $"Trigger fired ({reason}) — {message}" : $"Trigger fired ({reason}), but export failed: {message}";
+        }
+        catch (Exception ex)
+        {
+            IncidentExportStatusText = $"Export failed: {ex.Message}";
+        }
+        finally
+        {
+            IsExportingIncident = false;
+        }
+    }
+
+    // ----- #300: incident timeline replay ---------------------------------------------------------
+
+    /// <summary>#300: loads a previously-exported #296/#299 ring-buffer CSV (or one written by a
+    /// live-armed flight recorder session, if the user saved one manually) and re-charts it - see
+    /// LogReplayService.ParseFlightRecorderCsv's remarks for why this is a second parse method
+    /// rather than a reuse of LoggingViewModel's own Parse()/ReplaySeries.</summary>
+    private void LoadIncidentReplay()
+    {
+        var dialog = new OpenFileDialog
+        {
+            Title = "Load an incident ring-buffer CSV to replay",
+            Filter = "CSV files (*.csv)|*.csv|All files (*.*)|*.*",
+            InitialDirectory = IncidentBundlesFolder,
+        };
+        if (dialog.ShowDialog() != true) return;
+
+        var (result, error) = LogReplayService.ParseFlightRecorderCsv(dialog.FileName);
+        if (result is null)
+        {
+            _incidentReplay = null;
+            IncidentReplaySeries = null;
+            IncidentReplayStatusText = error ?? "Couldn't read that file.";
+            return;
+        }
+
+        _incidentReplay = result;
+
+        ISeries LineOf(IEnumerable<double> values, SKColor color, string name) => new LineSeries<double>
+        {
+            Values = values.ToArray(), Name = name, Stroke = new SolidColorPaint(color, 2f), Fill = null,
+            GeometryStroke = null, GeometryFill = null, LineSmoothness = 0.15,
+        };
+        IncidentReplaySeries = new[]
+        {
+            LineOf(result.CpuPercent, SKColors.DeepSkyBlue, "CPU %"),
+            LineOf(result.MaxCoreDpcPercent, SKColors.OrangeRed, "Max core DPC %"),
+            LineOf(result.ProcessorQueueLength, SKColors.Goldenrod, "Run-queue length"),
+            LineOf(result.HardFaultsPerSec, SKColors.Crimson, "Hard faults/sec"),
+        };
+
+        int n = result.Timestamps.Count;
+        int labelEvery = Math.Max(1, n / 8);
+        IncidentReplayXAxes[0].Labels = result.Timestamps
+            .Select((t, i) => i % labelEvery == 0 ? t.ToLocalTime().ToString("HH:mm:ss") : string.Empty)
+            .ToArray();
+
+        _incidentReplayScrubberIndex = 0;
+        OnPropertyChanged(nameof(IncidentReplayScrubberIndex));
+        OnPropertyChanged(nameof(IncidentReplayMaxIndex));
+        OnPropertyChanged(nameof(IncidentReplayScrubberText));
+        IncidentReplayStatusText = $"{result.RowCount} rows: {result.Timestamps[0].ToLocalTime():g} – {result.Timestamps[^1].ToLocalTime():g} ({Path.GetFileName(dialog.FileName)})";
+    }
+
+    /// <summary>Repaints the incident-replay axis text/gridlines to match the active theme family -
+    /// same shape as ApplyAxisTheme above.</summary>
+    public void ApplyIncidentReplayAxisTheme(Color text, Color separator)
+    {
+        var textSk = new SKColor(text.R, text.G, text.B);
+        var sepSk = new SKColor(separator.R, separator.G, separator.B, separator.A);
+        IncidentReplayXAxes[0].LabelsPaint = new SolidColorPaint(textSk);
+        IncidentReplayYAxes[0].LabelsPaint = new SolidColorPaint(textSk);
+        IncidentReplayYAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
+    }
+
     public void Dispose()
     {
         _lightTimer.Stop();
         _probeTimer.Stop();
         _schedulerTimer.Stop();
         _backgroundActivityTimer.Stop();
+        _flightRecorderTimer.Stop();
         _measureCts?.Cancel();
         _presentCts?.Cancel();
         _hardFaultEtwCts?.Cancel();

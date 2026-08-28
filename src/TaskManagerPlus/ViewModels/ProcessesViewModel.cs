@@ -348,6 +348,13 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
             var (isStuck, hint) = Responsiveness?.GetStuckThreadFlag(row.Pid) ?? (false, null);
             row.IsStuckThreadSuspect = isStuck;
             row.StuckThreadHintText = hint;
+
+            // #294: composite responsiveness score - see ResponsivenessViewModel.
+            // GetProcessResponsivenessScore's remarks for how each factor is gathered.
+            var score = Responsiveness?.GetProcessResponsivenessScore(row.Pid);
+            row.ResponsivenessScore = score?.Score;
+            row.ResponsivenessScoreTooltip = score?.TooltipText
+                ?? "Not enough data yet to compute a responsiveness score for this process.";
         }
     }
 

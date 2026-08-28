@@ -228,7 +228,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Network = new NetworkViewModel(Performance, Responsiveness);
         Gpu = new GpuViewModel(Processes);
         Logging = new LoggingViewModel(Performance, EnergyThermals);
-        Summary = new SummaryViewModel(Performance, Processes, Services, EnergyThermals, SystemSpecs, Network, Stability);
+        // #295: Responsiveness is a field initializer (constructed above), so it's already a real
+        // instance here - Summary reads Responsiveness.SystemScore directly rather than
+        // duplicating the composite-score math.
+        Summary = new SummaryViewModel(Performance, Processes, Services, EnergyThermals, SystemSpecs, Network, Stability, Responsiveness);
         Search = new GlobalSearchViewModel(Processes, Services, Startup, SystemSpecs);
 
         RemoteMonitor = new RemoteMonitorService(BuildRemoteMetricsSnapshot) { RequiredToken = _remoteMonitorSettings.Token };
@@ -315,6 +318,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Color TextOf(string key) => (resources[key] as SolidColorBrush)?.Color ?? Colors.Gray;
 
         Responsiveness.ApplyAxisTheme(TextOf("TextSecondaryBrush"), TextOf("BorderBrush2"));
+        // #300: incident-replay chart axes - same theming call shape, separate axis pair.
+        Responsiveness.ApplyIncidentReplayAxisTheme(TextOf("TextSecondaryBrush"), TextOf("BorderBrush2"));
     }
 
     private void ApplyAxisThemeToLogging()

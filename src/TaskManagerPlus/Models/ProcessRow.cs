@@ -233,4 +233,23 @@ public sealed class ProcessRow : ObservableObject
     /// each new trim, so the grid always shows the most recent one.</summary>
     private string? _lastTrimmedText;
     public string? LastTrimmedText { get => _lastTrimmedText; set => SetProperty(ref _lastTrimmedText, value); }
+
+    /// <summary>#294: composite 0-100 responsiveness score, combining message-pump round-trip time
+    /// and hung-window time share (HungWindowService), thread wait/ready ratio (SchedulerService),
+    /// hard-fault rate (PageFaultService) and GC pause time (DotNetPerfCounterService, managed
+    /// processes only) - see ResponsivenessScoreService.ComputeProcessScore for the math and
+    /// ResponsivenessViewModel.GetProcessResponsivenessScore for how the inputs are gathered. Null
+    /// when literally none of those five signals have any data for this pid (never a fabricated
+    /// 100) - the grid shows "—" in that case. Explicitly a composite heuristic, not a verdict -
+    /// see ResponsivenessScoreTooltip for the per-factor breakdown.</summary>
+    private double? _responsivenessScore;
+    public double? ResponsivenessScore
+    {
+        get => _responsivenessScore;
+        set { if (SetProperty(ref _responsivenessScore, value)) OnPropertyChanged(nameof(ResponsivenessScoreText)); }
+    }
+    public string ResponsivenessScoreText => ResponsivenessScore.HasValue ? $"{ResponsivenessScore.Value:0}" : "—";
+
+    private string _responsivenessScoreTooltip = "Not enough data yet to compute a responsiveness score for this process.";
+    public string ResponsivenessScoreTooltip { get => _responsivenessScoreTooltip; set => SetProperty(ref _responsivenessScoreTooltip, value); }
 }
