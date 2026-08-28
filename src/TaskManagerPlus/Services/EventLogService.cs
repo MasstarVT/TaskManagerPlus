@@ -317,4 +317,101 @@ public sealed class EventLogService
         }
         return result;
     }
+
+    // #749/#750/#751: the Service Control Manager failure/crash event IDs this domain's design
+    // note asks for one shared scan to back three different views of - a per-service timeline
+    // (#749), a rolling-window crash-loop count (#750), and a dependency-failure root-cause walk
+    // (#751, done in ServicesViewModel once every row's events are assigned).
+    private static readonly int[] ScmFailureEventIds = { 7000, 7001, 7009, 7011, 7022, 7023, 7024, 7031, 7034, 7043 };
+
+    // Every one of these message templates names the affected service as "The X service ..." -
+    // except 7009/7011, whose template puts a timeout value first instead. Matched against the
+    // fully rendered message (FormatDescription()) rather than a Properties[] index, since there's
+    // no single index that's stable across this whole event-ID set - see ServiceScmEvent's remarks.
+    private static readonly Dictionary<int, Regex> ScmServiceNamePatterns = new()
+    {
+        [7000] = new Regex(@"^The (?<svc>.+?) service failed to start", RegexOptions.IgnoreCase),
+        [7001] = new Regex(@"^The (?<svc>.+?) service depends on", RegexOptions.IgnoreCase),
+        [7009] = new Regex(@"waiting for the (?<svc>.+?) service to connect", RegexOptions.IgnoreCase),
+        [7011] = new Regex(@"transaction response from the (?<svc>.+?) service", RegexOptions.IgnoreCase),
+        [7022] = new Regex(@"^The (?<svc>.+?) service hung on starting", RegexOptions.IgnoreCase),
+        [7023] = new Regex(@"^The (?<svc>.+?) service terminated with the following error", RegexOptions.IgnoreCase),
+        [7024] = new Regex(@"^The (?<svc>.+?) service terminated with service-specific error", RegexOptions.IgnoreCase),
+        [7031] = new Regex(@"^The (?<svc>.+?) service terminated unexpectedly", RegexOptions.IgnoreCase),
+        [7034] = new Regex(@"^The (?<svc>.+?) service terminated unexpectedly", RegexOptions.IgnoreCase),
+        [7043] = new Regex(@"^The (?<svc>.+?) service did not shut down properly", RegexOptions.IgnoreCase),
+    };
+
+    // #750: SCM's own "It has done this N time(s)" restart count, present in both 7031 and 7034's
+    // message text.
+    private static readonly Regex RestartCountRegex = new(@"done this (?<n>\d+) time", RegexOptions.IgnoreCase);
+
+    /// <summary>
+    /// #749/#750/#751: scans the System log's Service Control Manager provider for the failure/
+    /// crash event IDs above across the same 30-day lookback every other event-log read in this
+    /// service uses. One flat, unfiltered-by-service list - callers group/window/walk it three
+    /// different ways rather than this running three separate queries.
+    /// </summary>
+    public List<ServiceScmEvent> ReadServiceFailureEvents()
+    {
+        var result = new List<ServiceScmEvent>();
+        try
+        {
+            long maxAgeMs = LookbackDays * 24L * 60 * 60 * 1000;
+            string idFilter = string.Join(" or ", ScmFailureEventIds.Select(id => $"EventID={id}"));
+            var query = new EventLogQuery("System", PathType.LogName,
+                $"*[System[Provider[@Name='Service Control Manager'] and ({idFilter}) and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]")
+            {
+                ReverseDirection = true,
+            };
+
+            using var reader = new EventLogReader(query);
+            int count = 0;
+            const int maxEvents = 3000; // generous, same reasoning as ReadServiceStartDurations
+            while (count < maxEvents && reader.ReadEvent() is { } record)
+            {
+                using (record)
+                {
+                    count++;
+                    if (record.TimeCreated is null) continue;
+
+                    string message;
+                    try { message = record.FormatDescription() ?? string.Empty; }
+                    catch { message = string.Empty; } // provider's message file isn't registered - same known gap ReadLog already handles
+
+                    string serviceName = ExtractScmServiceName(record.Id, message);
+                    if (serviceName.Length == 0) continue; // can't confidently attribute this event to a service - drop it rather than guess
+
+                    result.Add(new ServiceScmEvent
+                    {
+                        TimeCreated = record.TimeCreated.Value,
+                        EventId = record.Id,
+                        ServiceDisplayName = serviceName,
+                        Message = Truncate(message, 300),
+                        RestartCount = ExtractRestartCount(record.Id, message),
+                    });
+                }
+            }
+        }
+        catch
+        {
+            // Log unavailable/access denied - degrade to "no failure history", same as every other
+            // event-log read in this service.
+        }
+        return result.OrderByDescending(e => e.TimeCreated).ToList();
+    }
+
+    private static string ExtractScmServiceName(int eventId, string message)
+    {
+        if (!ScmServiceNamePatterns.TryGetValue(eventId, out var regex)) return string.Empty;
+        var m = regex.Match(message);
+        return m.Success ? m.Groups["svc"].Value.Trim() : string.Empty;
+    }
+
+    private static int? ExtractRestartCount(int eventId, string message)
+    {
+        if (eventId is not (7031 or 7034)) return null;
+        var m = RestartCountRegex.Match(message);
+        return m.Success && int.TryParse(m.Groups["n"].Value, out int n) ? n : null;
+    }
 }

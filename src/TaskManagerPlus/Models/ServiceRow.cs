@@ -17,8 +17,41 @@ public sealed class ServiceRow : ObservableObject
     public ServiceStartMode StartType
     {
         get => _startType;
-        set { if (SetProperty(ref _startType, value)) OnPropertyChanged(nameof(HasFailedToStart)); }
+        set
+        {
+            if (SetProperty(ref _startType, value))
+            {
+                OnPropertyChanged(nameof(HasFailedToStart));
+                OnPropertyChanged(nameof(StartTypeDisplay));
+            }
+        }
     }
+
+    /// <summary>#755: registry DelayedAutostart flag under this service's own key, read alongside
+    /// Description in ServiceControlService.Sample() - a single trivial per-service registry read,
+    /// the same cost class Description already pays every tick. See AutoStartDelaySeconds and
+    /// StartTypeDisplay.</summary>
+    private bool _isDelayedAutoStart;
+    public bool IsDelayedAutoStart
+    {
+        get => _isDelayedAutoStart;
+        set { if (SetProperty(ref _isDelayedAutoStart, value)) OnPropertyChanged(nameof(StartTypeDisplay)); }
+    }
+
+    /// <summary>#755: the machine-wide HKLM\SYSTEM\CurrentControlSet\Control\AutoStartDelay value
+    /// (Windows' documented default is 120 seconds when the value is absent) - the same for every
+    /// service, but read alongside IsDelayedAutoStart so StartTypeDisplay doesn't need a second
+    /// lookup.</summary>
+    private int _autoStartDelaySeconds = 120;
+    public int AutoStartDelaySeconds { get => _autoStartDelaySeconds; set => SetProperty(ref _autoStartDelaySeconds, value); }
+
+    /// <summary>#755: what the Startup type column actually shows - "Automatic (Delayed Start)"
+    /// with the machine's configured delay, the same distinction Explorer's own Services snap-in
+    /// draws, instead of a bare "Automatic" that leaves a service legitimately still-stopped in the
+    /// first couple of minutes after boot looking indistinguishable from one that never starts.</summary>
+    public string StartTypeDisplay => StartType == ServiceStartMode.Automatic && IsDelayedAutoStart
+        ? $"Automatic (Delayed Start, ~{AutoStartDelaySeconds}s)"
+        : StartType.ToString();
 
     private string _description = string.Empty;
     public string Description { get => _description; set => SetProperty(ref _description, value); }
@@ -41,7 +74,11 @@ public sealed class ServiceRow : ObservableObject
     /// <summary>True only when StartType is Automatic AND the last recorded start attempt
     /// reported a real Win32 error code - see ExitCode's remarks for why "Automatic but not
     /// currently running" alone isn't used (delayed-start and trigger-start services are
-    /// legitimately stopped most of the time and would otherwise dominate this list).</summary>
+    /// legitimately stopped most of the time and would otherwise dominate this list). #755 adds
+    /// direct data for the delayed-start half of that noise (IsDelayedAutoStart/
+    /// AutoStartDelaySeconds, shown via StartTypeDisplay) rather than only inferring it indirectly -
+    /// this flag's own condition stays as-is regardless, since ExitCode != 0 already means a real
+    /// start attempt was made and failed even for a delayed-start service.</summary>
     public bool HasFailedToStart => StartType == ServiceStartMode.Automatic && ExitCode != 0;
 
     /// <summary>Other services this one depends on to start, and services that in turn depend on
@@ -106,6 +143,78 @@ public sealed class ServiceRow : ObservableObject
     /// Drivers report a much narrower set of the fields above (no dependencies, often no logon
     /// account), so the Services view hides those columns for driver rows.</summary>
     public bool IsDriver { get; init; }
+
+    /// <summary>#749/#750/#751: SCM failure/crash history for this service within the lookback
+    /// window, loaded on demand via ServicesViewModel.LoadFailureHistoryCommand - see
+    /// EventLogService.ReadServiceFailureEvents. Empty until requested.</summary>
+    private IReadOnlyList<ServiceScmEvent> _scmEvents = Array.Empty<ServiceScmEvent>();
+    public IReadOnlyList<ServiceScmEvent> ScmEvents
+    {
+        get => _scmEvents;
+        set { if (SetProperty(ref _scmEvents, value)) OnPropertyChanged(nameof(HasScmEvents)); }
+    }
+
+    public bool HasScmEvents => ScmEvents.Count > 0;
+
+    /// <summary>#750: count of 7031/7034 ("terminated unexpectedly") events within the last 24
+    /// hours - crossing CrashLoopThreshold flags the row as crash-looping.</summary>
+    private int _crashLoopCount24H;
+    public int CrashLoopCount24H
+    {
+        get => _crashLoopCount24H;
+        set { if (SetProperty(ref _crashLoopCount24H, value)) OnPropertyChanged(nameof(IsCrashLooping)); }
+    }
+
+    private const int CrashLoopThreshold = 3;
+
+    /// <summary>#750: "more than a handful" of unexpected terminations within 24h - a quick flag,
+    /// not a verdict (a service with real recovery actions configured may legitimately restart
+    /// itself often).</summary>
+    public bool IsCrashLooping => CrashLoopCount24H > CrashLoopThreshold;
+
+    /// <summary>#751: dependency-failure root-cause chain, walked from this service down through
+    /// its static DependsOn graph using each hop's own #749 failure history - see
+    /// ServicesViewModel.BuildRootCause. Empty until failure history has been loaded, or when no
+    /// failure was found anywhere in the chain.</summary>
+    private string _dependencyRootCauseText = string.Empty;
+    public string DependencyRootCauseText { get => _dependencyRootCauseText; set => SetProperty(ref _dependencyRootCauseText, value); }
+
+    /// <summary>#752: this service's DependOnService names a service that either doesn't exist or
+    /// has Start=4 (Disabled) - either would keep this service from ever starting. See
+    /// ServiceControlService.RunInventoryAudit. False until an audit has been run.</summary>
+    private bool _hasBrokenDependency;
+    public bool HasBrokenDependency { get => _hasBrokenDependency; set => SetProperty(ref _hasBrokenDependency, value); }
+
+    private string _brokenDependencyText = string.Empty;
+    public string BrokenDependencyText { get => _brokenDependencyText; set => SetProperty(ref _brokenDependencyText, value); }
+
+    /// <summary>#753: ImagePath resolves to a binary that no longer exists on disk (following
+    /// svchost -k/rundll32 through to their hosted Parameters\ServiceDll where applicable) - see
+    /// ServiceControlService.RunInventoryAudit/DeleteAsync (the confirmed "sc delete" offered for
+    /// this row once orphaned). False until an audit has been run.</summary>
+    private bool _isOrphaned;
+    public bool IsOrphaned { get => _isOrphaned; set => SetProperty(ref _isOrphaned, value); }
+
+    private string _orphanedImagePath = string.Empty;
+    public string OrphanedImagePath { get => _orphanedImagePath; set => SetProperty(ref _orphanedImagePath, value); }
+
+    /// <summary>#754: ImagePath is unquoted and contains a space before its .exe boundary - the
+    /// classic unquoted-service-path privilege-escalation pattern. UnquotedPathCorrected is the
+    /// exact value to paste back into ImagePath to fix it. False until an audit has been run.</summary>
+    private bool _hasUnquotedPath;
+    public bool HasUnquotedPath { get => _hasUnquotedPath; set => SetProperty(ref _hasUnquotedPath, value); }
+
+    private string _unquotedPathOriginal = string.Empty;
+    public string UnquotedPathOriginal { get => _unquotedPathOriginal; set => SetProperty(ref _unquotedPathOriginal, value); }
+
+    private string _unquotedPathCorrected = string.Empty;
+    public string UnquotedPathCorrected { get => _unquotedPathCorrected; set => SetProperty(ref _unquotedPathCorrected, value); }
+
+    /// <summary>#756: trigger-start conditions (`sc qtriggerinfo`), loaded on demand via
+    /// ServicesViewModel.ViewTriggerInfoCommand - see ServiceControlService.ReadTriggerInfoTextAsync.
+    /// Empty until requested, the same on-demand shape as FailureActionsText.</summary>
+    private string _triggerInfoText = string.Empty;
+    public string TriggerInfoText { get => _triggerInfoText; set => SetProperty(ref _triggerInfoText, value); }
 
     public bool CanStart => Status is ServiceControllerStatus.Stopped;
     public bool CanStop => Status is ServiceControllerStatus.Running && ServiceName is not ("RpcSs" or "RpcEptMapper" or "DcomLaunch");

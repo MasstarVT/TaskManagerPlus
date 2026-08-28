@@ -46,7 +46,10 @@
                 <ColumnDefinition Width="260" />
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
@@ -65,22 +68,39 @@
                       IsChecked="{Binding ShowDrivers}"
                       ToolTip="Show kernel/file-system drivers (ServiceController.GetDevices) instead of ordinary Win32 services" />
 
-            <Button Grid.Column="4" Content="Start" Margin="0,0,8,0" Command="{Binding StartCommand}" Style="{StaticResource SuccessButton}" />
-            <Button Grid.Column="5" Content="Stop" Margin="0,0,8,0" Command="{Binding StopCommand}" Style="{StaticResource DangerButton}" />
-            <Button Grid.Column="6" Content="Restart" Margin="0,0,8,0" Command="{Binding RestartCommand}" Style="{StaticResource PrimaryButton}" />
+            <!-- #750: populated only after "Load failure history" runs. -->
+            <CheckBox Grid.Column="3" Content="Crash-looping only" VerticalAlignment="Center" Margin="16,0,0,0"
+                      IsChecked="{Binding CrashLoopingOnly}"
+                      ToolTip="Show only services that terminated unexpectedly more than a handful of times in the last 24h (requires 'Load failure history')" />
+
+            <!-- #753: populated only after "Run service audit" runs. -->
+            <CheckBox Grid.Column="4" Content="Orphaned only" VerticalAlignment="Center" Margin="16,0,0,0"
+                      IsChecked="{Binding OrphanedOnly}"
+                      ToolTip="Show only services whose ImagePath resolves to a binary that no longer exists (requires 'Run service audit')" />
+
+            <Button Grid.Column="6" Content="Start" Margin="0,0,8,0" Command="{Binding StartCommand}" Style="{StaticResource SuccessButton}" />
+            <Button Grid.Column="7" Content="Stop" Margin="0,0,8,0" Command="{Binding StopCommand}" Style="{StaticResource DangerButton}" />
+            <Button Grid.Column="8" Content="Restart" Margin="0,0,8,0" Command="{Binding RestartCommand}" Style="{StaticResource PrimaryButton}" />
             <!-- #71: what Windows does when this service crashes (auto-restart, run a program,
                  reboot, ...) - loaded on demand, see ServicesViewModel.LoadFailureActionsAsync. -->
-            <Button Grid.Column="7" Content="Recovery actions" Command="{Binding ViewFailureActionsCommand}" />
+            <Button Grid.Column="9" Content="Recovery actions" Margin="0,0,8,0" Command="{Binding ViewFailureActionsCommand}" />
+            <!-- #756: trigger-start conditions - loaded on demand, see ServicesViewModel.LoadTriggerInfoAsync. -->
+            <Button Grid.Column="10" Content="Trigger info" Command="{Binding ViewTriggerInfoCommand}" />
         </Grid>
 
-        <!-- Round 7 #13/#16: start-duration history + config-drift baseline actions. -->
+        <!-- Round 7 #13/#16, #749-754: start-duration history, config-drift baseline actions,
+             SCM failure history (#749/#750/#751), and registry inventory audit (#752/#753/#754). -->
         <WrapPanel Grid.Row="1" Margin="0,0,0,12">
             <Button Content="Load start-time history" Margin="0,0,8,4" Command="{Binding LoadStartDurationsCommand}"
                     ToolTip="Mine the System event log's Service Control Manager entries for approximate per-service start durations" />
             <Button Content="Capture config baseline" Margin="0,0,8,4" Command="{Binding CaptureConfigBaselineCommand}"
                     ToolTip="Save every service's current StartType/logon account to a JSON file" />
-            <Button Content="Check config drift" Margin="0,0,16,4" Command="{Binding CheckConfigDriftCommand}"
+            <Button Content="Check config drift" Margin="0,0,8,4" Command="{Binding CheckConfigDriftCommand}"
                     ToolTip="Compare current StartType/logon accounts against a previously saved baseline" />
+            <Button Content="Load failure history" Margin="0,0,8,4" Command="{Binding LoadFailureHistoryCommand}"
+                    ToolTip="Mine the System event log's SCM failure/crash events (7000/7001/7009/7011/7022/7023/7024/7031/7034/7043) for a per-service failure timeline, crash-loop count, and dependency root cause" />
+            <Button Content="Run service audit" Margin="0,0,16,4" Command="{Binding RunInventoryAuditCommand}"
+                    ToolTip="Scan HKLM\SYSTEM\CurrentControlSet\Services for broken dependencies, orphaned binaries, and unquoted paths" />
             <TextBlock Text="{Binding StartDurationStatus}" VerticalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4" />
         </WrapPanel>
 
@@ -142,7 +162,9 @@
                         </DataTemplate>
                     </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>
-                <DataGridTextColumn Header="Startup type" Binding="{Binding StartType}" Width="110" />
+                <!-- #755: shows "Automatic (Delayed Start, ~120s)" instead of a bare "Automatic"
+                     when DelayedAutostart is set - see ServiceRow.StartTypeDisplay. -->
+                <DataGridTextColumn Header="Startup type" Binding="{Binding StartTypeDisplay}" Width="160" />
                 <DataGridTextColumn Header="PID" Binding="{Binding ProcessId}" Width="60" />
                 <!-- Round 7 #14: logon account, tinted when it's neither empty (drivers) nor one
                      of the standard built-in service accounts. -->
@@ -167,6 +189,73 @@
                 </DataGridTemplateColumn>
                 <!-- Round 7 #13: populated only after "Load start-time history" runs. -->
                 <DataGridTextColumn Header="Start duration" Binding="{Binding StartDurationText}" Width="1.4*" />
+                <!-- #750/#752/#753/#754: quick-flag badges, each populated only after its
+                     respective on-demand scan ("Load failure history" / "Run service audit") has
+                     run - a clean row shows nothing here rather than an empty placeholder cell. -->
+                <DataGridTemplateColumn Header="Flags" Width="130">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <StackPanel Orientation="Vertical" VerticalAlignment="Center">
+                                <TextBlock Text="Crash-looping" FontSize="10" FontWeight="SemiBold"
+                                           Foreground="{DynamicResource DangerBrush}"
+                                           ToolTip="{Binding CrashLoopCount24H, StringFormat='Terminated unexpectedly {0} time(s) in the last 24h'}">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsCrashLooping}" Value="True">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                                <TextBlock Text="Orphaned" FontSize="10" FontWeight="SemiBold"
+                                           Foreground="{DynamicResource DangerBrush}"
+                                           ToolTip="{Binding OrphanedImagePath, StringFormat='Points at a missing binary: {0}'}">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsOrphaned}" Value="True">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                                <TextBlock Text="Unquoted path" FontSize="10" FontWeight="SemiBold"
+                                           Foreground="{DynamicResource WarningBrush}"
+                                           ToolTip="{Binding UnquotedPathCorrected, StringFormat='Corrected: {0}'}">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding HasUnquotedPath}" Value="True">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                                <TextBlock Text="Broken dependency" FontSize="10" FontWeight="SemiBold"
+                                           Foreground="{DynamicResource WarningBrush}"
+                                           ToolTip="{Binding BrokenDependencyText}">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding HasBrokenDependency}" Value="True">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </StackPanel>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
                 <DataGridTextColumn Header="Description" Binding="{Binding Description}" Width="2.5*" />
             </DataGrid.Columns>
             <DataGrid.ContextMenu>
@@ -212,20 +301,20 @@
                     </Style.Triggers>
                 </Style>
             </Border.Style>
-            <StackPanel Orientation="Horizontal">
-                <StackPanel Margin="0,0,24,0" MaxWidth="420">
+            <WrapPanel Orientation="Horizontal">
+                <StackPanel Margin="0,0,24,8" MaxWidth="420">
                     <TextBlock Text="Depends on" Style="{StaticResource SubStat}" />
                     <TextBlock Text="{Binding SelectedService.DependsOn, Converter={StaticResource StringListJoinConverter}}"
                                TextWrapping="Wrap" FontSize="12" Margin="0,2,0,0" />
                 </StackPanel>
-                <StackPanel MaxWidth="420" Margin="0,0,24,0">
+                <StackPanel MaxWidth="420" Margin="0,0,24,8">
                     <TextBlock Text="Other services depend on this" Style="{StaticResource SubStat}" />
                     <TextBlock Text="{Binding SelectedService.DependentServices, Converter={StaticResource StringListJoinConverter}}"
                                TextWrapping="Wrap" FontSize="12" Margin="0,2,0,0" />
                 </StackPanel>
                 <!-- #71: on-demand recovery-actions text - empty (and collapsed) until the
                      "Recovery actions" button is clicked, see ServicesViewModel. -->
-                <StackPanel MaxWidth="420">
+                <StackPanel MaxWidth="420" Margin="0,0,24,8">
                     <StackPanel.Style>
                         <Style TargetType="StackPanel">
                             <Setter Property="Visibility" Value="Visible" />
@@ -240,7 +329,115 @@
                     <TextBlock Text="{Binding SelectedService.FailureActionsText}"
                                TextWrapping="Wrap" FontSize="11.5" FontFamily="Consolas" Margin="0,2,0,0" />
                 </StackPanel>
-            </StackPanel>
+
+                <!-- #756: on-demand trigger-start conditions - empty (and collapsed) until the
+                     "Trigger info" button is clicked. -->
+                <StackPanel MaxWidth="420" Margin="0,0,24,8">
+                    <StackPanel.Style>
+                        <Style TargetType="StackPanel">
+                            <Setter Property="Visibility" Value="Visible" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding SelectedService.TriggerInfoText}" Value="">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </StackPanel.Style>
+                    <TextBlock Text="Trigger-start conditions" Style="{StaticResource SubStat}" />
+                    <TextBlock Text="{Binding SelectedService.TriggerInfoText}"
+                               TextWrapping="Wrap" FontSize="11.5" FontFamily="Consolas" Margin="0,2,0,0" />
+                </StackPanel>
+
+                <!-- #752: broken DependOnService reference - visible only once "Run service audit"
+                     has flagged this row. -->
+                <StackPanel MaxWidth="420" Margin="0,0,24,8">
+                    <StackPanel.Style>
+                        <Style TargetType="StackPanel">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding SelectedService.HasBrokenDependency}" Value="True">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </StackPanel.Style>
+                    <TextBlock Text="Broken dependency" Style="{StaticResource SubStat}" Foreground="{DynamicResource WarningBrush}" />
+                    <TextBlock Text="{Binding SelectedService.BrokenDependencyText}"
+                               TextWrapping="Wrap" FontSize="12" Margin="0,2,0,0" />
+                </StackPanel>
+
+                <!-- #753: orphaned - ImagePath resolves to a binary that no longer exists, with a
+                     confirmed sc delete offered right here. -->
+                <StackPanel MaxWidth="420" Margin="0,0,24,8">
+                    <StackPanel.Style>
+                        <Style TargetType="StackPanel">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding SelectedService.IsOrphaned}" Value="True">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </StackPanel.Style>
+                    <TextBlock Text="Orphaned - missing binary" Style="{StaticResource SubStat}" Foreground="{DynamicResource DangerBrush}" />
+                    <TextBlock Text="{Binding SelectedService.OrphanedImagePath}" TextWrapping="Wrap" FontSize="11.5" FontFamily="Consolas" Margin="0,2,0,4" />
+                    <Button Content="Delete service…" HorizontalAlignment="Left" Style="{StaticResource DangerButton}"
+                            Command="{Binding DeleteOrphanedServiceCommand}"
+                            ToolTip="Runs sc delete after confirmation" />
+                </StackPanel>
+
+                <!-- #754: unquoted service path, with the exact corrected value. -->
+                <StackPanel MaxWidth="420" Margin="0,0,24,8">
+                    <StackPanel.Style>
+                        <Style TargetType="StackPanel">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding SelectedService.HasUnquotedPath}" Value="True">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </StackPanel.Style>
+                    <TextBlock Text="Unquoted service path" Style="{StaticResource SubStat}" Foreground="{DynamicResource WarningBrush}" />
+                    <TextBlock Text="{Binding SelectedService.UnquotedPathOriginal}" TextWrapping="Wrap" FontSize="11" FontFamily="Consolas"
+                               Margin="0,2,0,0" Foreground="{DynamicResource TextSecondaryBrush}" />
+                    <TextBlock Text="{Binding SelectedService.UnquotedPathCorrected}" TextWrapping="Wrap" FontSize="11" FontFamily="Consolas" Margin="0,2,0,0" />
+                </StackPanel>
+
+                <!-- #749/#750/#751: SCM failure history, crash-loop count, and dependency root
+                     cause - visible only once "Load failure history" has found something for this
+                     row. -->
+                <StackPanel MaxWidth="480" Margin="0,0,24,8">
+                    <StackPanel.Style>
+                        <Style TargetType="StackPanel">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding SelectedService.HasScmEvents}" Value="True">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </StackPanel.Style>
+                    <TextBlock Text="Failure history (last 30 days)" Style="{StaticResource SubStat}" />
+                    <ScrollViewer MaxHeight="140" VerticalScrollBarVisibility="Auto" Margin="0,2,0,0">
+                        <ItemsControl ItemsSource="{Binding SelectedService.ScmEvents}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock TextWrapping="Wrap" FontSize="11" Margin="0,0,0,5">
+                                        <Run Text="{Binding TimeCreated, StringFormat=g}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        <Run Text=" - " />
+                                        <Run Text="{Binding EventLabel}" FontWeight="SemiBold" />
+                                        <LineBreak />
+                                        <Run Text="{Binding Message}" FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                    </TextBlock>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                    <TextBlock Text="Root cause" Style="{StaticResource SubStat}" Margin="0,6,0,0" />
+                    <TextBlock Text="{Binding SelectedService.DependencyRootCauseText}" TextWrapping="Wrap" FontSize="11.5" Margin="0,2,0,0" />
+                </StackPanel>
+            </WrapPanel>
         </Border>
 
         <TextBlock Grid.Row="4" Text="{Binding StatusMessage}" Margin="0,8,0,0"
