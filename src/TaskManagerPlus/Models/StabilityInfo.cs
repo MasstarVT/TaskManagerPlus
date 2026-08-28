@@ -101,3 +101,37 @@ public sealed class ServiceStartDuration
     public double AvgStartDurationMs { get; init; }
     public int SampleCount { get; init; }
 }
+
+/// <summary>#713: one entry on the "Power & boot timeline" strip - correlates System-log events
+/// 6005 (Event Log service started, i.e. a boot happened), 6006 (clean shutdown), 6008 (previous
+/// shutdown was unexpected), 6013 (periodic uptime report), Kernel-Power 41 (no clean shutdown
+/// recorded before this boot - the same event EventLogService.WasLastShutdownUnexpected already
+/// reads for a different purpose), Kernel-Power 109 (a shutdown's reason code), and User32 1074
+/// (who/what initiated a restart or shutdown, and why) into one chronological strip. See
+/// PowerTimelineService.Read.</summary>
+public sealed class PowerTimelineEntry
+{
+    public DateTime TimeCreated { get; init; }
+    public int EventId { get; init; }
+    public string ProviderName { get; init; } = string.Empty;
+    public string Kind { get; init; } = string.Empty;
+    public string Summary { get; init; } = string.Empty;
+
+    public string KindLabel => Kind switch
+    {
+        "Boot" => "Boot",
+        "CleanShutdown" => "Clean shutdown",
+        "UnexpectedShutdown" => "Unexpected shutdown",
+        "Uptime" => "Uptime report",
+        "NoCleanShutdown" => "No clean shutdown recorded",
+        "ShutdownReason" => "Shutdown reason",
+        "RestartInitiated" => "Restart initiated",
+        _ => Kind,
+    };
+
+    /// <summary>Drives the strip's dot color - a plain informational marker (Boot/CleanShutdown/
+    /// Uptime/RestartInitiated/ShutdownReason) vs. a flagged one (UnexpectedShutdown/
+    /// NoCleanShutdown) - same "quick flag, not a verdict" idea as the rest of this app's
+    /// heuristics, just surfaced as color instead of prose.</summary>
+    public bool IsWarning => Kind is "UnexpectedShutdown" or "NoCleanShutdown";
+}

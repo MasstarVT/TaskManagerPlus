@@ -160,6 +160,49 @@
             <TextBlock Text="{Binding StatusMessage}" Margin="0,8,0,0"
                        Foreground="{DynamicResource TextSecondaryBrush}" />
 
+            <!-- #712: boot-data availability explainer - shown in place of the boot performance
+                 card below whenever BootPerformanceService.ReadLatest() came back null, so the
+                 tab explains *why* rather than just going quiet. See BootDataAvailability's
+                 remarks for what each case means. -->
+            <Border Margin="0,20,0,0" BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,1,0,0" Padding="0,16,0,0">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding BootBreakdown}" Value="{x:Null}">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <StackPanel.Style>
+                        <Style TargetType="StackPanel">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding BootDataAvailability}" Value="{x:Null}">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </StackPanel.Style>
+                    <TextBlock Text="Boot performance data unavailable" Style="{StaticResource CardTitle}" Margin="0,0,0,4" />
+                    <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Text="{Binding BootDataAvailability.ExplanationText}" />
+                    <Button Content="Enable diagnostics channel" HorizontalAlignment="Left" Margin="0,10,0,0"
+                            Command="{Binding EnableDiagnosticsChannelCommand}">
+                        <Button.Style>
+                            <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding BootDataAvailability.CanOfferEnable}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Button.Style>
+                    </Button>
+                </StackPanel>
+            </Border>
+
             <!-- #89/#90: boot time breakdown for the most recent boot (adaptive field list - see
                  BootPerformanceService's remarks on why field names/count aren't fixed) plus a
                  small self-recorded trend across sessions. Hidden entirely when the event log has
@@ -175,7 +218,17 @@
                     </Style>
                 </Border.Style>
                 <StackPanel>
-                    <TextBlock Text="Boot performance" Style="{StaticResource CardTitle}" Margin="0,0,0,4" />
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Boot performance" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <!-- #713: cross-link over to the Stability tab's "Power & boot timeline" -
+                             see StartupView.xaml.cs's ViewPowerTimeline_Click. -->
+                        <Button Grid.Column="1" Content="View power &amp; boot timeline" Padding="8,3" FontSize="11.5"
+                                Click="ViewPowerTimeline_Click" />
+                    </Grid>
                     <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,10" TextWrapping="Wrap">
                         <Run Text="Last boot: " /><Run Text="{Binding BootBreakdown.BootTime, StringFormat={}{0:g}, Mode=OneWay}" />
                         <Run Text=" · Total " /><Run Text="{Binding BootBreakdown.TotalMs, Converter={StaticResource BootMsToSecondsConverter}, Mode=OneWay}" />
@@ -310,6 +363,227 @@
                             </TextBlock.Style>
                         </TextBlock>
                     </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- #708: boot-start/system-start driver and service load failures (Service Control
+                 Manager 7026/7000/7001) - cross-linked to the Services tab's driver list. Collapsed
+                 when nothing failed to load this boot (the common case). -->
+            <Border Margin="0,20,0,0" BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,1,0,0" Padding="0,16,0,0">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding DriverLoadFailures.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Drivers that failed to load at boot" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="View drivers in Services tab" Padding="8,3" FontSize="11.5"
+                                Click="ViewDriversInServices_Click" />
+                    </Grid>
+                    <ItemsControl ItemsSource="{Binding DriverLoadFailures}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,8" Margin="0,0,0,6">
+                                    <StackPanel>
+                                        <TextBlock FontSize="12.5" FontWeight="SemiBold">
+                                            <Run Text="{Binding Name}" /><Run Text="  " /><Run Text="{Binding CategoryText}" Foreground="{DynamicResource DangerBrush}" FontWeight="Normal" />
+                                        </TextBlock>
+                                        <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap">
+                                            <Run Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}" />
+                                            <Run Text=" · " /><Run Text="{Binding Detail}" />
+                                        </TextBlock>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #714: BootExecute audit (autochk/chkdsk-at-boot detection) - the raw registry
+                 value plus a plain-language reading, a flag not a verdict (see BootExecuteInfo's
+                 remarks). Styled as a warning card only when it differs from the stock entry. -->
+            <Border Margin="0,20,0,0" BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,1,0,0" Padding="0,16,0,0">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding BootExecuteInfo}" Value="{x:Null}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Boot-time tasks (BootExecute)" Style="{StaticResource CardTitle}" Margin="0,0,0,4" />
+                    <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap">
+                        <Run Text="Raw value: " /><Run Text="{Binding BootExecuteInfo.RawValueText}" FontFamily="Consolas" />
+                    </TextBlock>
+                    <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" FontSize="12">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding BootExecuteInfo.IsStock}" Value="False">
+                                        <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                        <Run Text="{Binding BootExecuteInfo.Explanation}" />
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- #711: Prefetcher/ReadyBoot configuration audit - flags the common "a debloat guide
+                 told me to disable this" case (boot prefetching off on a spinning disk), see
+                 PrefetchAuditResult.LooksLikeMistake's remarks. -->
+            <Border Margin="0,20,0,0" BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,1,0,0" Padding="0,16,0,0">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding PrefetchAudit}" Value="{x:Null}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Prefetcher / ReadyBoot configuration" Style="{StaticResource CardTitle}" Margin="0,0,0,4" />
+                    <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Text="{Binding PrefetchAudit.SummaryText}" />
+                    <Border Background="{DynamicResource DangerMutedBrush}" BorderBrush="{DynamicResource DangerBrush}"
+                            BorderThickness="1" CornerRadius="8" Padding="10,8" Margin="0,8,0,0">
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding PrefetchAudit.LooksLikeMistake}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                        <TextBlock Foreground="{DynamicResource DangerBrush}" FontSize="11.5" TextWrapping="Wrap"
+                                   Text="Quick flag, not a verdict - boot prefetching looks disabled on a spinning (HDD) system drive, a common side effect of a &quot;debloat guide&quot;. Prefetch/Superfetch generally help on an HDD; this is usually worth turning back on." />
+                    </Border>
+                    <Button Content="Restore Windows defaults" HorizontalAlignment="Left" Margin="0,10,0,0"
+                            Command="{Binding RestorePrefetchDefaultsCommand}" />
+                </StackPanel>
+            </Border>
+
+            <!-- #709: "Capture a boot log" - a two-step, opt-in workflow (bcdedit bootlog + ntbtlog.txt
+                 parse), never armed silently - see BootLogCaptureService's remarks. -->
+            <Border Margin="0,20,0,0" BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,1,0,0" Padding="0,16,0,0">
+                <StackPanel>
+                    <TextBlock Text="Capture a boot log" Style="{StaticResource CardTitle}" Margin="0,0,0,4" />
+                    <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,10"
+                               Text="Turns on Windows boot logging, then parses %windir%\ntbtlog.txt for every &quot;Did not load driver&quot; line (plus load ordering) after you restart and reopen this app." />
+                    <StackPanel Orientation="Horizontal">
+                        <Button Content="Capture a boot log" Command="{Binding ArmBootLogCaptureCommand}" Margin="0,0,8,0" />
+                        <Button Content="Turn boot logging off" Command="{Binding DisarmBootLogCaptureCommand}" Margin="0,0,8,0" />
+                        <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource WarningBrush}" FontSize="11.5">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsBootLogCaptureArmed}" Value="True">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                            <Run Text="Armed - restart your PC, then reopen this app." />
+                        </TextBlock>
+                    </StackPanel>
+
+                    <StackPanel Margin="0,12,0,0">
+                        <StackPanel.Style>
+                            <Style TargetType="StackPanel">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding NtbtlogResult}" Value="{x:Null}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </StackPanel.Style>
+                        <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,6">
+                            <Run Text="Captured " /><Run Text="{Binding NtbtlogResult.CapturedAtUtc, StringFormat={}{0:g}, Mode=OneWay}" />
+                            <Run Text=" · " /><Run Text="{Binding NtbtlogResult.FailedDrivers.Count, Mode=OneWay}" /><Run Text=" driver(s) did not load" />
+                        </TextBlock>
+                        <ItemsControl ItemsSource="{Binding NtbtlogResult.FailedDrivers}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,6" Margin="0,0,8,8" MaxWidth="320">
+                                        <TextBlock FontSize="11.5" TextWrapping="Wrap">
+                                            <Run Text="{Binding Order}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                            <Run Text=". " /><Run Text="{Binding DriverPath}" />
+                                        </TextBlock>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- #710: one-click boot ETW trace via the Windows Performance Recorder - hidden
+                 entirely when wpr.exe isn't present. Same two-step, opt-in shape as boot log
+                 capture above - see BootEtwTraceService's remarks. -->
+            <Border Margin="0,20,0,0" BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,1,0,0" Padding="0,16,0,0">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsBootEtwTraceAvailable}" Value="False">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Boot ETW trace (deep dive)" Style="{StaticResource CardTitle}" Margin="0,0,0,4" />
+                    <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,10"
+                               Text="Arms a Windows Performance Recorder boot trace; after you restart and reopen this app, the trace is collected automatically and can be opened in WPA." />
+                    <StackPanel Orientation="Horizontal">
+                        <Button Content="Arm boot trace" Command="{Binding ArmBootEtwTraceCommand}" Margin="0,0,8,0" />
+                        <Button Content="Cancel" Command="{Binding DisarmBootEtwTraceCommand}" Margin="0,0,8,0" />
+                        <Button Content="Open in WPA" Command="{Binding OpenEtlInWpaCommand}" Margin="0,0,8,0" />
+                        <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource WarningBrush}" FontSize="11.5">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsBootEtwTraceArmed}" Value="True">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                            <Run Text="Armed - restart your PC, then reopen this app." />
+                        </TextBlock>
+                    </StackPanel>
+                    <TextBlock Margin="0,8,0,0" TextWrapping="Wrap">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding LastEtlPath}" Value="{x:Null}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                        <Run Text="Last collected trace: " /><Run Text="{Binding LastEtlPath}" />
+                    </TextBlock>
                 </StackPanel>
             </Border>
 

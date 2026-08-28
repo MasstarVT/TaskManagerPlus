@@ -1,8 +1,11 @@
+using System.Diagnostics;
 using System.Diagnostics.Eventing.Reader;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Xml.Linq;
+using Microsoft.Win32;
 using TaskManagerPlus.Models;
 
 namespace TaskManagerPlus.Services;
@@ -486,6 +489,253 @@ public static class BootPerformanceService
     }
 
     #endregion
+
+    #region #708 - boot-start driver/service load failures (SCM 7026/7000/7001)
+
+    private const string ScmProviderName = "Service Control Manager";
+    private static readonly int[] DriverFailureEventIds = { 7026, 7000, 7001 };
+    private const int MaxDriverFailureEvents = 500;
+
+    /// <summary>#708: reads Service Control Manager events 7026 (enumerates every boot-start/
+    /// system-start driver or service that failed to load this boot - one insertion string per
+    /// name, no per-entry detail) and 7000/7001 (a single driver "failed to start"/service
+    /// "dependency failed", each with its own formatted error text). Same 30-day lookback and
+    /// degrade-to-empty-list pattern as ReadDegradationEvents.</summary>
+    public static List<DriverLoadFailure> ReadDriverLoadFailures()
+    {
+        var results = new List<DriverLoadFailure>();
+        try
+        {
+            long maxAgeMs = 30 * 24L * 60 * 60 * 1000;
+            string idFilter = string.Join(" or ", DriverFailureEventIds.Select(id => $"EventID={id}"));
+            var query = new EventLogQuery("System", PathType.LogName,
+                $"*[System[Provider[@Name='{ScmProviderName}'] and ({idFilter}) and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]") { ReverseDirection = true };
+            using var reader = new EventLogReader(query);
+
+            int count = 0;
+            while (count < MaxDriverFailureEvents && reader.ReadEvent() is { } record)
+            {
+                using (record)
+                {
+                    count++;
+                    results.AddRange(ParseDriverFailureEvent(record));
+                }
+            }
+        }
+        catch
+        {
+            // Log/provider unavailable or access denied - an empty list, same degrade-to-nothing
+            // pattern every other event-log read in this app uses.
+        }
+        return results.OrderByDescending(f => f.TimeCreated).ToList();
+    }
+
+    private static IEnumerable<DriverLoadFailure> ParseDriverFailureEvent(EventRecord record)
+    {
+        var time = record.TimeCreated ?? DateTime.MinValue;
+
+        if (record.Id == 7026)
+        {
+            // 7026's insertion strings are one failed boot/system-start driver or service name
+            // apiece - no per-name error text alongside them, just the enumerated list.
+            IList<EventProperty> props;
+            try { props = record.Properties; }
+            catch { yield break; }
+
+            foreach (var prop in props)
+            {
+                if (prop.Value is string name && !string.IsNullOrWhiteSpace(name))
+                    yield return new DriverLoadFailure { TimeCreated = time, EventId = record.Id, Name = name.Trim(), Detail = "Listed in the boot/system-start driver failure summary." };
+            }
+            yield break;
+        }
+
+        // 7000/7001: Properties[0] is the driver/service name; the formatted description carries
+        // the human-readable error text (not a documented, versioned insertion-string layout, so
+        // this reads the rendered message rather than assuming a fixed property index for it).
+        string? failedName = null;
+        try { if (record.Properties.Count > 0) failedName = record.Properties[0].Value as string; }
+        catch { /* fall through with failedName null */ }
+        if (string.IsNullOrWhiteSpace(failedName)) yield break;
+
+        string detail;
+        try { detail = record.FormatDescription() ?? string.Empty; }
+        catch { detail = string.Empty; } // provider's message file isn't registered - a known, common gap
+
+        yield return new DriverLoadFailure
+        {
+            TimeCreated = time,
+            EventId = record.Id,
+            Name = failedName.Trim(),
+            Detail = string.IsNullOrWhiteSpace(detail) ? "(no further detail available)" : TruncateText(detail, 220),
+        };
+    }
+
+    #endregion
+
+    #region #712 - boot-data availability explainer
+
+    private const string WdiPolicyKeyPath = @"SOFTWARE\Policies\Microsoft\Windows\WDI";
+
+    /// <summary>#712: when ReadLatest() comes back null, this tells apart "the Diagnostics-
+    /// Performance channel itself is disabled" (read via `wevtutil gl`, fixable with one click -
+    /// see EnableDiagnosticsChannelAsync) from "a WDI group policy appears to restrict a
+    /// diagnostics scenario" (read via the documented ScenarioExecutionEnabled policy value under
+    /// each scenario GUID subkey - not a specific hardcoded scenario ID, since that mapping isn't
+    /// publicly documented, the same "adaptive read, don't hardcode an unverified contract"
+    /// tradeoff BootPerformanceService's other adaptive reads already take) from neither.</summary>
+    public static async Task<BootDataAvailability> DiagnoseUnavailabilityAsync()
+    {
+        bool? channelEnabled = await ReadChannelEnabledAsync();
+        bool? policyDisabled = ReadWdiPolicyLooksDisabled();
+        return new BootDataAvailability { ChannelEnabled = channelEnabled, PolicyLooksDisabled = policyDisabled };
+    }
+
+    private static async Task<bool?> ReadChannelEnabledAsync()
+    {
+        try
+        {
+            var (output, exitCode) = await RunCapturedAsync("wevtutil.exe", $"gl \"{LogName}\"");
+            if (exitCode != 0) return null;
+            var match = Regex.Match(output, @"enabled:\s*(true|false)", RegexOptions.IgnoreCase);
+            return match.Success ? match.Groups[1].Value.Equals("true", StringComparison.OrdinalIgnoreCase) : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static bool? ReadWdiPolicyLooksDisabled()
+    {
+        try
+        {
+            using var key = Registry.LocalMachine.OpenSubKey(WdiPolicyKeyPath);
+            if (key is null) return null; // no WDI policy configured at all - not proof either way
+
+            bool anyDisabled = false, anyEnabled = false;
+            foreach (var subName in key.GetSubKeyNames())
+            {
+                using var scenario = key.OpenSubKey(subName);
+                if (scenario?.GetValue("ScenarioExecutionEnabled") is int v)
+                {
+                    if (v == 0) anyDisabled = true; else anyEnabled = true;
+                }
+            }
+            if (anyDisabled) return true;
+            if (anyEnabled) return false;
+            return null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>#712: one-click `wevtutil sl &lt;channel&gt; /e:true` - only ever offered when
+    /// DiagnoseUnavailabilityAsync found the channel explicitly disabled (BootDataAvailability.
+    /// CanOfferEnable), not for the policy-restricted or genuinely-nothing-found cases.</summary>
+    public static async Task<(bool Success, string? Error)> EnableDiagnosticsChannelAsync()
+    {
+        try
+        {
+            var (output, exitCode) = await RunCapturedAsync("wevtutil.exe", $"sl \"{LogName}\" /e:true");
+            return exitCode == 0 ? (true, null) : (false, string.IsNullOrWhiteSpace(output) ? "wevtutil failed." : output.Trim());
+        }
+        catch (Exception ex)
+        {
+            return (false, ex.Message);
+        }
+    }
+
+    #endregion
+
+    #region #714 - BootExecute audit (autochk / chkdsk-at-boot detection)
+
+    private const string SessionManagerKeyPath = @"SYSTEM\CurrentControlSet\Control\Session Manager";
+    private static readonly string[] StockBootExecute = { "autocheck autochk *" };
+
+    /// <summary>#714: HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\BootExecute
+    /// (REG_MULTI_SZ), compared against the single stock entry every clean Windows install has.
+    /// Anything beyond that - an extra scheduled `autochk /r` on a volume (chkdsk queued for next
+    /// boot), or a third-party entry - both delays boot and is worth a plain-language flag, not a
+    /// verdict (a legitimately queued chkdsk after a dirty unmount is normal, just worth
+    /// knowing about).</summary>
+    public static BootExecuteInfo ReadBootExecute()
+    {
+        try
+        {
+            using var key = Registry.LocalMachine.OpenSubKey(SessionManagerKeyPath);
+            var raw = key?.GetValue("BootExecute") as string[];
+            if (raw is null)
+                return new BootExecuteInfo { RawValue = Array.Empty<string>(), IsStock = true, Explanation = "Value not found (unusual) - nothing to flag." };
+
+            bool isStock = raw.Length == StockBootExecute.Length
+                && raw.Zip(StockBootExecute, (a, b) => string.Equals(a.Trim(), b, StringComparison.OrdinalIgnoreCase)).All(match => match);
+
+            return new BootExecuteInfo
+            {
+                RawValue = raw,
+                IsStock = isStock,
+                Explanation = isStock
+                    ? "Only the standard autocheck pass - nothing extra delaying boot here."
+                    : DescribeExtraBootExecuteEntries(raw),
+            };
+        }
+        catch
+        {
+            return new BootExecuteInfo { RawValue = Array.Empty<string>(), IsStock = true, Explanation = "Couldn't read (access denied) - assumed stock." };
+        }
+    }
+
+    private static string DescribeExtraBootExecuteEntries(string[] raw)
+    {
+        var extras = raw.Where(e => !e.Trim().Equals(StockBootExecute[0], StringComparison.OrdinalIgnoreCase)).ToList();
+        if (extras.Count == 0) return "Entries differ from the stock order/casing, but no extra tasks found.";
+
+        var chkdskLike = extras.Where(e => e.Contains("autochk", StringComparison.OrdinalIgnoreCase) || e.Contains("chkdsk", StringComparison.OrdinalIgnoreCase)).ToList();
+        if (chkdskLike.Count > 0)
+            return $"An extra chkdsk/autochk-style pass is scheduled at boot ({string.Join("; ", chkdskLike)}) - this can noticeably delay boot on a large volume.";
+
+        return $"Entr{(extras.Count == 1 ? "y" : "ies")} beyond the standard autocheck pass found ({string.Join("; ", extras)}) - each one delays boot until it finishes.";
+    }
+
+    #endregion
+
+    /// <summary>Shells out and captures combined stdout+stderr, bounded by a real timeout - the
+    /// same concurrent-read/bounded-wait/kill-on-timeout pattern ScheduledTaskService.RunCapturedAsync
+    /// and TracerouteService.RunAsync already establish, copied locally rather than shared (same
+    /// "each shelling-out service owns its own small helper" convention those two already use).</summary>
+    private static async Task<(string Output, int? ExitCode)> RunCapturedAsync(string exe, string args, int timeoutMs = 10000)
+    {
+        var psi = new ProcessStartInfo(exe, args)
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        using var proc = Process.Start(psi) ?? throw new InvalidOperationException($"couldn't start {exe}");
+
+        var outputTask = proc.StandardOutput.ReadToEndAsync();
+        var errorTask = proc.StandardError.ReadToEndAsync();
+
+        using var cts = new CancellationTokenSource(timeoutMs);
+        try
+        {
+            await proc.WaitForExitAsync(cts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            try { proc.Kill(); } catch { /* best-effort */ }
+            return ("(command timed out)", null);
+        }
+
+        string output = (await outputTask) + (await errorTask);
+        return (output, proc.ExitCode);
+    }
+
+    private static string TruncateText(string s, int maxLen) => s.Length <= maxLen ? s : s[..maxLen] + "…";
 
     /// <summary>#62 (System Specs): longest continuous-uptime record this month/this year - a pure
     /// derived read over this same persisted boot-history.json, no new sampling. A completed

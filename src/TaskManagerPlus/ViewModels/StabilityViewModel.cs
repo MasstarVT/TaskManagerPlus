@@ -27,6 +27,11 @@ public sealed class StabilityViewModel : ObservableObject
     // FaultingModuleSummary's remarks. Pure derived aggregation over RecentEvents, no new query.
     public ObservableCollection<FaultingModuleSummary> CrashesByModule { get; } = new();
 
+    // #713: "Power & boot timeline" - see PowerTimelineService's remarks. A separate targeted
+    // query (different providers/event IDs than the Critical/Error scan above), run alongside it
+    // on the same on-demand Refresh rather than a second button.
+    public ObservableCollection<PowerTimelineEntry> PowerTimeline { get; } = new();
+
     private bool _isLoading;
     public bool IsLoading { get => _isLoading; private set => SetProperty(ref _isLoading, value); }
 
@@ -134,7 +139,8 @@ public sealed class StabilityViewModel : ObservableObject
         try
         {
             var snapshot = await Task.Run(() => _service.Query());
-            Apply(snapshot);
+            var timeline = await Task.Run(PowerTimelineService.Read);
+            Apply(snapshot, timeline);
             RefreshErrorText = null;
         }
         catch (Exception ex)
@@ -147,8 +153,11 @@ public sealed class StabilityViewModel : ObservableObject
         }
     }
 
-    private void Apply(StabilitySnapshot snapshot)
+    private void Apply(StabilitySnapshot snapshot, List<PowerTimelineEntry> timeline)
     {
+        PowerTimeline.Clear();
+        foreach (var e in timeline) PowerTimeline.Add(e);
+
         RecentEvents.Clear();
         foreach (var e in snapshot.RecentEvents) RecentEvents.Add(e);
 

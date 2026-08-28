@@ -80,6 +80,75 @@
                 </StackPanel>
             </Border>
 
+            <!-- #713: "Power & boot timeline" - correlates EventLog 6005/6006/6008/6013,
+                 Kernel-Power 41/109, and User32 1074 into one chronological strip - see
+                 PowerTimelineService's remarks. Linked from the Startup tab's boot chart (see
+                 StartupView.xaml's "View power & boot timeline" button). -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Power &amp; boot timeline" Style="{StaticResource CardTitle}" />
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap"
+                               Text="Boots, shutdowns, and who/what initiated them - last 30 days." />
+                    <ScrollViewer MaxHeight="280" VerticalScrollBarVisibility="Auto">
+                        <ItemsControl ItemsSource="{Binding PowerTimeline}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Margin="0,0,0,10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="120" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <Ellipse Grid.Column="0" Width="10" Height="10" Margin="0,3,10,0" VerticalAlignment="Top">
+                                            <Ellipse.Style>
+                                                <Style TargetType="Ellipse">
+                                                    <Setter Property="Fill" Value="{DynamicResource AccentBrush}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsWarning}" Value="True">
+                                                            <Setter Property="Fill" Value="{DynamicResource DangerBrush}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Ellipse.Style>
+                                        </Ellipse>
+                                        <TextBlock Grid.Column="1" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}"
+                                                   Text="{Binding TimeCreated, StringFormat={}{0:g}}" VerticalAlignment="Top" />
+                                        <StackPanel Grid.Column="2">
+                                            <TextBlock FontSize="12.5" FontWeight="SemiBold" Text="{Binding KindLabel}">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsWarning}" Value="True">
+                                                                <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                            <TextBlock FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap"
+                                                       Text="{Binding Summary}" />
+                                        </StackPanel>
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                    <TextBlock Text="No power/boot timeline events found in the last 30 days." Margin="0,4,0,0">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding PowerTimeline.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
             <!-- #3: minidump files, timestamp + best-effort bugcheck code correlated from a
                  nearby Kernel-Power 41 event - see EventLogService.ReadMinidumps. -->
             <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">

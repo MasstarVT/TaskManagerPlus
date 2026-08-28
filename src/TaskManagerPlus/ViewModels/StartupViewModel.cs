@@ -112,6 +112,54 @@ public sealed class StartupViewModel : ObservableObject
     private BootRegressionFlag? _regressionFlag;
     public BootRegressionFlag? RegressionFlag { get => _regressionFlag; private set => SetProperty(ref _regressionFlag, value); }
 
+    // #708: boot-start driver/system-start driver and service load failures (Service Control
+    // Manager 7026/7000/7001) - cross-linked to the Services tab's driver list, see
+    // StartupView.xaml.cs's ViewDriversInServices_Click.
+    public ObservableCollection<DriverLoadFailure> DriverLoadFailures { get; } = new();
+
+    // #709: two-step, opt-in "Capture a boot log" workflow (bcdedit bootlog + ntbtlog.txt parse) -
+    // see BootLogCaptureService's remarks. Never armed silently - IsBootLogCaptureArmed always
+    // reflects the persisted pending state, so the Startup tab shows an explicit armed/pending
+    // state (and an easy Disarm) rather than a silent background flag.
+    private bool _isBootLogCaptureArmed;
+    public bool IsBootLogCaptureArmed { get => _isBootLogCaptureArmed; private set => SetProperty(ref _isBootLogCaptureArmed, value); }
+
+    private NtbtlogResult? _ntbtlogResult;
+    public NtbtlogResult? NtbtlogResult { get => _ntbtlogResult; private set => SetProperty(ref _ntbtlogResult, value); }
+
+    public AsyncRelayCommand ArmBootLogCaptureCommand { get; }
+    public AsyncRelayCommand DisarmBootLogCaptureCommand { get; }
+
+    // #710: one-click boot ETW trace via the Windows Performance Recorder - hidden entirely on the
+    // Startup tab when wpr.exe isn't present (IsBootEtwTraceAvailable). Same two-step, opt-in shape
+    // as boot log capture above.
+    public bool IsBootEtwTraceAvailable => BootEtwTraceService.IsAvailable;
+
+    private bool _isBootEtwTraceArmed;
+    public bool IsBootEtwTraceArmed { get => _isBootEtwTraceArmed; private set => SetProperty(ref _isBootEtwTraceArmed, value); }
+
+    private string? _lastEtlPath;
+    public string? LastEtlPath { get => _lastEtlPath; private set => SetProperty(ref _lastEtlPath, value); }
+
+    public AsyncRelayCommand ArmBootEtwTraceCommand { get; }
+    public AsyncRelayCommand DisarmBootEtwTraceCommand { get; }
+    public RelayCommand OpenEtlInWpaCommand { get; }
+
+    // #711: Prefetcher/ReadyBoot configuration audit - see PrefetchAuditService's remarks.
+    private PrefetchAuditResult? _prefetchAudit;
+    public PrefetchAuditResult? PrefetchAudit { get => _prefetchAudit; private set => SetProperty(ref _prefetchAudit, value); }
+    public AsyncRelayCommand RestorePrefetchDefaultsCommand { get; }
+
+    // #712: boot-data availability explainer - only populated when BootBreakdown came back null,
+    // i.e. there was actually nothing to explain away.
+    private BootDataAvailability? _bootDataAvailability;
+    public BootDataAvailability? BootDataAvailability { get => _bootDataAvailability; private set => SetProperty(ref _bootDataAvailability, value); }
+    public AsyncRelayCommand EnableDiagnosticsChannelCommand { get; }
+
+    // #714: BootExecute audit (autochk/chkdsk-at-boot detection) - see BootPerformanceService.ReadBootExecute.
+    private BootExecuteInfo? _bootExecuteInfo;
+    public BootExecuteInfo? BootExecuteInfo { get => _bootExecuteInfo; private set => SetProperty(ref _bootExecuteInfo, value); }
+
     public StartupViewModel()
     {
         _bootHistoryLine = new LineSeries<double>
@@ -145,8 +193,19 @@ public sealed class StartupViewModel : ObservableObject
         LoadBrowserExtensionsCommand = new AsyncRelayCommand(LoadBrowserExtensionsAsync);
         LoadShellExtensionsCommand = new AsyncRelayCommand(LoadShellExtensionsAsync);
 
+        ArmBootLogCaptureCommand = new AsyncRelayCommand(ArmBootLogCaptureAsync, () => !IsBootLogCaptureArmed);
+        DisarmBootLogCaptureCommand = new AsyncRelayCommand(DisarmBootLogCaptureAsync, () => IsBootLogCaptureArmed);
+
+        ArmBootEtwTraceCommand = new AsyncRelayCommand(ArmBootEtwTraceAsync, () => IsBootEtwTraceAvailable && !IsBootEtwTraceArmed);
+        DisarmBootEtwTraceCommand = new AsyncRelayCommand(DisarmBootEtwTraceAsync, () => IsBootEtwTraceArmed);
+        OpenEtlInWpaCommand = new RelayCommand(_ => { if (LastEtlPath is not null) BootEtwTraceService.OpenInWpa(LastEtlPath); }, _ => LastEtlPath is not null);
+
+        RestorePrefetchDefaultsCommand = new AsyncRelayCommand(RestorePrefetchDefaultsAsync);
+        EnableDiagnosticsChannelCommand = new AsyncRelayCommand(EnableDiagnosticsChannelAsync, () => BootDataAvailability?.CanOfferEnable == true);
+
         Refresh();
         LoadBootPerformance();
+        _ = CheckPendingCaptureWorkflowsAsync();
     }
 
     private async Task LoadBrowserExtensionsAsync()
@@ -197,7 +256,7 @@ public sealed class StartupViewModel : ObservableObject
 
     private void LoadBootPerformance()
     {
-        _ = Task.Run(() =>
+        _ = Task.Run(async () =>
         {
             var breakdown = BootPerformanceService.ReadLatest();
             var history = BootPerformanceService.RecordAndLoadHistory(breakdown);
@@ -222,6 +281,18 @@ public sealed class StartupViewModel : ObservableObject
             var typeStats = BootPerformanceService.ComputeBootTypeStats(history);
             var regressionFlag = BootPerformanceService.ComputeRegressionFlag(history, thisBootDegradations);
 
+            // #708: boot-start/system-start driver and service load failures.
+            var driverFailures = BootPerformanceService.ReadDriverLoadFailures();
+
+            // #711: Prefetcher/ReadyBoot configuration audit.
+            var prefetchAudit = PrefetchAuditService.Read();
+
+            // #714: BootExecute audit (autochk/chkdsk-at-boot detection).
+            var bootExecute = BootPerformanceService.ReadBootExecute();
+
+            // #712: only worth diagnosing why boot data is missing when it's actually missing.
+            var availability = breakdown is null ? await BootPerformanceService.DiagnoseUnavailabilityAsync() : null;
+
             System.Windows.Application.Current?.Dispatcher.Invoke(() =>
             {
                 BootBreakdown = breakdown;
@@ -241,8 +312,122 @@ public sealed class StartupViewModel : ObservableObject
                 BootTypeStatsText = typeStats.Count == 0 ? null : string.Join(" · ", typeStats.Select(s => s.Text));
 
                 RegressionFlag = regressionFlag;
+
+                DriverLoadFailures.Clear();
+                foreach (var f in driverFailures) DriverLoadFailures.Add(f);
+
+                PrefetchAudit = prefetchAudit;
+                BootExecuteInfo = bootExecute;
+                BootDataAvailability = availability;
             });
         });
+    }
+
+    /// <summary>#709/#710: checks whether a boot log capture and/or a boot ETW trace was armed in
+    /// a previous session and, if so, attempts to finish the workflow now that the app is running
+    /// again (presumably after the reboot the arm step asked for). Called once at startup,
+    /// alongside LoadBootPerformance - never on a timer.</summary>
+    private async Task CheckPendingCaptureWorkflowsAsync()
+    {
+        var logState = await Task.Run(BootLogCaptureService.LoadState);
+        if (logState.IsArmed && logState.ArmedAtUtc is { } armedAt)
+        {
+            var parsed = await Task.Run(() => BootLogCaptureService.ReadAndParseLog(armedAt));
+            System.Windows.Application.Current?.Dispatcher.Invoke(() =>
+            {
+                IsBootLogCaptureArmed = true;
+                NtbtlogResult = parsed;
+                if (parsed is not null)
+                    StatusMessage = $"Boot log captured - {parsed.FailedDrivers.Count} driver(s) did not load. Turn boot logging back off when you're done reviewing it.";
+            });
+        }
+
+        var etwState = await Task.Run(BootEtwTraceService.LoadState);
+        if (etwState.IsArmed)
+        {
+            var (collected, error, path) = await BootEtwTraceService.CollectIfPendingAsync();
+            System.Windows.Application.Current?.Dispatcher.Invoke(() =>
+            {
+                IsBootEtwTraceArmed = false; // CollectIfPendingAsync always clears the pending state, success or not
+                if (collected)
+                {
+                    LastEtlPath = path;
+                    StatusMessage = $"Boot ETW trace collected: {path}";
+                }
+                else if (error is not null)
+                {
+                    StatusMessage = $"Couldn't collect the pending boot ETW trace: {error}";
+                }
+            });
+        }
+    }
+
+    private async Task ArmBootLogCaptureAsync()
+    {
+        var (success, error) = await BootLogCaptureService.ArmAsync();
+        if (success)
+        {
+            IsBootLogCaptureArmed = true;
+            NtbtlogResult = null;
+            StatusMessage = "Boot logging armed. Restart your PC, then reopen this app to see the results.";
+        }
+        else
+        {
+            StatusMessage = $"Couldn't arm boot log capture: {error}";
+        }
+    }
+
+    private async Task DisarmBootLogCaptureAsync()
+    {
+        var (success, error) = await BootLogCaptureService.DisarmAsync();
+        IsBootLogCaptureArmed = false;
+        NtbtlogResult = null;
+        StatusMessage = success ? "Boot logging turned off." : $"Couldn't turn off boot logging: {error}";
+    }
+
+    private async Task ArmBootEtwTraceAsync()
+    {
+        var (success, error) = await BootEtwTraceService.ArmAsync();
+        if (success)
+        {
+            IsBootEtwTraceArmed = true;
+            LastEtlPath = null;
+            StatusMessage = "Boot ETW trace armed. Restart your PC, then reopen this app to collect it.";
+        }
+        else
+        {
+            StatusMessage = $"Couldn't arm the boot ETW trace: {error}";
+        }
+    }
+
+    private async Task DisarmBootEtwTraceAsync()
+    {
+        var (success, error) = await BootEtwTraceService.DisarmAsync();
+        IsBootEtwTraceArmed = false;
+        StatusMessage = success ? "Boot ETW trace canceled." : $"Couldn't cancel the boot ETW trace: {error}";
+    }
+
+    private async Task RestorePrefetchDefaultsAsync()
+    {
+        var (success, error) = await Task.Run(PrefetchAuditService.RestoreDefaults);
+        if (success)
+        {
+            PrefetchAudit = await Task.Run(PrefetchAuditService.Read);
+            StatusMessage = "Prefetcher/SysMain restored to Windows defaults.";
+        }
+        else
+        {
+            StatusMessage = $"Couldn't restore Prefetcher defaults: {error}";
+        }
+    }
+
+    private async Task EnableDiagnosticsChannelAsync()
+    {
+        var (success, error) = await BootPerformanceService.EnableDiagnosticsChannelAsync();
+        StatusMessage = success
+            ? "Diagnostics channel enabled. Boot-time data will be available after the next boot."
+            : $"Couldn't enable the diagnostics channel: {error}";
+        if (success) BootDataAvailability = await BootPerformanceService.DiagnoseUnavailabilityAsync();
     }
 
     private async Task LoadScheduledTasksAsync()
