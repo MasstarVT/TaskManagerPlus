@@ -1,8 +1,10 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.IO;
 using System.Threading;
 using System.Windows;
 using System.Windows.Data;
+using Microsoft.Win32;
 using TaskManagerPlus.Common;
 using TaskManagerPlus.Models;
 using TaskManagerPlus.Services;
@@ -125,6 +127,13 @@ public sealed class DevicesDriversViewModel : ObservableObject
     public RelayCommand ShowDriverInventoryViewCommand { get; }
     public RelayCommand ShowDeviceTreeViewCommand { get; }
 
+    /// <summary>#479: this tab's THIRD top-level view - the driver store. Same two-bool-toggle
+    /// shape as IsDeviceTreeViewActive above rather than a real WPF TabControl, just extended by
+    /// one more flag.</summary>
+    private bool _isDriverStoreViewActive;
+    public bool IsDriverStoreViewActive { get => _isDriverStoreViewActive; set => SetProperty(ref _isDriverStoreViewActive, value); }
+    public RelayCommand ShowDriverStoreViewCommand { get; }
+
     // --- #463 (event-log half)/#464/#466: cheap targeted event-log queries and a bounded WMI+
     // registry sweep, all folded into this tab's existing on-demand Refresh (RefreshAsync below)
     // rather than needing their own separate buttons - none of these are expensive enough on their
@@ -233,6 +242,10 @@ public sealed class DevicesDriversViewModel : ObservableObject
             // runs directly on selection rather than needing its own button.
             SelectedDeviceFilters.Clear();
             foreach (var f in ClassFilterDriverService.ReadDeviceFilters(value?.DeviceId)) SelectedDeviceFilters.Add(f);
+
+            // #483: likewise cheap (a couple of registry reads plus, if the driver store view has
+            // already been loaded, an in-memory lookup) - recomputed directly on selection.
+            RefreshSelectedDeviceRollback();
         }
     }
 
@@ -312,6 +325,76 @@ public sealed class DevicesDriversViewModel : ObservableObject
 
     public AsyncRelayCommand LoadWakePowerCommand { get; }
 
+    // ------------------------------------------------------------------------------------------
+    // #479/#480/#484: driver store - this tab's third top-level view (alongside the driver-
+    // inventory grid and device tree above). On-demand like the rest of this tab's heavier
+    // sections - lazily loaded the first time the user switches to it (EnsureDriverStoreLoadedAsync,
+    // called from ShowDriverStoreViewCommand below), then only re-loaded on an explicit Load click.
+    // ------------------------------------------------------------------------------------------
+    public ObservableCollection<DriverStorePackage> DriverStore { get; } = new();
+
+    private bool _isLoadingDriverStore;
+    public bool IsLoadingDriverStore { get => _isLoadingDriverStore; private set => SetProperty(ref _isLoadingDriverStore, value); }
+
+    private bool _hasLoadedDriverStoreOnce;
+
+    private string _driverStoreStatusText = "Not loaded - click Load (or switch to this view) to enumerate every package in the driver store (pnputil /enum-drivers).";
+    public string DriverStoreStatusText { get => _driverStoreStatusText; private set => SetProperty(ref _driverStoreStatusText, value); }
+
+    public AsyncRelayCommand LoadDriverStoreCommand { get; }
+
+    // --- #481: multi-select "Delete checked" - mirrors RemoveCheckedDevicesCommand's (#472)
+    // checkbox-driven pattern above, on DriverStorePackage.IsCheckedForDeletion. ---
+    public AsyncRelayCommand DeleteCheckedDriverPackagesCommand { get; }
+
+    private bool _isPerformingDriverStoreAction;
+    public bool IsPerformingDriverStoreAction { get => _isPerformingDriverStoreAction; private set => SetProperty(ref _isPerformingDriverStoreAction, value); }
+
+    private string _driverStoreActionStatusText = string.Empty;
+    public string DriverStoreActionStatusText { get => _driverStoreActionStatusText; private set => SetProperty(ref _driverStoreActionStatusText, value); }
+
+    // --- #482: export every third-party driver package to a user-chosen folder. ---
+    public AsyncRelayCommand ExportDriversCommand { get; }
+
+    private bool _isExportingDrivers;
+    public bool IsExportingDrivers { get => _isExportingDrivers; private set => SetProperty(ref _isExportingDrivers, value); }
+
+    private string _exportDriversStatusText = string.Empty;
+    public string ExportDriversStatusText { get => _exportDriversStatusText; private set => SetProperty(ref _exportDriversStatusText, value); }
+
+    // --- #485: install every .inf found under a user-chosen folder. ---
+    public AsyncRelayCommand InstallDriverPackageCommand { get; }
+
+    private bool _isInstallingDriverPackage;
+    public bool IsInstallingDriverPackage { get => _isInstallingDriverPackage; private set => SetProperty(ref _isInstallingDriverPackage, value); }
+
+    private string _installDriverStatusText = string.Empty;
+    public string InstallDriverStatusText { get => _installDriverStatusText; private set => SetProperty(ref _installDriverStatusText, value); }
+
+    private string _installDriverOutputText = string.Empty;
+    /// <summary>#485: pnputil's full stdout+stderr from the install run, shown in a scrollable
+    /// read-only box - shown verbatim (unlike the enum-drivers output, which is parsed into rows)
+    /// since the suggestion explicitly asks for the tool's own output.</summary>
+    public string InstallDriverOutputText { get => _installDriverOutputText; private set => SetProperty(ref _installDriverOutputText, value); }
+
+    // --- #483: rollback availability + launch, recomputed whenever SelectedDeviceNode changes
+    // (device-tree view) - see RefreshSelectedDeviceRollback. ---
+    private bool _selectedDeviceRollbackAvailable;
+    public bool SelectedDeviceRollbackAvailable { get => _selectedDeviceRollbackAvailable; private set => SetProperty(ref _selectedDeviceRollbackAvailable, value); }
+
+    private string _selectedDeviceRollbackReasonText = string.Empty;
+    public string SelectedDeviceRollbackReasonText { get => _selectedDeviceRollbackReasonText; private set => SetProperty(ref _selectedDeviceRollbackReasonText, value); }
+
+    public RelayCommand RollbackDriverCommand { get; }
+
+    // --- #486: jumps to the Summary tab's existing snapshot UI (which now also diffs driver
+    // inventory/driver store contents - see SnapshotService) rather than duplicating that UI here.
+    // MainWindow subscribes to this event and switches tabs - the same thin, event-based cross-tab
+    // coupling CLAUDE.md's "cross-tab coupling is deliberately thin" convention already uses
+    // elsewhere (e.g. GlobalHotkeyService.Pressed / GlobalHotkeyService wired from MainWindow). ---
+    public event EventHandler? OpenSnapshotUiRequested;
+    public RelayCommand OpenSnapshotUiCommand { get; }
+
     public DevicesDriversViewModel()
     {
         DriversView = CollectionViewSource.GetDefaultView(Drivers);
@@ -328,8 +411,14 @@ public sealed class DevicesDriversViewModel : ObservableObject
         VerifyFileCommand = new RelayCommand(param => _ = VerifyFileAsync(param as DriverFileInfo));
         VerifyAllCommand = new AsyncRelayCommand(VerifyAllAsync);
 
-        ShowDriverInventoryViewCommand = new RelayCommand(_ => IsDeviceTreeViewActive = false);
-        ShowDeviceTreeViewCommand = new RelayCommand(_ => IsDeviceTreeViewActive = true);
+        ShowDriverInventoryViewCommand = new RelayCommand(_ => { IsDeviceTreeViewActive = false; IsDriverStoreViewActive = false; });
+        ShowDeviceTreeViewCommand = new RelayCommand(_ => { IsDeviceTreeViewActive = true; IsDriverStoreViewActive = false; });
+        ShowDriverStoreViewCommand = new RelayCommand(_ =>
+        {
+            IsDeviceTreeViewActive = false;
+            IsDriverStoreViewActive = true;
+            _ = EnsureDriverStoreLoadedAsync();
+        });
 
         LoadTimelineCommand = new AsyncRelayCommand(LoadTimelineAsync);
         StartDriverLoadTraceCommand = new AsyncRelayCommand(StartDriverLoadTraceAsync);
@@ -345,6 +434,13 @@ public sealed class DevicesDriversViewModel : ObservableObject
 
         LoadResourcesCommand = new AsyncRelayCommand(LoadResourcesAsync);
         LoadWakePowerCommand = new AsyncRelayCommand(LoadWakePowerAsync);
+
+        LoadDriverStoreCommand = new AsyncRelayCommand(LoadDriverStoreAsync);
+        DeleteCheckedDriverPackagesCommand = new AsyncRelayCommand(DeleteCheckedDriverPackagesAsync);
+        ExportDriversCommand = new AsyncRelayCommand(ExportDriversAsync);
+        InstallDriverPackageCommand = new AsyncRelayCommand(InstallDriverPackageAsync);
+        RollbackDriverCommand = new RelayCommand(_ => RollbackSelectedDevice());
+        OpenSnapshotUiCommand = new RelayCommand(_ => OpenSnapshotUiRequested?.Invoke(this, EventArgs.Empty));
 
         _ = RefreshAsync();
     }
@@ -380,6 +476,11 @@ public sealed class DevicesDriversViewModel : ObservableObject
             _lastRefreshedUtc = DateTime.UtcNow;
             OnPropertyChanged(nameof(LastRefreshedText));
             RefreshErrorText = null;
+
+            // #483: the driver-inventory grid just reloaded, which is where the currently-selected
+            // device's bound INF name comes from (Drivers.InfName) - re-check rollback availability
+            // in case it changed.
+            RefreshSelectedDeviceRollback();
         }
         catch (Exception ex)
         {
@@ -945,5 +1046,273 @@ public sealed class DevicesDriversViewModel : ObservableObject
         {
             IsLoadingWakePower = false;
         }
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // #479/#480/#484: driver store load.
+    // ------------------------------------------------------------------------------------------
+
+    private async Task LoadDriverStoreAsync()
+    {
+        IsLoadingDriverStore = true;
+        _hasLoadedDriverStoreOnce = true;
+        DriverStoreStatusText = "Enumerating the driver store (pnputil /enum-drivers)...";
+        try
+        {
+            var result = await DriverStoreService.ListAsync();
+            if (result.ErrorMessage is { } err)
+            {
+                DriverStoreStatusText = err;
+                return;
+            }
+
+            var presentNodes = _presentDeviceNodes.Count > 0 ? _presentDeviceNodes : await PnpDeviceTreeService.ListPresentAsync();
+            if (_presentDeviceNodes.Count == 0) _presentDeviceNodes = presentNodes;
+            // #484: cross-reference every present device's bound driver node against these
+            // packages' published names - this is what makes #481's "refuse to delete anything
+            // still in use" hard block possible.
+            DriverStoreService.ApplyInUseInfo(result.Packages, presentNodes);
+
+            DriverStore.Clear();
+            foreach (var p in result.Packages) DriverStore.Add(p);
+
+            int staleCount = result.Packages.Count(p => p.IsStale);
+            DriverStoreStatusText = $"{result.Packages.Count} package(s) in the driver store" +
+                (staleCount > 0
+                    ? $" - {staleCount} older than the newest in their group, {Formatting.FormatBytes(result.ReclaimableBytes)} potentially reclaimable."
+                    : " - no older/duplicate packages found.");
+
+            RefreshSelectedDeviceRollback();
+        }
+        catch (Exception ex)
+        {
+            DriverStoreStatusText = $"Couldn't enumerate the driver store: {ex.Message}";
+        }
+        finally
+        {
+            IsLoadingDriverStore = false;
+        }
+    }
+
+    /// <summary>Lazily triggers the driver store's own Load the first time the user switches to
+    /// that view (called from ShowDriverStoreViewCommand) - not re-run automatically after that,
+    /// matching #471's ShowNonPresentDevices "load once per explicit toggle/Load" gating.</summary>
+    private Task EnsureDriverStoreLoadedAsync() =>
+        !_hasLoadedDriverStoreOnce && !IsLoadingDriverStore ? LoadDriverStoreAsync() : Task.CompletedTask;
+
+    /// <summary>#481: deletes every currently-checked package. Refuses outright - no /force retry
+    /// offered at all - for any row #484's IsInUse flags as bound to a present device; that's a
+    /// hard block, not a warning the user can click through. For the rest, tries a plain delete
+    /// first and only offers /force (behind its own SECOND, more serious confirmation) when
+    /// pnputil itself reports the package is still in use for some other reason (e.g. a non-
+    /// present/ghost device's driver node still references it).</summary>
+    private async Task DeleteCheckedDriverPackagesAsync()
+    {
+        var checkedPackages = DriverStore.Where(p => p.IsCheckedForDeletion).ToList();
+        if (checkedPackages.Count == 0)
+        {
+            MessageBox.Show(
+                "Check one or more driver store packages below to delete.",
+                "No packages selected",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+            return;
+        }
+
+        // Defense in depth - the checkbox itself is disabled for an in-use row in the view (see
+        // DevicesDriversView.xaml), but this refuses outright even if one somehow got checked
+        // (e.g. IsInUse changed - a device was plugged back in - after it was ticked).
+        var blocked = checkedPackages.Where(p => p.IsInUse).ToList();
+        var deletable = checkedPackages.Except(blocked).ToList();
+
+        if (deletable.Count == 0)
+        {
+            MessageBox.Show(
+                "Every checked package is still bound to a present device - this app refuses to offer deletion for those. " +
+                "Uninstall or update the device's driver first if you genuinely want to remove one of these.",
+                "Can't delete - in use",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return;
+        }
+
+        string list = string.Join("\n", deletable.Select(p => $"  • {p.PublishedName}  ({p.OriginalName}, {p.Provider})"));
+        string blockedNote = blocked.Count > 0
+            ? $"\n\n{blocked.Count} other checked package(s) are still bound to a present device and will be skipped - this app refuses to delete those."
+            : string.Empty;
+        var confirm = MessageBox.Show(
+            $"Delete {deletable.Count} driver store package(s)?\n\n{list}{blockedNote}\n\n" +
+            "This removes the package from the driver store (pnputil /delete-driver ... /uninstall). It won't affect a " +
+            "currently-working device using a different package.",
+            "Delete driver package(s)",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        IsPerformingDriverStoreAction = true;
+        int done = 0, failed = 0;
+        try
+        {
+            foreach (var p in deletable)
+            {
+                DriverStoreActionStatusText = $"Deleting {p.PublishedName}... ({done + failed + 1}/{deletable.Count})";
+                var (success, message) = await PnpUtilService.DeleteDriverAsync(p.PublishedName, force: false);
+                if (success) { done++; continue; }
+
+                bool looksInUse = message.Contains("use", StringComparison.OrdinalIgnoreCase) ||
+                                   message.Contains("force", StringComparison.OrdinalIgnoreCase);
+                if (!looksInUse) { failed++; continue; }
+
+                // #481: the SECOND, more serious confirmation - only ever reached for a package
+                // pnputil itself refused to delete without /force.
+                var forceConfirm = MessageBox.Show(
+                    $"pnputil reports \"{p.PublishedName}\" ({p.OriginalName}) is still in use and could not be deleted:\n\n{message}\n\n" +
+                    "Forcing removal (/force) can leave a device without a working driver until one is reinstalled, even one " +
+                    "this app didn't detect as currently present. This is NOT reversible from here.\n\n" +
+                    "Are you ABSOLUTELY sure you want to force-delete this package?",
+                    "Force-delete driver package - second confirmation",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Error);
+                if (forceConfirm != MessageBoxResult.Yes) { failed++; continue; }
+
+                var (forceSuccess, _) = await PnpUtilService.DeleteDriverAsync(p.PublishedName, force: true);
+                if (forceSuccess) done++; else failed++;
+            }
+
+            DriverStoreActionStatusText = failed == 0
+                ? $"Deleted {done} package(s)."
+                : $"Deleted {done}, {failed} failed.";
+            await LoadDriverStoreAsync();
+        }
+        finally
+        {
+            IsPerformingDriverStoreAction = false;
+        }
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // #482: export every third-party driver package to a user-chosen folder.
+    // ------------------------------------------------------------------------------------------
+
+    private async Task ExportDriversAsync()
+    {
+        var exportsDir = AppPaths.GetPath("DriverExports");
+        try { Directory.CreateDirectory(exportsDir); } catch { /* the folder picker still works without a pre-created folder */ }
+
+        var dialog = new OpenFolderDialog
+        {
+            Title = "Choose a folder to export driver packages to",
+            InitialDirectory = exportsDir,
+        };
+        if (dialog.ShowDialog() != true) return;
+        string folder = dialog.FolderName;
+
+        IsExportingDrivers = true;
+        ExportDriversStatusText = "Exporting driver packages...";
+        try
+        {
+            var (success, message) = await PnpUtilService.ExportDriversAsync(folder);
+            if (!success)
+            {
+                ExportDriversStatusText = $"Export failed: {message}";
+                return;
+            }
+
+            // pnputil /export-driver writes one subfolder per exported package - a cheap best-
+            // effort summary (package count + total size), not something pnputil itself reports.
+            int packageCount = 0;
+            long totalBytes = 0;
+            try
+            {
+                var subDirs = Directory.EnumerateDirectories(folder).ToList();
+                packageCount = subDirs.Count;
+                foreach (var dir in subDirs)
+                foreach (var file in Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories))
+                    try { totalBytes += new FileInfo(file).Length; } catch { /* skip an unreadable file */ }
+            }
+            catch { /* best-effort summary only - the export itself already succeeded */ }
+
+            ExportDriversStatusText = $"Exported {packageCount} driver package(s) to \"{folder}\" ({Formatting.FormatBytes(totalBytes)}).";
+        }
+        catch (Exception ex)
+        {
+            ExportDriversStatusText = $"Export failed: {ex.Message}";
+        }
+        finally
+        {
+            IsExportingDrivers = false;
+        }
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // #485: install every .inf found under a user-chosen folder.
+    // ------------------------------------------------------------------------------------------
+
+    private async Task InstallDriverPackageAsync()
+    {
+        var dialog = new OpenFolderDialog { Title = "Choose a folder containing driver package(s) (.inf) to install" };
+        if (dialog.ShowDialog() != true) return;
+        string folder = dialog.FolderName;
+
+        var confirm = MessageBox.Show(
+            $"Install every driver package (.inf) found in \"{folder}\", including subfolders?\n\n" +
+            "This runs pnputil /add-driver ... /subdirs /install, which stages and installs each package system-wide.",
+            "Install driver package(s)",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        IsInstallingDriverPackage = true;
+        InstallDriverStatusText = "Installing...";
+        InstallDriverOutputText = string.Empty;
+        try
+        {
+            var (success, message) = await PnpUtilService.AddDriverAsync(folder);
+            InstallDriverOutputText = message;
+            InstallDriverStatusText = success ? "Finished - see output below." : "pnputil reported a problem - see output below.";
+            if (success) await LoadDriverStoreAsync();
+        }
+        catch (Exception ex)
+        {
+            InstallDriverStatusText = $"Install failed: {ex.Message}";
+        }
+        finally
+        {
+            IsInstallingDriverPackage = false;
+        }
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // #483: rollback availability + launch (device-tree view).
+    // ------------------------------------------------------------------------------------------
+
+    private void RefreshSelectedDeviceRollback()
+    {
+        var node = SelectedDeviceNode;
+        if (node is null || !node.IsPresent)
+        {
+            SelectedDeviceRollbackAvailable = false;
+            SelectedDeviceRollbackReasonText = string.Empty;
+            return;
+        }
+
+        string? boundInf = node.Service is { Length: > 0 } svc
+            ? Drivers.FirstOrDefault(d => d.ServiceName.Equals(svc, StringComparison.OrdinalIgnoreCase))?.InfName
+            : null;
+
+        var availability = DriverRollbackService.Check(node.DeviceId, boundInf, DriverStore);
+        SelectedDeviceRollbackAvailable = availability.Available;
+        SelectedDeviceRollbackReasonText = availability.Reason;
+    }
+
+    private void RollbackSelectedDevice()
+    {
+        var node = SelectedDeviceNode;
+        if (node is null) return;
+
+        var (success, error) = DriverRollbackService.OpenDeviceProperties(node.DeviceId);
+        DeviceActionStatusText = success
+            ? $"Opened driver properties for \"{node.Name}\" - use \"Roll Back Driver\" on the Driver tab there."
+            : $"Couldn't open driver properties: {error}";
     }
 }

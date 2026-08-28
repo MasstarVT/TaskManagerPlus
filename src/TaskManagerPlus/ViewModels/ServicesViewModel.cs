@@ -92,7 +92,10 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
     /// <summary>Round 7 #16: capture the current StartType/logon-account config as a baseline, or
     /// compare against a previously saved one - reuses SnapshotService/SystemSnapshot from Round 6
     /// rather than a second baseline file format.</summary>
-    public RelayCommand CaptureConfigBaselineCommand { get; }
+    // #486: SnapshotService.Capture became CaptureAsync (driver inventory/driver store
+    // enumeration added a few seconds of shell-out work) - AsyncRelayCommand rather than
+    // RelayCommand for the same reason SummaryViewModel's SaveSnapshotCommand is.
+    public AsyncRelayCommand CaptureConfigBaselineCommand { get; }
     public RelayCommand CheckConfigDriftCommand { get; }
 
     private string? _startDurationStatus;
@@ -109,7 +112,7 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
         RefreshNowCommand = new RelayCommand(_ => _ = RefreshAsync());
         ViewFailureActionsCommand = new RelayCommand(_ => _ = LoadFailureActionsAsync(), _ => SelectedService is not null);
         LoadStartDurationsCommand = new RelayCommand(_ => _ = LoadStartDurationsAsync());
-        CaptureConfigBaselineCommand = new RelayCommand(_ => CaptureConfigBaseline());
+        CaptureConfigBaselineCommand = new AsyncRelayCommand(CaptureConfigBaselineAsync);
         CheckConfigDriftCommand = new RelayCommand(_ => CheckConfigDrift());
 
         // Round 12, #100: configurable poll interval - see PollIntervalSettingsService's remarks.
@@ -296,8 +299,9 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
 
     /// <summary>Round 7 #16: saves the current StartType/logon-account config as a JSON baseline -
     /// reuses SnapshotService/SystemSnapshot, the same file a user might otherwise capture from the
-    /// Summary tab's "Save snapshot" button (that capture now includes ServiceConfigs too).</summary>
-    private void CaptureConfigBaseline()
+    /// Summary tab's "Save snapshot" button (that capture now includes ServiceConfigs too, and,
+    /// since #486, driver inventory/driver store contents).</summary>
+    private async Task CaptureConfigBaselineAsync()
     {
         var snapshotsDir = AppPaths.GetPath("Snapshots");
         try { Directory.CreateDirectory(snapshotsDir); } catch { /* SaveFileDialog still works without a pre-created folder */ }
@@ -312,9 +316,10 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
         };
         if (dialog.ShowDialog() != true) return;
 
+        StatusMessage = "Capturing baseline...";
         try
         {
-            SnapshotService.Save(SnapshotService.Capture(), dialog.FileName);
+            SnapshotService.Save(await SnapshotService.CaptureAsync(), dialog.FileName);
             StatusMessage = $"Baseline saved: {Path.GetFileName(dialog.FileName)}";
         }
         catch (Exception ex)

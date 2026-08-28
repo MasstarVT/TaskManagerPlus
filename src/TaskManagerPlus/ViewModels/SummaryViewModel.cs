@@ -112,9 +112,17 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
 
     // #93/#94: baseline capture + "what changed" comparison - one save/compare pair covers both
     // suggestions, since a saved baseline IS the comparison point for a later diff. See
-    // SnapshotService's remarks.
-    public RelayCommand SaveSnapshotCommand { get; }
-    public RelayCommand CompareSnapshotCommand { get; }
+    // SnapshotService's remarks. AsyncRelayCommand rather than RelayCommand since #486 extended
+    // SnapshotService.Capture into an async CaptureAsync (driver inventory/driver store
+    // enumeration genuinely takes a few seconds, unlike the rest of what a snapshot captures).
+    public AsyncRelayCommand SaveSnapshotCommand { get; }
+    public AsyncRelayCommand CompareSnapshotCommand { get; }
+
+    private bool _isCapturingSnapshot;
+    /// <summary>#486: true while SaveSnapshotCommand/CompareSnapshotCommand's own CaptureAsync
+    /// call is running - drives the two buttons' "Saving.../Comparing..." text, the same busy-flag
+    /// shape every on-demand Load button elsewhere in this app already uses.</summary>
+    public bool IsCapturingSnapshot { get => _isCapturingSnapshot; private set => SetProperty(ref _isCapturingSnapshot, value); }
 
     // Round 12, #99: clipboard-friendly one-line(ish) system summary - distinct from
     // GenerateReport/GenerateHtmlReport above (a full multi-section file), this is a handful of
@@ -196,8 +204,8 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
 
         GenerateReportCommand = new RelayCommand(_ => GenerateReport());
         GenerateHtmlReportCommand = new RelayCommand(_ => GenerateHtmlReport());
-        SaveSnapshotCommand = new RelayCommand(_ => SaveSnapshot());
-        CompareSnapshotCommand = new RelayCommand(_ => CompareSnapshot());
+        SaveSnapshotCommand = new AsyncRelayCommand(SaveSnapshotAsync);
+        CompareSnapshotCommand = new AsyncRelayCommand(CompareSnapshotAsync);
         CopySummaryCommand = new RelayCommand(_ => CopySummary());
         LoadSnapshotACommand = new RelayCommand(_ => LoadSnapshotAb(isA: true));
         LoadSnapshotBCommand = new RelayCommand(_ => LoadSnapshotAb(isA: false));
@@ -623,8 +631,9 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>#93: "record how my PC looks when healthy" - captures installed software,
-    /// services, and startup items to a JSON file the user picks.</summary>
-    private void SaveSnapshot()
+    /// services, startup items, and (#486) driver inventory/driver store contents to a JSON file
+    /// the user picks.</summary>
+    private async Task SaveSnapshotAsync()
     {
         var snapshotsDir = AppPaths.GetPath("Snapshots");
         try { Directory.CreateDirectory(snapshotsDir); } catch { /* SaveFileDialog still works without a pre-created folder */ }
@@ -639,14 +648,21 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         };
         if (dialog.ShowDialog() != true) return;
 
+        IsCapturingSnapshot = true;
+        SnapshotStatusText = "Capturing snapshot (including driver inventory/driver store - this can take a few seconds)...";
         try
         {
-            SnapshotService.Save(SnapshotService.Capture(CaptureIdleCpuTempOrNull()), dialog.FileName);
+            var snapshot = await SnapshotService.CaptureAsync(CaptureIdleCpuTempOrNull());
+            SnapshotService.Save(snapshot, dialog.FileName);
             SnapshotStatusText = $"Snapshot saved: {Path.GetFileName(dialog.FileName)}";
         }
         catch (Exception ex)
         {
             SnapshotStatusText = $"Couldn't save snapshot: {ex.Message}";
+        }
+        finally
+        {
+            IsCapturingSnapshot = false;
         }
     }
 
@@ -675,8 +691,8 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>#94: "what changed" - loads a previously saved baseline and diffs it against the
-    /// system's current state.</summary>
-    private void CompareSnapshot()
+    /// system's current state (including, since #486, driver inventory/driver store contents).</summary>
+    private async Task CompareSnapshotAsync()
     {
         var dialog = new OpenFileDialog
         {
@@ -694,22 +710,31 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
             return;
         }
 
-        var current = SnapshotService.Capture(CaptureIdleCpuTempOrNull());
-        var diff = SnapshotService.Diff(baseline, current);
-        SnapshotDiff = diff;
-        SnapshotStatusText = diff.HasChanges
-            ? $"Compared against {baseline.CapturedAt:g} - changes found."
-            : $"Compared against {baseline.CapturedAt:g} - no changes found.";
+        IsCapturingSnapshot = true;
+        SnapshotStatusText = "Capturing the current system's state to compare (including driver inventory/driver store - this can take a few seconds)...";
+        try
+        {
+            var current = await SnapshotService.CaptureAsync(CaptureIdleCpuTempOrNull());
+            var diff = SnapshotService.Diff(baseline, current);
+            SnapshotDiff = diff;
+            SnapshotStatusText = diff.HasChanges
+                ? $"Compared against {baseline.CapturedAt:g} - changes found."
+                : $"Compared against {baseline.CapturedAt:g} - no changes found.";
 
-        IdleTempTrendText = BuildIdleTempTrendText(baseline.IdleCpuTempC, current.IdleCpuTempC);
+            IdleTempTrendText = BuildIdleTempTrendText(baseline.IdleCpuTempC, current.IdleCpuTempC);
 
-        // Round 12, #98: cross-references this same diff against the reboot-pending flag
-        // SystemSpecsService.ReadRebootPending already computes (Round 11) - a derived rollup,
-        // no new registry reads, just correlating two outputs SummaryViewModel already has. Lives
-        // as its own Health Check line (RefreshHealthIssues, below) rather than duplicated logic
-        // here, since that's the one place already re-evaluated on a timer whenever RebootPending
-        // could change (a Windows Update finishing installing in the background, for instance).
-        RefreshHealthIssues();
+            // Round 12, #98: cross-references this same diff against the reboot-pending flag
+            // SystemSpecsService.ReadRebootPending already computes (Round 11) - a derived rollup,
+            // no new registry reads, just correlating two outputs SummaryViewModel already has. Lives
+            // as its own Health Check line (RefreshHealthIssues, below) rather than duplicated logic
+            // here, since that's the one place already re-evaluated on a timer whenever RebootPending
+            // could change (a Windows Update finishing installing in the background, for instance).
+            RefreshHealthIssues();
+        }
+        finally
+        {
+            IsCapturingSnapshot = false;
+        }
     }
 
     /// <summary>Round 11, #69: builds LeftTiles/RightTiles from TileCatalog, applying whatever

@@ -40,6 +40,24 @@
                     </Style>
                 </Button.Style>
             </Button>
+            <!-- #479: this tab's third top-level view. -->
+            <Button Content="Driver store" Padding="10,5" Margin="8,0,0,0" Command="{Binding ShowDriverStoreViewCommand}">
+                <Button.Style>
+                    <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsDriverStoreViewActive}" Value="True">
+                                <Setter Property="Background" Value="{DynamicResource AccentBrush}" />
+                                <Setter Property="Foreground" Value="White" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Button.Style>
+            </Button>
+            <!-- #486: jumps to the Summary tab's existing snapshot/diff UI, which now also covers
+                 driver inventory + driver store contents - see SnapshotService. -->
+            <Button Content="System snapshot &amp; driver diff..." Padding="10,5" Margin="16,0,0,0"
+                    Command="{Binding OpenSnapshotUiCommand}"
+                    ToolTip="Opens the Summary tab's snapshot/compare UI, which now also diffs driver inventory and driver store contents against a saved baseline." />
         </StackPanel>
 
     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="16">
@@ -48,6 +66,9 @@
                 <Setter Property="Visibility" Value="Visible" />
                 <Style.Triggers>
                     <DataTrigger Binding="{Binding IsDeviceTreeViewActive}" Value="True">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                    </DataTrigger>
+                    <DataTrigger Binding="{Binding IsDriverStoreViewActive}" Value="True">
                         <Setter Property="Visibility" Value="Collapsed" />
                     </DataTrigger>
                 </Style.Triggers>
@@ -774,6 +795,20 @@
                                 </Style>
                             </MenuItem.Style>
                         </MenuItem>
+                        <!-- #483: only shown when a previous driver version was actually detected
+                             as retained for this device - see DriverRollbackService.Check. -->
+                        <MenuItem Header="Roll back driver..." Command="{Binding RollbackDriverCommand}"
+                                  ToolTip="{Binding SelectedDeviceRollbackReasonText}">
+                            <MenuItem.Style>
+                                <Style TargetType="MenuItem">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding SelectedDeviceRollbackAvailable}" Value="False">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </MenuItem.Style>
+                        </MenuItem>
                         <Separator />
                         <MenuItem Header="Remove device entry" Command="{Binding RemoveDeviceCommand}"
                                   ToolTip="#472: pnputil /remove-device - only for a non-present ('ghost') device.">
@@ -996,6 +1031,37 @@
                             </StackPanel>
                         </Border>
 
+                        <!-- #483: rollback availability - only shown when a previous driver
+                             version was actually detected as retained for this device (see
+                             DriverRollbackService.Check's remarks for the two signals it checks). -->
+                        <Border Padding="10,8" CornerRadius="6" Background="{DynamicResource AccentMutedBrush}" Margin="0,0,0,10">
+                            <Border.Style>
+                                <Style TargetType="Border">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding SelectedDeviceRollbackAvailable}" Value="True">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Border.Style>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0">
+                                    <TextBlock FontSize="12.5" FontWeight="SemiBold" Text="A previous driver version may be available to roll back to" />
+                                    <TextBlock FontSize="11" TextWrapping="Wrap" Margin="0,2,0,0"
+                                               Foreground="{DynamicResource TextSecondaryBrush}"
+                                               Text="{Binding SelectedDeviceRollbackReasonText}" />
+                                </StackPanel>
+                                <Button Grid.Column="1" Content="Roll back driver..." Padding="10,4" VerticalAlignment="Center"
+                                        Margin="10,0,0,0" Command="{Binding RollbackDriverCommand}"
+                                        ToolTip="Opens this device's driver properties (Device Manager) - use the Driver tab's own &quot;Roll Back Driver&quot; button there; this app doesn't perform the rollback itself." />
+                            </Grid>
+                        </Border>
+
                         <!-- #467 (per-device half): UpperFilters/LowerFilters under this device's
                              own Enum key. -->
                         <TextBlock Text="Per-device filter drivers" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,4" />
@@ -1215,6 +1281,257 @@
                     </DataGrid>
                 </StackPanel>
             </Border>
+
+        </StackPanel>
+    </ScrollViewer>
+
+    <!-- #479/#480/#481/#482/#484/#485: the driver store view - this tab's third top-level view. -->
+    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="16">
+        <ScrollViewer.Style>
+            <Style TargetType="ScrollViewer">
+                <Setter Property="Visibility" Value="Collapsed" />
+                <Style.Triggers>
+                    <DataTrigger Binding="{Binding IsDriverStoreViewActive}" Value="True">
+                        <Setter Property="Visibility" Value="Visible" />
+                    </DataTrigger>
+                </Style.Triggers>
+            </Style>
+        </ScrollViewer.Style>
+        <StackPanel>
+
+            <!-- #479: header - Load, status. -->
+            <Grid Margin="0,0,0,12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0">
+                    <TextBlock Text="Driver store" Style="{StaticResource CardTitle}" Margin="0" FontSize="15" />
+                    <TextBlock Text="{Binding DriverStoreStatusText}" Style="{StaticResource SubStat}" Margin="0,2,0,0" TextWrapping="Wrap" />
+                </StackPanel>
+                <Button Grid.Column="1" Style="{StaticResource PrimaryButton}" Command="{Binding LoadDriverStoreCommand}">
+                    <TextBlock>
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Text" Value="Load" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsLoadingDriverStore}" Value="True">
+                                        <Setter Property="Text" Value="Loading..." />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </Button>
+            </Grid>
+
+            <!-- #482/#485: export/install buttons - independent of the grid below (neither needs
+                 the driver store to already be loaded, though a successful install/delete does
+                 trigger a reload once it finishes). -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Backup &amp; install" Style="{StaticResource CardTitle}" />
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap"
+                               Text="Export every third-party driver package to a folder (pnputil /export-driver), or install every .inf found under a folder (pnputil /add-driver ... /subdirs /install)." />
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                        <Button Padding="10,4" Command="{Binding ExportDriversCommand}" Margin="0,0,8,0">
+                            <TextBlock>
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="Export third-party drivers..." />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsExportingDrivers}" Value="True">
+                                                <Setter Property="Text" Value="Exporting..." />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Button>
+                        <Button Padding="10,4" Command="{Binding InstallDriverPackageCommand}">
+                            <TextBlock>
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="Install driver package(s)..." />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsInstallingDriverPackage}" Value="True">
+                                                <Setter Property="Text" Value="Installing..." />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Button>
+                    </StackPanel>
+
+                    <!-- #482: indeterminate busy bar - neither export nor install streams
+                         granular, easily-parseable progress on stdout, so this is the "simple
+                         running... state" CLAUDE.md's on-demand-action convention calls for. -->
+                    <ProgressBar Height="4" IsIndeterminate="True" Margin="0,0,0,8">
+                        <ProgressBar.Style>
+                            <Style TargetType="ProgressBar">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsExportingDrivers}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding IsInstallingDriverPackage}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </ProgressBar.Style>
+                    </ProgressBar>
+
+                    <TextBlock Text="{Binding ExportDriversStatusText}" Margin="0,0,0,4" TextWrapping="Wrap">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding ExportDriversStatusText}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <TextBlock Text="{Binding InstallDriverStatusText}" Margin="0,0,0,4" TextWrapping="Wrap">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding InstallDriverStatusText}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
+                    <!-- #485: full tool output, shown verbatim in a scrollable read-only box. -->
+                    <Expander Header="Install output" Margin="0,4,0,0">
+                        <Expander.Style>
+                            <Style TargetType="Expander">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding InstallDriverOutputText}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Expander.Style>
+                        <TextBox Text="{Binding InstallDriverOutputText, Mode=OneWay}" IsReadOnly="True"
+                                 TextWrapping="Wrap" FontFamily="Consolas" FontSize="11" MaxHeight="220"
+                                 VerticalScrollBarVisibility="Auto" Background="{DynamicResource BgElevatedBrush}"
+                                 BorderThickness="0" Padding="8" Margin="0,6,0,0" />
+                    </Expander>
+                </StackPanel>
+            </Border>
+
+            <!-- #481: multi-select delete toolbar - acts on every currently-checked row in the
+                 grid below. -->
+            <Grid Margin="0,0,0,10">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="{Binding DriverStoreActionStatusText}" VerticalAlignment="Center"
+                           Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5" TextTrimming="CharacterEllipsis" />
+                <Button Grid.Column="1" Padding="10,4" Command="{Binding DeleteCheckedDriverPackagesCommand}">
+                    <TextBlock>
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Text" Value="Delete checked" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsPerformingDriverStoreAction}" Value="True">
+                                        <Setter Property="Text" Value="Working..." />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </Button>
+            </Grid>
+
+            <!-- #479/#480/#484: the driver store grid itself - stale (older-than-newest-in-group)
+                 rows tinted, matching the driver-inventory grid's own unsigned-row tint above. -->
+            <DataGrid Height="420" ItemsSource="{Binding DriverStore}" IsReadOnly="True" AutoGenerateColumns="False"
+                      CanUserAddRows="False">
+                <DataGrid.Columns>
+                    <!-- #481: checkbox column, disabled outright for any package #484 flags as
+                         in use - the actual hard refusal happens in code (defense in depth), this
+                         just makes it impossible to check one via the UI at all. -->
+                    <DataGridTemplateColumn Header="" Width="34">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <CheckBox IsChecked="{Binding IsCheckedForDeletion, UpdateSourceTrigger=PropertyChanged}"
+                                          HorizontalAlignment="Center" VerticalAlignment="Center"
+                                          ToolTip="{Binding InUseText}">
+                                    <CheckBox.Style>
+                                        <Style TargetType="CheckBox">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsInUse}" Value="True">
+                                                    <Setter Property="IsEnabled" Value="False" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </CheckBox.Style>
+                                </CheckBox>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTextColumn Header="Published" Binding="{Binding PublishedName}" Width="80" />
+                    <DataGridTextColumn Header="Original INF" Binding="{Binding OriginalName}" Width="1.3*" />
+                    <DataGridTextColumn Header="Provider" Binding="{Binding Provider}" Width="1.2*" />
+                    <DataGridTextColumn Header="Class" Binding="{Binding ClassName}" Width="1*" />
+                    <DataGridTextColumn Header="Version" Binding="{Binding DriverVersionText}" Width="1.5*" />
+                    <DataGridTextColumn Header="Signer" Binding="{Binding SignerName}" Width="1.3*" />
+                    <DataGridTextColumn Header="Size" Binding="{Binding SizeBytes, Converter={StaticResource BytesToReadableConverter}, TargetNullValue=Unknown}" Width="90" />
+                    <!-- #480 -->
+                    <DataGridTemplateColumn Header="Stale" Width="60" SortMemberPath="IsStale">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <TextBlock VerticalAlignment="Center" FontWeight="SemiBold"
+                                           ToolTip="Older than the newest package sharing this original INF + provider - a candidate for cleanup, not a verdict (the newest version might itself be the one causing a problem).">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Text" Value="No" />
+                                            <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsStale}" Value="True">
+                                                    <Setter Property="Text" Value="Yes" />
+                                                    <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <!-- #484 -->
+                    <DataGridTemplateColumn Header="In use" Width="1.8*" SortMemberPath="IsInUse">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding InUseText}" FontSize="11" TextTrimming="CharacterEllipsis"
+                                           ToolTip="{Binding InUseText}" VerticalAlignment="Center">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsInUse}" Value="True">
+                                                    <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
+                                                    <Setter Property="FontWeight" Value="SemiBold" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                </DataGrid.Columns>
+            </DataGrid>
 
         </StackPanel>
     </ScrollViewer>
