@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
@@ -25,6 +25,14 @@
          built-in escape hatch" tradeoff this project already takes for PerformanceCounter/WMI. -->
     <UseWindowsForms>true</UseWindowsForms>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- UseWindowsForms turns EnableUnsafeBinaryFormatterSerialization on by default (WinForms
+         clipboard/drag-drop compat). This app never uses BinaryFormatter, and its only clipboard
+         calls are Clipboard.SetText - which does not go through it - so leaving the unsafe
+         deserialization path enabled is pure attack surface on a process that runs elevated
+         (app.manifest -> requireAdministrator). Turned off explicitly; if a future feature needs
+         Clipboard.SetData with a custom object or WinForms drag-drop, that is the thing to
+         revisit, not this flag. -->
+    <EnableUnsafeBinaryFormatterSerialization>false</EnableUnsafeBinaryFormatterSerialization>
     <!-- WFAC010 is a WinForms analyzer telling us to move app.manifest's dpiAware/dpiAwareness
          settings to the ApplicationHighDpiMode property + Application.SetHighDpiMode(). That advice
          is for a WinForms-bootstrapped app; this is WPF-first (App.xaml is the entry point and the

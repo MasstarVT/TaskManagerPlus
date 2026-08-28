@@ -368,7 +368,12 @@
                     <views:SystemSpecsView DataContext="{Binding SystemSpecs}" />
                 </TabItem>
 
-                <TabItem>
+                <!-- AutomationProperties.Name is load-bearing, not decorative: this is the one TabItem
+                     whose Header is a panel rather than a string (it carries the alert badge below), so
+                     UI Automation otherwise exposes it to screen readers as the literal
+                     "System.Windows.Controls.TabItem Header: Content:", and SelectTabByName could not
+                     resolve "Stability" at all. See SelectTabByName in MainWindow.xaml.cs. -->
+                <TabItem AutomationProperties.Name="Stability">
                     <TabItem.Header>
                         <!-- Round 14, item 27: small red dot badge when the new-dump watcher has
                              an unacknowledged alert - StabilityViewModel.HasNewDumpAlert. -->
