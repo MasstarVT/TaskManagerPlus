@@ -64,10 +64,36 @@ public sealed class DiagnosticStep : ObservableObject
     /// layers that are meaningless once an earlier one has already failed.</summary>
     public bool StopOnFailure { get; init; }
 
+    /// <summary>#914: optional predicate letting a later step in the same branch look at an
+    /// earlier step's already-recorded Status/ResultText/Evidence (steps run strictly in order, so
+    /// by the time the runner reaches this step every earlier one has already finished) and decide
+    /// whether to run at all - the declarative equivalent of a hand-written if/else in the
+    /// ViewModel. Used for e.g. #911's three-way disk-bottleneck split (only analyze fragmentation
+    /// once an earlier step has confirmed the volume is a spinning disk) and #912's battery branch
+    /// (skip the battery report/srumutil steps entirely once an earlier step finds no battery at
+    /// all). Null (the default) means "always run" - unaffected by this predicate.</summary>
+    public Func<TroubleshootRun, bool>? ShouldRun { get; init; }
+
+    /// <summary>#909: true for a heavier, opt-in step (e.g. the wpr/tracerpt DPC capture) that the
+    /// runner does not execute automatically as part of the branch sequence - it stays Pending
+    /// until the user explicitly triggers it via <c>TroubleshootViewModel.RunManualStepCommand</c>,
+    /// consistent with CLAUDE.md's "on-demand vs. polled" convention for anything heavier than a
+    /// trivial read.</summary>
+    public bool IsManual { get; init; }
+
     public required Func<CancellationToken, Task<DiagnosticStepResult>> Check { get; init; }
 
     private DiagnosticStepStatus _status = DiagnosticStepStatus.Pending;
-    public DiagnosticStepStatus Status { get => _status; set => SetProperty(ref _status, value); }
+    public DiagnosticStepStatus Status
+    {
+        get => _status;
+        set { if (SetProperty(ref _status, value)) OnPropertyChanged(nameof(IsManualPending)); }
+    }
+
+    /// <summary>True while a manual step is still waiting to be triggered - lets the run view show
+    /// its "Run" button only until the user has actually used it (or it's been force-skipped by an
+    /// earlier StopOnFailure layer).</summary>
+    public bool IsManualPending => IsManual && Status == DiagnosticStepStatus.Pending;
 
     private string _resultText = string.Empty;
     public string ResultText { get => _resultText; set => SetProperty(ref _resultText, value); }
@@ -80,4 +106,9 @@ public sealed class DiagnosticStep : ObservableObject
     }
 
     public bool HasEvidence => Evidence.Count > 0;
+
+    /// <summary>#915: how long this step's check actually took to run - persisted alongside its
+    /// result so a saved run's transcript can show timing, not just outcome. Null until the step
+    /// has finished (or been skipped/timed out) at least once.</summary>
+    public TimeSpan? Duration { get; set; }
 }

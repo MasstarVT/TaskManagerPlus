@@ -6,6 +6,7 @@ using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Text.RegularExpressions;
 using Microsoft.Win32;
+using TaskManagerPlus.Common;
 using TaskManagerPlus.Models;
 
 namespace TaskManagerPlus.Services;
@@ -81,6 +82,45 @@ public static class TroubleshootService
         {
             // Log/provider unavailable (channel disabled, access denied, doesn't exist on this
             // Windows build) - degrade to "nothing found", same as every EventLogService read.
+        }
+        return results;
+    }
+
+    /// <summary>
+    /// Like <see cref="ReadProviderEvents"/> but with no event-ID filter at all - used for #913's
+    /// USBHUB3 diagnostic channel, whose event-ID set isn't documented as stably as Kernel-PnP's
+    /// and (on most systems) isn't enabled by default in the first place, so "channel not present"
+    /// degrades to the same empty-list result as "nothing logged" rather than a separate failure.
+    /// </summary>
+    private static List<RawEvent> ReadAllProviderEvents(string logName, int lookbackDays, int maxEvents = 50)
+    {
+        var results = new List<RawEvent>();
+        try
+        {
+            long maxAgeMs = lookbackDays * 24L * 60 * 60 * 1000;
+            var query = new EventLogQuery(logName, PathType.LogName,
+                $"*[System[TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]")
+            {
+                ReverseDirection = true,
+            };
+
+            using var reader = new EventLogReader(query);
+            int count = 0;
+            while (count < maxEvents && reader.ReadEvent() is { } record)
+            {
+                using (record)
+                {
+                    count++;
+                    string message;
+                    try { message = record.FormatDescription() ?? string.Empty; }
+                    catch { message = string.Empty; }
+                    results.Add(new RawEvent(record.TimeCreated ?? DateTime.MinValue, record.Id, record.ProviderName ?? string.Empty, message));
+                }
+            }
+        }
+        catch
+        {
+            // Channel not present/enabled/access denied - degrade to "nothing found".
         }
         return results;
     }
@@ -1076,6 +1116,777 @@ public static class TroubleshootService
         var evidence = ranked.Select(c => $"{c.Name}: {c.Milliseconds:0} ms ({c.TimeCreated:g})").ToList();
         var top = ranked[0];
         return DiagnosticStepResult.Warn($"\"{top.Name}\" blocked shutdown the longest at last measurement: {top.Milliseconds:0} ms.", evidence);
+    }
+
+    #endregion
+
+    #region 909 - "Games or video stutter"
+
+    /// <summary>Processor Information\% DPC Time / % Interrupt Time (the "_Total" instance) plus
+    /// System\Context Switches/sec, sampled fresh over ~1 second the same "prime, then read" way
+    /// CheckMemoryThrashingAsync already does for a rate counter. A driver monopolizing interrupt
+    /// time is exactly the "smooth everywhere except stutters/audio crackles" signature - CPU%
+    /// alone can look totally normal while this is happening, which is why this doesn't just reuse
+    /// the shared performance sampler's CPU history.</summary>
+    public static async Task<DiagnosticStepResult> CheckDpcInterruptTimeAsync(CancellationToken ct)
+    {
+        PerformanceCounter? dpcCounter = null, interruptCounter = null, contextSwitchCounter = null;
+        try
+        {
+            try { dpcCounter = new PerformanceCounter("Processor Information", "% DPC Time", "_Total", readOnly: true); }
+            catch { /* category/instance not present on this system - reflected in evidence below */ }
+            try { interruptCounter = new PerformanceCounter("Processor Information", "% Interrupt Time", "_Total", readOnly: true); }
+            catch { /* as above */ }
+            try { contextSwitchCounter = new PerformanceCounter("System", "Context Switches/sec", readOnly: true); }
+            catch { /* as above */ }
+
+            if (dpcCounter is null && interruptCounter is null && contextSwitchCounter is null)
+                return DiagnosticStepResult.Skip("None of the DPC/interrupt/context-switch performance counters are available on this system.");
+
+            dpcCounter?.NextValue();
+            interruptCounter?.NextValue();
+            contextSwitchCounter?.NextValue();
+            await Task.Delay(1000, ct);
+            float dpc = dpcCounter?.NextValue() ?? 0;
+            float interrupt = interruptCounter?.NextValue() ?? 0;
+            float contextSwitches = contextSwitchCounter?.NextValue() ?? 0;
+
+            var evidence = new List<string>
+            {
+                dpcCounter is not null ? $"% DPC Time (all cores): {dpc:0.##}%" : "% DPC Time: unavailable",
+                interruptCounter is not null ? $"% Interrupt Time (all cores): {interrupt:0.##}%" : "% Interrupt Time: unavailable",
+                contextSwitchCounter is not null ? $"Context Switches/sec: {contextSwitches:0}" : "Context Switches/sec: unavailable",
+            };
+
+            // Rough rules of thumb, not documented Microsoft thresholds - outside a heavily
+            // loaded system, DPC/ISR time is normally well under 1%, so a sustained few percent
+            // is already a strong "a driver is doing too much work in interrupt context" signal.
+            bool dpcHigh = dpc >= 3;
+            bool interruptHigh = interrupt >= 2;
+            bool contextSwitchesHigh = contextSwitches >= 15000;
+
+            if (dpcHigh || interruptHigh)
+                return DiagnosticStepResult.Warn(
+                    "DPC/interrupt time is elevated - a driver may be monopolizing interrupt time, which shows up as stutter/audio crackle even while overall CPU% looks normal. Use the capture below to narrow down which driver.",
+                    evidence);
+            if (contextSwitchesHigh)
+                return DiagnosticStepResult.Warn("Context switch rate is unusually high - worth investigating alongside the DPC/interrupt capture below.", evidence);
+            return DiagnosticStepResult.Pass("DPC/interrupt time and context-switch rate look normal over this sample window.", evidence);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            return DiagnosticStepResult.Skip($"Couldn't read DPC/interrupt counters: {ex.Message}");
+        }
+        finally
+        {
+            dpcCounter?.Dispose();
+            interruptCounter?.Dispose();
+            contextSwitchCounter?.Dispose();
+        }
+    }
+
+    /// <summary>#909: the heavy, opt-in half of this branch - a short `wpr -start DiagEasy` /
+    /// `wpr -stop` capture, then a best-effort `tracerpt` summary. This is deliberately not part of
+    /// the automatic step sequence (see <see cref="DiagnosticStep.IsManual"/>) - even a short
+    /// capture is a real system-wide ETW trace, and wpr only allows one active trace session at a
+    /// time, so it's opt-in via its own button rather than something every "Games stutter" run
+    /// kicks off unasked.
+    ///
+    /// Caveat, stated plainly in the result text: `tracerpt` alone (no symbols, no Windows
+    /// Performance Analyzer) can't reliably resolve a raw DPC/ISR routine address back to a driver
+    /// module name - that resolution is what WPA's own analysis views do. What this *can* do
+    /// without WPA is summarize which kernel/interrupt-related ETW providers logged the most events
+    /// during the capture window, via tracerpt's own -summary report - a useful "where to look
+    /// next" pointer, not a definitive per-driver DPC-time ranking.</summary>
+    public static async Task<DiagnosticStepResult> CaptureDpcOffenderAsync(CancellationToken ct)
+    {
+        string system32 = Environment.GetFolderPath(Environment.SpecialFolder.System);
+        string wpr = Path.Combine(system32, "wpr.exe");
+        string tracerpt = Path.Combine(system32, "tracerpt.exe");
+        if (!File.Exists(wpr) || !File.Exists(tracerpt))
+            return DiagnosticStepResult.Skip("wpr.exe and/or tracerpt.exe aren't available on this system - can't run the capture.");
+
+        string etlPath = Path.Combine(Path.GetTempPath(), $"tmp-dpc-capture-{Guid.NewGuid():N}.etl");
+        string summaryPath = Path.Combine(Path.GetTempPath(), $"tmp-dpc-summary-{Guid.NewGuid():N}.txt");
+        string csvPath = Path.Combine(Path.GetTempPath(), $"tmp-dpc-events-{Guid.NewGuid():N}.csv");
+        try
+        {
+            var (startOutput, startExit) = await RunCapturedAsync(wpr, "-start DiagEasy -filemode", timeoutMs: 20000);
+            if (startExit != 0)
+                return DiagnosticStepResult.Skip($"Couldn't start the wpr capture: {Truncate(startOutput.Trim(), 300)}");
+
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(8), ct);
+            }
+            catch (OperationCanceledException)
+            {
+                // Don't leave an active trace session behind for a canceled/timed-out capture -
+                // wpr only allows one at a time, and an abandoned session would block every
+                // future capture until manually stopped.
+                try { await RunCapturedAsync(wpr, "-cancel", timeoutMs: 15000); } catch { /* best-effort */ }
+                throw;
+            }
+
+            var (stopOutput, stopExit) = await RunCapturedAsync(wpr, $"-stop \"{etlPath}\"", timeoutMs: 60000);
+            if (stopExit != 0 || !File.Exists(etlPath))
+                return DiagnosticStepResult.Skip($"Couldn't stop/save the wpr capture: {Truncate(stopOutput.Trim(), 300)}");
+
+            var (_, tracerptExit) = await RunCapturedAsync(tracerpt,
+                $"\"{etlPath}\" -o \"{csvPath}\" -summary \"{summaryPath}\" -quiet", timeoutMs: 60000);
+            if (tracerptExit != 0 || !File.Exists(summaryPath))
+                return DiagnosticStepResult.Warn("Capture saved, but tracerpt couldn't summarize it.", new[] { $"Trace file: {etlPath}" });
+
+            string summary = await File.ReadAllTextAsync(summaryPath, ct);
+            var providerLines = Regex.Matches(summary, @"^\s*(Microsoft-Windows-[\w-]+|PerfInfo|[\w.\\-]+)\s*:\s*(\d+)\s*$", RegexOptions.Multiline)
+                .Select(m => (Name: m.Groups[1].Value.Trim(), Count: int.Parse(m.Groups[2].Value)))
+                .Where(p => p.Count > 0)
+                .OrderByDescending(p => p.Count)
+                .Take(8)
+                .ToList();
+
+            var evidence = new List<string> { $"Trace file: {etlPath}", $"Summary report: {summaryPath}" };
+            if (providerLines.Count == 0)
+            {
+                return DiagnosticStepResult.Warn(
+                    "Capture completed, but no specific provider/module could be confidently extracted from tracerpt's summary. tracerpt alone can't resolve DPC routines to driver names without symbols - open the trace in Windows Performance Analyzer for a real per-driver DPC breakdown.",
+                    evidence);
+            }
+
+            evidence.InsertRange(0, providerLines.Select(p => $"{p.Name}: {p.Count} events during the capture"));
+            var top = providerLines[0];
+            return DiagnosticStepResult.Warn(
+                $"Best-effort lead, not a confirmed per-driver ranking: \"{top.Name}\" logged the most events during the capture window ({top.Count}). tracerpt can't resolve DPC/ISR routines to a driver module name without symbols - open the trace in Windows Performance Analyzer for the definitive per-driver DPC time breakdown.",
+                evidence);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            return DiagnosticStepResult.Skip($"DPC capture failed: {ex.Message}");
+        }
+        finally
+        {
+            try { if (File.Exists(csvPath)) File.Delete(csvPath); } catch { /* best-effort cleanup */ }
+        }
+    }
+
+    #endregion
+
+    #region 910 - "Wi-Fi keeps dropping"
+
+    public sealed class WifiContext
+    {
+        public bool HasWirelessAdapter { get; set; }
+    }
+
+    /// <summary>Whether this machine has a wireless network adapter at all, via
+    /// `netsh wlan show interfaces` (the same tool the rest of this branch already shells out to) -
+    /// its own "There is no wireless interface on the system." text is the simplest reliable
+    /// signal, rather than guessing from WMI adapter names/types.</summary>
+    public static async Task<DiagnosticStepResult> CheckWirelessAdapterPresenceAsync(WifiContext ctx)
+    {
+        try
+        {
+            var (output, exitCode) = await RunCapturedAsync("netsh.exe", "wlan show interfaces");
+            if (exitCode is null) return DiagnosticStepResult.Skip("netsh wlan show interfaces timed out.");
+
+            bool none = output.Contains("no wireless interface", StringComparison.OrdinalIgnoreCase);
+            ctx.HasWirelessAdapter = !none && output.Contains("Name", StringComparison.OrdinalIgnoreCase);
+
+            if (!ctx.HasWirelessAdapter)
+                return DiagnosticStepResult.Skip("No wireless adapter found on this system - the rest of this check doesn't apply.");
+            return DiagnosticStepResult.Pass("A wireless adapter was found.", new[] { output.Trim() });
+        }
+        catch (Exception ex)
+        {
+            return DiagnosticStepResult.Skip($"Couldn't check for a wireless adapter: {ex.Message}");
+        }
+    }
+
+    /// <summary>`netsh wlan show wlanreport` generates an HTML report at a fixed well-known path
+    /// (%ProgramData%\Microsoft\Windows\WlanReport\wlan-report-latest.html) - this reads that file
+    /// and best-effort extracts disconnect events and their reason codes, the same "strip tags,
+    /// look for a recognizable shape" approach CheckSleepStudyAsync already uses for another
+    /// version-varying, mostly-tabular Windows diagnostic report.</summary>
+    public static async Task<DiagnosticStepResult> CheckWlanReportAsync(WifiContext ctx)
+    {
+        try
+        {
+            var (_, exitCode) = await RunCapturedAsync("netsh.exe", "wlan show wlanreport", timeoutMs: 20000);
+            string reportPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+                "Microsoft", "Windows", "WlanReport", "wlan-report-latest.html");
+
+            if (exitCode != 0 || !File.Exists(reportPath))
+                return DiagnosticStepResult.Skip("Couldn't generate/find the WLAN report (netsh wlan show wlanreport).");
+
+            string html = await File.ReadAllTextAsync(reportPath);
+            string text = System.Net.WebUtility.HtmlDecode(Regex.Replace(html, "<[^>]+>", " "));
+
+            var disconnects = Regex.Matches(text, @"[Dd]isconnect(?:ed)?\D{0,60}?[Rr]eason(?:\s*[Cc]ode)?\D{0,10}(\d{1,5})")
+                .Select(m => m.Groups[1].Value)
+                .Where(v => v.Length > 0)
+                .ToList();
+
+            var evidence = new List<string> { $"Full report: {reportPath}" };
+            if (disconnects.Count == 0)
+                return DiagnosticStepResult.Warn(
+                    "WLAN report generated, but no specific disconnect-reason codes could be confidently extracted from it - open the report directly for the full disconnect timeline.",
+                    evidence);
+
+            var byReason = disconnects.GroupBy(r => r).OrderByDescending(g => g.Count()).ToList();
+            evidence.InsertRange(0, byReason.Select(g => $"Reason code {g.Key}: {g.Count()} occurrence(s)"));
+            var top = byReason[0];
+            return DiagnosticStepResult.Warn(
+                $"{disconnects.Count} disconnect event(s) found in the WLAN report. Most common reason code: {top.Key} ({top.Count()} occurrence(s)).",
+                evidence);
+        }
+        catch (Exception ex)
+        {
+            return DiagnosticStepResult.Skip($"Couldn't read the WLAN report: {ex.Message}");
+        }
+    }
+
+    /// <summary>WLAN-AutoConfig event IDs 8000-8003 (association/disconnect/roam) and the
+    /// 11000-series (adapter/radio state changes), last 7 days.</summary>
+    public static DiagnosticStepResult CheckWlanAutoConfigEvents()
+    {
+        var ids = new List<int> { 8000, 8001, 8002, 8003 };
+        ids.AddRange(Enumerable.Range(11000, 15));
+        var events = ReadProviderEvents("Microsoft-Windows-WLAN-AutoConfig/Operational", null, ids, 7, maxEvents: 100);
+
+        if (events.Count == 0)
+            return DiagnosticStepResult.Pass("No WLAN-AutoConfig disconnect/roam events (8000-8003/11000-series) found in the last 7 days.");
+
+        var byId = events.GroupBy(e => e.EventId).OrderByDescending(g => g.Count()).ToList();
+        var evidence = events.Take(15).Select(e => $"{e.TimeCreated:g} - event {e.EventId}: {Truncate(e.Message, 140)}").ToList();
+        var top = byId[0];
+        return DiagnosticStepResult.Warn($"{events.Count} WLAN-AutoConfig event(s) in the last 7 days - most common is event {top.Key} ({top.Count()} occurrence(s)).", evidence);
+    }
+
+    /// <summary>`powercfg /query` for the active plan's wireless adapter power-saving setting - an
+    /// aggressive setting is a common, easy-to-fix cause of a Wi-Fi adapter dropping out on idle.</summary>
+    public static async Task<DiagnosticStepResult> CheckWirelessPowerSavingAsync()
+    {
+        try
+        {
+            var (output, exitCode) = await RunCapturedAsync("powercfg.exe", "/query SCHEME_CURRENT SUB_WIRELESS");
+            if (exitCode is null) return DiagnosticStepResult.Skip("powercfg /query timed out.");
+            if (string.IsNullOrWhiteSpace(output) || output.Contains("Invalid", StringComparison.OrdinalIgnoreCase))
+                return DiagnosticStepResult.Skip("Couldn't read the wireless adapter power-saving setting (this system may not expose SUB_WIRELESS).");
+
+            var acMatch = Regex.Match(output, @"Current AC Power Setting Index:\s*0x([0-9a-fA-F]+)");
+            var dcMatch = Regex.Match(output, @"Current DC Power Setting Index:\s*0x([0-9a-fA-F]+)");
+            int? ac = acMatch.Success ? Convert.ToInt32(acMatch.Groups[1].Value, 16) : null;
+            int? dc = dcMatch.Success ? Convert.ToInt32(dcMatch.Groups[1].Value, 16) : null;
+
+            if (ac is null && dc is null)
+                return DiagnosticStepResult.Skip("Couldn't determine the wireless adapter's power-saving setting from powercfg /query.");
+
+            var evidence = new List<string>
+            {
+                ac is { } a ? $"Plugged in (AC): {DescribeWirelessPowerSavingLevel(a)}" : "Plugged in (AC): unknown",
+                dc is { } d ? $"On battery (DC): {DescribeWirelessPowerSavingLevel(d)}" : "On battery (DC): unknown",
+            };
+
+            bool aggressive = (ac ?? 0) >= 2 || (dc ?? 0) >= 2;
+            return aggressive
+                ? DiagnosticStepResult.Warn("An aggressive wireless power-saving setting is active - a common, easy-to-fix cause of the adapter dropping out on idle.", evidence)
+                : DiagnosticStepResult.Pass("Wireless adapter power-saving setting looks reasonable.", evidence);
+        }
+        catch (Exception ex)
+        {
+            return DiagnosticStepResult.Skip($"Couldn't read the wireless power-saving setting: {ex.Message}");
+        }
+    }
+
+    private static string DescribeWirelessPowerSavingLevel(int index) => index switch
+    {
+        0 => "Maximum Performance (no power saving)",
+        1 => "Low Power Saving",
+        2 => "Medium Power Saving",
+        3 => "Maximum Power Saving",
+        _ => $"Unknown ({index})",
+    };
+
+    #endregion
+
+    #region 911 - "My disk sits at 100%"
+
+    public sealed class DiskBottleneckContext
+    {
+        public string MediaType { get; set; } = "Unknown";
+        public string DriveLetter { get; set; } = "C";
+    }
+
+    private static PerformanceCounter? TryCreateTotalDiskCounter(string counter)
+    {
+        try { return new PerformanceCounter("LogicalDisk", counter, "_Total", readOnly: true); }
+        catch { return null; }
+    }
+
+    /// <summary>LogicalDisk\Avg. Disk sec/Transfer (latency) vs. Disk Bytes/sec (throughput) for
+    /// the system drive, sampled fresh over ~1 second - high latency with low throughput points at
+    /// the disk itself being slow (fragmentation/aging/failing hardware); high throughput points at
+    /// genuinely heavy I/O from something (a process or background service, checked next).</summary>
+    public static async Task<DiagnosticStepResult> CheckDiskLatencyVsThroughputAsync(CancellationToken ct)
+    {
+        string driveInstance = Environment.SystemDirectory[..1] + ":";
+        PerformanceCounter? latencyCounter = null, throughputCounter = null;
+        try
+        {
+            try { latencyCounter = new PerformanceCounter("LogicalDisk", "Avg. Disk sec/Transfer", driveInstance, readOnly: true); }
+            catch { latencyCounter = TryCreateTotalDiskCounter("Avg. Disk sec/Transfer"); }
+            try { throughputCounter = new PerformanceCounter("LogicalDisk", "Disk Bytes/sec", driveInstance, readOnly: true); }
+            catch { throughputCounter = TryCreateTotalDiskCounter("Disk Bytes/sec"); }
+
+            if (latencyCounter is null && throughputCounter is null)
+                return DiagnosticStepResult.Skip("Couldn't read LogicalDisk latency/throughput counters.");
+
+            latencyCounter?.NextValue();
+            throughputCounter?.NextValue();
+            await Task.Delay(1000, ct);
+            float latencySec = latencyCounter?.NextValue() ?? 0;
+            float bytesPerSec = throughputCounter?.NextValue() ?? 0;
+
+            double latencyMs = latencySec * 1000;
+            var evidence = new List<string>
+            {
+                $"Avg. Disk sec/Transfer: {latencyMs:0.#} ms",
+                $"Disk Bytes/sec: {Formatting.FormatByteRate(bytesPerSec)}",
+            };
+
+            bool latencyHigh = latencyMs >= 25;
+            bool throughputHigh = bytesPerSec >= 50 * 1024 * 1024; // ~50 MB/s sustained reads as genuinely busy
+
+            string summary = (latencyHigh, throughputHigh) switch
+            {
+                (true, false) => "High latency with low throughput - reads as the disk itself being the bottleneck (aging/fragmented/failing), not a specific app driving heavy I/O.",
+                (true, true) => "High latency and high throughput together - reads as genuinely I/O-heavy right now (see the top process below).",
+                (false, true) => "High throughput with normal latency - reads as genuinely I/O-heavy right now, not a slow disk (see the top process below).",
+                _ => "Disk latency and throughput both look normal right now.",
+            };
+            return latencyHigh || throughputHigh
+                ? DiagnosticStepResult.Warn(summary, evidence)
+                : DiagnosticStepResult.Pass(summary, evidence);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            return DiagnosticStepResult.Skip($"Couldn't read disk latency/throughput counters: {ex.Message}");
+        }
+        finally
+        {
+            latencyCounter?.Dispose();
+            throughputCounter?.Dispose();
+        }
+    }
+
+    /// <summary>Top per-process disk I/O from the already-sampled Processes list (ProcessRow.
+    /// DiskBytesPerSec, computed by ProcessMonitorService.Sample() - reused rather than re-read),
+    /// the same "reuse the shared sampler's already-computed figures" shape CheckTopOffenders
+    /// already uses for CPU/memory.</summary>
+    public static DiagnosticStepResult CheckTopDiskIoProcess(IReadOnlyList<ProcessRow> processes)
+    {
+        try
+        {
+            var top = processes.Where(p => p.DiskBytesPerSec > 0).OrderByDescending(p => p.DiskBytesPerSec).Take(5).ToList();
+            if (top.Count == 0)
+                return DiagnosticStepResult.Pass("No process is showing meaningful disk I/O right now.");
+
+            var evidence = top.Select(p => $"{p.Name} (PID {p.Pid}): {Formatting.FormatByteRate(p.DiskBytesPerSec)}").ToList();
+            var leader = top[0];
+            bool dominant = top.Count == 1 || leader.DiskBytesPerSec >= top[1].DiskBytesPerSec * 2;
+
+            if (dominant && leader.DiskBytesPerSec >= 5 * 1024 * 1024)
+                return DiagnosticStepResult.Warn($"{leader.Name} (PID {leader.Pid}) is driving most of the current disk I/O at {Formatting.FormatByteRate(leader.DiskBytesPerSec)}.", evidence);
+            return DiagnosticStepResult.Pass("No single process is clearly dominating disk I/O right now.", evidence);
+        }
+        catch (Exception ex)
+        {
+            return DiagnosticStepResult.Skip($"Couldn't read the process list: {ex.Message}");
+        }
+    }
+
+    /// <summary>Media type (HDD/SSD/...) of the system drive via DiskFragmentationService's
+    /// existing MSFT_Volume associator chain - reused, not re-implemented. Feeds the fragmentation
+    /// step's own short-circuit below (an SSD doesn't fragment in any way that matters, so there's
+    /// no point running a full-volume analyze pass on one).</summary>
+    public static DiagnosticStepResult CheckSystemDriveMediaType(DiskBottleneckContext ctx)
+    {
+        try
+        {
+            string driveLetter = Environment.SystemDirectory[..1];
+            ctx.DriveLetter = driveLetter;
+            ctx.MediaType = DiskFragmentationService.GetMediaType(driveLetter);
+
+            var evidence = new List<string> { $"Drive {driveLetter}: media type {ctx.MediaType}" };
+            if (ctx.MediaType == "HDD")
+                return DiagnosticStepResult.Warn("System drive is a spinning disk (HDD) - fragmentation is worth checking (manual step below).", evidence);
+            return DiagnosticStepResult.Pass($"System drive media type: {ctx.MediaType}{(ctx.MediaType == "SSD" ? " - fragmentation doesn't apply." : ".")}", evidence);
+        }
+        catch (Exception ex)
+        {
+            return DiagnosticStepResult.Skip($"Couldn't determine the system drive's media type: {ex.Message}");
+        }
+    }
+
+    /// <summary>#911: the fragmentation check is manual (<see cref="DiagnosticStep.IsManual"/>)
+    /// rather than part of the automatic sequence - DiskFragmentationService.Analyze is already
+    /// documented as "on-demand only... even an analyze-only pass walks the whole volume's MFT and
+    /// can take a while", so this branch respects that rather than firing it on every "disk sits at
+    /// 100%" run. Short-circuits to a Pass without running defrag.exe at all when the drive isn't a
+    /// spinning disk.</summary>
+    public static async Task<DiagnosticStepResult> CheckFragmentationManualAsync(DiskBottleneckContext ctx)
+    {
+        try
+        {
+            string mediaType = ctx.MediaType.Length > 0 && ctx.MediaType != "Unknown" ? ctx.MediaType : DiskFragmentationService.GetMediaType(ctx.DriveLetter);
+            if (mediaType != "HDD")
+                return DiagnosticStepResult.Pass($"Drive {ctx.DriveLetter}: media type {mediaType} - fragmentation doesn't apply, skipping the analyze pass.");
+
+            var (success, percent, message) = await DiskFragmentationService.Analyze(ctx.DriveLetter);
+            if (!success)
+                return DiagnosticStepResult.Skip(message);
+
+            var evidence = new List<string> { $"Drive {ctx.DriveLetter}: {message}" };
+            if (percent is { } p && p >= 10)
+                return DiagnosticStepResult.Warn($"Drive {ctx.DriveLetter} is {p}% fragmented - a plausible contributor to sustained high disk activity on an HDD.", evidence);
+            return DiagnosticStepResult.Pass($"Drive {ctx.DriveLetter} fragmentation: {message}.", evidence);
+        }
+        catch (Exception ex)
+        {
+            return DiagnosticStepResult.Skip($"Couldn't analyze fragmentation: {ex.Message}");
+        }
+    }
+
+    /// <summary>Whether Windows Search (a standalone process, so directly attributable) or the
+    /// SysMain/Superfetch service (hosted inside a shared svchost.exe, so its own I/O can't be
+    /// cleanly isolated per-process the way SearchIndexer's can - flagged by running state only,
+    /// with that limitation stated explicitly) look like the top writer right now.</summary>
+    public static DiagnosticStepResult CheckBackgroundWriter(IReadOnlyList<ProcessRow> processes)
+    {
+        try
+        {
+            var evidence = new List<string>();
+            var searchIndexer = processes.FirstOrDefault(p => p.Name.Equals("SearchIndexer", StringComparison.OrdinalIgnoreCase));
+            bool searchHigh = searchIndexer is not null && searchIndexer.DiskBytesPerSec >= 5 * 1024 * 1024;
+            if (searchIndexer is not null)
+                evidence.Add($"SearchIndexer.exe (PID {searchIndexer.Pid}): {Formatting.FormatByteRate(searchIndexer.DiskBytesPerSec)}");
+
+            bool sysMainRunning = false;
+            try
+            {
+                var services = new ServiceControlService().Sample();
+                var sysMain = services.FirstOrDefault(s => s.ServiceName.Equals("SysMain", StringComparison.OrdinalIgnoreCase));
+                sysMainRunning = sysMain?.Status == System.ServiceProcess.ServiceControllerStatus.Running;
+                if (sysMain is not null)
+                    evidence.Add($"SysMain (Superfetch) service: {sysMain.Status} - runs inside a shared svchost.exe, so its own I/O can't be isolated per-process here.");
+            }
+            catch { /* service list unavailable - evidence just won't mention it */ }
+
+            if (searchHigh)
+                return DiagnosticStepResult.Warn("Windows Search indexing is currently writing heavily to disk.", evidence);
+            if (sysMainRunning)
+                return DiagnosticStepResult.Warn("SysMain (Superfetch) is running - a plausible (but not directly measurable per-process) contributor to background disk activity, especially just after boot or an app update.", evidence);
+            return DiagnosticStepResult.Pass("Windows Search and SysMain don't look like the current source of disk activity.", evidence);
+        }
+        catch (Exception ex)
+        {
+            return DiagnosticStepResult.Skip($"Couldn't check background indexing/prefetch services: {ex.Message}");
+        }
+    }
+
+    #endregion
+
+    #region 912 - "Battery dies too fast"
+
+    public sealed class BatteryContext
+    {
+        public bool HasBattery { get; set; }
+    }
+
+    /// <summary>Win32_Battery presence check - gates the rest of this branch via each later step's
+    /// ShouldRun predicate (#914), since running powercfg /batteryreport on a desktop with no
+    /// battery at all just produces its own "This machine has no batteries" error text rather than
+    /// anything worth showing as a separate failed step.</summary>
+    public static DiagnosticStepResult CheckBatteryPresence(BatteryContext ctx)
+    {
+        try
+        {
+            using var searcher = new ManagementObjectSearcher("SELECT DeviceID, EstimatedChargeRemaining FROM Win32_Battery");
+            var batteries = searcher.Get().Cast<ManagementObject>().ToList();
+            ctx.HasBattery = batteries.Count > 0;
+
+            if (!ctx.HasBattery)
+                return DiagnosticStepResult.Skip("No battery detected - this looks like a desktop, so the rest of this check doesn't apply.");
+
+            var evidence = batteries.Select(b => $"{b["DeviceID"]}: {b["EstimatedChargeRemaining"]}% estimated charge remaining").ToList();
+            return DiagnosticStepResult.Pass($"{batteries.Count} battery(ies) detected.", evidence);
+        }
+        catch (Exception ex)
+        {
+            return DiagnosticStepResult.Skip($"Couldn't check for a battery: {ex.Message}");
+        }
+    }
+
+    /// <summary>`powercfg /batteryreport` - design vs. full-charge capacity (-&gt; a health%
+    /// headline) and the report's own recent-usage detail, best-effort extracted from the generated
+    /// HTML the same "strip tags, look for a recognizable shape" way CheckSleepStudyAsync already
+    /// does for a different powercfg report.</summary>
+    public static async Task<DiagnosticStepResult> CheckBatteryReportAsync()
+    {
+        string reportPath = Path.Combine(Path.GetTempPath(), $"tmp-batteryreport-{Guid.NewGuid():N}.html");
+        try
+        {
+            var (output, exitCode) = await RunCapturedAsync("powercfg.exe", $"/batteryreport /output \"{reportPath}\"", timeoutMs: 20000);
+            if (exitCode != 0 || !File.Exists(reportPath))
+                return DiagnosticStepResult.Skip($"Couldn't generate the battery report: {Truncate(output.Trim(), 200)}");
+
+            string html = await File.ReadAllTextAsync(reportPath);
+            string text = System.Net.WebUtility.HtmlDecode(Regex.Replace(html, "<[^>]+>", " "));
+
+            var designMatch = Regex.Match(text, @"DESIGN CAPACITY\s*([\d,]+)\s*mWh", RegexOptions.IgnoreCase);
+            var fullMatch = Regex.Match(text, @"FULL CHARGE CAPACITY\s*([\d,]+)\s*mWh", RegexOptions.IgnoreCase);
+
+            var evidence = new List<string> { $"Full report: {reportPath}" };
+            if (!designMatch.Success || !fullMatch.Success ||
+                !double.TryParse(designMatch.Groups[1].Value.Replace(",", ""), out var design) ||
+                !double.TryParse(fullMatch.Groups[1].Value.Replace(",", ""), out var full) || design <= 0)
+            {
+                return DiagnosticStepResult.Warn("Battery report generated, but design/full-charge capacity couldn't be confidently extracted - open the report directly for the full detail.", evidence);
+            }
+
+            double healthPercent = Math.Round(full / design * 100, 0);
+            evidence.Insert(0, $"Design capacity: {design:0} mWh");
+            evidence.Insert(1, $"Full charge capacity: {full:0} mWh");
+
+            string summary = $"Battery health: {healthPercent:0}% of design capacity ({full:0} mWh of {design:0} mWh).";
+            return healthPercent < 80
+                ? DiagnosticStepResult.Warn(summary + " Meaningfully degraded - this alone can explain shorter battery life.", evidence)
+                : DiagnosticStepResult.Pass(summary, evidence);
+        }
+        catch (Exception ex)
+        {
+            return DiagnosticStepResult.Skip($"Couldn't run/parse powercfg /batteryreport: {ex.Message}");
+        }
+    }
+
+    /// <summary>`powercfg /srumutil /output &lt;file&gt; /xml` - SRUM-based per-app energy
+    /// estimates. Less universally present than /batteryreport (added later, and can be missing or
+    /// policy-disabled on some builds), so this degrades to Skip on any failure rather than treating
+    /// its absence as a check failure - the summary explicitly says so per this round's spec.</summary>
+    public static async Task<DiagnosticStepResult> CheckSrumEnergyAsync()
+    {
+        string xmlPath = Path.Combine(Path.GetTempPath(), $"tmp-srum-{Guid.NewGuid():N}.xml");
+        try
+        {
+            var (_, exitCode) = await RunCapturedAsync("powercfg.exe", $"/srumutil /output \"{xmlPath}\" /xml", timeoutMs: 25000);
+            if (exitCode != 0 || !File.Exists(xmlPath))
+                return DiagnosticStepResult.Skip("powercfg /srumutil isn't available on this Windows build (or produced no output) - it's less universally present than /batteryreport.");
+
+            string xml = await File.ReadAllTextAsync(xmlPath);
+            var apps = Regex.Matches(xml, @"(?:ApplicationName|APPID|Name)=""([^""]+\.exe)""[^>]*?(?:EnergyEstimate|Energy)=""(\d+(?:\.\d+)?)""", RegexOptions.IgnoreCase)
+                .Select(m => (Name: m.Groups[1].Value, Energy: double.Parse(m.Groups[2].Value)))
+                .Where(a => a.Energy > 0)
+                .GroupBy(a => a.Name).Select(g => (g.Key, Energy: g.Sum(a => a.Energy)))
+                .OrderByDescending(a => a.Energy)
+                .Take(8)
+                .ToList();
+
+            var evidence = new List<string> { $"Full SRUM export: {xmlPath}" };
+            if (apps.Count == 0)
+                return DiagnosticStepResult.Warn("SRUM energy data exported, but no specific per-app energy figures could be confidently extracted - open the XML export directly.", evidence);
+
+            evidence.InsertRange(0, apps.Select(a => $"{a.Key}: {a.Energy:0} (relative energy estimate)"));
+            return DiagnosticStepResult.Warn($"Top energy-consuming app: {apps[0].Key}. Figures are SRUM's own relative energy estimates, not a calibrated mWh figure.", evidence);
+        }
+        catch (Exception ex)
+        {
+            return DiagnosticStepResult.Skip($"Couldn't run/parse powercfg /srumutil: {ex.Message}");
+        }
+    }
+
+    /// <summary>Active power plan name, reused from PowerPlanService rather than re-parsing
+    /// `powercfg /list` here.</summary>
+    public static async Task<DiagnosticStepResult> CheckActivePowerPlanForBatteryAsync()
+    {
+        try
+        {
+            var plans = await PowerPlanService.ListPowerPlansAsync();
+            var active = plans.FirstOrDefault(p => p.IsActive);
+            if (active is null)
+                return DiagnosticStepResult.Skip("Couldn't determine the active power plan.");
+
+            var evidence = new List<string> { $"Active plan: {active.Name}" };
+            bool highPerf = active.Name.Contains("High performance", StringComparison.OrdinalIgnoreCase) ||
+                            active.Name.Contains("Ultimate Performance", StringComparison.OrdinalIgnoreCase);
+            return highPerf
+                ? DiagnosticStepResult.Warn($"Active power plan is \"{active.Name}\" - a high-performance plan trades battery life for performance.", evidence)
+                : DiagnosticStepResult.Pass($"Active power plan: {active.Name}.", evidence);
+        }
+        catch (Exception ex)
+        {
+            return DiagnosticStepResult.Skip($"Couldn't read the active power plan: {ex.Message}");
+        }
+    }
+
+    #endregion
+
+    #region 913 - "A device keeps disconnecting or isn't recognized"
+
+    public sealed class PnpProblemContext
+    {
+        public string? WorstDeviceName { get; set; }
+        public int WorstErrorCode { get; set; }
+    }
+
+    /// <summary>Common ConfigManagerErrorCode values translated to plain English - not exhaustive
+    /// (Microsoft documents roughly 50 of these), just the ones a user is actually likely to hit for
+    /// a flaky/unrecognized device. An unlisted code still shows as "Code N" rather than nothing.</summary>
+    private static readonly Dictionary<int, string> ConfigManagerErrorDescriptions = new()
+    {
+        [1] = "Device is not configured correctly",
+        [3] = "Driver may be corrupted, or the system is low on memory",
+        [10] = "Device cannot start",
+        [12] = "Device cannot find enough free resources to use",
+        [14] = "Device requires a restart to work correctly",
+        [16] = "Windows cannot identify all the resources this device uses",
+        [18] = "Reinstall the drivers for this device",
+        [19] = "Windows cannot start this device - the registry may be corrupted",
+        [21] = "Windows is removing this device",
+        [22] = "Device is disabled",
+        [24] = "Device is not present, not working properly, or does not have all its drivers installed",
+        [28] = "Drivers for this device are not installed",
+        [29] = "Device is disabled because the firmware didn't give it the required resources",
+        [31] = "Device is not working properly - Windows cannot load the required drivers",
+        [32] = "Driver for this device has been disabled (blocked as an intentional policy)",
+        [33] = "Windows cannot determine which resources this device needs",
+        [34] = "Windows cannot determine the settings for this device",
+        [35] = "This computer's system firmware does not include enough information to properly configure this device",
+        [37] = "Windows cannot initialize the device driver for this hardware",
+        [38] = "Driver for this device was previously started and is still in memory",
+        [39] = "Windows cannot load the device driver - it may be corrupted or missing",
+        [40] = "Windows cannot access this hardware because its service key information is missing or recorded incorrectly",
+        [41] = "Windows successfully loaded the device driver but cannot find the hardware device",
+        [42] = "Windows cannot load the device driver because there is a duplicate device already running",
+        [43] = "Windows has stopped this device because it has reported problems",
+        [44] = "An application or service has shut down this hardware device",
+        [45] = "Currently, this hardware device is not connected to the computer",
+        [47] = "Windows cannot use this hardware device because it has been prepared for safe removal",
+        [48] = "The software for this device has been blocked from starting because it is known to have problems with Windows",
+        [52] = "Windows cannot verify the digital signature for the drivers required for this device",
+    };
+
+    private static string DescribeConfigManagerErrorCode(int code) =>
+        ConfigManagerErrorDescriptions.TryGetValue(code, out var desc) ? $"Code {code}: {desc}" : $"Code {code} (no plain-English description available)";
+
+    /// <summary>Win32_PnPEntity entries with a nonzero ConfigManagerErrorCode - Device Manager's own
+    /// "yellow bang / missing driver / disabled" state, queried directly via WMI rather than
+    /// shelling out to a tool, since Win32_PnPEntity already exposes this cleanly.</summary>
+    public static DiagnosticStepResult CheckPnpProblemDevices(PnpProblemContext ctx)
+    {
+        try
+        {
+            var problems = new List<(string Name, int Code)>();
+            using var searcher = new ManagementObjectSearcher(
+                "SELECT Name, ConfigManagerErrorCode FROM Win32_PnPEntity WHERE ConfigManagerErrorCode <> 0");
+            foreach (ManagementObject mo in searcher.Get())
+            {
+                string name = (mo["Name"] as string ?? "(unnamed device)").Trim();
+                int code = mo["ConfigManagerErrorCode"] is { } raw ? Convert.ToInt32(raw) : 0;
+                if (code == 0) continue;
+                problems.Add((name, code));
+            }
+
+            if (problems.Count == 0)
+                return DiagnosticStepResult.Pass("No devices currently report a problem (ConfigManagerErrorCode) in Device Manager.");
+
+            var evidence = problems.Select(p => $"{p.Name} - {DescribeConfigManagerErrorCode(p.Code)}").ToList();
+            // Prefer a "not currently connected" (45) device as the likely disconnect culprit when
+            // one is present - the code that most directly matches this symptom's wording - and
+            // otherwise just take the first problem device found.
+            var worst = problems.OrderByDescending(p => p.Code == 45 ? 1 : 0).First();
+            ctx.WorstDeviceName = worst.Name;
+            ctx.WorstErrorCode = worst.Code;
+
+            return DiagnosticStepResult.Warn($"{problems.Count} device(s) currently report a problem. Most relevant: {worst.Name} - {DescribeConfigManagerErrorCode(worst.Code)}.", evidence);
+        }
+        catch (Exception ex)
+        {
+            return DiagnosticStepResult.Skip($"Couldn't query Win32_PnPEntity: {ex.Message}");
+        }
+    }
+
+    /// <summary>Kernel-PnP and USBHUB3 event-log entries from the last 7 days, joined to the
+    /// problem device found above by a name substring match (the same correlate-by-name join
+    /// #907's boot-culprit step already uses) - counts how many times that device (or "a device",
+    /// if none matched by name) shows up in that window.</summary>
+    public static DiagnosticStepResult CheckDeviceDisconnectEvents(PnpProblemContext ctx)
+    {
+        var kernelPnp = ReadProviderEvents("System", "Microsoft-Windows-Kernel-PnP", new[] { 400, 410, 411, 420 }, 7, maxEvents: 100);
+        var usbEvents = ReadAllProviderEvents("Microsoft-Windows-USB-USBHUB3-Diagnostic/Operational", 7, maxEvents: 100);
+
+        var all = kernelPnp.Concat(usbEvents).OrderByDescending(e => e.TimeCreated).ToList();
+        if (all.Count == 0)
+            return DiagnosticStepResult.Pass("No Kernel-PnP or USBHUB3 disconnect-related events found in the last 7 days.");
+
+        List<RawEvent> matching = all;
+        if (!string.IsNullOrEmpty(ctx.WorstDeviceName))
+        {
+            var m = all.Where(e => e.Message.Contains(ctx.WorstDeviceName, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (m.Count > 0) matching = m;
+        }
+
+        var evidence = matching.Take(15).Select(e => $"{e.TimeCreated:g} - {e.ProviderName} event {e.EventId}: {Truncate(e.Message, 140)}").ToList();
+        string deviceLabel = ctx.WorstDeviceName ?? "a device";
+        return DiagnosticStepResult.Warn($"{matching.Count} disconnect-related event(s) found for {deviceLabel} in the last 7 days ({all.Count} total Kernel-PnP/USBHUB3 events).", evidence);
+    }
+
+    /// <summary>Whether any USB root hub has "allow the computer to turn off this device to save
+    /// power" enabled - the registry surface behind that Device Manager checkbox
+    /// (Device Parameters\SelectiveSuspendEnabled under each root hub's instance key). A root hub
+    /// with this on can power down (and drop) everything attached to it, a classic cause of USB
+    /// devices dropping out under light/idle load.</summary>
+    public static DiagnosticStepResult CheckUsbRootHubPowerSetting()
+    {
+        try
+        {
+            var enabledOn = new List<string>();
+            var checkedHubs = new List<string>();
+            using var usbKey = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Enum\USB");
+            if (usbKey is null)
+                return DiagnosticStepResult.Skip("Couldn't read HKLM\\SYSTEM\\CurrentControlSet\\Enum\\USB.");
+
+            foreach (var vidPidName in usbKey.GetSubKeyNames().Where(n => n.Contains("ROOT_HUB", StringComparison.OrdinalIgnoreCase)))
+            {
+                using var vidPidKey = usbKey.OpenSubKey(vidPidName);
+                if (vidPidKey is null) continue;
+                foreach (var instanceName in vidPidKey.GetSubKeyNames())
+                {
+                    using var deviceParams = vidPidKey.OpenSubKey($@"{instanceName}\Device Parameters");
+                    var raw = deviceParams?.GetValue("SelectiveSuspendEnabled") ?? deviceParams?.GetValue("EnhancedPowerManagementEnabled");
+                    if (raw is null) continue;
+                    string hubLabel = $"{vidPidName}\\{instanceName}";
+                    checkedHubs.Add(hubLabel);
+                    if (Convert.ToInt32(raw) != 0)
+                        enabledOn.Add(hubLabel);
+                }
+            }
+
+            if (checkedHubs.Count == 0)
+                return DiagnosticStepResult.Skip("No USB root hub power-management registry values were found to check.");
+
+            if (enabledOn.Count > 0)
+                return DiagnosticStepResult.Warn(
+                    $"{enabledOn.Count} of {checkedHubs.Count} USB root hub(s) allow Windows to power them down to save power - a plausible cause of devices dropping out under light/idle load.",
+                    enabledOn);
+            return DiagnosticStepResult.Pass($"None of the {checkedHubs.Count} checked USB root hub(s) have selective suspend enabled.", checkedHubs);
+        }
+        catch (Exception ex)
+        {
+            return DiagnosticStepResult.Skip($"Couldn't read USB root hub power settings: {ex.Message}");
+        }
     }
 
     #endregion

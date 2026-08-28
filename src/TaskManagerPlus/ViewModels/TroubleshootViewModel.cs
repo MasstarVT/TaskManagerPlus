@@ -9,118 +9,199 @@ namespace TaskManagerPlus.ViewModels;
 /// #901: backs the Troubleshoot tab - a symptom-picker landing grid plus, once a symptom is
 /// selected, a scripted <see cref="TroubleshootRun"/> of ordered <see cref="DiagnosticStep"/>s run
 /// against existing services (EventLogService, NetworkDiagnosticsService, PowerPlanService,
-/// SensorMonitorService, ...) instead of making a user guess which of the other twelve tabs to
-/// open first. Takes the shared <see cref="PerformanceViewModel"/> and <see cref="ProcessesViewModel"/>
-/// (the same instances MainViewModel already composes for the CPU/Memory/Storage/Network/Processes
-/// tabs) so the "My PC is slow" branch reads already-polled live data instead of re-sampling from
-/// scratch - see CLAUDE.md's shared-sampler note.
+/// SensorMonitorService, ProcessMonitorService (via ProcessesViewModel), DiskFragmentationService,
+/// ...) instead of making a user guess which of the other twelve tabs to open first. Takes the
+/// shared <see cref="PerformanceViewModel"/> and <see cref="ProcessesViewModel"/> (the same
+/// instances MainViewModel already composes for the CPU/Memory/Storage/Network/Processes tabs) so
+/// branches like "My PC is slow" and "My disk sits at 100%" read already-polled live data instead
+/// of re-sampling from scratch - see CLAUDE.md's shared-sampler note.
 ///
-/// Every step is run sequentially and raced against its own <see cref="DiagnosticStep.Timeout"/>
-/// via Task.WhenAny + a per-step CancellationTokenSource, so one hung WMI/tool call can never
-/// freeze the rest of a run - the same "never let one call hang the UI forever" rule
-/// SensorMonitorService/HandleInspectionService already document for their own background work.
+/// #914: every symptom (902-913) is one <see cref="TroubleshootBranchDefinition"/> in
+/// <see cref="_branches"/> - a title/description plus a step-list factory and a verdict function -
+/// rather than a hand-written case in a switch statement. A step's own
+/// <see cref="DiagnosticStep.ShouldRun"/> predicate (reading an earlier step's already-recorded
+/// Status off the same run, via <see cref="StepById"/>) expresses branching that would otherwise be
+/// procedural if/else in this ViewModel - see #911's disk branch (fragmentation only gated by media
+/// type) and #912's battery branch (report/srum/plan all gated on "a battery was actually found").
+/// Adding a 14th symptom is adding one more <see cref="TroubleshootBranchDefinition"/> to the list
+/// built in the constructor, not a new hand-written method plus a new switch case.
 ///
-/// This round wires up 902-908 (7 branches: slow PC, crashes, won't sleep, no internet, loud
-/// fans/hot, slow boot/sign-in, slow shutdown). "Games stutter" and "Battery dies fast" are shown
-/// on the landing grid (per #901's spec) but marked unavailable - a later round wires their
-/// branches up the same way these seven were built, reusing this same DiagnosticStep/TroubleshootRun
-/// engine rather than a new one.
+/// Every automatic step is run sequentially and raced against its own
+/// <see cref="DiagnosticStep.Timeout"/> via Task.WhenAny + a per-step CancellationTokenSource (see
+/// <see cref="RunOneStepAsync"/>), so one hung WMI/tool call can never freeze the rest of a run -
+/// the same "never let one call hang the UI forever" rule SensorMonitorService/
+/// HandleInspectionService already document for their own background work. A step marked
+/// <see cref="DiagnosticStep.IsManual"/> (e.g. #909's wpr/tracerpt DPC capture, #911's
+/// full-volume fragmentation analyze pass) is skipped by that automatic loop entirely and instead
+/// runs on demand via <see cref="RunManualStepCommand"/> - consistent with CLAUDE.md's "on-demand
+/// vs. polled" convention for anything heavier than a trivial read.
+///
+/// #915: every finished run is persisted by <see cref="TroubleshootRunHistoryService"/> to
+/// AppPaths.SettingsDirectory\Runs\ - <see cref="PastRuns"/> backs the tab's "Past runs" panel,
+/// which can reopen a saved run read-only (<see cref="OpenSavedRunCommand"/>) or re-run the same
+/// symptom fresh (<see cref="RerunSavedCommand"/>).
 /// </summary>
 public sealed class TroubleshootViewModel : ObservableObject
 {
     private readonly PerformanceViewModel _performance;
     private readonly ProcessesViewModel _processes;
+    private readonly List<TroubleshootBranchDefinition> _branches = new();
     private bool _isRunning;
 
     public ObservableCollection<SymptomCard> Symptoms { get; } = new();
 
+    /// <summary>#915: saved run transcripts, newest first - populated on demand when the "Past
+    /// runs" panel is opened rather than kept live, since the Runs folder is only read from, never
+    /// watched.</summary>
+    public ObservableCollection<TroubleshootRunRecord> PastRuns { get; } = new();
+
     private TroubleshootRun? _selectedRun;
-    public TroubleshootRun? SelectedRun { get => _selectedRun; private set => SetProperty(ref _selectedRun, value); }
+    public TroubleshootRun? SelectedRun
+    {
+        get => _selectedRun;
+        private set
+        {
+            if (SetProperty(ref _selectedRun, value))
+            {
+                OnPropertyChanged(nameof(ShowLanding));
+                OnPropertyChanged(nameof(ShowPastRuns));
+            }
+        }
+    }
+
+    private bool _isShowingPastRuns;
+    public bool IsShowingPastRuns
+    {
+        get => _isShowingPastRuns;
+        private set
+        {
+            if (SetProperty(ref _isShowingPastRuns, value))
+            {
+                OnPropertyChanged(nameof(ShowLanding));
+                OnPropertyChanged(nameof(ShowPastRuns));
+            }
+        }
+    }
+
+    /// <summary>True for the symptom-card landing grid.</summary>
+    public bool ShowLanding => SelectedRun is null && !IsShowingPastRuns;
+
+    /// <summary>True for the "Past runs" list.</summary>
+    public bool ShowPastRuns => SelectedRun is null && IsShowingPastRuns;
 
     public bool IsRunning { get => _isRunning; private set => SetProperty(ref _isRunning, value); }
 
     public RelayCommand RunSymptomCommand { get; }
     public RelayCommand BackToSymptomsCommand { get; }
+    public RelayCommand ShowPastRunsCommand { get; }
+    public RelayCommand HidePastRunsCommand { get; }
+    public RelayCommand OpenSavedRunCommand { get; }
+    public RelayCommand RerunSavedCommand { get; }
+    public AsyncRelayCommand RunManualStepCommand { get; }
 
     public TroubleshootViewModel(PerformanceViewModel performance, ProcessesViewModel processes)
     {
         _performance = performance;
         _processes = processes;
 
-        Symptoms.Add(new SymptomCard { Id = "slow", Title = "My PC is slow right now", Description = "Checks CPU/RAM/disk load, top offenders, and background maintenance work." });
-        Symptoms.Add(new SymptomCard { Id = "crash", Title = "It crashes or blue-screens", Description = "Checks crash events, minidumps, reliability records, hardware errors, and recent driver installs." });
-        Symptoms.Add(new SymptomCard { Id = "sleep", Title = "It won't go to sleep / wakes on its own", Description = "Checks active power requests, wake timers, last wake source, and the sleep study report." });
-        Symptoms.Add(new SymptomCard { Id = "no-internet", Title = "No internet", Description = "Walks the network stack layer by layer: adapter, address, gateway, DNS, then a real connection." });
-        Symptoms.Add(new SymptomCard { Id = "fans", Title = "Fans are loud / it runs hot", Description = "Correlates fan/temperature sensors against CPU load and the active power plan." });
-        Symptoms.Add(new SymptomCard { Id = "boot", Title = "It boots or signs in slowly", Description = "Reads Windows' own boot-performance diagnostics and matches culprits to Startup/Services." });
-        Symptoms.Add(new SymptomCard { Id = "shutdown", Title = "It takes forever to shut down", Description = "Reads shutdown-degradation and profile-unload events, and the service kill timeout." });
-        Symptoms.Add(new SymptomCard { Id = "games", Title = "Games stutter", Description = "Not available yet.", IsAvailable = false });
-        Symptoms.Add(new SymptomCard { Id = "battery", Title = "Battery dies fast", Description = "Not available yet.", IsAvailable = false });
+        RegisterBranch("slow", "My PC is slow right now", "Checks CPU/RAM/disk load, top offenders, and background maintenance work.", BuildSlowPcSteps, BuildSlowPcVerdict);
+        RegisterBranch("crash", "It crashes or blue-screens", "Checks crash events, minidumps, reliability records, hardware errors, and recent driver installs.", BuildCrashSteps, BuildCrashVerdict);
+        RegisterBranch("sleep", "It won't go to sleep / wakes on its own", "Checks active power requests, wake timers, last wake source, and the sleep study report.", BuildSleepSteps, BuildSleepVerdict);
+        RegisterBranch("no-internet", "No internet", "Walks the network stack layer by layer: adapter, address, gateway, DNS, then a real connection.", BuildNoInternetSteps, BuildNoInternetVerdict);
+        RegisterBranch("fans", "Fans are loud / it runs hot", "Correlates fan/temperature sensors against CPU load and the active power plan.", BuildFansSteps, BuildFansVerdict);
+        RegisterBranch("boot", "It boots or signs in slowly", "Reads Windows' own boot-performance diagnostics and matches culprits to Startup/Services.", BuildBootSteps, BuildBootVerdict);
+        RegisterBranch("shutdown", "It takes forever to shut down", "Reads shutdown-degradation and profile-unload events, and the service kill timeout.", BuildShutdownSteps, BuildShutdownVerdict);
+        RegisterBranch("games", "Games or video stutter", "Checks DPC/interrupt time and context-switch rate, with an opt-in wpr/tracerpt capture to narrow down the offending driver.", BuildGamesSteps, BuildGamesVerdict);
+        RegisterBranch("wifi", "Wi-Fi keeps dropping", "Reads the WLAN report's disconnect history, WLAN-AutoConfig events, and the adapter's power-saving setting.", BuildWifiSteps, BuildWifiVerdict);
+        RegisterBranch("disk", "My disk sits at 100%", "Distinguishes a hogging process, HDD fragmentation, and background indexing/prefetching as the cause.", BuildDiskSteps, BuildDiskVerdict);
+        RegisterBranch("battery", "Battery dies too fast", "Combines the battery report, SRUM energy estimates, and the active power plan into a health headline.", BuildBatterySteps, BuildBatteryVerdict);
+        RegisterBranch("device", "A device keeps disconnecting or isn't recognized", "Finds devices reporting a problem, joins them to recent PnP/USB events, and checks USB selective-suspend.", BuildDeviceSteps, BuildDeviceVerdict);
+
+        foreach (var branch in _branches)
+            Symptoms.Add(new SymptomCard { Id = branch.SymptomId, Title = branch.Title, Description = branch.Description });
 
         RunSymptomCommand = new RelayCommand(
             id => { if (id is string sid) _ = RunSymptomAsync(sid); },
-            id => id is string sid && !IsRunning && Symptoms.Any(s => s.Id == sid && s.IsAvailable));
+            id => id is string sid && !IsRunning && _branches.Any(b => b.SymptomId == sid));
         BackToSymptomsCommand = new RelayCommand(_ => SelectedRun = null, _ => !IsRunning);
+
+        ShowPastRunsCommand = new RelayCommand(_ => { RefreshPastRuns(); IsShowingPastRuns = true; }, _ => !IsRunning && SelectedRun is null);
+        HidePastRunsCommand = new RelayCommand(_ => IsShowingPastRuns = false);
+        OpenSavedRunCommand = new RelayCommand(param =>
+        {
+            if (param is not TroubleshootRunRecord record) return;
+            IsShowingPastRuns = false;
+            SelectedRun = TroubleshootRunHistoryService.ToRun(record);
+        });
+        RerunSavedCommand = new RelayCommand(
+            param => { if (param is TroubleshootRunRecord record) { IsShowingPastRuns = false; _ = RunSymptomAsync(record.SymptomId); } },
+            param => param is TroubleshootRunRecord record && !IsRunning && _branches.Any(b => b.SymptomId == record.SymptomId));
+
+        RunManualStepCommand = new AsyncRelayCommand(
+            async param =>
+            {
+                if (param is not DiagnosticStep step || !step.IsManualPending) return;
+                await RunOneStepAsync(step);
+                if (SelectedRun is { VerdictBuilder: { } builder } run)
+                {
+                    run.VerdictText = SafeBuildVerdict(builder, run);
+                    TroubleshootRunHistoryService.Save(run);
+                }
+            },
+            param => param is DiagnosticStep step && step.IsManualPending);
+    }
+
+    private void RegisterBranch(string id, string title, string description, Func<List<DiagnosticStep>> buildSteps, Func<TroubleshootRun, string> buildVerdict)
+    {
+        _branches.Add(new TroubleshootBranchDefinition
+        {
+            SymptomId = id,
+            Title = title,
+            Description = description,
+            BuildSteps = buildSteps,
+            BuildVerdict = buildVerdict,
+        });
+    }
+
+    private void RefreshPastRuns()
+    {
+        PastRuns.Clear();
+        foreach (var record in TroubleshootRunHistoryService.ListSaved())
+            PastRuns.Add(record);
     }
 
     private async Task RunSymptomAsync(string symptomId)
     {
         if (IsRunning) return;
-        var card = Symptoms.FirstOrDefault(s => s.Id == symptomId);
-        if (card is null || !card.IsAvailable) return;
+        var branch = _branches.FirstOrDefault(b => b.SymptomId == symptomId);
+        if (branch is null) return;
 
-        var (steps, buildVerdict) = BuildBranch(symptomId);
-        var run = new TroubleshootRun { SymptomId = symptomId, DisplayName = card.Title };
-        foreach (var step in steps) run.Steps.Add(step);
+        var run = new TroubleshootRun { SymptomId = symptomId, DisplayName = branch.Title, VerdictBuilder = branch.BuildVerdict };
+        foreach (var step in branch.BuildSteps()) run.Steps.Add(step);
 
         SelectedRun = run;
+        IsShowingPastRuns = false;
         IsRunning = true;
         try
         {
             foreach (var step in run.Steps)
             {
-                step.Status = DiagnosticStepStatus.Running;
+                // #909/#911: a manual/opt-in step (a heavier capture the automatic sequence
+                // shouldn't fire unasked) stays Pending until the user triggers it directly via
+                // RunManualStepCommand - never run here.
+                if (step.IsManual) continue;
 
-                using var cts = new CancellationTokenSource();
-                Task<DiagnosticStepResult> checkTask;
-                try
+                // #914: a step can declare it only applies given an earlier step's result
+                // already sitting on this run (e.g. "only check the WLAN report if an adapter was
+                // actually found") - evaluated here rather than as a hand-written if/else per branch.
+                if (step.ShouldRun is not null && !step.ShouldRun(run))
                 {
-                    checkTask = step.Check(cts.Token);
-                }
-                catch (Exception ex)
-                {
-                    // A check that throws synchronously (shouldn't happen given every
-                    // TroubleshootService method wraps its own body, but a defensive catch here
-                    // means a bug in one check still can't take the whole run down).
-                    ApplyResult(step, DiagnosticStepResult.Fail($"Check threw an unexpected error: {ex.Message}"));
-                    if (step.StopOnFailure) { SkipRemaining(run, step); break; }
+                    step.Status = DiagnosticStepStatus.Skipped;
+                    step.ResultText = "Skipped - not applicable given an earlier step's result.";
                     continue;
                 }
 
-                var delayTask = Task.Delay(step.Timeout, cts.Token);
-                var winner = await Task.WhenAny(checkTask, delayTask);
-                cts.Cancel(); // release whichever of the two is still pending
-
-                if (winner != checkTask)
-                {
-                    step.Status = DiagnosticStepStatus.TimedOut;
-                    step.ResultText = $"Timed out after {step.Timeout.TotalSeconds:0.#}s.";
-                    // Don't await the abandoned check - just make sure a later fault on it can't
-                    // surface as an unobserved task exception.
-                    _ = checkTask.ContinueWith(t => t.Exception, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously);
-                    if (step.StopOnFailure) { SkipRemaining(run, step); break; }
-                    continue;
-                }
-
-                try
-                {
-                    var result = await checkTask;
-                    ApplyResult(step, result);
-                }
-                catch (Exception ex)
-                {
-                    ApplyResult(step, DiagnosticStepResult.Fail($"Check threw an unexpected error: {ex.Message}"));
-                }
+                await RunOneStepAsync(step);
 
                 if (step.StopOnFailure && step.Status == DiagnosticStepStatus.Failed)
                 {
@@ -129,14 +210,67 @@ public sealed class TroubleshootViewModel : ObservableObject
                 }
             }
 
-            run.VerdictText = SafeBuildVerdict(buildVerdict, run);
+            run.VerdictText = SafeBuildVerdict(branch.BuildVerdict, run);
         }
         finally
         {
             run.IsRunning = false;
             run.FinishedAt = DateTime.Now;
             IsRunning = false;
+            TroubleshootRunHistoryService.Save(run);
         }
+    }
+
+    /// <summary>Runs one step's Check, racing it against its own Timeout via Task.WhenAny + a
+    /// per-step CancellationTokenSource - shared by the automatic run loop above and
+    /// RunManualStepCommand below, so a manual/opt-in step gets exactly the same "can never hang
+    /// the UI forever" treatment as every automatic one.</summary>
+    private static async Task RunOneStepAsync(DiagnosticStep step)
+    {
+        step.Status = DiagnosticStepStatus.Running;
+        var stepStartUtc = DateTime.UtcNow;
+
+        using var cts = new CancellationTokenSource();
+        Task<DiagnosticStepResult> checkTask;
+        try
+        {
+            checkTask = step.Check(cts.Token);
+        }
+        catch (Exception ex)
+        {
+            // A check that throws synchronously (shouldn't happen given every TroubleshootService
+            // method wraps its own body, but a defensive catch here means a bug in one check still
+            // can't take the whole run down).
+            ApplyResult(step, DiagnosticStepResult.Fail($"Check threw an unexpected error: {ex.Message}"));
+            step.Duration = DateTime.UtcNow - stepStartUtc;
+            return;
+        }
+
+        var delayTask = Task.Delay(step.Timeout, cts.Token);
+        var winner = await Task.WhenAny(checkTask, delayTask);
+        cts.Cancel(); // release whichever of the two is still pending
+
+        if (winner != checkTask)
+        {
+            step.Status = DiagnosticStepStatus.TimedOut;
+            step.ResultText = $"Timed out after {step.Timeout.TotalSeconds:0.#}s.";
+            step.Duration = DateTime.UtcNow - stepStartUtc;
+            // Don't await the abandoned check - just make sure a later fault on it can't surface
+            // as an unobserved task exception.
+            _ = checkTask.ContinueWith(t => t.Exception, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously);
+            return;
+        }
+
+        try
+        {
+            var result = await checkTask;
+            ApplyResult(step, result);
+        }
+        catch (Exception ex)
+        {
+            ApplyResult(step, DiagnosticStepResult.Fail($"Check threw an unexpected error: {ex.Message}"));
+        }
+        step.Duration = DateTime.UtcNow - stepStartUtc;
     }
 
     private static void ApplyResult(DiagnosticStep step, DiagnosticStepResult result)
@@ -169,22 +303,12 @@ public sealed class TroubleshootViewModel : ObservableObject
     private static DiagnosticStep? StepById(TroubleshootRun run, string id) => run.Steps.FirstOrDefault(s => s.Id == id);
 
     // ==================================================================================
-    // Branch definitions - one per symptom. Each returns its ordered step list plus a
-    // verdict function that reads the *completed* steps' Status/ResultText/Evidence to
-    // produce a "most likely cause" summary once the run finishes.
+    // Branch definitions - one per symptom, registered in the constructor via RegisterBranch
+    // (#914). Each pair below builds the ordered step list plus a verdict function that reads the
+    // *completed* steps' Status/ResultText/Evidence to produce a "most likely cause" summary once
+    // the run finishes (or, for a manual/opt-in step, once that step finishes too - see
+    // RunManualStepCommand).
     // ==================================================================================
-
-    private (List<DiagnosticStep> Steps, Func<TroubleshootRun, string> Verdict) BuildBranch(string symptomId) => symptomId switch
-    {
-        "slow" => (BuildSlowPcSteps(), BuildSlowPcVerdict),
-        "crash" => (BuildCrashSteps(), BuildCrashVerdict),
-        "sleep" => (BuildSleepSteps(), BuildSleepVerdict),
-        "no-internet" => (BuildNoInternetSteps(), BuildNoInternetVerdict),
-        "fans" => (BuildFansSteps(), BuildFansVerdict),
-        "boot" => (BuildBootSteps(), BuildBootVerdict),
-        "shutdown" => (BuildShutdownSteps(), BuildShutdownVerdict),
-        _ => (new List<DiagnosticStep>(), _ => "This symptom isn't available yet."),
-    };
 
     // ---------------------------- 902: My PC is slow right now ----------------------------
 
@@ -548,5 +672,264 @@ public sealed class TroubleshootViewModel : ObservableObject
         if (profile?.Status == DiagnosticStepStatus.Warning)
             return "No clear timed culprit from the degradation events, but profile-unload events were found. " + profile.ResultText;
         return "No shutdown-degradation or profile-unload events were found in the last 30 days.";
+    }
+
+    // ---------------------------- 909: Games or video stutter ----------------------------
+
+    private static List<DiagnosticStep> BuildGamesSteps() => new()
+    {
+        new DiagnosticStep
+        {
+            Id = "games.dpc", Label = "DPC/interrupt time & context switches",
+            Description = "Processor Information\\% DPC Time / % Interrupt Time and System\\Context Switches/sec, sampled fresh over about a second.",
+            Timeout = TimeSpan.FromSeconds(6),
+            Check = ct => TroubleshootService.CheckDpcInterruptTimeAsync(ct),
+        },
+        new DiagnosticStep
+        {
+            Id = "games.capture", Label = "Capture DPC/interrupt activity (wpr + tracerpt)",
+            Description = "Opt-in ~10-second system trace to narrow down which driver is accumulating DPC/interrupt time. Heavier than the check above - only run this while it's actively stuttering.",
+            Timeout = TimeSpan.FromSeconds(150),
+            IsManual = true,
+            Check = ct => TroubleshootService.CaptureDpcOffenderAsync(ct),
+        },
+    };
+
+    private static string BuildGamesVerdict(TroubleshootRun run)
+    {
+        var capture = StepById(run, "games.capture");
+        if (capture?.Status == DiagnosticStepStatus.Warning)
+            return capture.ResultText;
+        var dpc = StepById(run, "games.dpc");
+        if (dpc?.Status == DiagnosticStepStatus.Warning)
+            return dpc.ResultText + " Run the capture step above for a closer look.";
+        return "DPC/interrupt time looks normal over this sample window - if it's stuttering right now, try running this again while it's happening, or use the capture step above.";
+    }
+
+    // ---------------------------- 910: Wi-Fi keeps dropping ----------------------------
+
+    private static List<DiagnosticStep> BuildWifiSteps()
+    {
+        var ctx = new TroubleshootService.WifiContext();
+        return new List<DiagnosticStep>
+        {
+            new DiagnosticStep
+            {
+                Id = "wifi.adapter", Label = "Wireless adapter presence",
+                Timeout = TimeSpan.FromSeconds(10),
+                Check = _ => TroubleshootService.CheckWirelessAdapterPresenceAsync(ctx),
+            },
+            new DiagnosticStep
+            {
+                Id = "wifi.report", Label = "WLAN report disconnect history",
+                Description = "netsh wlan show wlanreport - the adapter's own disconnect-reason timeline.",
+                Timeout = TimeSpan.FromSeconds(25),
+                ShouldRun = run => StepById(run, "wifi.adapter")?.Status == DiagnosticStepStatus.Passed,
+                Check = _ => TroubleshootService.CheckWlanReportAsync(ctx),
+            },
+            new DiagnosticStep
+            {
+                Id = "wifi.events", Label = "WLAN-AutoConfig events (8000-8003/11000-series)",
+                Timeout = TimeSpan.FromSeconds(15),
+                ShouldRun = run => StepById(run, "wifi.adapter")?.Status == DiagnosticStepStatus.Passed,
+                Check = _ => Task.FromResult(TroubleshootService.CheckWlanAutoConfigEvents()),
+            },
+            new DiagnosticStep
+            {
+                Id = "wifi.power", Label = "Wireless adapter power-saving setting",
+                Timeout = TimeSpan.FromSeconds(15),
+                ShouldRun = run => StepById(run, "wifi.adapter")?.Status == DiagnosticStepStatus.Passed,
+                Check = _ => TroubleshootService.CheckWirelessPowerSavingAsync(),
+            },
+        };
+    }
+
+    private static string BuildWifiVerdict(TroubleshootRun run)
+    {
+        var adapter = StepById(run, "wifi.adapter");
+        if (adapter?.Status != DiagnosticStepStatus.Passed)
+            return "No wireless adapter was found on this system.";
+
+        var report = StepById(run, "wifi.report");
+        var events = StepById(run, "wifi.events");
+        var power = StepById(run, "wifi.power");
+
+        var parts = new List<string>();
+        if (report?.Status == DiagnosticStepStatus.Warning) parts.Add(report.ResultText);
+        if (events?.Status == DiagnosticStepStatus.Warning) parts.Add(events.ResultText);
+        if (power?.Status == DiagnosticStepStatus.Warning) parts.Add(power.ResultText);
+
+        return parts.Count > 0
+            ? string.Join(" ", parts)
+            : "No disconnect history, WLAN-AutoConfig events, or an aggressive power-saving setting stood out - if it's dropping intermittently, try running this again after it happens.";
+    }
+
+    // ---------------------------- 911: My disk sits at 100% ----------------------------
+
+    private List<DiagnosticStep> BuildDiskSteps()
+    {
+        var ctx = new TroubleshootService.DiskBottleneckContext();
+        return new List<DiagnosticStep>
+        {
+            new DiagnosticStep
+            {
+                Id = "disk.latency", Label = "Disk latency vs. throughput",
+                Description = "LogicalDisk\\Avg. Disk sec/Transfer vs. Disk Bytes/sec, sampled fresh over about a second.",
+                Timeout = TimeSpan.FromSeconds(6),
+                Check = ct => TroubleshootService.CheckDiskLatencyVsThroughputAsync(ct),
+            },
+            new DiagnosticStep
+            {
+                Id = "disk.process", Label = "Top disk I/O process",
+                Description = "Reuses the already-sampled Processes list's per-process disk I/O figures.",
+                Timeout = TimeSpan.FromSeconds(5),
+                Check = _ => Task.FromResult(TroubleshootService.CheckTopDiskIoProcess(_processes.Processes.ToList())),
+            },
+            new DiagnosticStep
+            {
+                Id = "disk.mediatype", Label = "System drive media type (HDD/SSD)",
+                Timeout = TimeSpan.FromSeconds(10),
+                Check = _ => Task.FromResult(TroubleshootService.CheckSystemDriveMediaType(ctx)),
+            },
+            new DiagnosticStep
+            {
+                Id = "disk.fragmentation", Label = "Fragmentation analysis (HDD only)",
+                Description = "An analyze-only defrag.exe pass across the whole volume - opt-in, since even an analyze pass can take a while.",
+                Timeout = TimeSpan.FromSeconds(130),
+                IsManual = true,
+                Check = _ => TroubleshootService.CheckFragmentationManualAsync(ctx),
+            },
+            new DiagnosticStep
+            {
+                Id = "disk.background", Label = "Background indexing/prefetch (SysMain/Windows Search)",
+                Timeout = TimeSpan.FromSeconds(5),
+                Check = _ => Task.FromResult(TroubleshootService.CheckBackgroundWriter(_processes.Processes.ToList())),
+            },
+        };
+    }
+
+    private static string BuildDiskVerdict(TroubleshootRun run)
+    {
+        var process = StepById(run, "disk.process");
+        var fragmentation = StepById(run, "disk.fragmentation");
+        var background = StepById(run, "disk.background");
+        var latency = StepById(run, "disk.latency");
+
+        if (process?.Status == DiagnosticStepStatus.Warning)
+            return "Verdict: a specific process is driving disk I/O. " + process.ResultText;
+        if (fragmentation?.Status == DiagnosticStepStatus.Warning)
+            return "Verdict: HDD fragmentation. " + fragmentation.ResultText;
+        if (background?.Status == DiagnosticStepStatus.Warning)
+            return "Verdict: background indexing/prefetching. " + background.ResultText;
+        if (latency?.Status == DiagnosticStepStatus.Warning)
+            return latency.ResultText + " Run the fragmentation step above if this is a spinning disk.";
+        return "Disk activity looks normal right now - if it's pegged at 100% currently, try running this again while it's happening.";
+    }
+
+    // ---------------------------- 912: Battery dies too fast ----------------------------
+
+    private static List<DiagnosticStep> BuildBatterySteps()
+    {
+        var ctx = new TroubleshootService.BatteryContext();
+        return new List<DiagnosticStep>
+        {
+            new DiagnosticStep
+            {
+                Id = "battery.presence", Label = "Battery presence",
+                Timeout = TimeSpan.FromSeconds(10),
+                Check = _ => Task.FromResult(TroubleshootService.CheckBatteryPresence(ctx)),
+            },
+            new DiagnosticStep
+            {
+                Id = "battery.report", Label = "Battery report (powercfg /batteryreport)",
+                Description = "Design vs. full-charge capacity, and recent usage.",
+                Timeout = TimeSpan.FromSeconds(25),
+                ShouldRun = run => StepById(run, "battery.presence")?.Status == DiagnosticStepStatus.Passed,
+                Check = _ => TroubleshootService.CheckBatteryReportAsync(),
+            },
+            new DiagnosticStep
+            {
+                Id = "battery.srum", Label = "Per-app energy estimate (powercfg /srumutil)",
+                Description = "Less universally present than the battery report - degrades gracefully if unavailable on this Windows build.",
+                Timeout = TimeSpan.FromSeconds(30),
+                ShouldRun = run => StepById(run, "battery.presence")?.Status == DiagnosticStepStatus.Passed,
+                Check = _ => TroubleshootService.CheckSrumEnergyAsync(),
+            },
+            new DiagnosticStep
+            {
+                Id = "battery.plan", Label = "Active power plan",
+                Timeout = TimeSpan.FromSeconds(15),
+                ShouldRun = run => StepById(run, "battery.presence")?.Status == DiagnosticStepStatus.Passed,
+                Check = _ => TroubleshootService.CheckActivePowerPlanForBatteryAsync(),
+            },
+        };
+    }
+
+    private static string BuildBatteryVerdict(TroubleshootRun run)
+    {
+        var presence = StepById(run, "battery.presence");
+        if (presence?.Status != DiagnosticStepStatus.Passed)
+            return "No battery detected - this looks like a desktop, so battery life isn't applicable.";
+
+        var report = StepById(run, "battery.report");
+        var srum = StepById(run, "battery.srum");
+        var plan = StepById(run, "battery.plan");
+
+        var parts = new List<string>();
+        if (report is not null && report.Status is DiagnosticStepStatus.Warning or DiagnosticStepStatus.Passed && report.ResultText.Length > 0)
+            parts.Add(report.ResultText);
+        if (srum?.Status == DiagnosticStepStatus.Warning) parts.Add(srum.ResultText);
+        if (plan?.Status == DiagnosticStepStatus.Warning) parts.Add(plan.ResultText);
+
+        return parts.Count > 0
+            ? string.Join(" ", parts)
+            : "Battery health and active power plan both look normal - nothing obvious stood out.";
+    }
+
+    // ---------------------------- 913: A device keeps disconnecting or isn't recognized ----------------------------
+
+    private static List<DiagnosticStep> BuildDeviceSteps()
+    {
+        var ctx = new TroubleshootService.PnpProblemContext();
+        return new List<DiagnosticStep>
+        {
+            new DiagnosticStep
+            {
+                Id = "device.pnp", Label = "Devices reporting a problem (Device Manager)",
+                Description = "Win32_PnPEntity entries with a nonzero ConfigManagerErrorCode.",
+                Timeout = TimeSpan.FromSeconds(15),
+                Check = _ => Task.FromResult(TroubleshootService.CheckPnpProblemDevices(ctx)),
+            },
+            new DiagnosticStep
+            {
+                Id = "device.events", Label = "Kernel-PnP/USBHUB3 events (last 7 days)",
+                Timeout = TimeSpan.FromSeconds(20),
+                Check = _ => Task.FromResult(TroubleshootService.CheckDeviceDisconnectEvents(ctx)),
+            },
+            new DiagnosticStep
+            {
+                Id = "device.power", Label = "USB root hub power setting",
+                Description = "Whether \"allow the computer to turn off this device to save power\" is enabled on any USB root hub.",
+                Timeout = TimeSpan.FromSeconds(10),
+                Check = _ => Task.FromResult(TroubleshootService.CheckUsbRootHubPowerSetting()),
+            },
+        };
+    }
+
+    private static string BuildDeviceVerdict(TroubleshootRun run)
+    {
+        var pnp = StepById(run, "device.pnp");
+        var events = StepById(run, "device.events");
+        var power = StepById(run, "device.power");
+
+        if (pnp?.Status == DiagnosticStepStatus.Warning)
+        {
+            string extra = events?.Status == DiagnosticStepStatus.Warning ? " " + events.ResultText : string.Empty;
+            string powerNote = power?.Status == DiagnosticStepStatus.Warning ? " " + power.ResultText : string.Empty;
+            return pnp.ResultText + extra + powerNote;
+        }
+        if (power?.Status == DiagnosticStepStatus.Warning)
+            return "No device currently reports a Device Manager problem, but " + power.ResultText;
+        return "No device currently reports a problem in Device Manager, and USB root hub power settings look fine.";
     }
 }

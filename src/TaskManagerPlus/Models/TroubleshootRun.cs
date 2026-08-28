@@ -36,4 +36,11 @@ public sealed class TroubleshootRun : ObservableObject
     /// <summary>True once VerdictText has something worth showing - lets the run view collapse
     /// the verdict card entirely while a run is still in progress or produced nothing actionable.</summary>
     public bool HasVerdict => !string.IsNullOrWhiteSpace(VerdictText);
+
+    /// <summary>#909/#914: the branch's verdict function, kept on the live run (not serialized -
+    /// TroubleshootRunRecord is the persisted half) so a manual/opt-in step that finishes after the
+    /// automatic sequence already built a verdict (e.g. #909's wpr/tracerpt DPC capture) can trigger
+    /// TroubleshootViewModel to recompute VerdictText rather than leaving it stuck at whatever the
+    /// automatic steps alone concluded.</summary>
+    public Func<TroubleshootRun, string>? VerdictBuilder { get; set; }
 }

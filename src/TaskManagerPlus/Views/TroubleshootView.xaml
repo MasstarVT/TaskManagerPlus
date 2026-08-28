@@ -66,6 +66,24 @@
                                    Foreground="{Binding Status, Converter={StaticResource DiagnosticStepStatusToBrushConverter}}" />
                     </Grid>
 
+                    <!-- #909/#911: a manual/opt-in step (the wpr/tracerpt DPC capture, the
+                         full-volume fragmentation analyze pass) stays Pending until the user
+                         triggers it here - the automatic run loop never touches it. -->
+                    <Button Content="Run this check" HorizontalAlignment="Left" Padding="10,4" Margin="19,8,0,0"
+                            Command="{Binding DataContext.RunManualStepCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                            CommandParameter="{Binding}">
+                        <Button.Style>
+                            <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsManualPending}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Button.Style>
+                    </Button>
+
                     <TextBlock Text="{Binding ResultText}" FontSize="12.5" TextWrapping="Wrap" Margin="19,8,0,0">
                         <TextBlock.Style>
                             <Style TargetType="TextBlock">
@@ -100,23 +118,51 @@
                 </StackPanel>
             </Border>
         </DataTemplate>
+
+        <!-- #915: one saved run in the "Past runs" panel - reopen it read-only or re-run the same
+             symptom fresh. -->
+        <DataTemplate x:Key="PastRunCardTemplate" DataType="{x:Type models:TroubleshootRunRecord}">
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,10" Padding="14,12">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0" Margin="0,0,10,0">
+                        <TextBlock Text="{Binding DisplayName}" FontSize="13.5" FontWeight="SemiBold" TextWrapping="Wrap" />
+                        <TextBlock Style="{StaticResource SubStat}">
+                            <Run Text="Started " /><Run Text="{Binding StartedAt, StringFormat={}{0:g}, Mode=OneWay}" />
+                        </TextBlock>
+                        <TextBlock Text="{Binding VerdictText}" FontSize="12" TextWrapping="Wrap" Margin="0,6,0,0" MaxHeight="54" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                        <Button Content="Open" Padding="10,4" Margin="0,0,8,0"
+                                Command="{Binding DataContext.OpenSavedRunCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                CommandParameter="{Binding}" />
+                        <Button Content="Re-run" Padding="10,4"
+                                Command="{Binding DataContext.RerunSavedCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                CommandParameter="{Binding}" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+        </DataTemplate>
     </UserControl.Resources>
 
     <Grid>
-        <!-- Landing grid - symptom cards. Visible only while no run has been selected. -->
-        <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16">
-            <ScrollViewer.Style>
-                <Style TargetType="ScrollViewer">
-                    <Setter Property="Visibility" Value="Collapsed" />
-                    <Style.Triggers>
-                        <DataTrigger Binding="{Binding SelectedRun}" Value="{x:Null}">
-                            <Setter Property="Visibility" Value="Visible" />
-                        </DataTrigger>
-                    </Style.Triggers>
-                </Style>
-            </ScrollViewer.Style>
+        <!-- Landing grid - symptom cards. Visible only while no run/past-runs panel is showing. -->
+        <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16"
+                      Visibility="{Binding ShowLanding, Converter={StaticResource BoolToVisibilityConverter}}">
             <StackPanel>
-                <TextBlock Text="What's the problem?" FontSize="18" FontWeight="Light" Margin="0,0,0,4" />
+                <Grid Margin="0,0,0,4">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="What's the problem?" FontSize="18" FontWeight="Light" VerticalAlignment="Center" />
+                    <!-- #915: reopen a saved run's transcript, or re-run its symptom fresh. -->
+                    <Button Grid.Column="1" Content="Past runs" Padding="10,4" VerticalAlignment="Center"
+                            Command="{Binding ShowPastRunsCommand}" />
+                </Grid>
                 <TextBlock Text="Pick the symptom that best matches what you're seeing - this runs a scripted set of checks instead of making you guess which tab to open."
                            Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,18" />
                 <ItemsControl ItemsSource="{Binding Symptoms}" ItemTemplate="{StaticResource SymptomCardTemplate}">
@@ -126,6 +172,35 @@
                         </ItemsPanelTemplate>
                     </ItemsControl.ItemsPanel>
                 </ItemsControl>
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- #915: "Past runs" panel - visible only when explicitly opened from the landing page. -->
+        <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16"
+                      Visibility="{Binding ShowPastRuns, Converter={StaticResource BoolToVisibilityConverter}}">
+            <StackPanel>
+                <Grid Margin="0,0,0,16">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Button Grid.Column="0" Content="&#8592; Back" Command="{Binding HidePastRunsCommand}"
+                            Padding="10,4" Margin="0,0,14,0" VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="1" Text="Past runs" FontSize="17" FontWeight="SemiBold" VerticalAlignment="Center" />
+                </Grid>
+                <TextBlock Text="No saved runs yet - run a check and it'll show up here." Margin="0,0,0,12">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding PastRuns.Count}" Value="0">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+                <ItemsControl ItemsSource="{Binding PastRuns}" ItemTemplate="{StaticResource PastRunCardTemplate}" />
             </StackPanel>
         </ScrollViewer>
 
