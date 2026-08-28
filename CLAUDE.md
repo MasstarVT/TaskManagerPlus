@@ -5,14 +5,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 Task Manager Plus — a Windows Task Manager replacement written in C# / WPF
-(.NET 8). Twelve top-level tabs (Summary, CPU, Memory, Storage, Network, GPU,
-Energy & Thermals, Processes, Services, Startup, System Specs, Stability),
-live color-theming (six palette families + saturation + high-contrast +
-color-blind-safe alerts), a CSV/HTML/Markdown logging & reporting system, a
-system tray icon with a global hotkey, and an optional LAN-visible remote
-monitor endpoint. Navigation is a TMOG-style top horizontal tab strip
-(`TabStripPlacement="Top"`), matching the visual/IA style of
-[tmog.org](https://tmog.org), not a left sidebar rail.
+(.NET 8). Thirteen top-level tabs (Summary, CPU, Memory, Storage, Network,
+GPU, Energy & Thermals, Processes, Services, Startup, System Specs,
+Stability, Troubleshoot), live color-theming (six palette families +
+saturation + high-contrast + color-blind-safe alerts), a CSV/HTML/Markdown
+logging & reporting system, a system tray icon with a global hotkey, and an
+optional LAN-visible remote monitor endpoint. Navigation is a TMOG-style top
+horizontal tab strip (`TabStripPlacement="Top"`), matching the visual/IA
+style of [tmog.org](https://tmog.org), not a left sidebar rail.
 
 The project has gone through many incremental rounds of feature additions
 (see `suggestions.md` for the backlog and git history for the detailed
@@ -181,6 +181,52 @@ update both series of a pair together. Fan RPM-vs-temperature uses a
 `ScatterSeries` instead (no glow/core pairing — a point cloud, not a line).
 Reliability History (Stability tab) uses `ColumnSeries` — the only bar
 chart in the app, since a discrete daily count reads better as bars.
+
+### Troubleshoot tab (guided diagnostics, rules engine, remediation)
+
+The Troubleshoot tab is a landing page of symptom cards (`TroubleshootViewModel`,
+`Services/TroubleshootService.cs`) plus several sibling sub-pages reached by
+buttons that swap the tab's content area — Timeline, Baselines, Background
+Health, Changes (the change journal), Evidence Bundle, Glossary, Network
+Activity — rather than being separate top-level tabs of their own. Follow
+this same swap-a-content-area pattern (not a new `TabItem`) for anything
+that belongs "inside" guided diagnostics. A symptom branch is a declarative
+`Models/TroubleshootBranchDefinition.cs` (an ordered list of `DiagnosticStep`
+objects with per-step timeout and a `ShouldRun` predicate that can read an
+earlier step's result), evaluated by one generic runner — adding a symptom
+is a data change (`RegisterBranch(...)`), not a new hand-written procedural
+method.
+
+The Summary tab's Health Check card is now driven by `RulesEngineService`
+reading JSON rule packs from `AppPaths.SettingsDirectory\Rules\*.json`
+(seeded from a built-in pack) instead of a hardcoded `if` chain — a rule is
+metric-bag conditions (`{"metric":...,"op":...,"value":...}` plus
+`all`/`any`/`not`, no embedded scripting engine) plus presentation metadata
+(severity, confidence, docs URL, plain-English body, applicable remediation
+action ids). **Any new Health-Check-style finding should be added as a rule
+in the pack, not as a new `if` in `SummaryViewModel`.** `HealthIssue` is the
+one finding shape rendered everywhere (Health Check card, Troubleshoot,
+reports, evidence bundles) — don't add a second parallel finding type.
+
+Every system-mutating action this app performs — service control, startup
+toggles, process priority/affinity/suspend, power-plan changes, and the
+`RemediationActionCatalog` fix-actions — is expected to append to
+`Services/ChangeJournalService.cs`'s `change-journal.jsonl` (undoable
+per-entry) and to respect `Services/ReadOnlyModeService.cs`'s app-wide
+read-only switch in its command's `CanExecute`. A remediation action shows
+its literal command line before running, offers a dry-run/preview command
+where one exists, and offers a restore point + a `reg export` backup ahead
+of a risky/registry-writing change — copy this shape for any new mutating
+action rather than wiring a bare "run it" button.
+
+`Services/BackgroundHealthCollectorService.cs` is a fifth always-on timer,
+deliberately separate from the four in "Configurable poll intervals" below
+and from the user-started CSV logging feature: low-frequency (60s default),
+writes compact rows to a self-pruning `health-history.jsonl`, and
+self-measures its own CPU/duration cost each cycle (visible in the
+Background Health panel) with automatic backoff if a cycle runs long — the
+explicit bar for this collector is that it must never be the thing that
+makes the machine feel slow.
 
 ## Cross-cutting conventions
 
