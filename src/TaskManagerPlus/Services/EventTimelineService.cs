@@ -34,22 +34,24 @@ public sealed class EventTimelineService
 
     /// <summary>Merges whatever sources are actually wired today - event-log Critical/Error records,
     /// minidump files, boot markers (reused from EventAnomalyDetectionService.FindBootMarkers, per
-    /// this chunk's instructions), and shutdown markers (reused from ComputeRebootAttributions'
-    /// output, computed once by the caller and passed in here rather than re-queried) - into one
-    /// time-ordered stream. <paramref name="csvLogMarkers"/> folds in the app's own CSV log samples
-    /// when a logging session covers part of the window (#137's "if logging was running" clause);
-    /// StabilityViewModel passes an empty sequence when none is available, never fabricating one.
+    /// this chunk's instructions), shutdown markers (reused from ComputeRebootAttributions' output,
+    /// computed once by the caller and passed in here rather than re-queried), and (#161) WER crash
+    /// reports - into one time-ordered stream. <paramref name="csvLogMarkers"/> folds in the app's
+    /// own CSV log samples when a logging session covers part of the window (#137's "if logging was
+    /// running" clause); StabilityViewModel passes an empty sequence when none is available, never
+    /// fabricating one.
     ///
-    /// WER report timestamps and driver/update/service-install events (items 161-183) are NOT
-    /// wired in yet - no data source for them exists in this codebase. TimelineEntry/TimelineSource
-    /// already declare cases for them (see their remarks) so a later chunk adds an Append* method
-    /// here without touching anything that already consumes TimelineEntry.</summary>
+    /// Driver/update/service-install events (items 169-183) are NOT wired in yet - no data source
+    /// for them exists in this codebase. TimelineEntry/TimelineSource already declare cases for them
+    /// (see their remarks) so a later chunk adds an Append* method here without touching anything
+    /// that already consumes TimelineEntry.</summary>
     public List<TimelineEntry> BuildTimeline(
         IEnumerable<StabilityEvent> recentEvents,
         IEnumerable<MinidumpInfo> minidumps,
         IReadOnlyList<DateTime> bootMarkers,
         IReadOnlyList<RebootAttribution> shutdownMarkers,
-        IEnumerable<TimelineEntry>? csvLogMarkers = null)
+        IEnumerable<TimelineEntry>? csvLogMarkers = null,
+        IEnumerable<WerReportInfo>? werReports = null)
     {
         var entries = new List<TimelineEntry>();
 
@@ -60,7 +62,7 @@ public sealed class EventTimelineService
                 Source = TimelineSource.EventLog,
                 Timestamp = e.TimeCreated,
                 Title = $"{e.ProviderName} {e.EventId} ({e.Level})",
-                Detail = e.Message,
+                Detail = e.DisplayDetail,
                 SourceLabel = "Event log",
                 IsCrash = IsCrashLikeEvent(e),
                 SourceEvent = new EventRecordRow
@@ -111,6 +113,27 @@ public sealed class EventTimelineService
                 SourceLabel = "Shutdown",
                 IsCrash = !s.WasCleanShutdown,
             });
+        }
+
+        // #161: WER crash reports - a minidump-shaped entry (mere existence is itself crash
+        // evidence, same as the Minidump loop above), just from ReportQueue/ReportArchive instead of
+        // %SystemRoot%\Minidump. See WerReportService.ReadReports.
+        if (werReports is not null)
+        {
+            foreach (var w in werReports)
+            {
+                entries.Add(new TimelineEntry
+                {
+                    Source = TimelineSource.WerReport,
+                    Timestamp = w.Timestamp,
+                    Title = w.DisplayTitle,
+                    Detail = w.ModName is { Length: > 0 } mod
+                        ? $"Faulting module {mod}{(w.ExceptionCode is { Length: > 0 } code ? $", exception {code}" : string.Empty)} ({(w.IsArchived ? "archived" : "queued")})."
+                        : $"WER report ({(w.IsArchived ? "archived" : "queued")}).",
+                    SourceLabel = "WER report",
+                    IsCrash = true,
+                });
+            }
         }
 
         if (csvLogMarkers is not null) entries.AddRange(csvLogMarkers);

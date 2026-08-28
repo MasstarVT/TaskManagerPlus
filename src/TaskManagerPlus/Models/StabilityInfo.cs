@@ -19,6 +19,19 @@ public sealed class StabilityEvent
     /// EventLogService.ExtractBugcheckCode for why this is best-effort (the insertion-string
     /// layout isn't a documented, versioned contract).</summary>
     public string? BugcheckCode { get; init; }
+
+    /// <summary>#168: a fuller, non-truncated parse of this event's own message - only ever populated
+    /// for ".NET Runtime" event 1026 (managed exception type + top stack frames) and "Application
+    /// Error" event 1000 (structured faulting application/module/exception-code/offset fields, since
+    /// 1000 itself never carries a managed stack trace) - see
+    /// WerReportService.ParseManagedExceptionDetail. Null for every other event, which is what
+    /// DisplayDetail below falls back to Message (still truncated to 300 characters) for.</summary>
+    public string? ExceptionDetail { get; init; }
+
+    /// <summary>#168: what the UI should actually show for this event's detail/tooltip - the fuller
+    /// ExceptionDetail parse when one was found, otherwise the existing truncated Message. Leaves
+    /// every event ID other than 1026/1000 exactly as truncated as before.</summary>
+    public string DisplayDetail => ExceptionDetail ?? Message;
 }
 
 /// <summary>One file under %SystemRoot%\Minidump (#3) - bugcheck code is filled in only when a

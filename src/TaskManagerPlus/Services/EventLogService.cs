@@ -162,6 +162,10 @@ public sealed class EventLogService
                         Message = Truncate(message, 300),
                         FaultingModule = ExtractFaultingModule(message),
                         BugcheckCode = record.Id == KernelPowerEventId ? ExtractBugcheckCode(record) : null,
+                        // #168: a fuller, non-truncated parse for .NET Runtime 1026 / Application
+                        // Error 1000 specifically - every other event ID keeps the same truncated
+                        // Message as before (see StabilityEvent.DisplayDetail).
+                        ExceptionDetail = record.Id is 1026 or 1000 ? WerReportService.ParseManagedExceptionDetail(record.Id, message) : null,
                     });
                 }
             }

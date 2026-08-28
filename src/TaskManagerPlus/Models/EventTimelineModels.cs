@@ -9,10 +9,10 @@ namespace TaskManagerPlus.Models;
 /// </summary>
 
 /// <summary>#137: which data source a TimelineEntry came from - drives per-source colour coding
-/// (TimelineSourceToBrushConverter) and the timeline's filter chips. WerReport/DriverInstall/
-/// UpdateInstall/ServiceInstall aren't wired into the merge yet (no data source for them exists in
-/// this codebase until items 161-183) - they're declared here now so a later chunk only has to add
-/// an Append* method to EventTimelineService.BuildTimeline, not touch this enum's consumers.</summary>
+/// (TimelineSourceToBrushConverter) and the timeline's filter chips. WerReport is wired into
+/// BuildTimeline as of #161 (see EventTimelineService.BuildTimeline's werReports parameter).
+/// DriverInstall/UpdateInstall/ServiceInstall are still declared but not wired - no data source for
+/// them exists in this codebase until a later chunk (items 169-183) adds one.</summary>
 public enum TimelineSource
 {
     EventLog,
@@ -20,9 +20,9 @@ public enum TimelineSource
     Boot,
     Shutdown,
     CsvLog,
-
-    // Not wired into BuildTimeline yet - see items 161-183.
     WerReport,
+
+    // Not wired into BuildTimeline yet - see items 169-183.
     DriverInstall,
     UpdateInstall,
     ServiceInstall,

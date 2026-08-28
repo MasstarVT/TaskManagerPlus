@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Windows;
 using LiveChartsCore;
 using LiveChartsCore.SkiaSharpView;
 using LiveChartsCore.SkiaSharpView.Painting;
@@ -65,6 +66,15 @@ public sealed class StabilityViewModel : ObservableObject
     private readonly EventTimelineService _timeline = new(new EventLogExplorerService());
     private readonly EventLogExplorerService _drillDownExplorer = new();
 
+    // #161-167: Windows Error Reporting - its own EventLogExplorerService instance (same "each
+    // ViewModel composes its own Services/* instances directly" convention as _kb/_anomaly/_timeline
+    // above), needed for #163's "Application Error" 1000 combine and #164's "Application Hang" 1002 read.
+    private readonly WerReportService _wer = new(new EventLogExplorerService());
+
+    /// <summary>The last WER report scan's results, stashed so RefreshTimelineExtrasAsync's
+    /// BuildTimeline call (#161) can fold them into the unified timeline without a second scan.</summary>
+    private List<WerReportInfo> _lastWerReports = new();
+
     /// <summary>#141: fires once per refresh (success or failure) - MainViewModel wires this to push
     /// fresh crash/error markers into PerformanceViewModel's charts, reusing this tab's own event
     /// data rather than adding a second poll.</summary>
@@ -122,6 +132,39 @@ public sealed class StabilityViewModel : ObservableObject
     // Round 10, #66: repeated crashes grouped by faulting module, most frequent first - see
     // FaultingModuleSummary's remarks. Pure derived aggregation over RecentEvents, no new query.
     public ObservableCollection<FaultingModuleSummary> CrashesByModule { get; } = new();
+
+    // ---- #161/#162: WER crash reports, grouped by bucket signature ----
+    public ObservableCollection<WerCrashBucket> CrashReportBuckets { get; } = new();
+
+    // ---- #163: top crashing applications (WER + Application-log 1000 combined) ----
+    public ObservableCollection<TopCrashingApplication> TopCrashingApplications { get; } = new();
+
+    // ---- #164: hangs (Application Hang 1002) - kept separate from crashes above ----
+    public ObservableCollection<WerHangInfo> Hangs { get; } = new();
+
+    // ---- #166: WER storage footprint ----
+    private WerStorageFootprint _werFootprint = new();
+    public WerStorageFootprint WerFootprint { get => _werFootprint; private set => SetProperty(ref _werFootprint, value); }
+
+    public RelayCommand RevealWerQueueCommand { get; }
+    public RelayCommand RevealWerArchiveCommand { get; }
+
+    // ---- #165: local crash dump capture (LocalDumps) toggle ----
+    private LocalDumpsSettings _localDumpsSettings = new();
+    public LocalDumpsSettings LocalDumpsSettings { get => _localDumpsSettings; private set => SetProperty(ref _localDumpsSettings, value); }
+
+    private bool _canRevertLocalDumps;
+    public bool CanRevertLocalDumps { get => _canRevertLocalDumps; private set => SetProperty(ref _canRevertLocalDumps, value); }
+
+    private string? _localDumpsStatusText;
+    public string? LocalDumpsStatusText { get => _localDumpsStatusText; private set => SetProperty(ref _localDumpsStatusText, value); }
+
+    public RelayCommand EnableLocalDumpsCommand { get; }
+    public RelayCommand RevertLocalDumpsCommand { get; }
+
+    // ---- #167: error reporting configuration check ----
+    private WerConfigStatus _werConfigStatus = new();
+    public WerConfigStatus WerConfigStatus { get => _werConfigStatus; private set => SetProperty(ref _werConfigStatus, value); }
 
     /// <summary>#128: "New error types this week" - (provider, eventId) signatures present only in
     /// the last 7 days of RecentEvents' 30-day window, with no occurrence in the older 23 days of
@@ -192,11 +235,21 @@ public sealed class StabilityViewModel : ObservableObject
         DrillDownCommand = new RelayCommand(p => _ = DrillDownAsync(p as TimelineEntry));
         FindChangesBeforeCrashCommand = new RelayCommand(p => _ = FindChangesBeforeCrashAsync(p as TimelineEntry));
 
+        // #166: reuses EtwTraceService.RevealInExplorer - no second `explorer.exe /select,` helper.
+        RevealWerQueueCommand = new RelayCommand(() => EtwTraceService.RevealInExplorer(WerFootprint.QueuePath), () => WerFootprint.QueueExists);
+        RevealWerArchiveCommand = new RelayCommand(() => EtwTraceService.RevealInExplorer(WerFootprint.ArchivePath), () => WerFootprint.ArchiveExists);
+
+        // #165: both gated behind their own explicit MessageBox confirmation - see EnableLocalDumps/RevertLocalDumps.
+        EnableLocalDumpsCommand = new RelayCommand(EnableLocalDumps);
+        RevertLocalDumpsCommand = new RelayCommand(RevertLocalDumps, () => CanRevertLocalDumps);
+        CanRevertLocalDumps = WerReportService.BackupExists();
+
         // #137: one chip per source actually wired into BuildTimeline - see TimelineSource's remarks.
         TimelineFilters.Add(new TimelineFilterChip(TimelineSource.EventLog, "Event log", ApplyTimelineFilters));
         TimelineFilters.Add(new TimelineFilterChip(TimelineSource.Minidump, "Minidump", ApplyTimelineFilters));
         TimelineFilters.Add(new TimelineFilterChip(TimelineSource.Boot, "Boot", ApplyTimelineFilters));
         TimelineFilters.Add(new TimelineFilterChip(TimelineSource.Shutdown, "Shutdown", ApplyTimelineFilters));
+        TimelineFilters.Add(new TimelineFilterChip(TimelineSource.WerReport, "WER report", ApplyTimelineFilters));
 
         _dailyEventColumns = new ColumnSeries<double>
         {
@@ -258,6 +311,10 @@ public sealed class StabilityViewModel : ObservableObject
             var flaggedIds = _kb.SeriousFlaggedIds();
             var hits = await Task.Run(() => _service.ScanForKnownBadIds(flaggedIds));
             BuildKnownBadIdScorecard(hits);
+
+            // #161-167: WER report queue/archive scan, hangs, storage footprint, LocalDumps and
+            // error-reporting-config reads - folded into this same on-demand refresh, never a new timer.
+            await RefreshWerAsync();
 
             // #137/#142/#143/#144: folded into this same on-demand refresh, never a new timer.
             await RefreshTimelineExtrasAsync(snapshot);
@@ -329,10 +386,127 @@ public sealed class StabilityViewModel : ObservableObject
 
         try
         {
-            _allTimelineEntries = await Task.Run(() => _timeline.BuildTimeline(snapshot.RecentEvents, snapshot.Minidumps, bootMarkers, attributions));
+            _allTimelineEntries = await Task.Run(() => _timeline.BuildTimeline(snapshot.RecentEvents, snapshot.Minidumps, bootMarkers, attributions, werReports: _lastWerReports));
             ApplyTimelineFilters();
         }
         catch { /* degrade to an empty timeline */ }
+    }
+
+    /// <summary>#161-167: WER report queue/archive scan (buckets + top crashing apps), hangs, storage
+    /// footprint, and the LocalDumps/error-reporting-config reads - each wrapped independently so one
+    /// failing part (e.g. a locked-down ProgramData folder, or WerSvc missing on this Windows
+    /// edition) doesn't blank out the others that already succeeded, same as
+    /// RefreshTimelineExtrasAsync above.</summary>
+    private async Task RefreshWerAsync()
+    {
+        try { _lastWerReports = await Task.Run(() => _wer.ReadReports()); }
+        catch { _lastWerReports = new List<WerReportInfo>(); }
+
+        try
+        {
+            var buckets = _wer.GroupByBucket(_lastWerReports);
+            CrashReportBuckets.Clear();
+            foreach (var b in buckets) CrashReportBuckets.Add(b);
+        }
+        catch { /* degrade to an empty bucket list */ }
+
+        try
+        {
+            var topApps = await Task.Run(() => _wer.ComputeTopCrashingApplications(_lastWerReports));
+            TopCrashingApplications.Clear();
+            foreach (var a in topApps) TopCrashingApplications.Add(a);
+        }
+        catch { /* degrade to an empty top-crashing-apps list */ }
+
+        try
+        {
+            var hangs = await Task.Run(() => _wer.ReadHangs());
+            Hangs.Clear();
+            foreach (var h in hangs) Hangs.Add(h);
+        }
+        catch { /* degrade to an empty hang list */ }
+
+        try { WerFootprint = await Task.Run(() => _wer.ComputeStorageFootprint()); }
+        catch { /* degrade - keeps whatever footprint the last successful scan found */ }
+
+        try { LocalDumpsSettings = await Task.Run(() => _wer.ReadLocalDumpsSettings()); }
+        catch { /* degrade - keeps its previous value */ }
+        CanRevertLocalDumps = WerReportService.BackupExists();
+
+        try { WerConfigStatus = await Task.Run(() => _wer.ReadConfigStatus()); }
+        catch { /* degrade - keeps its previous value (Unknown on first load) */ }
+    }
+
+    /// <summary>#165: a real confirmation dialog stating the disk-space implication, matching the
+    /// "explicit permission required for a registry write" convention CLAUDE.md documents - never
+    /// writes without this. Saves the pre-change values first (WerReportService.SaveBackup) so
+    /// RevertLocalDumps below can restore them even after an app restart.</summary>
+    private void EnableLocalDumps()
+    {
+        string suggestedFolder = Environment.ExpandEnvironmentVariables(@"%LOCALAPPDATA%\CrashDumps");
+
+        var confirm = MessageBox.Show(
+            "This writes to HKLM\\SOFTWARE\\Microsoft\\Windows\\Windows Error Reporting\\LocalDumps so Windows "
+            + "keeps a local copy of future crash dumps instead of only uploading them and discarding the copy.\n\n"
+            + $"Dumps will be written to:\n{suggestedFolder}\n\n"
+            + "Up to 10 mini dumps will be kept (older ones are deleted automatically as new ones arrive) - each "
+            + "one is small, but a machine with several crashing apps will accumulate more of them over time.\n\n"
+            + "Enable local crash dump capture now?",
+            "Enable local crash dump capture",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        var previous = _wer.ReadLocalDumpsSettings();
+        WerReportService.SaveBackup(previous);
+
+        var (success, error) = _wer.WriteLocalDumpsSettings(suggestedFolder, dumpCount: 10, dumpType: 1);
+        if (success)
+        {
+            LocalDumpsSettings = _wer.ReadLocalDumpsSettings();
+            CanRevertLocalDumps = true;
+            LocalDumpsStatusText = $"Local crash dump capture enabled - dumps will be written to {suggestedFolder}.";
+        }
+        else
+        {
+            WerReportService.ClearBackup(); // nothing actually changed - don't leave a stale backup around
+            LocalDumpsStatusText = $"Couldn't enable local crash dump capture: {error}";
+        }
+    }
+
+    /// <summary>#165: one-click revert - restores whatever LocalDumps looked like right before
+    /// EnableLocalDumps above last wrote to it (persisted to disk, so this still works after an app
+    /// restart, not just within the same session).</summary>
+    private void RevertLocalDumps()
+    {
+        var backup = WerReportService.LoadBackup();
+        if (backup is null)
+        {
+            LocalDumpsStatusText = "No previous local crash dump configuration was saved to revert to.";
+            return;
+        }
+
+        var confirm = MessageBox.Show(
+            "This restores the LocalDumps registry configuration to what it was before this app last changed it"
+            + (backup.KeyExists ? "." : " (the LocalDumps key didn't exist before - it will be removed again.)")
+            + "\n\nRevert local crash dump capture now?",
+            "Revert local crash dump capture",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Question);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        var (success, error) = _wer.RestoreLocalDumpsSettings(backup);
+        if (success)
+        {
+            WerReportService.ClearBackup();
+            LocalDumpsSettings = _wer.ReadLocalDumpsSettings();
+            CanRevertLocalDumps = false;
+            LocalDumpsStatusText = "Local crash dump configuration reverted to its previous state.";
+        }
+        else
+        {
+            LocalDumpsStatusText = $"Couldn't revert local crash dump capture: {error}";
+        }
     }
 
     /// <summary>#137: re-filters the already-built merged list by whichever source chips are

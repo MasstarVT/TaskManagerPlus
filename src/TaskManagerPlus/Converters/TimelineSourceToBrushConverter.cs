@@ -15,11 +15,12 @@ public sealed class TimelineSourceToBrushConverter : IValueConverter
     private static readonly Brush Boot = new SolidColorBrush(Color.FromRgb(0x3D, 0xD6, 0x8C));
     private static readonly Brush Shutdown = new SolidColorBrush(Color.FromRgb(0xF5, 0xB9, 0x42));
     private static readonly Brush CsvLog = new SolidColorBrush(Color.FromRgb(0x4D, 0xA6, 0xE0));
+    private static readonly Brush WerReport = new SolidColorBrush(Color.FromRgb(0xC9, 0x4B, 0x8C));
     private static readonly Brush Other = new SolidColorBrush(Color.FromRgb(0x9A, 0x6C, 0xE0));
 
     static TimelineSourceToBrushConverter()
     {
-        EventLog.Freeze(); Minidump.Freeze(); Boot.Freeze(); Shutdown.Freeze(); CsvLog.Freeze(); Other.Freeze();
+        EventLog.Freeze(); Minidump.Freeze(); Boot.Freeze(); Shutdown.Freeze(); CsvLog.Freeze(); WerReport.Freeze(); Other.Freeze();
     }
 
     public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
@@ -31,6 +32,7 @@ public sealed class TimelineSourceToBrushConverter : IValueConverter
                 TimelineSource.Boot => Boot,
                 TimelineSource.Shutdown => Shutdown,
                 TimelineSource.CsvLog => CsvLog,
+                TimelineSource.WerReport => WerReport,
                 _ => Other,
             }
             : Other;
