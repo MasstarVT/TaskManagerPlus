@@ -39,4 +39,27 @@ public sealed class SensorReading
     /// doesn't standardize any more than it standardizes CPU/battery sensor names) - the view
     /// only tints a row red when this is explicitly true, never for null/false.</summary>
     public bool? IsVoltageOutOfSpec { get; init; }
+
+    /// <summary>#615: per-fan-channel status ("OK"/"Slow"/"Stopped"/"Not reporting"), computed by
+    /// comparing every fan channel reported at the same tick instead of relying on a single
+    /// global dead-fan flag - a chassis fan pinned well below its siblings under identical load
+    /// is disconnected or dead even though it isn't reading exactly 0. Null for any non-fan
+    /// reading.</summary>
+    public string? FanStatus { get; init; }
+
+    /// <summary>#614: the highest RPM ever recorded for this fan identifier across every session
+    /// (FanMaxRpmService) - compared against this session's own max to flag a bearing wearing out
+    /// even though the fan still spins and still ramps. Null for a non-fan reading, or a fan with
+    /// no prior session's high-water mark recorded yet.</summary>
+    public float? HistoricalMaxRpm { get; init; }
+
+    /// <summary>#614: true when this session's max RPM for this fan is 20%+ below
+    /// HistoricalMaxRpm - see the field's remarks. Null (not false) for any non-fan reading.</summary>
+    public bool? StepLossDetected { get; init; }
+
+    /// <summary>#616: true when this fan channel's name matched a pump/AIO hint ("Pump", "AIO",
+    /// "W_PUMP") - held to a different rule (near-constant RPM expected) than case fans, and
+    /// excluded from the #615 sibling-RPM "Slow" comparison since a pump's absolute RPM isn't
+    /// meaningfully comparable to a case fan's.</summary>
+    public bool IsPumpChannel { get; init; }
 }

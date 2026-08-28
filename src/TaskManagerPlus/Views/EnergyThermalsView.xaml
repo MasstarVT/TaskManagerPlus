@@ -50,9 +50,39 @@
                 </TextBlock>
             </Border>
 
+            <!-- #613: fan stall/hunting detector - distinct from the exactly-0-RPM dead-fan
+                 banner above (oscillation or sub-minimum dwell, a failing bearing or a
+                 badly-tuned firmware fan curve). Quick flag, not a verdict. -->
+            <Border Background="{DynamicResource BgElevatedBrush}" BorderBrush="{DynamicResource WarningBrush}"
+                    BorderThickness="1" CornerRadius="8" Padding="14,10" Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding FanHuntingDetected}" Value="True">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <TextBlock Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" FontSize="12.5">
+                    <Run Text="Fan hunting (quick flag, not a verdict): " /><Run Text="{Binding FanHuntingReason, Mode=OneWay}" />
+                </TextBlock>
+            </Border>
+
             <!-- #605: time-to-throttle header readout - falling time-to-throttle across weeks is
                  the clearest single signal of degrading cooling. -->
             <TextBlock Text="{Binding TimeToThrottleText}" FontSize="13" FontWeight="SemiBold"
+                       Foreground="{DynamicResource TextPrimaryBrush}" Margin="0,0,0,4" TextWrapping="Wrap" />
+
+            <!-- #618: cooldown-rate readout, alongside the time-to-throttle readout above. -->
+            <TextBlock Text="{Binding CooldownText}" FontSize="13" FontWeight="SemiBold"
+                       Foreground="{DynamicResource TextPrimaryBrush}" Margin="0,0,0,4" TextWrapping="Wrap" />
+
+            <!-- #617: heat-soak readout - burst vs. steady-state temperature under one sustained
+                 load, which needs a different fix (undersized cooler / hot case) than a high
+                 peak alone. -->
+            <TextBlock Text="{Binding HeatSoakText}" FontSize="13" FontWeight="SemiBold"
                        Foreground="{DynamicResource TextPrimaryBrush}" Margin="0,0,0,12" TextWrapping="Wrap" />
 
             <!-- Headline tiles -->
@@ -152,6 +182,43 @@
                     <Style TargetType="views:VfdMeter">
                         <Style.Triggers>
                             <DataTrigger Binding="{Binding StorageHotspotDeltaC}" Value="{x:Null}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </views:VfdMeter.Style>
+            </views:VfdMeter>
+
+            <!-- #619: ambient-temperature proxy - lowest of the motherboard "System"/drive
+                 temperatures during the most recent genuinely-idle window. Hidden until at least
+                 one idle window has completed. -->
+            <views:VfdMeter Title="Ambient (proxy)" Glow="False" Margin="0,0,0,16"
+                            ValueText="{Binding AmbientProxyC, StringFormat={}{0:0.#}, TargetNullValue=–}" Unit="°C"
+                            SubText="Lowest motherboard/drive reading during recent idle"
+                            AccentBrush="{DynamicResource TextSecondaryBrush}">
+                <views:VfdMeter.Style>
+                    <Style TargetType="views:VfdMeter">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding AmbientProxyC}" Value="{x:Null}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </views:VfdMeter.Style>
+            </views:VfdMeter>
+
+            <!-- #612: cooling delivered per RPM (power / temp-above-ambient / RPM) - a rising
+                 index means more RPM is needed for the same cooling, pointing at dust or a
+                 clogged heatsink. An arbitrary-but-consistent unit, only meaningful as a trend on
+                 this one machine. Hidden until an ambient proxy is available. -->
+            <views:VfdMeter Title="Fan efficiency index" Glow="False" Margin="0,0,0,16"
+                            ValueText="{Binding FanEfficiencyIndex, StringFormat={}{0:0.###}, TargetNullValue=–}"
+                            SubText="Cooling delivered per RPM — a rising trend suggests dust or a clogged heatsink"
+                            AccentBrush="{DynamicResource AccentBrush}">
+                <views:VfdMeter.Style>
+                    <Style TargetType="views:VfdMeter">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding FanEfficiencyIndex}" Value="{x:Null}">
                                 <Setter Property="Visibility" Value="Collapsed" />
                             </DataTrigger>
                         </Style.Triggers>
@@ -380,9 +447,19 @@
                  load temps. -->
             <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
                 <StackPanel>
-                    <TextBlock Text="Idle-temperature baseline" Style="{StaticResource CardTitle}" />
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Idle-temperature baseline" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <!-- #619: normalize-to-ambient toggle - without it, a hot summer looks
+                             identical to a dying cooler in this trend. -->
+                        <CheckBox Grid.Column="1" Content="Normalize to ambient" FontSize="11.5" VerticalAlignment="Center"
+                                  IsChecked="{Binding NormalizeToAmbient}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                    </Grid>
                     <TextBlock Text="Median CPU package temperature during genuinely idle windows, one point per day since first run. A rising floor at similar ambient conditions is a cleaner dust/pump-failure signal than load temps."
-                               Style="{StaticResource SubStat}" Margin="0,-6,0,10" TextWrapping="Wrap" />
+                               Style="{StaticResource SubStat}" Margin="0,-2,0,10" TextWrapping="Wrap" />
                     <lvc:CartesianChart Series="{Binding IdleBaselineSeries}" XAxes="{Binding IdleBaselineXAxes}" YAxes="{Binding IdleBaselineYAxes}"
                                          Height="160" TooltipPosition="Top" LegendPosition="Hidden" Background="Transparent" />
                     <TextBlock Text="No idle baseline recorded yet - stays idle (under 5% CPU) for 60 seconds to record the first point.">
@@ -397,6 +474,60 @@
                             </Style>
                         </TextBlock.Style>
                     </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- #618: cooldown-rate monthly trend - seconds to fall 20°C from peak once load
+                 drops from >80% to <10%. Cooldown slope is largely workload-independent, so a
+                 slowing trend degrades measurably as thermal paste dries out. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <TextBlock Text="Cooldown rate" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Average seconds to fall 20°C from peak after a sustained load ends, one point per month. A slowing trend at similar peak temperatures points at drying thermal paste rather than a workload change."
+                               Style="{StaticResource SubStat}" Margin="0,-6,0,10" TextWrapping="Wrap" />
+                    <lvc:CartesianChart Series="{Binding CooldownSeries}" XAxes="{Binding CooldownXAxes}" YAxes="{Binding CooldownYAxes}"
+                                         Height="140" TooltipPosition="Top" LegendPosition="Hidden" Background="Transparent" />
+                </StackPanel>
+            </Border>
+
+            <!-- #611: cooling-degradation card - for each (load, power) bucket with data spanning
+                 more than one calendar month, the delta between the most recent and earliest
+                 recorded month for that *same* bucket. Bucketing by load/power removes workload
+                 as a confounder that a naive "average temp is up" comparison would get wrong.
+                 Hidden entirely until at least one bucket has two months of data. -->
+            <Border Margin="0,16,0,0">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding CoolingDegradationRows.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Cooling degradation" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Same CPU load/power bucket, compared against the earliest recorded month for that bucket - removes 'the machine's been working harder lately' as a confounder."
+                               Style="{StaticResource SubStat}" Margin="0,-6,0,10" TextWrapping="Wrap" />
+                    <ItemsControl ItemsSource="{Binding CoolingDegradationRows}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock Text="{Binding BucketText}" FontSize="12" />
+                                        <TextBlock Text="{Binding ComparisonText}" Style="{StaticResource SubStat}" />
+                                    </StackPanel>
+                                    <TextBlock Grid.Column="1" VerticalAlignment="Center" FontSize="13" FontWeight="SemiBold"
+                                               Foreground="{DynamicResource WarningBrush}"
+                                               Text="{Binding DeltaC, StringFormat={}{0:+0.#;-0.#;0}°C}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
                 </StackPanel>
             </Border>
 
@@ -445,7 +576,7 @@
                 </Border.Style>
                 <StackPanel>
                     <TextBlock Text="Fan curve (primary CPU fan)" Style="{StaticResource CardTitle}" />
-                    <TextBlock Text="RPM vs. CPU temperature over the last few minutes - a fan that isn't ramping with temperature reads as a flat line instead of an upward trend."
+                    <TextBlock Text="RPM vs. CPU temperature over the last few minutes - a fan that isn't ramping with temperature reads as a flat line instead of an upward trend. The faint ghosted line, when present, is last month's fitted curve (#612) - shifted right means more RPM is now needed for the same temperature, pointing at dust or a clogged heatsink."
                                Style="{StaticResource SubStat}" Margin="0,-6,0,10" TextWrapping="Wrap" />
                     <lvc:CartesianChart Series="{Binding FanCurveSeries}" XAxes="{Binding FanCurveXAxes}" YAxes="{Binding FanCurveYAxes}"
                                          Height="180" TooltipPosition="Hidden" LegendPosition="Hidden" Background="Transparent" />
@@ -609,12 +740,121 @@
                 </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
                     <DataTemplate>
+                        <!-- #614/#615: per-fan status (OK/Slow/Stopped/Not reporting) instead of
+                             a single global dead-fan flag, plus the step-loss "was" comparison
+                             against this fan's historical RPM ceiling when it's dropped 20%+. -->
                         <views:VfdMeter Title="{Binding SensorName}" Glow="False" Width="172" Margin="0,0,8,8"
                                         ValueText="{Binding Value, StringFormat={}{0:0}, TargetNullValue=–}" Unit="RPM"
-                                        SubText="{Binding HardwareName}" AccentBrush="{DynamicResource AccentBrush}" />
+                                        SubText="{Binding HardwareName}" AccentBrush="{DynamicResource AccentBrush}">
+                            <views:VfdMeter.Style>
+                                <Style TargetType="views:VfdMeter">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding FanStatus}" Value="Slow">
+                                            <Setter Property="AccentBrush" Value="{DynamicResource WarningBrush}" />
+                                            <Setter Property="SubText" Value="Slow — well below sibling fans" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding FanStatus}" Value="Stopped">
+                                            <Setter Property="AccentBrush" Value="{DynamicResource DangerBrush}" />
+                                            <Setter Property="SubText" Value="Stopped" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding FanStatus}" Value="Not reporting">
+                                            <Setter Property="AccentBrush" Value="{DynamicResource TextSecondaryBrush}" />
+                                            <Setter Property="SubText" Value="Not reporting" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding StepLossDetected}" Value="True">
+                                            <Setter Property="AccentBrush" Value="{DynamicResource WarningBrush}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </views:VfdMeter.Style>
+                        </views:VfdMeter>
                     </DataTemplate>
                 </ItemsControl.ItemTemplate>
             </ItemsControl>
+
+            <!-- #614: RPM step-loss list - "Max RPM 1120 (was 1480)" for any fan whose session
+                 ceiling has dropped 20%+ below its historical max, a bearing wearing out even
+                 though the fan still spins. Hidden entirely when no fan currently qualifies. -->
+            <ItemsControl ItemsSource="{Binding Fans}" Margin="0,-8,0,16">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <TextBlock FontSize="11.5" Foreground="{DynamicResource WarningBrush}" Margin="0,0,0,3">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding StepLossDetected}" Value="True">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                            <Run Text="{Binding SensorName, Mode=OneWay}" /><Run Text=": Max RPM " />
+                            <Run Text="{Binding SessionMax, StringFormat={}{0:0}, Mode=OneWay}" />
+                            <Run Text=" (was " /><Run Text="{Binding HistoricalMaxRpm, StringFormat={}{0:0}, Mode=OneWay}" /><Run Text=")" />
+                        </TextBlock>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <!-- #616: coolant-pump variance card - a pump should hold a near-constant RPM, so
+                 variance (not absolute RPM) is the fault signal, unlike the case fans above.
+                 Hidden entirely when no channel matched a Pump/AIO/W_PUMP name hint. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding CoolantPumps.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Coolant pump" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="A pump should run at a near-constant RPM - rising variance, not absolute RPM, is the fault signal here."
+                               Style="{StaticResource SubStat}" Margin="0,-6,0,10" TextWrapping="Wrap" />
+                    <ItemsControl ItemsSource="{Binding CoolantPumps}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock FontSize="12">
+                                            <Run Text="{Binding Name}" />
+                                            <Run Text=" — " /><Run Text="{Binding CurrentRpm, StringFormat={}{0:0} RPM}" />
+                                        </TextBlock>
+                                        <TextBlock Style="{StaticResource SubStat}">
+                                            <Run Text="{Binding MeanRpm, StringFormat={}Mean {0:0} RPM}" />
+                                            <Run Text=" · " /><Run Text="{Binding CoefficientOfVariation, StringFormat={}{0:0.0%} variation}" />
+                                        </TextBlock>
+                                    </StackPanel>
+                                    <Border Grid.Column="1" CornerRadius="10" Padding="8,3" VerticalAlignment="Center"
+                                            Background="{DynamicResource BgElevatedBrush}">
+                                        <TextBlock FontSize="11.5" FontWeight="SemiBold">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Text" Value="Stable" />
+                                                    <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsVariable}" Value="True">
+                                                            <Setter Property="Text" Value="Variable — check pump" />
+                                                            <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </Border>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
 
             <!-- Voltages -->
             <TextBlock Text="Voltages" Style="{StaticResource SubStat}" Margin="0,0,0,10" />

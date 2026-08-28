@@ -40,15 +40,17 @@ public static class ThermalBaselineService
     }
 
     /// <summary>Adds or overwrites today's entry (one per calendar day) with the median idle
-    /// temperature just measured. Best-effort, same as every other settings write in this app.</summary>
-    public static void RecordToday(double medianIdleTempC)
+    /// temperature just measured, plus #619's ambient-proxy reading from the same idle window
+    /// (null when no motherboard "System"/drive sensor was reporting). Best-effort, same as every
+    /// other settings write in this app.</summary>
+    public static void RecordToday(double medianIdleTempC, double? ambientProxyC = null)
     {
         try
         {
             var list = Load();
             var today = DateTime.Now.Date;
             list.RemoveAll(e => e.Date == today);
-            list.Add(new ThermalBaselineEntry { Date = today, MedianIdleTempC = medianIdleTempC });
+            list.Add(new ThermalBaselineEntry { Date = today, MedianIdleTempC = medianIdleTempC, AmbientProxyC = ambientProxyC });
             list = list.OrderBy(e => e.Date).ToList();
             if (list.Count > MaxEntries) list = list.Skip(list.Count - MaxEntries).ToList();
 
