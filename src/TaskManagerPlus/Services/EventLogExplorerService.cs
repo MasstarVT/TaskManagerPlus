@@ -1,5 +1,8 @@
 using System.Diagnostics.Eventing.Reader;
+using System.IO;
 using System.Security.Principal;
+using System.Text.RegularExpressions;
+using System.Xml.Linq;
 using TaskManagerPlus.Models;
 
 namespace TaskManagerPlus.Services;
@@ -182,13 +185,13 @@ public sealed class EventLogExplorerService
     /// on-demand service call in this app. Keeps at most one page's worth of EventRecord objects
     /// alive at a time rather than materializing the whole log, so a 100MB channel opens as fast
     /// as its first ~500 records instead of being read in full up front.</summary>
-    public EventReadResult ReadPage(string channelName, string xpath, EventBookmark? bookmark, int pageSize = 500)
+    public EventReadResult ReadPage(string channelName, string xpath, EventBookmark? bookmark, int pageSize = 500, PathType pathType = PathType.LogName)
     {
         var rows = new List<EventRecordRow>(pageSize);
         EventBookmark? lastBookmark = bookmark;
         try
         {
-            var query = new EventLogQuery(channelName, PathType.LogName, xpath) { ReverseDirection = true };
+            var query = new EventLogQuery(channelName, pathType, xpath) { ReverseDirection = true };
             using var reader = bookmark is null ? new EventLogReader(query) : new EventLogReader(query, bookmark);
 
             // Continuing from a bookmark re-returns the bookmarked record itself first (documented
@@ -232,6 +235,23 @@ public sealed class EventLogExplorerService
 
     private EventRecordRow ConvertRecord(EventRecord record, string channelName)
     {
+        // #112: a multi-channel structured query (ReadMultiChannel) has no single "the channel" -
+        // callers pass string.Empty for channelName in that case and this falls back to the
+        // record's own LogName (which EventRecord always knows, regardless of query shape) so each
+        // row still shows which channel it actually came from.
+        string actualChannel = channelName;
+        try
+        {
+            var logName = record.LogName;
+            if (!string.IsNullOrEmpty(logName)) actualChannel = logName;
+        }
+        catch { /* keep whatever channelName the caller already knew */ }
+
+        Guid? activityId = null;
+        try { activityId = record.ActivityId; } catch { }
+        Guid? relatedActivityId = null;
+        try { relatedActivityId = record.RelatedActivityId; } catch { }
+
         string message;
         try { message = record.FormatDescription() ?? string.Empty; }
         catch { message = string.Empty; } // provider's message file isn't registered - #105 falls back to raw XML
@@ -275,7 +295,7 @@ public sealed class EventLogExplorerService
         return new EventRecordRow
         {
             TimeCreated = record.TimeCreated ?? DateTime.MinValue,
-            ChannelName = channelName,
+            ChannelName = actualChannel,
             Level = level,
             LevelValue = record.Level ?? 0,
             ProviderName = record.ProviderName ?? string.Empty,
@@ -289,6 +309,8 @@ public sealed class EventLogExplorerService
             RawXml = rawXml,
             PropertyValues = properties,
             Bookmark = SafeBookmark(record),
+            ActivityId = activityId,
+            RelatedActivityId = relatedActivityId,
         };
     }
 
@@ -369,5 +391,398 @@ public sealed class EventLogExplorerService
             onError?.Invoke(ex.Message);
             return null;
         }
+    }
+
+    // ---- #109: import/export Event Viewer custom views ----
+
+    private static string CustomViewsDirectory =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Microsoft", "Event Viewer", "Views");
+
+    /// <summary>#109: parses every *.xml file under %ProgramData%\Microsoft\Event Viewer\Views -
+    /// the same folder Event Viewer itself stores "Create Custom View..." definitions in - and
+    /// offers each as an importable saved filter, so a view a user already built in the real Event
+    /// Viewer works here without re-authoring its XPath by hand. A file that isn't the expected
+    /// ViewerConfig shape, or fails to parse at all, is skipped rather than aborting the whole
+    /// scan (same "one bad item shouldn't drop the rest" pattern GetProviderMetadata below uses).</summary>
+    public List<ImportableCustomView> GetImportableCustomViews()
+    {
+        var results = new List<ImportableCustomView>();
+        string dir;
+        try { dir = CustomViewsDirectory; } catch { return results; }
+        if (!Directory.Exists(dir)) return results;
+
+        IEnumerable<string> files;
+        try { files = Directory.EnumerateFiles(dir, "*.xml"); }
+        catch { return results; }
+
+        foreach (var file in files)
+        {
+            try
+            {
+                var doc = XDocument.Load(file);
+                var queryNode = doc.Root?.Element("QueryConfig")?.Element("QueryNode");
+                if (queryNode is null) continue;
+
+                string name = queryNode.Element("Name")?.Value?.Trim() is { Length: > 0 } n
+                    ? n
+                    : Path.GetFileNameWithoutExtension(file);
+
+                var selects = queryNode.Element("QueryList")?.Elements("Query").Elements("Select").ToList()
+                    ?? new List<XElement>();
+                if (selects.Count == 0) continue;
+
+                var channels = selects
+                    .Select(s => s.Attribute("Path")?.Value ?? string.Empty)
+                    .Where(c => c.Length > 0)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                // Event Viewer repeats (usually) the same XPath fragment per <Select> when one view
+                // spans several channels - the first one is a reasonable single XPath to carry
+                // forward into this app's one-XPath-per-filter model.
+                string xpath = selects[0].Value?.Trim() is { Length: > 0 } x ? x : "*";
+
+                results.Add(new ImportableCustomView { Name = name, Channels = channels, XPath = xpath, SourceFilePath = file });
+            }
+            catch
+            {
+                // Not a recognizable custom-view XML (or unreadable/locked) - skip this file, keep scanning.
+            }
+        }
+        return results;
+    }
+
+    /// <summary>#109 export half: writes a filter as a minimal Event-Viewer-compatible custom view
+    /// XML, so a filter built in this app shows up under Event Viewer's own "Custom Views" node
+    /// too. Covers the subset of ViewerConfig/QueryConfig Event Viewer actually needs to open a
+    /// view (Name + one &lt;Select&gt; per channel) - not every field Event Viewer's own "New
+    /// Custom View" wizard can produce, since this app has no equivalent UI for those (e.g.
+    /// by-source event selection).</summary>
+    public bool ExportCustomView(SavedEventFilter filter, string path)
+    {
+        try
+        {
+            var channels = filter.Channels.Count > 0 ? filter.Channels : new List<string> { "System" };
+            var queryList = new XElement("QueryList",
+                new XElement("Query", new XAttribute("Id", "0"), new XAttribute("Path", channels[0]),
+                    channels.Select(c => new XElement("Select", new XAttribute("Path", c), filter.XPath))));
+
+            var viewerConfig = new XElement("ViewerConfig",
+                new XElement("QueryConfig",
+                    new XElement("QueryParams", new XElement("UserQuery")),
+                    new XElement("QueryNode",
+                        new XElement("Name", filter.Name),
+                        new XElement("Description", "Exported from Task Manager Plus"),
+                        queryList)));
+
+            var dir = Path.GetDirectoryName(path);
+            if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+            File.WriteAllText(path, new XDocument(viewerConfig).ToString());
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    // ---- #110: open an external .evtx file ----
+
+    /// <summary>#110: the %SystemRoot%\System32\Winevt\Logs\Archive-*.evtx autobackup files Windows
+    /// creates when a channel with auto-backup logging hits its size cap - offered as a "Recent
+    /// archives" quick-pick next to the general Open .evtx file picker. Sorted newest-first;
+    /// returns an empty list (never throws) if the Logs folder can't be enumerated at all.</summary>
+    public List<RecentArchiveEntry> GetRecentArchives()
+    {
+        var results = new List<RecentArchiveEntry>();
+        try
+        {
+            string logsDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "Winevt", "Logs");
+            if (!Directory.Exists(logsDir)) return results;
+
+            foreach (var file in Directory.EnumerateFiles(logsDir, "Archive-*.evtx"))
+            {
+                try
+                {
+                    var info = new FileInfo(file);
+                    results.Add(new RecentArchiveEntry
+                    {
+                        Path = file,
+                        FileName = info.Name,
+                        LastWriteTimeUtc = info.LastWriteTimeUtc,
+                        SizeBytes = info.Length,
+                    });
+                }
+                catch { /* one unreadable archive file shouldn't drop the rest */ }
+            }
+        }
+        catch { /* Logs folder unreadable - empty list */ }
+
+        results.Sort((a, b) => b.LastWriteTimeUtc.CompareTo(a.LastWriteTimeUtc));
+        return results;
+    }
+
+    /// <summary>#110: builds a channel-tree leaf for an arbitrary .evtx file (picked via
+    /// OpenFileDialog or one of the recent-archives quick-picks), the same shape ReadPage/
+    /// StartWatch already understand via PathType.FilePath. Returns null if the file doesn't exist
+    /// or can't even be opened for a basic info read - degrade to "can't open this", never a
+    /// half-populated node.</summary>
+    public EventChannelNode? OpenEvtxFile(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) return null;
+
+        try
+        {
+            var info = EventLogSession.GlobalSession.GetLogInformation(path, PathType.FilePath);
+            return new EventChannelNode
+            {
+                Name = path,
+                DisplayName = Path.GetFileName(path),
+                Group = EventChannelGroup.AppsAndServices,
+                IsAccessible = true,
+                IsFilePath = true,
+                RecordCount = info.RecordCount,
+                LastWriteTime = info.LastWriteTime,
+            };
+        }
+        catch
+        {
+            // Corrupt file / not a valid .evtx / locked by another process - nothing usable to show.
+            return null;
+        }
+    }
+
+    // ---- #111: cross-channel full-text search (button-gated) ----
+
+    public sealed class CrossChannelSearchProgress
+    {
+        public string CurrentChannel { get; init; } = string.Empty;
+        public int ChannelsCompleted { get; init; }
+        public int ChannelsTotal { get; init; }
+        public int MatchesSoFar { get; init; }
+    }
+
+    /// <summary>#111: an explicit, button-gated sweep across every readable channel - level/time
+    /// bounded via <paramref name="xpath"/> (built by the caller from the same filter bar a
+    /// single-channel query uses), then a client-side substring or regex match against each
+    /// record's formatted description (full-text search isn't reliably expressible as XPath across
+    /// every provider's schema - same reasoning EventFilterCriteria.Keyword's remarks give for the
+    /// single-channel case). Capped per-channel and in total, and cooperatively cancellable via
+    /// <paramref name="ct"/> - this is a "quick flag, not an exhaustive audit" sweep of a busy
+    /// machine's logs, not a guarantee every matching record was seen, which is exactly why it's
+    /// gated behind an explicit button rather than ever running on a tick.</summary>
+    public List<EventRecordRow> SearchAllChannels(string xpath, string? keyword, bool isRegex, int maxPerChannel, int maxTotalResults, IProgress<CrossChannelSearchProgress>? progress, CancellationToken ct)
+    {
+        var results = new List<EventRecordRow>();
+
+        List<string> channels;
+        try
+        {
+            channels = EventLogSession.GlobalSession.GetLogNames()
+                .Where(n =>
+                {
+                    try { return EventLogSession.GlobalSession.GetLogInformation(n, PathType.LogName).RecordCount is > 0; }
+                    catch { return false; }
+                })
+                .ToList();
+        }
+        catch { return results; }
+
+        Regex? regex = null;
+        if (isRegex && !string.IsNullOrWhiteSpace(keyword))
+        {
+            try { regex = new Regex(keyword, RegexOptions.IgnoreCase | RegexOptions.Compiled); }
+            catch { return results; } // invalid pattern - degrade to no results rather than throw
+        }
+
+        int completed = 0;
+        foreach (var channel in channels)
+        {
+            ct.ThrowIfCancellationRequested();
+            progress?.Report(new CrossChannelSearchProgress { CurrentChannel = channel, ChannelsCompleted = completed, ChannelsTotal = channels.Count, MatchesSoFar = results.Count });
+
+            try
+            {
+                var query = new EventLogQuery(channel, PathType.LogName, xpath) { ReverseDirection = true };
+                using var reader = new EventLogReader(query);
+                int readInChannel = 0;
+                while (readInChannel < maxPerChannel && results.Count < maxTotalResults)
+                {
+                    if (readInChannel % 200 == 0) ct.ThrowIfCancellationRequested();
+
+                    using var record = reader.ReadEvent();
+                    if (record is null) break;
+                    readInChannel++;
+
+                    string message;
+                    try { message = record.FormatDescription() ?? string.Empty; }
+                    catch { message = string.Empty; }
+
+                    bool isMatch = string.IsNullOrWhiteSpace(keyword)
+                        || (regex is not null ? regex.IsMatch(message) : message.Contains(keyword!, StringComparison.OrdinalIgnoreCase));
+                    if (isMatch) results.Add(ConvertRecord(record, channel));
+                }
+            }
+            catch (OperationCanceledException) { throw; }
+            catch
+            {
+                // This one channel became unreadable mid-sweep (permissions, cleared/rotated
+                // between the tree scan and now, etc.) - skip it, keep going with the rest.
+            }
+
+            completed++;
+            if (results.Count >= maxTotalResults) break;
+        }
+
+        progress?.Report(new CrossChannelSearchProgress { CurrentChannel = "Done", ChannelsCompleted = completed, ChannelsTotal = channels.Count, MatchesSoFar = results.Count });
+        return results;
+    }
+
+    // ---- #112: one structured query across several channels at once ----
+
+    /// <summary>#112: builds an EvtQuery structured-XML string with one &lt;Select Path="..."&gt;
+    /// per channel, so "all Errors from System + Application + ..." is a single time-ordered
+    /// EventLogReader pass instead of N sequential ReadPage calls merged in memory afterward.
+    /// Channel names and the XPath are inserted as XElement content/attributes, which handles all
+    /// XML escaping (an XPath predicate routinely contains &lt;/&gt;/&amp;/quotes) rather than
+    /// hand-building the string.</summary>
+    public static string BuildStructuredQuery(IEnumerable<string> channels, string xpath)
+    {
+        var distinctChannels = channels
+            .Where(c => !string.IsNullOrWhiteSpace(c))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var query = new XElement("Query", new XAttribute("Id", "0"));
+        foreach (var channel in distinctChannels)
+            query.Add(new XElement("Select", new XAttribute("Path", channel), xpath));
+
+        return new XElement("QueryList", query).ToString(SaveOptions.DisableFormatting);
+    }
+
+    /// <summary>#112: reads one page from a structured multi-channel query built by
+    /// BuildStructuredQuery - same paging/bookmark contract as ReadPage, just against
+    /// PathType.LogName with path=null (the structured XML itself carries every channel). Each
+    /// row's ChannelName comes back correctly per-record via ConvertRecord's LogName fallback,
+    /// since a multi-channel result set has no single "the channel" to pass in up front.</summary>
+    public EventReadResult ReadMultiChannel(string structuredXml, EventBookmark? bookmark, int pageSize = 500)
+    {
+        var rows = new List<EventRecordRow>(pageSize);
+        EventBookmark? lastBookmark = bookmark;
+        try
+        {
+            var query = new EventLogQuery(null, PathType.LogName, structuredXml) { ReverseDirection = true };
+            using var reader = bookmark is null ? new EventLogReader(query) : new EventLogReader(query, bookmark);
+
+            bool skipFirst = bookmark is not null;
+            int count = 0;
+            while (count < pageSize)
+            {
+                using var record = reader.ReadEvent();
+                if (record is null) break;
+
+                if (skipFirst)
+                {
+                    skipFirst = false;
+                    lastBookmark = SafeBookmark(record) ?? lastBookmark;
+                    continue;
+                }
+
+                rows.Add(ConvertRecord(record, string.Empty));
+                lastBookmark = SafeBookmark(record) ?? lastBookmark;
+                count++;
+            }
+
+            return new EventReadResult { Rows = rows, Bookmark = lastBookmark, HasMore = rows.Count == pageSize };
+        }
+        catch (Exception ex)
+        {
+            return new EventReadResult { ErrorText = ex.Message };
+        }
+    }
+
+    // ---- #113: provider catalog browser ----
+
+    /// <summary>#113: every provider registered on this machine (session.GetProviderNames()),
+    /// sorted for a browsable list - just names, cheap enough to call eagerly when the catalog
+    /// panel opens (the expensive part is GetProviderMetadata per selected provider, below).</summary>
+    public List<string> GetProviderNames()
+    {
+        try { return EventLogSession.GlobalSession.GetProviderNames().OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList(); }
+        catch { return new List<string>(); }
+    }
+
+    /// <summary>#113: every event ID one provider's manifest declares it can emit
+    /// (ProviderMetadata.Events), with level/task/opcode/keywords/message-template plus which
+    /// channels it writes to (ProviderMetadata.LogLinks) - the built-in, always-accurate answer to
+    /// "what does provider X's event 129 even mean," needing no bundled lookup data. A provider
+    /// with no locally-registered manifest (common for a remote-only or uninstalled provider name)
+    /// comes back as an empty list, never a guessed one; one malformed event definition inside an
+    /// otherwise-good manifest is skipped rather than dropping the whole catalog.</summary>
+    public List<ProviderEventMetadataRow> GetProviderMetadata(string providerName)
+    {
+        var rows = new List<ProviderEventMetadataRow>();
+        if (string.IsNullOrWhiteSpace(providerName)) return rows;
+
+        try
+        {
+            using var metadata = new ProviderMetadata(providerName);
+
+            var channels = new List<string>();
+            try { channels = metadata.LogLinks.Select(l => l.LogName).Where(n => !string.IsNullOrEmpty(n)).Distinct(StringComparer.OrdinalIgnoreCase).ToList(); }
+            catch { /* channel links unavailable - the per-event metadata below is still useful without it */ }
+            string channelsJoined = string.Join(", ", channels);
+
+            IEnumerable<EventMetadata> events;
+            try { events = metadata.Events; }
+            catch { return rows; } // no locally-registered manifest for this provider - empty, not fabricated
+
+            foreach (var evt in events)
+            {
+                try
+                {
+                    rows.Add(new ProviderEventMetadataRow
+                    {
+                        EventId = (int)evt.Id,
+                        Version = evt.Version,
+                        Level = SafeDisplayName(() => evt.Level?.DisplayName, () => evt.Level?.Name),
+                        Task = SafeDisplayName(() => evt.Task?.DisplayName, () => evt.Task?.Name),
+                        Opcode = SafeDisplayName(() => evt.Opcode?.DisplayName, () => evt.Opcode?.Name),
+                        Keywords = SafeKeywordList(evt),
+                        Channels = channelsJoined,
+                        Template = SafeTemplate(evt),
+                    });
+                }
+                catch { /* one malformed event definition shouldn't drop the whole catalog */ }
+            }
+        }
+        catch
+        {
+            // Provider not registered on this machine, or its metadata is otherwise inaccessible -
+            // empty catalog, per #113's "machine-accurate, never fabricated" contract.
+        }
+        return rows;
+    }
+
+    private static string SafeDisplayName(Func<string?> primary, Func<string?> fallback)
+    {
+        try { if (primary() is { Length: > 0 } v) return v; } catch { }
+        try { if (fallback() is { Length: > 0 } v) return v; } catch { }
+        return "Unknown";
+    }
+
+    private static string SafeKeywordList(EventMetadata evt)
+    {
+        try
+        {
+            return string.Join(", ", evt.Keywords
+                .Select(k => { try { return k.DisplayName ?? k.Name; } catch { return null; } })
+                .Where(s => !string.IsNullOrWhiteSpace(s)));
+        }
+        catch { return string.Empty; }
+    }
+
+    private static string SafeTemplate(EventMetadata evt)
+    {
+        try { return evt.Template ?? string.Empty; } catch { return string.Empty; }
     }
 }

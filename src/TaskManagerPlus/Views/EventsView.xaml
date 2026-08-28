@@ -79,6 +79,10 @@
                                                  Background="Transparent" BorderThickness="0"
                                                  Command="{Binding DataContext.ApplyFilterCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                                  CommandParameter="{Binding}" />
+                                        <Button Content=" ⇩" FontSize="10.5" Padding="0" Margin="4,0,0,0"
+                                                 Background="Transparent" BorderThickness="0" Foreground="{DynamicResource TextSecondaryBrush}"
+                                                 Command="{Binding DataContext.ExportFilterCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                 CommandParameter="{Binding}" ToolTip="Export as an Event Viewer custom view (#109)" />
                                         <Button Content=" ✕" FontSize="10.5" Padding="0" Margin="4,0,0,0"
                                                  Background="Transparent" BorderThickness="0" Foreground="{DynamicResource TextSecondaryBrush}"
                                                  Command="{Binding DataContext.DeleteFilterCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
@@ -91,6 +95,125 @@
                     <TextBox Text="{Binding NewFilterName, UpdateSourceTrigger=PropertyChanged}" Width="140" Margin="10,0,8,0" />
                     <Button Content="Save current as filter" Command="{Binding SaveFilterCommand}" Padding="8,3" />
                 </StackPanel>
+
+                <!-- #109-114, #116: everything a power user needs but not every session - import/
+                     export, opening external .evtx files, the button-gated cross-channel search,
+                     the multi-channel structured query, the provider catalog, "copy current view",
+                     and the grid's grouping/correlation-column toggles. Collapsed by default so the
+                     always-visible filter bar above stays uncluttered. -->
+                <Expander Header="More tools" Margin="0,10,0,0" FontSize="11.5">
+                    <StackPanel Margin="0,10,0,0">
+
+                        <!-- #116: grouping + correlation columns -->
+                        <WrapPanel Margin="0,0,0,10">
+                            <TextBlock Text="Group by:" VerticalAlignment="Center" Margin="0,0,6,0" Foreground="{DynamicResource TextSecondaryBrush}" />
+                            <ComboBox Width="100" SelectedValuePath="Content" SelectedValue="{Binding GroupBy}" Margin="0,0,18,0">
+                                <ComboBoxItem Content="None" />
+                                <ComboBoxItem Content="Provider" />
+                                <ComboBoxItem Content="EventId" />
+                            </ComboBox>
+                            <CheckBox Content="Show correlation ID columns" IsChecked="{Binding ShowCorrelationColumns}" VerticalAlignment="Center" Margin="0,0,18,0" />
+                            <TextBlock Text="{Binding EvidenceBundle.Count, StringFormat='Evidence bundle: {0} item(s)'}" VerticalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        </WrapPanel>
+
+                        <!-- #114: copy the active filter as a reproducible command line -->
+                        <WrapPanel Margin="0,0,0,10">
+                            <Button Content="Copy as wevtutil command" Command="{Binding CopyAsWevtutilCommand}" Padding="8,3" Margin="0,0,8,0" />
+                            <Button Content="Copy as PowerShell command" Command="{Binding CopyAsPowerShellCommand}" Padding="8,3" />
+                        </WrapPanel>
+
+                        <!-- #110: open an external .evtx file / recent archive quick-picks -->
+                        <WrapPanel Margin="0,0,0,10">
+                            <Button Content="Open .evtx file..." Command="{Binding OpenEvtxFileCommand}" Padding="8,3" Margin="0,0,8,0" />
+                            <Button Content="Refresh recent archives" Command="{Binding RefreshRecentArchivesCommand}" Padding="8,3" Margin="0,0,8,0" />
+                            <ItemsControl ItemsSource="{Binding RecentArchives}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate DataType="{x:Type models:RecentArchiveEntry}">
+                                        <Button Content="{Binding FileName}" FontSize="11" Padding="6,2" Margin="0,0,6,0"
+                                                 Command="{Binding DataContext.OpenArchiveCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                 CommandParameter="{Binding}" ToolTip="{Binding Path}" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </WrapPanel>
+
+                        <!-- #111: cross-channel full-text search, button-gated with progress + cancel -->
+                        <WrapPanel Margin="0,0,0,4">
+                            <Button Content="Search all channels" Command="{Binding SearchAllChannelsCommand}" Padding="8,3" Margin="0,0,8,0"
+                                     ToolTip="Uses the Level/Provider/Event IDs/Lookback filters above as bounds, and Keyword as the text to match - can take a while on a busy machine." />
+                            <CheckBox Content="Regex" IsChecked="{Binding IsRegexSearch}" VerticalAlignment="Center" Margin="0,0,8,0" />
+                            <Button Content="Cancel" Command="{Binding CancelSearchCommand}" Padding="8,3" Margin="0,0,8,0" />
+                            <ProgressBar Width="110" Height="6" IsIndeterminate="{Binding IsSearchingAllChannels}" VerticalAlignment="Center" Margin="0,0,8,0" />
+                            <TextBlock Text="{Binding SearchProgressText}" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" />
+                        </WrapPanel>
+                        <DataGrid ItemsSource="{Binding SearchResults}" SelectedItem="{Binding SelectedEvent}"
+                                   IsReadOnly="True" AutoGenerateColumns="False" MaxHeight="200" Margin="0,0,0,10">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Time" Binding="{Binding TimeCreated, StringFormat={}{0:g}}" Width="130" />
+                                <DataGridTextColumn Header="Channel" Binding="{Binding ChannelName}" Width="140" />
+                                <DataGridTextColumn Header="Level" Binding="{Binding Level}" Width="70" />
+                                <DataGridTextColumn Header="Provider" Binding="{Binding ProviderName}" Width="*" />
+                                <DataGridTextColumn Header="Event ID" Binding="{Binding EventId}" Width="70" />
+                            </DataGrid.Columns>
+                        </DataGrid>
+
+                        <!-- #112: one structured query across every checked channel in the tree -->
+                        <WrapPanel Margin="0,0,0,4">
+                            <Button Content="Multi-channel query (checked channels)" Command="{Binding RunMultiChannelQueryCommand}" Padding="8,3" Margin="0,0,8,0"
+                                     ToolTip="Uses whichever channels are checked in the tree on the left (or every accessible channel if none are checked), with the XPath box above." />
+                            <Button Content="Load more" Command="{Binding LoadMoreMultiChannelCommand}" Padding="8,3" Margin="0,0,8,0">
+                                <Button.Style>
+                                    <Style TargetType="Button">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding HasMoreMultiChannel}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Button.Style>
+                            </Button>
+                            <TextBlock Text="{Binding MultiChannelStatusText}" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" />
+                        </WrapPanel>
+                        <DataGrid ItemsSource="{Binding MultiChannelResults}" SelectedItem="{Binding SelectedEvent}"
+                                   IsReadOnly="True" AutoGenerateColumns="False" MaxHeight="200" Margin="0,0,0,10">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Time" Binding="{Binding TimeCreated, StringFormat={}{0:g}}" Width="130" />
+                                <DataGridTextColumn Header="Channel" Binding="{Binding ChannelName}" Width="140" />
+                                <DataGridTextColumn Header="Level" Binding="{Binding Level}" Width="70" />
+                                <DataGridTextColumn Header="Provider" Binding="{Binding ProviderName}" Width="*" />
+                                <DataGridTextColumn Header="Event ID" Binding="{Binding EventId}" Width="70" />
+                            </DataGrid.Columns>
+                        </DataGrid>
+
+                        <!-- #113: provider catalog toggle (panel itself overlays the three-pane area below) -->
+                        <WrapPanel Margin="0,0,0,10">
+                            <ToggleButton Content="Provider catalog" IsChecked="{Binding IsProviderCatalogOpen}" Padding="8,3" />
+                        </WrapPanel>
+
+                        <!-- #109: import Event Viewer's own custom views / export a saved filter back to one -->
+                        <WrapPanel>
+                            <Button Content="Scan Event Viewer custom views" Command="{Binding ScanCustomViewsCommand}" Padding="8,3" Margin="0,0,8,0" />
+                            <ItemsControl ItemsSource="{Binding ImportableCustomViews}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate DataType="{x:Type models:ImportableCustomView}">
+                                        <Button FontSize="11" Padding="6,2" Margin="0,0,6,4"
+                                                 Command="{Binding DataContext.ImportCustomViewCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                 CommandParameter="{Binding}" ToolTip="{Binding SourceFilePath}">
+                                            <TextBlock Text="{Binding Name, StringFormat='Import &quot;{0}&quot;'}" />
+                                        </Button>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </WrapPanel>
+                    </StackPanel>
+                </Expander>
 
                 <TextBlock Text="{Binding StatusText}" Margin="0,8,0,0" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}">
                     <TextBlock.Style>
@@ -144,7 +267,25 @@
                         <TreeView.ItemTemplate>
                             <HierarchicalDataTemplate ItemsSource="{Binding Children}">
                                 <StackPanel Orientation="Horizontal" Margin="0,1">
-                                    <TextBlock Text="{Binding DisplayName}" FontSize="12" TextTrimming="CharacterEllipsis" MaxWidth="160" />
+                                    <!-- #112: multi-select checkbox feeding "Multi-channel query" -
+                                         hidden for group headings and inaccessible leaves. -->
+                                    <CheckBox IsChecked="{Binding IsSelectedForMulti, Mode=TwoWay}" VerticalAlignment="Center" Margin="0,0,4,0"
+                                               ToolTip="Include in Multi-channel query (#112)">
+                                        <CheckBox.Style>
+                                            <Style TargetType="CheckBox">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsGroup}" Value="True">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding IsAccessible}" Value="False">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </CheckBox.Style>
+                                    </CheckBox>
+                                    <TextBlock Text="{Binding DisplayName}" FontSize="12" TextTrimming="CharacterEllipsis" MaxWidth="150" />
                                     <TextBlock Text=" (no access)" FontSize="10.5" Foreground="{DynamicResource DangerBrush}">
                                         <TextBlock.Style>
                                             <Style TargetType="TextBlock">
@@ -203,7 +344,7 @@
                             </Button.Style>
                         </Button>
                     </Grid>
-                    <DataGrid ItemsSource="{Binding Events}" SelectedItem="{Binding SelectedEvent}"
+                    <DataGrid x:Name="EventsGrid" ItemsSource="{Binding EventsView}" SelectedItem="{Binding SelectedEvent}"
                                Margin="4,10,4,0"
                                VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
                                EnableRowVirtualization="True" ScrollViewer.CanContentScroll="True">
@@ -212,6 +353,53 @@
                                 <Setter Property="ToolTip" Value="{Binding Message}" />
                             </Style>
                         </DataGrid.RowStyle>
+                        <!-- #116: optional grouping by provider or event ID, each group header showing
+                             a count - collapses e.g. 400 identical DistributedCOM rows into one. -->
+                        <DataGrid.GroupStyle>
+                            <GroupStyle>
+                                <GroupStyle.HeaderTemplate>
+                                    <DataTemplate>
+                                        <TextBlock FontWeight="SemiBold" FontSize="11.5" Margin="2,8,0,2"
+                                                    Foreground="{DynamicResource TextPrimaryBrush}">
+                                            <Run Text="{Binding Name, Mode=OneWay}" /><Run Text=" (" /><Run Text="{Binding ItemCount, Mode=OneWay}" /><Run Text=")" />
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </GroupStyle.HeaderTemplate>
+                            </GroupStyle>
+                        </DataGrid.GroupStyle>
+                        <!-- #115: row-level actions - Explain (stub, see #117), copy XML/Markdown,
+                             quick re-filters, a time-bounded multi-channel lookup, and the evidence
+                             bundle. Attached to the DataGrid itself (not per-row) so
+                             PlacementTarget.DataContext/SelectedItem resolve cleanly through the
+                             detached ContextMenu popup. -->
+                        <DataGrid.ContextMenu>
+                            <ContextMenu>
+                                <MenuItem Header="Explain (preview)"
+                                           Command="{Binding PlacementTarget.DataContext.ExplainEventCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                           CommandParameter="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                <Separator />
+                                <MenuItem Header="Copy XML"
+                                           Command="{Binding PlacementTarget.DataContext.CopyEventXmlCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                           CommandParameter="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                <MenuItem Header="Copy as Markdown"
+                                           Command="{Binding PlacementTarget.DataContext.CopyEventMarkdownCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                           CommandParameter="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                <Separator />
+                                <MenuItem Header="Filter to this Event ID"
+                                           Command="{Binding PlacementTarget.DataContext.FilterToEventIdCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                           CommandParameter="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                <MenuItem Header="Filter to this provider"
+                                           Command="{Binding PlacementTarget.DataContext.FilterToProviderCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                           CommandParameter="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                <MenuItem Header="Show +/-5 minutes across all channels"
+                                           Command="{Binding PlacementTarget.DataContext.ShowAroundTimeCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                           CommandParameter="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                <Separator />
+                                <MenuItem Header="Add to evidence bundle"
+                                           Command="{Binding PlacementTarget.DataContext.AddToEvidenceCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                           CommandParameter="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                            </ContextMenu>
+                        </DataGrid.ContextMenu>
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="Time" Binding="{Binding TimeCreated, StringFormat={}{0:g}}" Width="140" />
                             <DataGridTemplateColumn Header="Level" Width="80" SortMemberPath="Level">
@@ -251,6 +439,13 @@
                             <DataGridTextColumn Header="Record ID" Binding="{Binding RecordId}" Width="80" />
                             <DataGridTextColumn Header="PID" Binding="{Binding ProcessId}" Width="60" />
                             <DataGridTextColumn Header="User" Binding="{Binding UserSid}" Width="1.2*" />
+                            <!-- #116: correlation columns - hidden unless explicitly toggled on via
+                                 the filter bar's "More tools" expander, since most events don't set
+                                 either field and they add little value by default. -->
+                            <DataGridTextColumn Header="Activity ID" Binding="{Binding ActivityId}" Width="130"
+                                                  Visibility="{Binding DataContext.ShowCorrelationColumns, ElementName=EventsGrid, Converter={StaticResource BoolToVisibilityConverter}}" />
+                            <DataGridTextColumn Header="Related Activity ID" Binding="{Binding RelatedActivityId}" Width="130"
+                                                  Visibility="{Binding DataContext.ShowCorrelationColumns, ElementName=EventsGrid, Converter={StaticResource BoolToVisibilityConverter}}" />
                         </DataGrid.Columns>
                     </DataGrid>
                 </DockPanel>
@@ -270,6 +465,22 @@
                         <TextBlock Grid.Column="0" Text="Event detail" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" FontSize="13" />
                         <CheckBox Grid.Column="1" Content="Raw XML" IsChecked="{Binding ShowRawXml}" VerticalAlignment="Center" />
                     </Grid>
+
+                    <!-- #115: "Explain" placeholder note - a real knowledge-base panel is item 117,
+                         not implemented yet; this just confirms the menu item did something. -->
+                    <Border DockPanel.Dock="Top" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="8,6" Margin="0,0,0,8">
+                        <TextBlock Text="{Binding ExplainNote}" TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource WarningBrush}" />
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding ExplainNote, Converter={StaticResource NullToVisibilityConverter}}" Value="Visible">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                    </Border>
 
                     <ScrollViewer VerticalScrollBarVisibility="Auto">
                         <StackPanel>
@@ -355,6 +566,69 @@
                         </StackPanel>
                     </ScrollViewer>
                 </DockPanel>
+            </Border>
+
+            <!-- #113: provider catalog browser - an overlay panel (not always-visible per the
+                 spec) reachable via the "Provider catalog" toggle in the filter bar's "More tools"
+                 expander. Spans every column of this Grid so it sits on top of the three panes
+                 below rather than squeezing into one of them. -->
+            <Border Grid.Column="0" Grid.ColumnSpan="5" Panel.ZIndex="10">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsProviderCatalogOpen}" Value="True">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <Grid Grid.Row="0" Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="Provider catalog" Style="{StaticResource CardTitle}" FontSize="14" Margin="0" />
+                            <TextBlock Text="Every event ID a provider's own manifest declares it can emit - read straight from the machine, never a bundled lookup table." Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,2,0,0" />
+                        </StackPanel>
+                        <ToggleButton Grid.Column="1" Content="Close" IsChecked="{Binding IsProviderCatalogOpen}" Padding="10,4" VerticalAlignment="Top" />
+                    </Grid>
+
+                    <Grid Grid.Row="1">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="220" />
+                            <ColumnDefinition Width="12" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+
+                        <DockPanel Grid.Column="0">
+                            <TextBox DockPanel.Dock="Top" Text="{Binding ProviderSearchText, UpdateSourceTrigger=PropertyChanged}"
+                                      Margin="0,0,0,6" ToolTip="Filter the provider list by name" />
+                            <ListBox ItemsSource="{Binding ProviderNamesView}" SelectedItem="{Binding SelectedProvider}"
+                                      BorderThickness="0" Background="Transparent" FontSize="11.5" />
+                        </DockPanel>
+
+                        <DataGrid Grid.Column="2" ItemsSource="{Binding ProviderEvents}" IsReadOnly="True" AutoGenerateColumns="False">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Event ID" Binding="{Binding EventId}" Width="70" />
+                                <DataGridTextColumn Header="Ver" Binding="{Binding Version}" Width="45" />
+                                <DataGridTextColumn Header="Level" Binding="{Binding Level}" Width="90" />
+                                <DataGridTextColumn Header="Task" Binding="{Binding Task}" Width="120" />
+                                <DataGridTextColumn Header="Opcode" Binding="{Binding Opcode}" Width="100" />
+                                <DataGridTextColumn Header="Keywords" Binding="{Binding Keywords}" Width="160" />
+                                <DataGridTextColumn Header="Channels" Binding="{Binding Channels}" Width="180" />
+                                <DataGridTextColumn Header="Message template" Binding="{Binding Template}" Width="2*" />
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </Grid>
+                </Grid>
             </Border>
         </Grid>
     </Grid>

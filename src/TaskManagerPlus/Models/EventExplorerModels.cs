@@ -36,6 +36,19 @@ public sealed class EventChannelNode
     public long? RecordCount { get; init; }
     public DateTime? LastWriteTime { get; init; }
     public List<EventChannelNode> Children { get; init; } = new();
+
+    /// <summary>#110: true for a node representing an opened .evtx file (PathType.FilePath) rather
+    /// than a live registered channel (PathType.LogName) - Name holds the full file path in that
+    /// case. Read-only (no live tail: EventLogExplorerService.StartWatch is never called against a
+    /// file-path node, since a static exported log never gets new records).</summary>
+    public bool IsFilePath { get; init; }
+
+    /// <summary>#112: plain mutable checkbox state for the channel tree's multi-select, backing
+    /// "Multi-channel query" - not init-only like the rest of this node, since it's flipped by the
+    /// tree's checkboxes after the node is built (no INotifyPropertyChanged needed here: the
+    /// CheckBox's own two-way binding drives the visual, this is just where the value lands for the
+    /// query-building code to read back).</summary>
+    public bool IsSelectedForMulti { get; set; }
 }
 
 /// <summary>One event record as shown in the center grid (#103) and read by the detail pane
@@ -72,6 +85,15 @@ public sealed class EventRecordRow
     /// <summary>An EventBookmark captured for this specific record - lets the grid resume paging
     /// from exactly this row (see EventLogExplorerService.ReadPage).</summary>
     public EventBookmark? Bookmark { get; init; }
+
+    /// <summary>#116: EventRecord.ActivityId/RelatedActivityId - the only fields that stitch a
+    /// multi-channel/multi-component operation together (a provider stamps the same ActivityId on
+    /// every event it logs for one logical operation, and stamps RelatedActivityId when it started
+    /// that operation on behalf of a different activity). Hidden by default in the grid (most
+    /// records don't set them at all - null, not a fabricated zero-guid) and toggled on via the
+    /// filter bar's "Correlation IDs" checkbox.</summary>
+    public Guid? ActivityId { get; init; }
+    public Guid? RelatedActivityId { get; init; }
 }
 
 /// <summary>Composes the XPath used by EventLogExplorerService.BuildXPath (#104) - a structured,
@@ -183,4 +205,40 @@ public sealed class EventFilterSettings
             },
         },
     };
+}
+
+/// <summary>#109: one parsed *.xml file under %ProgramData%\Microsoft\Event Viewer\Views (Event
+/// Viewer's own "Create Custom View..." storage), offered as an importable saved filter - see
+/// EventLogExplorerService.GetImportableCustomViews.</summary>
+public sealed class ImportableCustomView
+{
+    public string Name { get; init; } = string.Empty;
+    public List<string> Channels { get; init; } = new();
+    public string XPath { get; init; } = string.Empty;
+    public string SourceFilePath { get; init; } = string.Empty;
+}
+
+/// <summary>#110: one %SystemRoot%\System32\Winevt\Logs\Archive-*.evtx autobackup file, offered as
+/// a "Recent archives" quick-pick next to the general Open .evtx file picker.</summary>
+public sealed class RecentArchiveEntry
+{
+    public string Path { get; init; } = string.Empty;
+    public string FileName { get; init; } = string.Empty;
+    public DateTime LastWriteTimeUtc { get; init; }
+    public long SizeBytes { get; init; }
+}
+
+/// <summary>#113: one event ID a provider's manifest declares it can emit, read from
+/// ProviderMetadata.Events - the machine-accurate, always-current answer to "what does event 129
+/// from provider X mean," never a bundled/guessed lookup table.</summary>
+public sealed class ProviderEventMetadataRow
+{
+    public int EventId { get; init; }
+    public int Version { get; init; }
+    public string Level { get; init; } = string.Empty;
+    public string Task { get; init; } = string.Empty;
+    public string Opcode { get; init; } = string.Empty;
+    public string Keywords { get; init; } = string.Empty;
+    public string Channels { get; init; } = string.Empty;
+    public string Template { get; init; } = string.Empty;
 }
