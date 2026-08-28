@@ -1260,6 +1260,84 @@ public sealed class StorageViewModel : ObservableObject
 
     public AsyncRelayCommand CheckEjectBlockersCommand { get; }
 
+    // ================================================================================
+    // Round 19, #377/#378/#383: "Controller" card, system-wide half - which driver the boot-time
+    // storage controller is bound to, the storahci MSI/idle-power known-issue quick flag, and the
+    // loaded storage-stack driver inventory + PnP problem codes + disk I/O timeout. Read once at
+    // Storage-tab load (none of this changes without a reboot), same tier as the page-file/
+    // reclaimable-space loads above - see LoadStorageControllerFactsAsync.
+    // ================================================================================
+    private StorageControllerFacts? _controllerFacts;
+    public StorageControllerFacts? ControllerFacts { get => _controllerFacts; private set => SetProperty(ref _controllerFacts, value); }
+
+    private string _controllerFactsStatusText = "Loading...";
+    public string ControllerFactsStatusText { get => _controllerFactsStatusText; private set => SetProperty(ref _controllerFactsStatusText, value); }
+
+    public AsyncRelayCommand RefreshControllerFactsCommand { get; }
+
+    // ================================================================================
+    // Round 19, #379/#380/#381/#382: "Controller" card, per-disk half - tied to the same disk picker
+    // and "Read SMART details" action as the SMART cards above (ReadSmartDetailsAsync), rather than
+    // a second disk picker, since these facts only make sense for the disk already selected there.
+    // Hidden (ShowControllerDiskFacts false) until a disk's SMART details have actually been read.
+    // ================================================================================
+    private bool _showControllerDiskFacts;
+    public bool ShowControllerDiskFacts { get => _showControllerDiskFacts; private set => SetProperty(ref _showControllerDiskFacts, value); }
+
+    // #379/#381: whichever half applies to the selected disk's bus type - the other stays hidden.
+    private bool _showSataLinkInfo;
+    public bool ShowSataLinkInfo { get => _showSataLinkInfo; private set => SetProperty(ref _showSataLinkInfo, value); }
+
+    private string _sataLinkText = string.Empty;
+    public string SataLinkText { get => _sataLinkText; private set => SetProperty(ref _sataLinkText, value); }
+
+    private bool _sataLinkDowngraded;
+    public bool SataLinkDowngraded { get => _sataLinkDowngraded; private set => SetProperty(ref _sataLinkDowngraded, value); }
+
+    private bool _showNvmeLinkInfo;
+    public bool ShowNvmeLinkInfo { get => _showNvmeLinkInfo; private set => SetProperty(ref _showNvmeLinkInfo, value); }
+
+    private string _nvmeLinkText = string.Empty;
+    public string NvmeLinkText { get => _nvmeLinkText; private set => SetProperty(ref _nvmeLinkText, value); }
+
+    private bool _nvmeLinkDowngraded;
+    public bool NvmeLinkDowngraded { get => _nvmeLinkDowngraded; private set => SetProperty(ref _nvmeLinkDowngraded, value); }
+
+    // #380
+    private string _crcTrendText = string.Empty;
+    public string CrcTrendText { get => _crcTrendText; private set => SetProperty(ref _crcTrendText, value); }
+
+    private bool _crcTrendRising;
+    public bool CrcTrendRising { get => _crcTrendRising; private set => SetProperty(ref _crcTrendRising, value); }
+
+    // #382
+    private string _writeCacheSummaryText = string.Empty;
+    public string WriteCacheSummaryText { get => _writeCacheSummaryText; private set => SetProperty(ref _writeCacheSummaryText, value); }
+
+    private string _writeCacheSettingText = string.Empty;
+    public string WriteCacheSettingText { get => _writeCacheSettingText; private set => SetProperty(ref _writeCacheSettingText, value); }
+
+    private bool _writeCacheRisk;
+    public bool WriteCacheRisk { get => _writeCacheRisk; private set => SetProperty(ref _writeCacheRisk, value); }
+
+    // #384: firmware + known-issue lookup, shown at the SMART details card's "drive header" (right
+    // under the disk picker) rather than the Controller card - see StorageView.xaml.
+    private string _firmwareText = string.Empty;
+    public string FirmwareText { get => _firmwareText; private set => SetProperty(ref _firmwareText, value); }
+
+    private bool _firmwareKnownIssueMatched;
+    public bool FirmwareKnownIssueMatched { get => _firmwareKnownIssueMatched; private set => SetProperty(ref _firmwareKnownIssueMatched, value); }
+
+    // ================================================================================
+    // Round 19, #385: "Layout" card - unallocated tail space (over-provisioning) + 4K partition-
+    // alignment per disk, read once at Storage-tab load alongside the rest of the tab's one-time
+    // disk inventory (StoragePools/DriveHealthVerdicts/...).
+    // ================================================================================
+    public ObservableCollection<DiskLayoutInfo> DiskLayoutRows { get; } = new();
+
+    private string _diskLayoutStatusText = "Loading...";
+    public string DiskLayoutStatusText { get => _diskLayoutStatusText; private set => SetProperty(ref _diskLayoutStatusText, value); }
+
     private readonly ProcessesViewModel _processes;
 
     public StorageViewModel(PerformanceViewModel performance, EnergyThermalsViewModel energyThermals, ProcessesViewModel processes)
@@ -1407,6 +1485,9 @@ public sealed class StorageViewModel : ObservableObject
         // Round 18, #376
         CheckEjectBlockersCommand = new AsyncRelayCommand(param => CheckEjectBlockersAsync(param as RemovableDriveRow));
 
+        // Round 19, #377/#378/#383
+        RefreshControllerFactsCommand = new AsyncRelayCommand(LoadStorageControllerFactsAsync);
+
         // #324: subscribe to the shared sampler's tick rather than owning a new heavy timer -
         // see PerformanceViewModel.Sampled's remarks.
         Performance.Sampled += OnPerformanceSampled;
@@ -1505,6 +1586,13 @@ public sealed class StorageViewModel : ObservableObject
         // #375 above; only the per-row eject-blocker check (CheckEjectBlockersCommand) is gated
         // behind an explicit button, since that one does a real Restart Manager + handle-table walk.
         _ = LoadRemovableDrivesAsync();
+
+        // Round 19, #377/#378/#383: controller mode/MSI/driver-inventory facts - same one-time-at-
+        // load tier as everything else in this block (none of it changes without a reboot).
+        _ = LoadStorageControllerFactsAsync();
+
+        // Round 19, #385: over-provisioning + partition alignment per disk - same tier.
+        _ = LoadDiskLayoutAsync();
     }
 
     /// <summary>#371: repaints the retry-trend chart's axis text/gridlines to match the active
@@ -1707,6 +1795,11 @@ public sealed class StorageViewModel : ObservableObject
             var smartVerdict = DriveHealthVerdicts.FirstOrDefault(v => v.Index == disk.Index);
             if (smartVerdict is not null) RecomputeVerdict(smartVerdict, smartFacts, StoragePools.ToList());
 
+            // Round 19, #379/#381/#382/#384: Controller-card per-disk facts + firmware/drive-header
+            // facts - bundled into this same on-demand action, same "cheap read, reuse the existing
+            // disk picker" rationale as #323's reliability-latency tiles below.
+            await ApplyControllerDiskFactsAsync(disk, result);
+
             // Round 13, #313/#322: bundle the NVMe health-log-page-0x02 read (and Identify
             // Controller) into this same on-demand action - both are cheap single round trips, and
             // CLAUDE.md's "bundle a cheap read into the existing on-demand flow rather than a new
@@ -1812,6 +1905,154 @@ public sealed class StorageViewModel : ObservableObject
         WearProjectionText = string.Empty;
         ShowAtaSelfTest = false;
         AtaSelfTestStatusText = string.Empty;
+
+        // Round 19, #379/#380/#381/#382/#384: reset the Controller-card per-disk facts + drive-
+        // header firmware text too, same "don't linger from the previous disk" rationale.
+        ShowControllerDiskFacts = false;
+        ShowSataLinkInfo = false;
+        SataLinkText = string.Empty;
+        SataLinkDowngraded = false;
+        ShowNvmeLinkInfo = false;
+        NvmeLinkText = string.Empty;
+        NvmeLinkDowngraded = false;
+        CrcTrendText = string.Empty;
+        CrcTrendRising = false;
+        WriteCacheSummaryText = string.Empty;
+        WriteCacheSettingText = string.Empty;
+        WriteCacheRisk = false;
+        FirmwareText = string.Empty;
+        FirmwareKnownIssueMatched = false;
+    }
+
+    // ================================================================================
+    // Round 19, #379/#381/#382/#384: Controller-card per-disk facts + drive-header firmware text,
+    // all tied to the same disk picker/action as the SMART cards above (ReadSmartDetailsAsync) -
+    // see this method's call site there.
+    // ================================================================================
+    private async Task ApplyControllerDiskFactsAsync(SmartDiskOption disk, SmartRawResult result)
+    {
+        ShowControllerDiskFacts = true;
+
+        // #379/#381: SATA and NVMe are mutually exclusive per disk - dispatch by the bus type the
+        // SMART read above already resolved, rather than guessing again.
+        ShowSataLinkInfo = result.BusType is "SATA" or "ATA";
+        ShowNvmeLinkInfo = result.BusType == "NVMe";
+        if (ShowSataLinkInfo)
+        {
+            var link = await Task.Run(() => StorageLinkService.ReadSataLinkInfo(disk.Index));
+            ApplySataLink(link);
+        }
+        else if (ShowNvmeLinkInfo)
+        {
+            string? pnpId = await Task.Run(() => StorageControllerService.GetDiskPnpDeviceId(disk.Index));
+            var link = await Task.Run(() => StorageLinkService.ReadNvmeLinkInfo(pnpId));
+            ApplyNvmeLink(link);
+        }
+
+        // #382
+        try
+        {
+            var cache = await Task.Run(() => StorageControllerService.ReadWriteCacheInfo(disk.Index));
+            WriteCacheSummaryText = cache.SummaryText;
+            WriteCacheSettingText = cache.UserWriteCacheSettingText;
+            WriteCacheRisk = cache.RiskFlag;
+        }
+        catch (Exception ex)
+        {
+            WriteCacheSummaryText = $"Could not read write-cache facts: {ex.Message}";
+        }
+
+        // #384: drive-header firmware + known-issue lookup.
+        try
+        {
+            var (firmwareVersion, _) = await Task.Run(() => StorageControllerService.ReadFirmwareInfo(disk.Index));
+            ApplyFirmwareInfo(disk, firmwareVersion);
+        }
+        catch (Exception ex)
+        {
+            FirmwareText = $"Could not read firmware info: {ex.Message}";
+        }
+    }
+
+    private void ApplySataLink(DiskLinkInfo link)
+    {
+        if (!link.SataAvailable)
+        {
+            SataLinkText = $"Unknown - {link.SataUnavailableReason}";
+            SataLinkDowngraded = false;
+            return;
+        }
+
+        string negotiated = StorageLinkService.SataGenText(link.SataNegotiatedGen);
+        string max = StorageLinkService.SataGenText(link.SataMaxSupportedGen);
+        SataLinkDowngraded = link.SataDowngraded;
+        SataLinkText = link.SataDowngraded
+            ? $"Negotiated at {negotiated}, but this drive reports supporting up to {max} - it has negotiated down from its rated speed. Worth checking the SATA cable/port, or the BIOS/UEFI SATA mode, if this wasn't expected."
+            : $"Negotiated at {negotiated} (drive reports supporting up to {max}).";
+    }
+
+    private void ApplyNvmeLink(DiskLinkInfo link)
+    {
+        if (!link.NvmeAvailable)
+        {
+            NvmeLinkText = $"Unknown - {link.NvmeUnavailableReason}";
+            NvmeLinkDowngraded = false;
+            return;
+        }
+
+        string current = $"{StorageLinkService.PcieGenText(link.NvmeCurrentLinkSpeedGen)} x{(link.NvmeCurrentLinkWidth?.ToString() ?? "?")}";
+        string max = $"{StorageLinkService.PcieGenText(link.NvmeMaxLinkSpeedGen)} x{(link.NvmeMaxLinkWidth?.ToString() ?? "?")}";
+        NvmeLinkDowngraded = link.NvmeDowngraded;
+        NvmeLinkText = link.NvmeDowngraded
+            ? $"Currently linked at {current}, but this controller reports supporting up to {max} - it has negotiated down from its maximum. A common cause is an M.2 slot/riser wiring fewer lanes than the drive supports, or a BIOS/power setting - worth checking if this drive feels slower than expected."
+            : $"Currently linked at {current} (controller reports supporting up to {max}).";
+    }
+
+    private void ApplyFirmwareInfo(SmartDiskOption disk, string? firmwareVersion)
+    {
+        var lookup = FirmwareKnownIssueLookup.Match(disk.Model);
+        FirmwareKnownIssueMatched = lookup.Matched;
+        string versionText = string.IsNullOrWhiteSpace(firmwareVersion) ? "Unknown" : firmwareVersion;
+        FirmwareText = $"Firmware: {versionText}. {lookup.DisplayText} {FirmwareKnownIssueLookup.CoverageCaption}";
+    }
+
+    // ================================================================================
+    // Round 19, #377/#378/#383: "Controller" card, system-wide half.
+    // ================================================================================
+    private async Task LoadStorageControllerFactsAsync()
+    {
+        ControllerFactsStatusText = "Loading...";
+        try
+        {
+            var facts = await Task.Run(StorageControllerService.ReadControllerFacts);
+            ControllerFacts = facts;
+            ControllerFactsStatusText = facts.Available
+                ? $"{facts.Drivers.Count} driver(s) inventoried."
+                : facts.UnavailableReason;
+        }
+        catch (Exception ex)
+        {
+            ControllerFactsStatusText = $"Failed: {ex.Message}";
+        }
+    }
+
+    // ================================================================================
+    // Round 19, #385: "Layout" card - over-provisioning + partition alignment, one-time load.
+    // ================================================================================
+    private async Task LoadDiskLayoutAsync()
+    {
+        DiskLayoutStatusText = "Loading...";
+        try
+        {
+            var rows = await Task.Run(DiskLayoutService.ReadAll);
+            DiskLayoutRows.Clear();
+            foreach (var r in rows) DiskLayoutRows.Add(r);
+            DiskLayoutStatusText = rows.Count == 0 ? "No disks reported by the Storage Management API." : $"{rows.Count} disk(s).";
+        }
+        catch (Exception ex)
+        {
+            DiskLayoutStatusText = $"Failed: {ex.Message}";
+        }
     }
 
     private void ApplySmartRawResult(SmartRawResult result)
@@ -2412,6 +2653,14 @@ public sealed class StorageViewModel : ObservableObject
 
         // #326: trend chart, hidden until at least three snapshots exist for this disk.
         var history = SmartHistoryService.ForDisk(entry.DiskKey);
+
+        // Round 19, #380: SATA CRC error (0xC7) trend, from the same persisted history - a rising
+        // count means the cable/connector is likely failing now; a static historical count usually
+        // doesn't, per SmartHistoryService.EvaluateCrcTrend's remarks.
+        var (crcNonZero, crcRising, crcDescription) = SmartHistoryService.EvaluateCrcTrend(history);
+        CrcTrendText = crcDescription;
+        CrcTrendRising = crcNonZero && crcRising;
+
         if (history.Count >= 3)
         {
             _reallocatedHistory.Clear();

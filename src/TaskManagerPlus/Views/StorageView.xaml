@@ -330,6 +330,85 @@
                 </StackPanel>
             </Border>
 
+            <!-- Round 19, #385: Layout card - unallocated tail space (over-provisioning) + 4K
+                 partition-alignment per disk, read once at tab load. Informational throughout:
+                 deliberate over-provisioning is a valid, common SSD choice; misalignment costs
+                 real read-modify-write overhead but is stated as a fact, not an alarm. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Layout" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Unallocated space at the tail of each disk, and whether every partition starts on a 4K boundary. Deliberate over-provisioning is a valid, common SSD choice - only shown as a plain fact. Misalignment costs real read-modify-write overhead on 4Kn/512e media."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding DiskLayoutStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,8" />
+
+                    <ItemsControl ItemsSource="{Binding DiskLayoutRows}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Margin="0,0,0,10" Padding="10" CornerRadius="4" BorderThickness="1" BorderBrush="{DynamicResource BorderSubtleBrush}">
+                                    <StackPanel>
+                                        <TextBlock FontSize="12.5" FontWeight="SemiBold" TextTrimming="CharacterEllipsis">
+                                            <Run Text="{Binding Model, Mode=OneWay}" /><Run Text=" · " /><Run Text="{Binding MediaTypeText, Mode=OneWay}" />
+                                        </TextBlock>
+                                        <StackPanel>
+                                            <StackPanel.Style>
+                                                <Style TargetType="StackPanel">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding Available}" Value="False">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </StackPanel.Style>
+                                            <TextBlock Style="{StaticResource SubStat}" Margin="0,2,0,0" TextWrapping="Wrap">
+                                                <Run Text="Disk size: " /><Run Text="{Binding DiskSizeText, Mode=OneWay}" />
+                                                <Run Text=" · Partitioned: " /><Run Text="{Binding PartitionedText, Mode=OneWay}" />
+                                                <Run Text=" · Largest free extent: " /><Run Text="{Binding LargestFreeExtentText, Mode=OneWay}" />
+                                            </TextBlock>
+                                            <TextBlock Text="{Binding OverProvisioningSummaryText}" Style="{StaticResource SubStat}" Margin="0,2,0,6" TextWrapping="Wrap" />
+                                        </StackPanel>
+                                        <TextBlock Text="{Binding UnavailableReason}" Margin="0,2,0,6" TextWrapping="Wrap">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding Available}" Value="False">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+
+                                        <ItemsControl ItemsSource="{Binding Partitions}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock FontSize="11.5" Margin="0,0,0,2" TextWrapping="Wrap">
+                                                        <TextBlock.Style>
+                                                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding IsAligned}" Value="False">
+                                                                        <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </TextBlock.Style>
+                                                        <Run Text="Partition " /><Run Text="{Binding PartitionNumber, Mode=OneWay}" />
+                                                        <Run Text=" (" /><Run Text="{Binding DriveLetterText, Mode=OneWay}" /><Run Text=", " />
+                                                        <Run Text="{Binding SizeText, Mode=OneWay}" /><Run Text=") - " />
+                                                        <Run Text="{Binding AlignmentText, Mode=OneWay}" />
+                                                    </TextBlock>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
             <!-- Round 15, #337/#338/#339/#343/#345: per-volume filesystem facts - the anchor for
                  this round's NTFS/chkdsk features. One row per fixed, lettered volume; NTFS-only
                  facts (self-healing, corruption log) show "Unknown"/an empty log on a non-NTFS row
@@ -1097,6 +1176,24 @@
                     </Grid>
                     <TextBlock Text="{Binding SmartStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,8" />
 
+                    <!-- Round 19, #384: drive-header firmware revision + a starter, non-exhaustive
+                         known-issue list match - "worth checking the vendor's site", never a claim
+                         this drive will fail. -->
+                    <Border Margin="0,0,0,10" Padding="8" CornerRadius="4" BorderThickness="1" BorderBrush="{DynamicResource BorderSubtleBrush}"
+                            Visibility="{Binding FirmwareText, Converter={StaticResource StringToVisibilityConverter}}">
+                        <TextBlock Text="{Binding FirmwareText}" TextWrapping="Wrap">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding FirmwareKnownIssueMatched}" Value="True">
+                                            <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </Border>
+
                     <!-- Round 13, #323: MSFT_StorageReliabilityCounter latency-maximum tiles,
                          promoted out of the flat SMART-details dump above - any disk that reports
                          them, not NVMe-specific. Hidden until at least one has actually been read. -->
@@ -1289,6 +1386,160 @@
                         </StackPanel>
                         <TextBlock Text="{Binding AtaSelfTestStatusText}" Style="{StaticResource SubStat}" TextWrapping="Wrap"
                                    Visibility="{Binding AtaSelfTestStatusText, Converter={StaticResource StringToVisibilityConverter}}" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- Round 19, #377/#378/#379/#380/#381/#382/#383: Controller card - system-wide storage-
+                 mode/driver-inventory facts (top half, read once at tab load) plus per-disk link-
+                 speed/CRC-trend/write-cache facts for the disk selected in SMART details above
+                 (bottom half, populated by the same "Read SMART details" action). -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <Grid Margin="0,0,0,6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Controller" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Refresh" Padding="8,3" FontSize="11.5" Command="{Binding RefreshControllerFactsCommand}" />
+                    </Grid>
+                    <TextBlock Text="Storage-controller mode, driver inventory, and (for the disk selected in SMART details above) link speed, SATA CRC-error trend, and write-cache/power-protection facts. Mode/driver facts are read once at tab load and don't change without a reboot."
+                               Style="{StaticResource SubStat}" Margin="0,0,0,10" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding ControllerFactsStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,8" />
+
+                    <StackPanel Visibility="{Binding ControllerFacts, Converter={StaticResource NullToVisibilityConverter}}">
+                        <!-- #377: active controller mode - "quick flag, not a verdict" for legacy IDE. -->
+                        <TextBlock Text="{Binding ControllerFacts.ModeDetailText}" Margin="0,0,0,10" TextWrapping="Wrap">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding ControllerFacts.LegacyIdeQuickFlag}" Value="True">
+                                            <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                            <Setter Property="FontWeight" Value="SemiBold" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+
+                        <!-- #378: StorAHCI MSI/idle-power known-issue quick flag - only shown when
+                             storahci is confirmed as the bound driver above. -->
+                        <Border Margin="0,0,0,10" Padding="10" CornerRadius="4" BorderThickness="1" BorderBrush="{DynamicResource BorderSubtleBrush}"
+                                Visibility="{Binding ControllerFacts.ShowStorAhciMsiCheck, Converter={StaticResource BoolToVisibilityConverter}}">
+                            <StackPanel>
+                                <TextBlock Text="StorAHCI MSI / idle-power known-issue check" FontWeight="SemiBold" FontSize="12.5" Margin="0,0,0,4" />
+                                <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap">
+                                    <Run Text="MSISupported: " /><Run Text="{Binding ControllerFacts.MsiSupported, TargetNullValue=Unknown, Mode=OneWay}" />
+                                    <Run Text=" · Idle power management enabled: " /><Run Text="{Binding ControllerFacts.IdlePowerEnabled, TargetNullValue=Unknown, Mode=OneWay}" />
+                                </TextBlock>
+                                <TextBlock Style="{StaticResource SubStat}" Margin="0,4,0,0" TextWrapping="Wrap"
+                                           Text="Some storahci + MSI interrupt combinations have a documented history of causing periodic system freezes, particularly alongside idle-power management. If you're seeing periodic freezes with no other obvious cause, this specific combination is worth checking - not a confirmed diagnosis of your system." />
+                            </StackPanel>
+                        </Border>
+
+                        <!-- #383: loaded storage-stack driver inventory + PnP problem codes + disk timeout. -->
+                        <TextBlock Text="Storage driver inventory" FontWeight="SemiBold" FontSize="12.5" Margin="0,4,0,4" />
+                        <DataGrid ItemsSource="{Binding ControllerFacts.Drivers}" IsReadOnly="True" MaxHeight="220" AutoGenerateColumns="False" Margin="0,0,0,8">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Service" Binding="{Binding ServiceName}" Width="1*" />
+                                <DataGridTextColumn Header="Device" Binding="{Binding DeviceName}" Width="1.6*" />
+                                <DataGridTextColumn Header="Version" Binding="{Binding Version}" Width="1*" />
+                                <DataGridTextColumn Header="Date" Binding="{Binding DateText}" Width="1.1*" />
+                                <DataGridTextColumn Header="Signer" Binding="{Binding Signer}" Width="1.2*" />
+                                <DataGridTextColumn Header="Source" Binding="{Binding SourceNote}" Width="1.4*" />
+                            </DataGrid.Columns>
+                        </DataGrid>
+                        <TextBlock Text="An outdated vendor RAID/AHCI driver is a leading cause of storage-related bugchecks - informational inventory, not a diagnosis of this specific system."
+                                   Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" />
+
+                        <TextBlock Margin="0,0,0,8" TextWrapping="Wrap">
+                            <Run Text="Disk I/O timeout (Services\Disk\TimeOutValue): " />
+                            <Run Text="{Binding ControllerFacts.DiskTimeoutValueSeconds, TargetNullValue=Unknown, Mode=OneWay}" FontWeight="SemiBold" />
+                            <Run Text=" seconds" />
+                        </TextBlock>
+
+                        <StackPanel Margin="0,0,0,4">
+                            <StackPanel.Style>
+                                <Style TargetType="StackPanel">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding ControllerFacts.ProblemDevices.Count}" Value="0">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </StackPanel.Style>
+                            <TextBlock Text="Storage devices reporting a problem code" FontWeight="SemiBold" FontSize="12.5" Margin="0,0,0,4" Foreground="{DynamicResource WarningBrush}" />
+                            <ItemsControl ItemsSource="{Binding ControllerFacts.ProblemDevices}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding}" Style="{StaticResource SubStat}" Margin="0,0,0,2" TextWrapping="Wrap" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </StackPanel>
+
+                    <!-- #379/#380/#381/#382: per-disk facts for the disk selected in SMART details
+                         above - hidden until that card's "Read SMART details" has actually run. -->
+                    <StackPanel Margin="0,10,0,0">
+                        <StackPanel.Style>
+                            <Style TargetType="StackPanel">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding ShowControllerDiskFacts}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </StackPanel.Style>
+                        <TextBlock Text="{Binding SelectedSmartDisk.Display}" FontWeight="SemiBold" FontSize="12.5" Margin="0,0,0,6" />
+
+                        <!-- #379 -->
+                        <TextBlock Margin="0,0,0,6" TextWrapping="Wrap" Visibility="{Binding ShowSataLinkInfo, Converter={StaticResource BoolToVisibilityConverter}}">
+                            <Run Text="SATA link speed: " FontWeight="SemiBold" /><Run Text="{Binding SataLinkText, Mode=OneWay}" />
+                        </TextBlock>
+
+                        <!-- #381 -->
+                        <TextBlock Margin="0,0,0,6" TextWrapping="Wrap" Visibility="{Binding ShowNvmeLinkInfo, Converter={StaticResource BoolToVisibilityConverter}}">
+                            <Run Text="PCIe link: " FontWeight="SemiBold" /><Run Text="{Binding NvmeLinkText, Mode=OneWay}" />
+                        </TextBlock>
+
+                        <!-- #380 -->
+                        <TextBlock Text="{Binding CrcTrendText}" Margin="0,0,0,6" TextWrapping="Wrap"
+                                   Visibility="{Binding CrcTrendText, Converter={StaticResource StringToVisibilityConverter}}">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding CrcTrendRising}" Value="True">
+                                            <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                            <Setter Property="FontWeight" Value="SemiBold" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+
+                        <!-- #382: framed as a real data-loss risk, not just a quick flag, per this item's own brief. -->
+                        <Border Padding="10" CornerRadius="4" BorderThickness="1" BorderBrush="{DynamicResource BorderSubtleBrush}">
+                            <StackPanel>
+                                <TextBlock Text="Write cache / power protection" FontWeight="SemiBold" FontSize="12.5" Margin="0,0,0,4" />
+                                <TextBlock Text="{Binding WriteCacheSummaryText}" TextWrapping="Wrap">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding WriteCacheRisk}" Value="True">
+                                                    <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                    <Setter Property="FontWeight" Value="SemiBold" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                                <TextBlock Text="{Binding WriteCacheSettingText}" Style="{StaticResource SubStat}" Margin="0,4,0,0" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Border>
                     </StackPanel>
                 </StackPanel>
             </Border>
