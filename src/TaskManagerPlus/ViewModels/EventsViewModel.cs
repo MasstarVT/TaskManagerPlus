@@ -49,6 +49,13 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
     /// established.</summary>
     public EtwCaptureViewModel Etw { get; } = new();
 
+    /// <summary>#175-183: "Servicing, setup and update log parsing" - CBS.log/DISM.log/setup log
+    /// parsing, WindowsUpdate.log decoding, a combined update-failure history, pending-servicing
+    /// registry signals, the AppX/AppReadiness failure channels, and a CBS-folder health stat.
+    /// Composed the same way <see cref="Etw"/> is (a sub-ViewModel reached from its own toggleable
+    /// overlay panel, ServicingLogsPanel.xaml), rather than a third bespoke composition shape.</summary>
+    public ServicingLogsViewModel Servicing { get; } = new();
+
     public ObservableCollection<EventChannelNode> ChannelTree { get; } = new();
     public ObservableCollection<EventRecordRow> Events { get; } = new();
     public ObservableCollection<SavedEventFilter> SavedFilters { get; } = new();
@@ -1630,5 +1637,6 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
         _anomalyScanCts?.Cancel();
         _anomalyScanCts?.Dispose();
         Etw.Dispose();
+        Servicing.Dispose();
     }
 }

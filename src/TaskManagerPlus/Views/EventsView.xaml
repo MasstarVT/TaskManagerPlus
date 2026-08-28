@@ -219,8 +219,13 @@
                             <!-- #146-153: ETW session/autologger/provider inspection and WPR capture workflows - a
                                  separate overlay from the one above. Deliberately named "ETW Providers" wherever
                                  provider catalogs appear inside it, to stay distinct from #113's "Event Providers". -->
-                            <ToggleButton Content="ETW trace capture" IsChecked="{Binding Etw.IsPanelOpen}" Padding="8,3"
+                            <ToggleButton Content="ETW trace capture" IsChecked="{Binding Etw.IsPanelOpen}" Padding="8,3" Margin="0,0,8,0"
                                            ToolTip="ETW session inspector, autologgers, ETW provider &quot;who's listening&quot;, and WPR capture workflows (#146-153)." />
+                            <!-- #175-183: CBS.log/DISM.log/setup log parsing, WindowsUpdate.log decoding, update
+                                 history, pending-servicing signals, and the AppX/AppReadiness failure channel -
+                                 a third overlay, same toggleable-panel pattern as the two above. -->
+                            <ToggleButton Content="Servicing logs" IsChecked="{Binding Servicing.IsPanelOpen}" Padding="8,3"
+                                           ToolTip="CBS.log/DISM.log/setup log parsing, WindowsUpdate.log decoding, update history, pending-servicing signals, and the AppX/Store failure channel (#175-183)." />
                         </WrapPanel>
 
                         <!-- #109: import Event Viewer's own custom views / export a saved filter back to one -->
@@ -1056,6 +1061,23 @@
                     </Style>
                 </Border.Style>
                 <views:EtwCapturePanel DataContext="{Binding Etw}" />
+            </Border>
+
+            <!-- #175-183: Servicing logs overlay - same "spans every column, sits on top of the
+                 three panes below" shape as the two overlays above, reached via the "Servicing
+                 logs" toggle in the filter bar's "More tools" expander. -->
+            <Border Grid.Column="0" Grid.ColumnSpan="5" Panel.ZIndex="12">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding Servicing.IsPanelOpen}" Value="True">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <views:ServicingLogsPanel DataContext="{Binding Servicing}" />
             </Border>
         </Grid>
     </Grid>
