@@ -650,7 +650,18 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
 
         var up = snapshot.Uptime;
         Uptime = $"{(int)up.TotalDays}d {up.Hours:00}h {up.Minutes:00}m {up.Seconds:00}s";
+
+        // #324: fired at the end of every tick so a sibling ViewModel can piggyback a cheap
+        // per-tick check onto this shared sampler instead of standing up its own DispatcherTimer -
+        // see StorageViewModel's predicted-failure watch for the one consumer today.
+        Sampled?.Invoke();
     }
+
+    /// <summary>#324: raised once per sample tick, after every property above has been updated for
+    /// this tick. A full read of MSStorageDriver_FailurePredictStatus/MSFT_PhysicalDisk.HealthStatus
+    /// is cheap (a handful of WMI property reads), so StorageViewModel subscribes here rather than
+    /// owning a new heavy timer of its own, per CLAUDE.md's guidance for this specific item.</summary>
+    public event Action? Sampled;
 
     private void SyncCores(double[] percentages, bool[] parkedFlags)
     {

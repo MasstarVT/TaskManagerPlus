@@ -49,6 +49,19 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
 
     public ObservableCollection<HealthIssue> HealthIssues { get; } = new();
 
+    // Round 14, #328: compact mirror of the Storage tab's per-drive health-verdict list -
+    // recomputed on the same 2s health-timer tick RefreshHealthIssues already runs on, since
+    // DriveHealthVerdict is a plain mutable class (not independently observable) rather than a
+    // full ObservableObject.
+    private string _storageHealthSummaryText = "Checking...";
+    public string StorageHealthSummaryText { get => _storageHealthSummaryText; private set => SetProperty(ref _storageHealthSummaryText, value); }
+
+    private bool _storageHealthHasReplace;
+    public bool StorageHealthHasReplace { get => _storageHealthHasReplace; private set => SetProperty(ref _storageHealthHasReplace, value); }
+
+    private bool _storageHealthHasWatch;
+    public bool StorageHealthHasWatch { get => _storageHealthHasWatch; private set => SetProperty(ref _storageHealthHasWatch, value); }
+
     // Round 11, #69: hideable/reorderable dashboard tiles - see DashboardTileConfig's remarks for
     // why this is up/down reordering within a fixed two-column layout rather than freeform
     // drag-and-drop. Left/right mirror the Summary tab's existing two-column Grid (CPU/Memory
@@ -62,6 +75,7 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         ("topcpu", "Top CPU processes", false),
         ("topcpu10s", "Top CPU (10s avg)", false),
         ("disk", "Disk", false),
+        ("storagehealth", "Drive health", false),
         ("network", "Network", false),
         ("system", "System", false),
     };
@@ -740,6 +754,11 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
                 issues.Add(new HealthIssue { Message = "NVMe media and data integrity errors reported", IsCritical = true });
         }
 
+        // Round 14, #324: persistent alert for a drive that started predicting failure while the
+        // app was open - separate from the disk.IsHealthWarning rule above, which only reflects the
+        // one-time System-tab inventory sweep taken at startup.
+        foreach (var alert in _storage.DriveFailureAlerts) issues.Add(alert);
+
         if (_energyThermals.CpuPackageTempC is { } cpuTemp && cpuTemp >= HotCpuTempC)
             issues.Add(new HealthIssue { Message = $"CPU running hot ({cpuTemp:0}°C)", IsCritical = cpuTemp >= 100 });
 
@@ -820,6 +839,40 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         {
             HealthIssues.Clear();
             foreach (var issue in issues) HealthIssues.Add(issue);
+        }
+
+        RefreshStorageHealthTile();
+    }
+
+    /// <summary>Round 14, #328: recomputes the compact Summary-tab mirror of the Storage tab's
+    /// per-drive DriveHealthVerdict list - see StorageHealthSummaryText's remarks for why this is
+    /// pulled on a timer rather than reactively.</summary>
+    private void RefreshStorageHealthTile()
+    {
+        var verdicts = _storage.DriveHealthVerdicts;
+        if (verdicts.Count == 0)
+        {
+            StorageHealthSummaryText = "No disks detected.";
+            StorageHealthHasReplace = false;
+            StorageHealthHasWatch = false;
+            return;
+        }
+
+        int replace = verdicts.Count(v => v.Level == DriveHealthLevel.Replace);
+        int watch = verdicts.Count(v => v.Level == DriveHealthLevel.Watch);
+        StorageHealthHasReplace = replace > 0;
+        StorageHealthHasWatch = watch > 0;
+
+        if (replace == 0 && watch == 0)
+        {
+            StorageHealthSummaryText = verdicts.Count == 1 ? "Healthy" : $"All {verdicts.Count} disks healthy";
+        }
+        else
+        {
+            var parts = new List<string>();
+            if (replace > 0) parts.Add($"{replace} Replace");
+            if (watch > 0) parts.Add($"{watch} Watch");
+            StorageHealthSummaryText = $"{string.Join(", ", parts)} of {verdicts.Count} disk{(verdicts.Count == 1 ? string.Empty : "s")}";
         }
     }
 

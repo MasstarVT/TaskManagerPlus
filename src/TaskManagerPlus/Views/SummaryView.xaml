@@ -139,6 +139,36 @@
                              Margin="0,0,0,16" />
         </DataTemplate>
 
+        <!-- Round 14, #328: compact mirror of the Storage tab's per-drive Healthy/Watch/Replace
+             verdict list - see SummaryViewModel.RefreshStorageHealthTile. -->
+        <DataTemplate x:Key="Tile_storagehealth">
+            <Border Style="{StaticResource CardStyle}" Visibility="{Binding IsVisible, Converter={StaticResource BoolToVisibilityConverter}}">
+                <StackPanel>
+                    <StackPanel Style="{StaticResource TitleRow}" Margin="0,0,0,4">
+                        <Border Style="{StaticResource ColorDot}" Background="{DynamicResource SuccessBrush}" />
+                        <TextBlock Text="Drive health" Style="{StaticResource CardTitle}" Margin="0" />
+                    </StackPanel>
+                    <TextBlock Text="{Binding DataContext.StorageHealthSummaryText, RelativeSource={RelativeSource AncestorType=UserControl}}">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource BigStat}">
+                                <Setter Property="FontSize" Value="18" />
+                                <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding DataContext.StorageHealthHasWatch, RelativeSource={RelativeSource AncestorType=UserControl}}" Value="True">
+                                        <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding DataContext.StorageHealthHasReplace, RelativeSource={RelativeSource AncestorType=UserControl}}" Value="True">
+                                        <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <TextBlock Text="Predicted failure, critical SMART attributes, pending sectors and pool status combined per drive - see the Storage tab for reasons." Style="{StaticResource SubStat}" Margin="0,4,0,0" TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+        </DataTemplate>
+
         <DataTemplate x:Key="Tile_network">
             <Border Style="{StaticResource CardStyle}" Visibility="{Binding IsVisible, Converter={StaticResource BoolToVisibilityConverter}}">
                 <StackPanel>

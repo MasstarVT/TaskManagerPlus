@@ -3,7 +3,12 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.IO;
 using System.Windows.Data;
+using System.Windows.Media;
 using LibreHardwareMonitor.Hardware;
+using LiveChartsCore;
+using LiveChartsCore.SkiaSharpView;
+using LiveChartsCore.SkiaSharpView.Painting;
+using SkiaSharp;
 using TaskManagerPlus.Common;
 using TaskManagerPlus.Models;
 using TaskManagerPlus.Services;
@@ -297,6 +302,126 @@ public sealed class StorageViewModel : ObservableObject
 
     public AsyncRelayCommand RunThroughputTestCommand { get; }
 
+    // ---- Round 14, #324: live predicted-failure watch -------------------------------------
+    // Piggybacked onto PerformanceViewModel's existing tick (Sampled) rather than a new heavy
+    // timer - see PerformanceViewModel.Sampled's remarks. DriveFailureAlerts is a standing,
+    // Summary-tab-visible HealthIssue list (mirrored into SummaryViewModel.HealthIssues) that only
+    // grows/shrinks on an actual transition, so it doesn't flicker every tick.
+    public ObservableCollection<HealthIssue> DriveFailureAlerts { get; } = new();
+    private readonly Dictionary<int, bool> _lastPredictFailure = new();
+    private int _failureWatchTickCounter;
+    private bool _failureWatchRunning;
+
+    // ---- #325/#326/#327: SMART history journal, trend chart, wear-rate projection ---------
+    public ObservableCollection<SmartHistoryChange> SmartHistoryChanges { get; } = new();
+
+    private string _smartHistoryStatusText = string.Empty;
+    public string SmartHistoryStatusText { get => _smartHistoryStatusText; private set => SetProperty(ref _smartHistoryStatusText, value); }
+
+    // #326: glow/core series pair sharing one ObservableCollection<double> each, same styling as
+    // PerformanceViewModel.LineOf - hidden until at least three snapshots exist for this disk.
+    private readonly ObservableCollection<double> _reallocatedHistory = new();
+    private readonly ObservableCollection<double> _pendingHistory = new();
+    public ISeries[] SmartTrendSeries { get; private set; } = Array.Empty<ISeries>();
+
+    private bool _showSmartTrendChart;
+    public bool ShowSmartTrendChart { get => _showSmartTrendChart; private set => SetProperty(ref _showSmartTrendChart, value); }
+
+    private string _smartTrendRangeText = string.Empty;
+    public string SmartTrendRangeText { get => _smartTrendRangeText; private set => SetProperty(ref _smartTrendRangeText, value); }
+
+    // #327
+    private bool _showWearProjection;
+    public bool ShowWearProjection { get => _showWearProjection; private set => SetProperty(ref _showWearProjection, value); }
+
+    private string _wearProjectionText = string.Empty;
+    public string WearProjectionText { get => _wearProjectionText; private set => SetProperty(ref _wearProjectionText, value); }
+
+    // ---- #328: per-drive health verdict ----------------------------------------------------
+    public ObservableCollection<DriveHealthVerdict> DriveHealthVerdicts { get; } = new();
+
+    // ---- #329: Windows' own disk-diagnosis events ------------------------------------------
+    public ObservableCollection<DiskDiagnosisEvent> DiskDiagnosisEvents { get; } = new();
+
+    private string _diskDiagnosisStatusText = "Not checked";
+    public string DiskDiagnosisStatusText { get => _diskDiagnosisStatusText; private set => SetProperty(ref _diskDiagnosisStatusText, value); }
+
+    private bool _isCheckingDiskDiagnosis;
+    public bool IsCheckingDiskDiagnosis { get => _isCheckingDiskDiagnosis; private set => SetProperty(ref _isCheckingDiskDiagnosis, value); }
+
+    public AsyncRelayCommand CheckDiskDiagnosisCommand { get; }
+
+    // ---- #330/#331/#336: unified bad-sector view + pending-sector re-check ----------------
+    private BadSectorSummary? _badSectorSummary;
+    public BadSectorSummary? BadSectorSummary { get => _badSectorSummary; private set => SetProperty(ref _badSectorSummary, value); }
+
+    private string _badSectorStatusText = string.Empty;
+    public string BadSectorStatusText { get => _badSectorStatusText; private set => SetProperty(ref _badSectorStatusText, value); }
+
+    private bool _isCheckingBadSectors;
+    public bool IsCheckingBadSectors { get => _isCheckingBadSectors; private set => SetProperty(ref _isCheckingBadSectors, value); }
+
+    public AsyncRelayCommand CheckBadSectorsCommand { get; }
+
+    private bool _isRecheckingPendingSectors;
+    public bool IsRecheckingPendingSectors { get => _isRecheckingPendingSectors; private set => SetProperty(ref _isRecheckingPendingSectors, value); }
+
+    private string _pendingSectorRecheckText = string.Empty;
+    public string PendingSectorRecheckText { get => _pendingSectorRecheckText; private set => SetProperty(ref _pendingSectorRecheckText, value); }
+
+    public AsyncRelayCommand RecheckPendingSectorsCommand { get; }
+
+    // #336: bad-block/retry event correlation, folded into the same bad-sector card.
+    private string _badBlockEventCorrelationText = string.Empty;
+    public string BadBlockEventCorrelationText { get => _badBlockEventCorrelationText; private set => SetProperty(ref _badBlockEventCorrelationText, value); }
+
+    // ---- #332/#335: read-only surface scan + bad-LBA-to-file mapping ----------------------
+    public ObservableCollection<SurfaceScanResult> SurfaceScanResults { get; } = new();
+
+    private double _surfaceScanStallThresholdMs = 500;
+    public double SurfaceScanStallThresholdMs { get => _surfaceScanStallThresholdMs; set => SetProperty(ref _surfaceScanStallThresholdMs, value); }
+
+    private bool _isSurfaceScanning;
+    public bool IsSurfaceScanning { get => _isSurfaceScanning; private set => SetProperty(ref _isSurfaceScanning, value); }
+
+    private double _surfaceScanProgressPercent;
+    public double SurfaceScanProgressPercent { get => _surfaceScanProgressPercent; private set => SetProperty(ref _surfaceScanProgressPercent, value); }
+
+    private string _surfaceScanStatusText = "Not scanned";
+    public string SurfaceScanStatusText { get => _surfaceScanStatusText; private set => SetProperty(ref _surfaceScanStatusText, value); }
+
+    private CancellationTokenSource? _surfaceScanCts;
+    public AsyncRelayCommand StartSurfaceScanCommand { get; }
+    public RelayCommand CancelSurfaceScanCommand { get; }
+
+    // ---- #333: file-level read verification ------------------------------------------------
+    private string _fileVerificationRoot = (Path.GetPathRoot(Environment.SystemDirectory) ?? "C:\\");
+    public string FileVerificationRoot { get => _fileVerificationRoot; set => SetProperty(ref _fileVerificationRoot, value); }
+
+    public ObservableCollection<FileVerificationFailure> FileVerificationFailures { get; } = new();
+
+    private bool _isVerifyingFiles;
+    public bool IsVerifyingFiles { get => _isVerifyingFiles; private set => SetProperty(ref _isVerifyingFiles, value); }
+
+    private string _fileVerificationStatusText = "Not checked";
+    public string FileVerificationStatusText { get => _fileVerificationStatusText; private set => SetProperty(ref _fileVerificationStatusText, value); }
+
+    private CancellationTokenSource? _fileVerificationCts;
+    public AsyncRelayCommand VerifyFilesCommand { get; }
+    public RelayCommand CancelFileVerificationCommand { get; }
+
+    // ---- #334: ATA short/extended self-test (structure in place; issuance stubbed) --------
+    private bool _showAtaSelfTest;
+    public bool ShowAtaSelfTest { get => _showAtaSelfTest; private set => SetProperty(ref _showAtaSelfTest, value); }
+
+    public string AtaSelfTestEstimatedDurationText => AtaSelfTestService.EstimatedDurationText;
+
+    private string _ataSelfTestStatusText = string.Empty;
+    public string AtaSelfTestStatusText { get => _ataSelfTestStatusText; private set => SetProperty(ref _ataSelfTestStatusText, value); }
+
+    public RelayCommand RunAtaShortSelfTestCommand { get; }
+    public RelayCommand RunAtaExtendedSelfTestCommand { get; }
+
     public StorageViewModel(PerformanceViewModel performance, EnergyThermalsViewModel energyThermals)
     {
         Performance = performance;
@@ -323,6 +448,32 @@ public sealed class StorageViewModel : ObservableObject
         // #323: pure WMI, any disk - independent of the NVMe gating above.
         ResetReliabilityCountersCommand = new AsyncRelayCommand(ResetReliabilityCountersAsync, () => SelectedSmartDisk is not null);
 
+        // #329
+        CheckDiskDiagnosisCommand = new AsyncRelayCommand(CheckDiskDiagnosisAsync, () => !IsCheckingDiskDiagnosis);
+
+        // #330/#336: needs a disk (for the SMART-side counts) and a drive letter (for chkdsk/
+        // $BadClus) - gated on a disk being selected, same as the raw-attribute read above.
+        CheckBadSectorsCommand = new AsyncRelayCommand(CheckBadSectorsAsync, () => !IsCheckingBadSectors && SelectedSmartDisk is not null);
+
+        // #331: only meaningful once a pending-sector count is already on screen.
+        RecheckPendingSectorsCommand = new AsyncRelayCommand(RecheckPendingSectorsAsync, () => !IsRecheckingPendingSectors && SelectedSmartDisk is not null);
+
+        // #332
+        StartSurfaceScanCommand = new AsyncRelayCommand(StartSurfaceScanAsync, () => !IsSurfaceScanning && SelectedSmartDisk is not null);
+        CancelSurfaceScanCommand = new RelayCommand(() => _surfaceScanCts?.Cancel(), () => IsSurfaceScanning);
+
+        // #333
+        VerifyFilesCommand = new AsyncRelayCommand(VerifyFilesAsync, () => !IsVerifyingFiles && Directory.Exists(FileVerificationRoot));
+        CancelFileVerificationCommand = new RelayCommand(() => _fileVerificationCts?.Cancel(), () => IsVerifyingFiles);
+
+        // #334
+        RunAtaShortSelfTestCommand = new RelayCommand(() => RunAtaSelfTest(extended: false), () => ShowAtaSelfTest && SelectedSmartDisk is not null);
+        RunAtaExtendedSelfTestCommand = new RelayCommand(() => RunAtaSelfTest(extended: true), () => ShowAtaSelfTest && SelectedSmartDisk is not null);
+
+        // #324: subscribe to the shared sampler's tick rather than owning a new heavy timer -
+        // see PerformanceViewModel.Sampled's remarks.
+        Performance.Sampled += OnPerformanceSampled;
+
         _ = Task.Run(() =>
         {
             var pools = StorageSpacesService.List();
@@ -333,6 +484,12 @@ public sealed class StorageViewModel : ObservableObject
                 .ToList();
             var disks = SystemSpecsService.ListDisksForSmart();
 
+            // #328: cheap base facts (predicted failure, driver health) for every disk, computed
+            // once at startup - refined per-disk once that disk's SMART/NVMe data is actually read
+            // (see ApplySmartRawResult/ApplyNvmeHealth below).
+            var failureFlags = SystemSpecsService.ReadDiskFailureFlags().ToDictionary(f => f.Index);
+            var poolsForVerdict = pools;
+
             System.Windows.Application.Current?.Dispatcher.Invoke(() =>
             {
                 foreach (var p in pools) StoragePools.Add(p);
@@ -340,8 +497,74 @@ public sealed class StorageViewModel : ObservableObject
                 foreach (var (index, model) in disks) SmartDiskOptions.Add(new SmartDiskOption { Index = index, Model = model });
                 foreach (var d in fixedDrives) ThroughputDriveOptions.Add(d.Name.TrimEnd('\\'));
                 SelectedThroughputDrive = ThroughputDriveOptions.FirstOrDefault();
+
+                foreach (var (index, model) in disks)
+                {
+                    failureFlags.TryGetValue(index, out var flag);
+                    var verdict = new DriveHealthVerdict { Index = index, Model = model };
+                    ApplyBaseVerdictFacts(verdict, flag, poolsForVerdict);
+                    DriveHealthVerdicts.Add(verdict);
+                    if (flag is not null) _lastPredictFailure[index] = flag.PredictFailure == true;
+                }
             });
         });
+    }
+
+    /// <summary>#324: fired once per PerformanceViewModel sample tick. Throttled to roughly once
+    /// every 10 ticks (rather than every tick) so a fast poll interval doesn't turn this into a WMI
+    /// round trip several times a second, and skipped entirely while a previous check is still in
+    /// flight.</summary>
+    private void OnPerformanceSampled()
+    {
+        if (_failureWatchRunning) return;
+        if (++_failureWatchTickCounter < 10) return;
+        _failureWatchTickCounter = 0;
+        _failureWatchRunning = true;
+
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                var flags = SystemSpecsService.ReadDiskFailureFlags();
+                System.Windows.Application.Current?.Dispatcher.Invoke(() => ApplyFailureWatch(flags));
+            }
+            finally
+            {
+                _failureWatchRunning = false;
+            }
+        });
+    }
+
+    /// <summary>#324: on a false->true transition, fires a tray toast and adds a persistent
+    /// Summary-tab HealthIssue; on a true->false transition (recovered, or the drive was replaced),
+    /// clears any standing alert for that disk so the Summary tab doesn't keep showing a resolved
+    /// warning forever.</summary>
+    private void ApplyFailureWatch(List<DiskFailureFlag> flags)
+    {
+        foreach (var flag in flags)
+        {
+            bool nowFailing = flag.PredictFailure == true || string.Equals(flag.DriverHealthStatus, "Unhealthy", StringComparison.OrdinalIgnoreCase);
+            bool wasFailing = _lastPredictFailure.TryGetValue(flag.Index, out var prev) && prev;
+            _lastPredictFailure[flag.Index] = nowFailing;
+
+            string model = SmartDiskOptions.FirstOrDefault(d => d.Index == flag.Index)?.Model ?? $"Disk {flag.Index}";
+
+            if (nowFailing && !wasFailing)
+            {
+                string message = $"{model} now shows a SMART failure prediction - back up its data soon.";
+                ToastService.Show("Drive failure predicted", message, isCritical: true);
+                DriveFailureAlerts.Add(new HealthIssue { Message = message, IsCritical = true });
+            }
+            else if (!nowFailing && wasFailing)
+            {
+                var toRemove = DriveFailureAlerts.Where(i => i.Message.StartsWith(model, StringComparison.Ordinal)).ToList();
+                foreach (var i in toRemove) DriveFailureAlerts.Remove(i);
+            }
+
+            // Keep the #328 verdict list's predicted-failure reason in sync with this same live watch.
+            var verdict = DriveHealthVerdicts.FirstOrDefault(v => v.Index == flag.Index);
+            if (verdict is not null) RecomputeVerdict(verdict, flag);
+        }
     }
 
     private async Task CheckFragmentationAsync(FragmentationRow? row)
@@ -390,10 +613,19 @@ public sealed class StorageViewModel : ObservableObject
         // Round 10, #301-#312: the raw attribute table + derived summaries, tied into this same
         // on-demand action rather than a separate polling loop.
         SmartRawStatusText = "Reading raw SMART attributes...";
+        NvmeHealthLog? nvmeHealthLog = null;
         try
         {
             var result = await Task.Run(() => SmartRawAttributeService.Read(disk.Index, disk.Model));
             ApplySmartRawResult(result);
+
+            // #328: refine this disk's verdict now that real SMART-attribute facts are on hand.
+            var smartFacts = FactsFor(disk.Index);
+            var pendingAttr = Find(result.Attributes, 0xC5);
+            smartFacts.CriticalAttributeCount = SmartTriageTiles.Count(t => t.IsCritical);
+            smartFacts.PendingSectors = pendingAttr is null ? 0 : (int)Math.Min(pendingAttr.RawValue, int.MaxValue);
+            var smartVerdict = DriveHealthVerdicts.FirstOrDefault(v => v.Index == disk.Index);
+            if (smartVerdict is not null) RecomputeVerdict(smartVerdict, smartFacts, StoragePools.ToList());
 
             // Round 13, #313/#322: bundle the NVMe health-log-page-0x02 read (and Identify
             // Controller) into this same on-demand action - both are cheap single round trips, and
@@ -406,10 +638,27 @@ public sealed class StorageViewModel : ObservableObject
                 NvmeHealthStatusText = "Reading NVMe SMART/Health Information Log (page 0x02)...";
                 var healthLog = await Task.Run(() => NvmeHealthLogService.ReadHealthLog(disk.Index));
                 ApplyNvmeHealth(healthLog);
+                if (healthLog.Available) nvmeHealthLog = healthLog;
 
                 var identify = await Task.Run(() => NvmeHealthLogService.ReadIdentify(disk.Index));
                 ApplyNvmeIdentify(identify);
+
+                // #328: fold NVMe critical-warning/media-error facts into the same verdict.
+                var nvmeFacts = FactsFor(disk.Index);
+                nvmeFacts.NvmeCriticalWarningCount = NvmeCriticalWarnings.Count(w => w.IsSet);
+                nvmeFacts.NvmeMediaErrors = NvmeMediaErrorsPresent;
+                var nvmeVerdict = DriveHealthVerdicts.FirstOrDefault(v => v.Index == disk.Index);
+                if (nvmeVerdict is not null) RecomputeVerdict(nvmeVerdict, nvmeFacts, StoragePools.ToList());
             }
+
+            // #325/#326/#327: persist this snapshot, show what's changed since last run, and
+            // (re)build the trend chart + wear-rate projection - all from the same read above.
+            RecordSmartHistoryAndProject(disk, result, nvmeHealthLog);
+
+            // #334: ATA self-test structure only applies to a non-NVMe (ATA/SATA) drive that
+            // actually answered the raw-attribute read above.
+            ShowAtaSelfTest = !ShowNvmeHealth && !result.Unavailable;
+            AtaSelfTestStatusText = string.Empty;
         }
         catch (Exception ex)
         {
@@ -470,6 +719,19 @@ public sealed class StorageViewModel : ObservableObject
         NvmeSelfTestStatusText = "Not read";
         NvmeSelfTestTriggerStatusText = string.Empty;
         ApplyReliabilityLatencies(null, null, null);
+
+        // #325/#326/#327/#334: reset the history/trend/projection/self-test display so a previous
+        // disk's data doesn't linger while the newly selected disk's data is still being read.
+        SmartHistoryChanges.Clear();
+        SmartHistoryStatusText = string.Empty;
+        ShowSmartTrendChart = false;
+        SmartTrendRangeText = string.Empty;
+        SmartTrendSeries = Array.Empty<ISeries>();
+        OnPropertyChanged(nameof(SmartTrendSeries));
+        ShowWearProjection = false;
+        WearProjectionText = string.Empty;
+        ShowAtaSelfTest = false;
+        AtaSelfTestStatusText = string.Empty;
     }
 
     private void ApplySmartRawResult(SmartRawResult result)
@@ -899,5 +1161,519 @@ public sealed class StorageViewModel : ObservableObject
         {
             IsThroughputTesting = false;
         }
+    }
+
+    // ================================================================================
+    // #328: per-drive health verdict - the individual facts arrive at different times (predicted
+    // failure/pool status at startup, critical-attribute/pending-sector counts only once SMART is
+    // read, NVMe critical-warning/media-error counts only once that log is read), so each disk's
+    // running facts are tracked separately and the verdict is recomputed from the full set every
+    // time any one of them changes, rather than trying to patch Level/Reasons incrementally.
+    // ================================================================================
+
+    private sealed class VerdictFacts
+    {
+        public bool? PredictFailure;
+        public int CriticalAttributeCount;
+        public int PendingSectors;
+        public int NvmeCriticalWarningCount;
+        public bool NvmeMediaErrors;
+    }
+
+    private readonly Dictionary<int, VerdictFacts> _verdictFacts = new();
+
+    private VerdictFacts FactsFor(int index)
+    {
+        if (!_verdictFacts.TryGetValue(index, out var f)) _verdictFacts[index] = f = new VerdictFacts();
+        return f;
+    }
+
+    /// <summary>Seeds a disk's verdict from the cheap, always-available facts (predicted failure +
+    /// pool membership) at startup - refined later, per disk, once that disk's SMART/NVMe data is
+    /// actually read (see the RecomputeVerdict calls inside ReadSmartDetailsAsync).</summary>
+    private void ApplyBaseVerdictFacts(DriveHealthVerdict verdict, DiskFailureFlag? flag, List<StorageSpaceInfo> pools)
+    {
+        var facts = FactsFor(verdict.Index);
+        facts.PredictFailure = flag?.PredictFailure;
+        RecomputeVerdict(verdict, facts, pools);
+    }
+
+    private void RecomputeVerdict(DriveHealthVerdict verdict, DiskFailureFlag flag)
+    {
+        var facts = FactsFor(verdict.Index);
+        facts.PredictFailure = flag.PredictFailure;
+        RecomputeVerdict(verdict, facts, StoragePools.ToList());
+    }
+
+    /// <summary>Deliberately three-state and reason-listing rather than a made-up numeric score -
+    /// see DriveHealthVerdict's remarks. "Replace" fires only on the two unambiguous signals
+    /// (predicted failure, confirmed NVMe media errors); everything else is "Watch".</summary>
+    private static void RecomputeVerdict(DriveHealthVerdict verdict, VerdictFacts facts, List<StorageSpaceInfo> pools)
+    {
+        verdict.Reasons.Clear();
+        bool replace = false;
+        bool watch = false;
+
+        if (facts.PredictFailure == true)
+        {
+            verdict.Reasons.Add("SMART failure prediction flag is set");
+            replace = true;
+        }
+        if (facts.NvmeMediaErrors)
+        {
+            verdict.Reasons.Add("NVMe media/data integrity errors reported");
+            replace = true;
+        }
+        if (facts.NvmeCriticalWarningCount > 0)
+        {
+            verdict.Reasons.Add($"{facts.NvmeCriticalWarningCount} NVMe critical warning bit(s) set");
+            watch = true;
+        }
+        if (facts.PendingSectors > 0)
+        {
+            verdict.Reasons.Add($"{facts.PendingSectors} current pending sector(s) (SMART C5)");
+            watch = true;
+        }
+        if (facts.CriticalAttributeCount > 0)
+        {
+            verdict.Reasons.Add($"{facts.CriticalAttributeCount} critical SMART attribute(s) non-zero");
+            watch = true;
+        }
+        if (pools.Any(p => p.IsHealthWarning))
+        {
+            verdict.Reasons.Add("A Storage Spaces pool on this system reports a health warning");
+            watch = true;
+        }
+
+        verdict.Level = replace ? DriveHealthLevel.Replace : watch ? DriveHealthLevel.Watch : DriveHealthLevel.Healthy;
+    }
+
+    // ================================================================================
+    // #325/#326/#327: SMART history journal, trend chart, wear-rate projection.
+    // ================================================================================
+
+    private const float TrendCoreStrokeWidth = 2f;
+    private const float TrendGlowStrokeWidth = 7f;
+
+    /// <summary>#326: same glow/core line-series-pair styling as PerformanceViewModel.LineOf (a
+    /// thick, translucent glow stroke drawn first, then a crisp 2px core stroke with a top-to-bottom
+    /// gradient fill on top) - duplicated here rather than shared, since PerformanceViewModel's
+    /// helper is private and this chart's data source (a persisted snapshot history, not a live
+    /// poll) doesn't belong on that class.</summary>
+    private static (LineSeries<double> Glow, LineSeries<double> Core) TrendLineOf(ObservableCollection<double> values, SKColor color, string name)
+    {
+        var glow = new LineSeries<double>
+        {
+            Values = values,
+            Stroke = new SolidColorPaint(color.WithAlpha(70), TrendGlowStrokeWidth),
+            Fill = null,
+            GeometryStroke = null,
+            GeometryFill = null,
+            LineSmoothness = 0.3,
+            IsHoverable = false,
+            IsVisibleAtLegend = false,
+        };
+        var core = new LineSeries<double>
+        {
+            Values = values,
+            Name = name,
+            Stroke = new SolidColorPaint(color, TrendCoreStrokeWidth),
+            Fill = new LinearGradientPaint(color.WithAlpha(90), color.WithAlpha(0), new SKPoint(0, 0), new SKPoint(0, 1)),
+            GeometryStroke = null,
+            GeometryFill = null,
+            LineSmoothness = 0.3,
+        };
+        return (glow, core);
+    }
+
+    private void RecordSmartHistoryAndProject(SmartDiskOption disk, SmartRawResult result, NvmeHealthLog? nvmeLog)
+    {
+        if (result.Unavailable)
+        {
+            SmartHistoryStatusText = "No raw SMART data available - nothing to record.";
+            return;
+        }
+
+        var hostWritten = Find(result.Attributes, 0xF1) ?? Find(result.Attributes, 0xF9);
+        var lifeLeft = Find(result.Attributes, 0xE9) ?? Find(result.Attributes, 0xE7);
+
+        var entry = new SmartHistoryEntry
+        {
+            DiskKey = $"{disk.Index}:{disk.Model}",
+            Timestamp = DateTime.Now,
+            Reallocated = Find(result.Attributes, 0x05) is { } a05 ? (int)a05.RawValue : 0,
+            PendingSector = Find(result.Attributes, 0xC5) is { } aC5 ? (int)aC5.RawValue : 0,
+            OfflineUncorrectable = Find(result.Attributes, 0xC6) is { } aC6 ? (int)aC6.RawValue : 0,
+            ReportedUncorrectable = Find(result.Attributes, 0xBB) is { } aBB ? (int)aBB.RawValue : 0,
+            UdmaCrcErrors = Find(result.Attributes, 0xC7) is { } aC7 ? (int)aC7.RawValue : 0,
+            NvmePercentageUsed = nvmeLog?.PercentageUsed,
+            NvmeAvailableSparePercent = nvmeLog?.AvailableSparePercent,
+            NvmeDataUnitsWrittenTb = nvmeLog?.DataUnitsWrittenTb,
+            HostWrittenBytes = hostWritten is null ? null : hostWritten.RawValue * (double)result.BytesPerSector,
+            SataLifeLeftPercent = lifeLeft?.Current,
+        };
+
+        var changes = SmartHistoryService.RecordIfNew(entry);
+        SmartHistoryChanges.Clear();
+        foreach (var c in changes) SmartHistoryChanges.Add(c);
+        SmartHistoryStatusText = changes.Count == 0
+            ? "No change since the last recorded snapshot for this disk (or this is the first snapshot ever taken for it)."
+            : $"{changes.Count} attribute(s) changed since the last recorded snapshot.";
+
+        // #326: trend chart, hidden until at least three snapshots exist for this disk.
+        var history = SmartHistoryService.ForDisk(entry.DiskKey);
+        if (history.Count >= 3)
+        {
+            _reallocatedHistory.Clear();
+            _pendingHistory.Clear();
+            foreach (var h in history)
+            {
+                _reallocatedHistory.Add(h.Reallocated);
+                _pendingHistory.Add(h.PendingSector);
+            }
+            var (reallocGlow, reallocCore) = TrendLineOf(_reallocatedHistory, new SKColor(0xE0, 0x57, 0x57), "Reallocated");
+            var (pendingGlow, pendingCore) = TrendLineOf(_pendingHistory, new SKColor(0xE0, 0xA9, 0x30), "Pending");
+            SmartTrendSeries = new ISeries[] { reallocGlow, reallocCore, pendingGlow, pendingCore };
+            OnPropertyChanged(nameof(SmartTrendSeries));
+            SmartTrendRangeText = $"{history.Count} snapshots, {history[0].Timestamp:d} – {history[^1].Timestamp:d}.";
+            ShowSmartTrendChart = true;
+        }
+        else
+        {
+            ShowSmartTrendChart = false;
+            SmartTrendRangeText = history.Count == 0 ? string.Empty : $"{history.Count} snapshot(s) recorded so far - the trend chart needs at least 3.";
+        }
+
+        // #327: wear-rate projection from the same recorded history.
+        WearProjectionText = ComputeWearProjection(history);
+        ShowWearProjection = WearProjectionText.Length > 0;
+    }
+
+    /// <summary>#327: TB written per day from the recorded history, projected forward to the date
+    /// the drive reaches 100% Percentage Used (NVMe) or 0% life left (SATA SSD). Always captioned
+    /// as an extrapolation from recent behavior, never a warranty statement - a drive's real write
+    /// rate can change at any time.</summary>
+    private static string ComputeWearProjection(List<SmartHistoryEntry> history)
+    {
+        if (history.Count < 2) return string.Empty;
+
+        var first = history[0];
+        var last = history[^1];
+        double days = (last.Timestamp - first.Timestamp).TotalDays;
+        if (days < 1) return string.Empty; // not enough elapsed time between snapshots for a meaningful rate
+
+        if (last.NvmePercentageUsed is { } usedNow && first.NvmePercentageUsed is { } usedFirst)
+        {
+            double usedPerDay = (usedNow - usedFirst) / days;
+            if (usedPerDay <= 0)
+                return "NVMe percentage-used hasn't increased across the recorded history - no meaningful wear-out date to project yet.";
+            double daysRemaining = (100 - usedNow) / usedPerDay;
+            var projected = DateTime.Now.AddDays(daysRemaining);
+            return $"At the recent rate of {usedPerDay:0.###}%/day, this drive is projected to reach 100% Percentage Used around {projected:d} (in ~{daysRemaining:0} days) - extrapolation from your recent write rate, not a warranty statement.";
+        }
+
+        if (last.SataLifeLeftPercent is { } lifeNow && first.SataLifeLeftPercent is { } lifeFirst)
+        {
+            double lifePerDay = (lifeFirst - lifeNow) / days;
+            if (lifePerDay <= 0)
+                return "SATA SSD life-left percentage hasn't decreased across the recorded history - no meaningful wear-out date to project yet.";
+            double daysRemaining = lifeNow / lifePerDay;
+            var projected = DateTime.Now.AddDays(daysRemaining);
+            return $"At the recent rate of {lifePerDay:0.###}%/day, this drive is projected to reach 0% life left around {projected:d} (in ~{daysRemaining:0} days) - extrapolation from your recent write rate, not a warranty statement.";
+        }
+
+        if (last.HostWrittenBytes is { } bytesNow && first.HostWrittenBytes is { } bytesFirst && bytesNow > bytesFirst)
+        {
+            double tbPerDay = (bytesNow - bytesFirst) / days / 1_000_000_000_000.0;
+            return $"Writing approximately {tbPerDay:0.###} TB/day over the recorded history (no life-left/percentage-used figure available on this drive to project a wear-out date from) - extrapolation from your recent write rate, not a warranty statement.";
+        }
+
+        return string.Empty;
+    }
+
+    // ================================================================================
+    // #329: Windows' own disk-diagnosis events.
+    // ================================================================================
+
+    private async Task CheckDiskDiagnosisAsync()
+    {
+        IsCheckingDiskDiagnosis = true;
+        DiskDiagnosisStatusText = "Checking Windows disk-diagnosis events...";
+        DiskDiagnosisEvents.Clear();
+        try
+        {
+            var events = await Task.Run(() => DiskDiagnosisEventService.ReadDiskDiagnosisEvents());
+            foreach (var e in events) DiskDiagnosisEvents.Add(e);
+            DiskDiagnosisStatusText = events.Count == 0
+                ? "No disk-diagnosis or predicted-failure events found in the last 30 days."
+                : $"{events.Count} event(s) in the last 30 days (most recent first).";
+        }
+        catch (Exception ex)
+        {
+            DiskDiagnosisStatusText = $"Failed: {ex.Message}";
+        }
+        finally
+        {
+            IsCheckingDiskDiagnosis = false;
+        }
+    }
+
+    // ================================================================================
+    // #330/#331/#336: unified bad-sector view, pending-sector re-check, bad-block/retry
+    // event correlation.
+    // ================================================================================
+
+    private async Task CheckBadSectorsAsync()
+    {
+        var disk = SelectedSmartDisk;
+        if (disk is null) return;
+
+        IsCheckingBadSectors = true;
+        BadSectorStatusText = "Checking SMART counters, the latest chkdsk report, and $BadClus allocation...";
+        BadBlockEventCorrelationText = string.Empty;
+        try
+        {
+            // SMART side reuses whatever raw attributes are already on screen for this disk (the
+            // same precondition the pending-sector re-check below shares) rather than re-reading
+            // them a second time here.
+            int? reallocated = Find(SmartRawAttributes, 0x05) is { } ra ? (int)ra.RawValue : null;
+            int? pending = Find(SmartRawAttributes, 0xC5) is { } pa ? (int)pa.RawValue : null;
+            int? offlineUncorr = Find(SmartRawAttributes, 0xC6) is { } oa ? (int)oa.RawValue : null;
+
+            var (chkdskKb, chkdskDate) = await Task.Run(() => BadSectorService.ReadLatestChkdskBadSectors());
+
+            // $BadClus is a volume-level figure - resolve the first fixed volume physically hosted
+            // on this disk, the same association ClusterMappingService's #335 lookup uses.
+            var volume = await Task.Run(() => ClusterMappingService.ResolveVolumeForDisk(disk.Index));
+            long? badClusBytes = null;
+            string? badClusVolume = null;
+            if (volume is { } v)
+            {
+                badClusBytes = await BadSectorService.ReadBadClusAllocatedBytesAsync(v.DriveLetter);
+                badClusVolume = $"{v.DriveLetter}:";
+            }
+
+            var summary = new BadSectorSummary
+            {
+                SmartReallocated = reallocated,
+                SmartPending = pending,
+                SmartOfflineUncorrectable = offlineUncorr,
+                ChkdskBadSectorsKb = chkdskKb,
+                ChkdskReportDate = chkdskDate,
+                BadClusAllocatedBytes = badClusBytes,
+                BadClusVolume = badClusVolume,
+            };
+            BadSectorSummary = summary;
+
+            BadSectorStatusText = !summary.HasAnySource
+                ? "None of the three sources reported anything for this disk (SMART attributes weren't read yet, chkdsk has never logged a report, and $BadClus couldn't be read)."
+                : summary.SourcesDisagree
+                    ? "These sources disagree about whether this disk/volume has bad sectors - shown as-is below, not silently reconciled."
+                    : "All available sources checked.";
+
+            // #336: bad-block/retry event correlation, folded into the same card.
+            var badBlockEvents = await Task.Run(() => DiskDiagnosisEventService.ReadBadBlockAndRetryEvents());
+            int badBlockCount = badBlockEvents.Count(e => e.EventId == 7);
+            int retryCount = badBlockEvents.Count(e => e.EventId == 153);
+            bool escalate = pending is > 0 && retryCount > 0;
+            BadBlockEventCorrelationText = badBlockEvents.Count == 0
+                ? "No bad-block or I/O-retry events (System log, source Disk) found in the last 30 days."
+                : $"{badBlockCount} bad-block event(s), {retryCount} I/O-retry event(s) in the last 30 days." +
+                  (escalate ? " Both rising pending sectors AND recent retry events are present here - a stronger deterioration signal than either alone." : string.Empty);
+        }
+        catch (Exception ex)
+        {
+            BadSectorStatusText = $"Failed: {ex.Message}";
+        }
+        finally
+        {
+            IsCheckingBadSectors = false;
+        }
+    }
+
+    /// <summary>#331: "there is no simple documented Windows API to force a re-read of specific
+    /// LBAs" - this re-reads the whole SMART table now and diffs Current Pending Sector/Reallocated
+    /// against the values on screen before the click, labelled accurately as a re-check rather than
+    /// a targeted sector re-read.</summary>
+    private async Task RecheckPendingSectorsAsync()
+    {
+        var disk = SelectedSmartDisk;
+        if (disk is null) return;
+
+        ulong before = Find(SmartRawAttributes, 0xC5)?.RawValue ?? 0;
+        ulong reallocatedBefore = Find(SmartRawAttributes, 0x05)?.RawValue ?? 0;
+
+        IsRecheckingPendingSectors = true;
+        PendingSectorRecheckText = "Re-checking SMART now (read-only - re-reads the whole SMART table; this does not target specific sectors)...";
+        try
+        {
+            var result = await Task.Run(() => SmartRawAttributeService.Read(disk.Index, disk.Model));
+            if (result.Unavailable)
+            {
+                PendingSectorRecheckText = $"Re-check failed: {result.UnavailableReason}";
+                return;
+            }
+
+            ulong after = Find(result.Attributes, 0xC5)?.RawValue ?? 0;
+            ulong reallocatedAfter = Find(result.Attributes, 0x05)?.RawValue ?? 0;
+
+            long pendingDelta = (long)after - (long)before;
+            long reallocatedDelta = (long)reallocatedAfter - (long)reallocatedBefore;
+            PendingSectorRecheckText = pendingDelta == 0 && reallocatedDelta == 0
+                ? $"No change: pending sectors still {after}, reallocated still {reallocatedAfter}. Click \"Read SMART details\" above for a full grid refresh."
+                : $"Pending sectors {before} → {after} ({(pendingDelta > 0 ? "+" : string.Empty)}{pendingDelta}), reallocated {reallocatedBefore} → {reallocatedAfter} ({(reallocatedDelta > 0 ? "+" : string.Empty)}{reallocatedDelta}). Click \"Read SMART details\" above for a full grid refresh.";
+        }
+        catch (Exception ex)
+        {
+            PendingSectorRecheckText = $"Re-check failed: {ex.Message}";
+        }
+        finally
+        {
+            IsRecheckingPendingSectors = false;
+        }
+    }
+
+    // ================================================================================
+    // #332/#335: read-only surface scan + bad-LBA-to-file mapping.
+    // ================================================================================
+
+    private async Task StartSurfaceScanAsync()
+    {
+        var disk = SelectedSmartDisk;
+        if (disk is null) return;
+
+        _surfaceScanCts = new CancellationTokenSource();
+        var token = _surfaceScanCts.Token;
+        var dispatcher = System.Windows.Application.Current?.Dispatcher;
+
+        IsSurfaceScanning = true;
+        SurfaceScanProgressPercent = 0;
+        SurfaceScanResults.Clear();
+        SurfaceScanStatusText = "Scanning - reads only, never writes. This can take hours on a large HDD.";
+        try
+        {
+            var (success, message, _) = await Task.Run(() => SurfaceScanService.Scan(
+                disk.Index,
+                SurfaceScanStallThresholdMs,
+                problem => dispatcher?.Invoke(() =>
+                {
+                    // Cap the grid so a badly failing drive can't turn this into an unbounded UI list.
+                    if (SurfaceScanResults.Count < 500) SurfaceScanResults.Add(problem);
+                }),
+                progress => dispatcher?.Invoke(() =>
+                {
+                    SurfaceScanProgressPercent = progress.TotalLba > 0 ? Math.Min(100.0, (double)progress.CurrentLba / progress.TotalLba * 100.0) : 0;
+                    SurfaceScanStatusText = progress.TotalLba > 0
+                        ? $"Scanning... {SurfaceScanProgressPercent:0.0}% ({progress.CurrentLba:N0} / {progress.TotalLba:N0} sectors), {progress.ProblemsFound} problem(s) found so far."
+                        : $"Scanning... {progress.CurrentLba:N0} sectors read so far, {progress.ProblemsFound} problem(s) found (total size unknown).";
+                }),
+                token), token);
+
+            SurfaceScanStatusText = message;
+            SurfaceScanProgressPercent = 100;
+
+            // #335: best-effort LBA -> owning-file resolution, only after the scan itself finishes
+            // - doing this inline during the scan would slow the scan for a feature that's purely
+            // informational afterwards.
+            if (success && SurfaceScanResults.Count > 0)
+            {
+                var volume = await Task.Run(() => ClusterMappingService.ResolveVolumeForDisk(disk.Index));
+                if (volume is { } v)
+                {
+                    var resolved = new List<SurfaceScanResult>();
+                    foreach (var r in SurfaceScanResults)
+                    {
+                        token.ThrowIfCancellationRequested();
+                        r.OwningFile = await ClusterMappingService.ResolveOwningFileAsync(v.DriveLetter, r.StartLba, 512, v.BytesPerCluster);
+                        resolved.Add(r);
+                    }
+                    SurfaceScanResults.Clear();
+                    foreach (var r in resolved) SurfaceScanResults.Add(r);
+                }
+                else
+                {
+                    SurfaceScanStatusText += " (No assigned drive letter found on this disk - bad-LBA-to-file mapping unavailable.)";
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            SurfaceScanStatusText = $"Scan cancelled - {SurfaceScanResults.Count} problem(s) found before cancelling.";
+        }
+        catch (Exception ex)
+        {
+            SurfaceScanStatusText = $"Scan failed: {ex.Message}";
+        }
+        finally
+        {
+            IsSurfaceScanning = false;
+            _surfaceScanCts?.Dispose();
+            _surfaceScanCts = null;
+        }
+    }
+
+    // ================================================================================
+    // #333: file-level read verification.
+    // ================================================================================
+
+    private async Task VerifyFilesAsync()
+    {
+        string root = FileVerificationRoot;
+        if (!Directory.Exists(root))
+        {
+            FileVerificationStatusText = "Path not found.";
+            return;
+        }
+
+        _fileVerificationCts = new CancellationTokenSource();
+        var token = _fileVerificationCts.Token;
+        var dispatcher = System.Windows.Application.Current?.Dispatcher;
+
+        IsVerifyingFiles = true;
+        FileVerificationFailures.Clear();
+        FileVerificationStatusText = "Verifying (reading every byte of every file under this path)...";
+        try
+        {
+            var (checkedCount, failures) = await Task.Run(() => FileVerificationService.Verify(
+                root,
+                count =>
+                {
+                    if (count % 25 == 0)
+                        dispatcher?.Invoke(() => FileVerificationStatusText = $"Verifying... {count:N0} file(s) checked so far.");
+                },
+                token), token);
+
+            foreach (var f in failures) FileVerificationFailures.Add(f);
+            FileVerificationStatusText = failures.Count == 0
+                ? $"{checkedCount:N0} file(s) verified - every byte read back successfully."
+                : $"{checkedCount:N0} file(s) checked - {failures.Count} failed to read.";
+        }
+        catch (OperationCanceledException)
+        {
+            FileVerificationStatusText = $"Verification cancelled - {FileVerificationFailures.Count} failure(s) found so far.";
+        }
+        catch (Exception ex)
+        {
+            FileVerificationStatusText = $"Verification failed: {ex.Message}";
+        }
+        finally
+        {
+            IsVerifyingFiles = false;
+            _fileVerificationCts?.Dispose();
+            _fileVerificationCts = null;
+        }
+    }
+
+    // ================================================================================
+    // #334: ATA short/extended self-test - structure/UI in place, issuance stubbed (see
+    // AtaSelfTestService's remarks).
+    // ================================================================================
+
+    private void RunAtaSelfTest(bool extended)
+    {
+        var disk = SelectedSmartDisk;
+        if (disk is null) return;
+        var (_, message) = AtaSelfTestService.TriggerSelfTest(disk.Index, extended);
+        AtaSelfTestStatusText = message;
     }
 }

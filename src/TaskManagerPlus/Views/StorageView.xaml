@@ -133,6 +133,62 @@
                 </StackPanel>
             </Border>
 
+            <!-- Round 14, #328: per-drive Healthy/Watch/Replace verdict - combines predicted
+                 failure, critical SMART attributes, NVMe critical-warning bits, pending sectors and
+                 pool membership into one three-state verdict with reasons listed beneath it,
+                 deliberately not a made-up numeric score. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Drive health verdict" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Predicted failure + pool status are always current; critical-attribute/pending-sector/NVMe-warning counts refine once you read SMART details for that disk below."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+                    <ItemsControl ItemsSource="{Binding DriveHealthVerdicts}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Border Grid.Column="0" CornerRadius="3" Padding="8,3" VerticalAlignment="Top" Margin="0,0,10,0">
+                                        <Border.Style>
+                                            <Style TargetType="Border">
+                                                <Setter Property="Background" Value="{DynamicResource SuccessBrush}" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding LevelText}" Value="Watch">
+                                                        <Setter Property="Background" Value="{DynamicResource WarningBrush}" />
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding LevelText}" Value="Replace">
+                                                        <Setter Property="Background" Value="{DynamicResource DangerBrush}" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Border.Style>
+                                        <TextBlock Text="{Binding LevelText}" FontSize="11" FontWeight="SemiBold" Foreground="White" />
+                                    </Border>
+                                    <StackPanel Grid.Column="1">
+                                        <TextBlock Text="{Binding Model}" FontSize="12.5" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Text="{Binding ReasonsText}" Style="{StaticResource SubStat}" Margin="0,2,0,0" TextWrapping="Wrap" />
+                                    </StackPanel>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="No disks detected.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding DriveHealthVerdicts.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
             <!-- #86: on-demand HDD fragmentation check - hidden entirely when there's no fixed
                  spinning-disk volume at all (an all-SSD system, the increasingly common case). -->
             <Border Margin="0,0,0,16">
@@ -255,6 +311,60 @@
                     <TextBlock Text="Full 30-entry ATA attribute table + published failure thresholds for the disk selected above. Vendor-reassigned IDs (0xAD/0xB1/0xE8/0xE9/0xF1/0xF2, ...) are reinterpreted per the matched vendor profile where one exists."
                                Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
 
+                    <!-- Round 14, #325: "changed since last run" - a persisted snapshot journal
+                         (smart-history.json), diffed against the previous run's snapshot for this
+                         disk. Hidden entirely until there's something to show. -->
+                    <Border Margin="0,0,0,10" Padding="10" CornerRadius="4" BorderThickness="1" BorderBrush="{DynamicResource BorderSubtleBrush}">
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding SmartHistoryChanges.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                        <StackPanel>
+                            <TextBlock Text="Changed since last run" FontWeight="SemiBold" FontSize="12.5" Margin="0,0,0,6" />
+                            <ItemsControl ItemsSource="{Binding SmartHistoryChanges}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock FontSize="12" Margin="0,0,0,3">
+                                            <Run Text="{Binding Label, Mode=OneWay}" /><Run Text=": " />
+                                            <Run Text="{Binding Previous, Mode=OneWay}" /><Run Text=" → " />
+                                            <Run Text="{Binding Current, Mode=OneWay}" FontWeight="SemiBold" />
+                                            <Run Text=" (" /><Run Text="{Binding DeltaText, Mode=OneWay}" FontWeight="SemiBold" Foreground="{DynamicResource WarningBrush}" /><Run Text=")" />
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </Border>
+                    <TextBlock Text="{Binding SmartHistoryStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,10" TextWrapping="Wrap"
+                               Visibility="{Binding SmartHistoryStatusText, Converter={StaticResource StringToVisibilityConverter}}" />
+
+                    <!-- Round 14, #326: reallocated/pending trend, plotted from the same persisted
+                         history - hidden until at least three snapshots exist for this disk. -->
+                    <Border Margin="0,0,0,10">
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding ShowSmartTrendChart}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                        <StackPanel>
+                            <TextBlock Text="Reallocated / pending sector trend" FontWeight="SemiBold" FontSize="12.5" Margin="0,0,0,2" />
+                            <TextBlock Text="{Binding SmartTrendRangeText}" Style="{StaticResource SubStat}" Margin="0,0,0,4" />
+                            <lvc:CartesianChart Series="{Binding SmartTrendSeries}" XAxes="{Binding Performance.HiddenXAxes}"
+                                                 Height="140" TooltipPosition="Top" LegendPosition="Bottom" Background="Transparent" />
+                        </StackPanel>
+                    </Border>
+
                     <!-- #306: critical-attribute triage strip - "quick flag, not a verdict". -->
                     <TextBlock Text="One pending sector is worth watching, not replacing a drive over - a quick flag, not a verdict."
                                Margin="0,0,0,6" TextWrapping="Wrap">
@@ -316,6 +426,29 @@
                             <DataGridTextColumn Header="Note" Binding="{Binding VendorNote}" Width="1.2*" />
                         </DataGrid.Columns>
                     </DataGrid>
+
+                    <!-- Round 14, #334: ATA short/extended self-test - structure/UI in place,
+                         issuance stubbed (see AtaSelfTestService's remarks). Non-NVMe drives only. -->
+                    <StackPanel Margin="0,14,0,0">
+                        <StackPanel.Style>
+                            <Style TargetType="StackPanel">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding ShowAtaSelfTest}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </StackPanel.Style>
+                        <TextBlock Text="ATA self-test" FontWeight="SemiBold" FontSize="12.5" Margin="0,0,0,4" />
+                        <TextBlock Text="{Binding AtaSelfTestEstimatedDurationText}" Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" />
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                            <Button Content="Short self-test" Padding="8,3" FontSize="11.5" Margin="0,0,8,0" Command="{Binding RunAtaShortSelfTestCommand}" />
+                            <Button Content="Extended self-test" Padding="8,3" FontSize="11.5" Command="{Binding RunAtaExtendedSelfTestCommand}" />
+                        </StackPanel>
+                        <TextBlock Text="{Binding AtaSelfTestStatusText}" Style="{StaticResource SubStat}" TextWrapping="Wrap"
+                                   Visibility="{Binding AtaSelfTestStatusText, Converter={StaticResource StringToVisibilityConverter}}" />
+                    </StackPanel>
                 </StackPanel>
             </Border>
 
@@ -535,12 +668,152 @@
                                Visibility="{Binding SmartWearLevelText, Converter={StaticResource StringToVisibilityConverter}}" />
                     <TextBlock Text="{Binding SmartWearWarningText}" Foreground="{DynamicResource WarningBrush}" FontSize="12.5" TextWrapping="Wrap"
                                Visibility="{Binding SmartWearWarningText, Converter={StaticResource StringToVisibilityConverter}}" />
+
+                    <!-- Round 14, #327: TB-written-per-day wear-rate projection from the persisted
+                         SMART history - hidden until at least two snapshots exist. -->
+                    <TextBlock Text="{Binding WearProjectionText}" Margin="0,8,0,0" TextWrapping="Wrap">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding ShowWearProjection}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- Round 14, #329: Windows' own disk-diagnosis events - a different signal from the
+                 WMI-level predicted-failure flag watched live above (#324). A later chunk (#370)
+                 folds this into a unified storage event timeline. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Windows disk-diagnosis events" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Check now" Padding="10,4" Command="{Binding CheckDiskDiagnosisCommand}" />
+                    </Grid>
+                    <TextBlock Text="Microsoft-Windows-DiskDiagnosisDataCollector, plus System-log disk event 52 (&quot;the driver has detected that device ... has predicted that it will fail&quot;) - last 30 days."
+                               Style="{StaticResource SubStat}" Margin="0,-6,0,10" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding DiskDiagnosisStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" />
+                    <DataGrid ItemsSource="{Binding DiskDiagnosisEvents}" IsReadOnly="True" MaxHeight="220" AutoGenerateColumns="False">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Time" Binding="{Binding TimeCreated, StringFormat={}{0:g}}" Width="140" />
+                            <DataGridTextColumn Header="Source" Binding="{Binding Source}" Width="1.4*" />
+                            <DataGridTextColumn Header="Event ID" Binding="{Binding EventId}" Width="70" />
+                            <DataGridTextColumn Header="Message" Binding="{Binding Message}" Width="2.4*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- Round 14, #330/#331/#336: unified bad-sector view - SMART 05/C5/C6 (from the raw
+                 attribute grid above), the most recent chkdsk report, and the $BadClus allocation,
+                 shown side by side rather than reconciled when they disagree - plus a read-only
+                 pending-sector re-check and bad-block/retry event correlation. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Bad sectors" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Check bad sectors" Padding="10,4" Command="{Binding CheckBadSectorsCommand}" />
+                    </Grid>
+                    <TextBlock Text="Select a disk and read SMART details above first. These three sources measure different things and can legitimately disagree - shown as-is, never silently reconciled."
+                               Style="{StaticResource SubStat}" Margin="0,-6,0,10" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding BadSectorStatusText}" Margin="0,0,0,10" TextWrapping="Wrap">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding BadSectorSummary.SourcesDisagree}" Value="True">
+                                        <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                        <Setter Property="FontWeight" Value="SemiBold" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
+                    <UniformGrid Columns="3" Margin="0,0,0,10">
+                        <views:VfdMeter Title="SMART" Glow="False" Margin="0,0,8,0" Percent="0"
+                                        ValueText="{Binding BadSectorSummary.SmartReallocated, TargetNullValue=–}"
+                                        SubText="Reallocated (05)" AccentBrush="{Binding Performance.DiskColor, Converter={StaticResource ColorToBrushConverter}}" />
+                        <views:VfdMeter Title="chkdsk" Glow="False" Margin="4,0,4,0" Percent="0" Unit="KB"
+                                        ValueText="{Binding BadSectorSummary.ChkdskBadSectorsKb, TargetNullValue=–}"
+                                        SubText="Most recent report" AccentBrush="{Binding Performance.DiskColor, Converter={StaticResource ColorToBrushConverter}}" />
+                        <views:VfdMeter Title="$BadClus" Glow="False" Margin="8,0,0,0" Percent="0"
+                                        ValueText="{Binding BadSectorSummary.BadClusAllocatedBytes, Converter={StaticResource BytesToReadableConverter}, TargetNullValue=–}"
+                                        SubText="{Binding BadSectorSummary.BadClusVolume, StringFormat=Volume {0}, TargetNullValue='Volume unknown'}"
+                                        AccentBrush="{Binding Performance.DiskColor, Converter={StaticResource ColorToBrushConverter}}" />
+                    </UniformGrid>
+
+                    <TextBlock Text="{Binding BadBlockEventCorrelationText}" Style="{StaticResource SubStat}" Margin="0,0,0,10" TextWrapping="Wrap"
+                               Visibility="{Binding BadBlockEventCorrelationText, Converter={StaticResource StringToVisibilityConverter}}" />
+
+                    <!-- #331: labelled accurately as a re-check, not a targeted sector re-read -
+                         see RecheckPendingSectorsAsync's remarks for why. -->
+                    <Grid Margin="0,4,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Read-only - re-reads the whole SMART table now and diffs it against the values before you clicked. Not a targeted re-read of specific sectors."
+                                   Style="{StaticResource SubStat}" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,10,0" />
+                        <Button Grid.Column="1" Content="Re-check SMART now" Padding="8,3" FontSize="11.5" Command="{Binding RecheckPendingSectorsCommand}" />
+                    </Grid>
+                    <TextBlock Text="{Binding PendingSectorRecheckText}" Style="{StaticResource SubStat}" TextWrapping="Wrap"
+                               Visibility="{Binding PendingSectorRecheckText, Converter={StaticResource StringToVisibilityConverter}}" />
+                </StackPanel>
+            </Border>
+
+            <!-- Round 14, #332/#335: read-only surface scan - sequential end-to-end read via
+                 FILE_FLAG_NO_BUFFERING, recording error/stall ranges, cancellable. Bad LBAs are
+                 mapped to an owning file afterwards (approximate - see ClusterMappingService). -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Surface scan" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Reads only, never writes; can take hours on a large HDD. Uses the disk selected above. Cancel at any time - already-found problems stay listed."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Stall threshold (ms)" VerticalAlignment="Center" Margin="0,0,8,0" FontSize="12.5" />
+                        <TextBox Grid.Column="1" Width="70" Text="{Binding SurfaceScanStallThresholdMs, UpdateSourceTrigger=PropertyChanged}" VerticalContentAlignment="Center" Margin="0,0,8,0" />
+                        <Button Grid.Column="3" Content="Start scan" Padding="10,4" Margin="0,0,8,0" Command="{Binding StartSurfaceScanCommand}" />
+                        <Button Grid.Column="4" Content="Cancel" Padding="10,4" Command="{Binding CancelSurfaceScanCommand}" />
+                    </Grid>
+                    <ProgressBar Height="6" Minimum="0" Maximum="100" Value="{Binding SurfaceScanProgressPercent, Mode=OneWay}" Margin="0,0,0,8"
+                                 Visibility="{Binding IsSurfaceScanning, Converter={StaticResource BoolToVisibilityConverter}}" />
+                    <TextBlock Text="{Binding SurfaceScanStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" />
+                    <DataGrid ItemsSource="{Binding SurfaceScanResults}" IsReadOnly="True" MaxHeight="240" AutoGenerateColumns="False">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Start LBA" Binding="{Binding StartLba}" Width="90" />
+                            <DataGridTextColumn Header="End LBA" Binding="{Binding EndLba}" Width="90" />
+                            <DataGridTextColumn Header="Type" Binding="{Binding Note}" Width="1.6*" />
+                            <DataGridTextColumn Header="Elapsed (ms)" Binding="{Binding ElapsedMs, StringFormat={}{0:0}}" Width="90" />
+                            <DataGridTextColumn Header="Owning file (approx.)" Binding="{Binding OwningFile}" Width="2*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
                 </StackPanel>
             </Border>
 
             <!-- Round 9, #39: largest files/folders scanner - on-demand, depth-capped, for
                  finding what's eating a nearly-full volume. Access-denied subtrees are skipped
-                 silently rather than failing the whole scan. -->
+                 silently rather than failing the whole scan. Round 14, #333 adds a file-level
+                 read-verification scanner alongside it, reusing the same safe-enumeration helpers. -->
             <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
                 <StackPanel>
                     <TextBlock Text="Largest files &amp; folders" Style="{StaticResource CardTitle}" />
@@ -560,6 +833,29 @@
                             <DataGridTextColumn Header="Kind" Binding="{Binding Kind}" Width="70" />
                             <DataGridTextColumn Header="Path" Binding="{Binding Path}" Width="2.2*" />
                             <DataGridTextColumn Header="Size" Binding="{Binding SizeText}" Width="*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+
+                    <!-- Round 14, #333: file-level read verification - walks a folder tree reading
+                         every byte of every file, listing which ones fail. -->
+                    <TextBlock Text="File-level read verification" FontWeight="SemiBold" FontSize="13" Margin="0,16,0,4" />
+                    <TextBlock Text="Turns an abstract bad-sector count into a concrete list of files that are already unreadable. Reads every byte - can be slow on a large tree, especially on a struggling drive."
+                               Style="{StaticResource SubStat}" Margin="0,0,0,10" TextWrapping="Wrap" />
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBox Grid.Column="0" Margin="0,0,8,0" Text="{Binding FileVerificationRoot, UpdateSourceTrigger=PropertyChanged}" VerticalContentAlignment="Center" />
+                        <Button Grid.Column="1" Content="Verify" Padding="10,4" Margin="0,0,8,0" Command="{Binding VerifyFilesCommand}" />
+                        <Button Grid.Column="2" Content="Cancel" Padding="10,4" Command="{Binding CancelFileVerificationCommand}" />
+                    </Grid>
+                    <TextBlock Text="{Binding FileVerificationStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" />
+                    <DataGrid ItemsSource="{Binding FileVerificationFailures}" IsReadOnly="True" MaxHeight="200" AutoGenerateColumns="False">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Path" Binding="{Binding Path}" Width="2.4*" />
+                            <DataGridTextColumn Header="Error" Binding="{Binding Error}" Width="1.6*" />
                         </DataGrid.Columns>
                     </DataGrid>
                 </StackPanel>

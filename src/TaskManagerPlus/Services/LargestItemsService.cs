@@ -93,6 +93,23 @@ public static class LargestItemsService
         return total;
     }
 
+    /// <summary>#333: unbounded-depth, cancellable recursive file enumeration reusing the same
+    /// access-denied-skips-the-subtree safe enumeration this class's own depth-capped scan uses -
+    /// exposed (internal, not private) for FileVerificationService's full-tree read-verification
+    /// walk, which (unlike the largest-items scan above) has no reason to cap depth.</summary>
+    internal static IEnumerable<FileInfo> SafeEnumerateFilesRecursive(DirectoryInfo dir, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        foreach (var file in SafeEnumerateFiles(dir))
+            yield return file;
+
+        foreach (var sub in SafeEnumerateDirectories(dir))
+        {
+            foreach (var file in SafeEnumerateFilesRecursive(sub, cancellationToken))
+                yield return file;
+        }
+    }
+
     private static IEnumerable<FileInfo> SafeEnumerateFiles(DirectoryInfo dir)
     {
         try { return dir.EnumerateFiles(); }

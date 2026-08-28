@@ -499,6 +499,89 @@ public sealed class SystemSpecsService
     internal static string NormalizeForMatch(string s) => s.Replace(' ', '_').ToLowerInvariant();
 
     /// <summary>
+    /// #324/#328: a lightweight, poll-safe per-disk failure-prediction + driver health-status read -
+    /// reuses the same MSStorageDriver_FailurePredictStatus query and PNPDeviceID-prefix pairing
+    /// ReadDisks() already uses for the System tab's one-time inventory sweep, but scoped down to
+    /// just the two fields a live watch/verdict needs (no Model/Size/MediaType/wear lookup), so it's
+    /// cheap enough for StorageViewModel to call every few PerformanceViewModel.Sampled ticks rather
+    /// than only once at startup.
+    /// </summary>
+    public static List<DiskFailureFlag> ReadDiskFailureFlags()
+    {
+        var result = new List<DiskFailureFlag>();
+        try
+        {
+            var failurePredictions = ReadFailurePredictStatus();
+            var healthByIndex = ReadPhysicalDiskHealthByIndex();
+
+            using var searcher = new ManagementObjectSearcher("SELECT Index, PNPDeviceID FROM Win32_DiskDrive");
+            foreach (ManagementObject mo in searcher.Get())
+            {
+                int diskIndex = -1;
+                try { diskIndex = System.Convert.ToInt32(mo["Index"] ?? -1); } catch { /* skip */ }
+                if (diskIndex < 0) continue;
+
+                string pnpDeviceId = (mo["PNPDeviceID"] as string ?? string.Empty).Trim();
+                bool? predictFailure = null;
+                if (pnpDeviceId.Length > 0)
+                {
+                    var needle = NormalizeForMatch(pnpDeviceId);
+                    foreach (var (instanceKey, value) in failurePredictions)
+                    {
+                        if (instanceKey.StartsWith(needle, StringComparison.Ordinal))
+                        {
+                            predictFailure = value;
+                            break;
+                        }
+                    }
+                }
+
+                result.Add(new DiskFailureFlag
+                {
+                    Index = diskIndex,
+                    PredictFailure = predictFailure,
+                    DriverHealthStatus = healthByIndex.TryGetValue(diskIndex, out var h) ? h : null,
+                });
+            }
+        }
+        catch
+        {
+            // return whatever was gathered before the failure
+        }
+        return result;
+    }
+
+    /// <summary>MSFT_PhysicalDisk.HealthStatus by disk index - same best-effort index-based pairing
+    /// ReadDiskWearByIndex already relies on (Win32_DiskDrive.Index and MSFT_PhysicalDisk.DeviceId
+    /// are both small integers assigned in enumeration order).</summary>
+    private static Dictionary<int, string> ReadPhysicalDiskHealthByIndex()
+    {
+        var result = new Dictionary<int, string>();
+        try
+        {
+            using var searcher = new ManagementObjectSearcher(
+                @"root\Microsoft\Windows\Storage", "SELECT DeviceId, HealthStatus FROM MSFT_PhysicalDisk");
+            foreach (ManagementObject mo in searcher.Get())
+            {
+                if (mo["DeviceId"] is not string deviceId || !int.TryParse(deviceId, out int index)) continue;
+                if (mo["HealthStatus"] is null) continue;
+                result[index] = Convert.ToUInt16(mo["HealthStatus"]) switch
+                {
+                    0 => "Healthy",
+                    1 => "Warning",
+                    2 => "Unhealthy",
+                    _ => "Unknown",
+                };
+            }
+        }
+        catch
+        {
+            // Namespace/class unavailable - every disk simply has no driver health status.
+        }
+        return result;
+    }
+
+    /// <summary>
     /// SSD wear/life-used percentage (#65), via the Storage Management API's
     /// MSFT_StorageReliabilityCounter.Wear in root\Microsoft\Windows\Storage - the same figure
     /// PowerShell's Get-PhysicalDisk | Get-StorageReliabilityCounter reports. There's no direct
