@@ -1075,8 +1075,12 @@ public sealed class SystemSpecsService
     /// heuristic, not a verified fact - the same "quick visual flag, not a security verdict"
     /// tradeoff ProcessMonitorService's signature check documents - so it's presented as such
     /// rather than a precise on/off state.
+    ///
+    /// Round 17, #869/#870: made internal (was private) so DefenderService can reuse this same
+    /// SecurityCenter2 query for its policy-disabled/duplicated-scanner diagnoses instead of
+    /// duplicating the WMI call and the productState decode.
     /// </summary>
-    private static List<AntivirusInfo> ReadAntivirusProducts(out bool multipleActive)
+    internal static List<AntivirusInfo> ReadAntivirusProducts(out bool multipleActive)
     {
         var products = new List<AntivirusInfo>();
         try

@@ -434,6 +434,9 @@
                     <MenuItem Header="View mitigations" Command="{Binding ViewMitigationsCommand}" />
                     <MenuItem Header="View privileges" Command="{Binding ViewPrivilegesCommand}" />
                     <MenuItem Header="Decode -enc argument" Command="{Binding DecodeEncodedCommandCommand}" />
+                    <Separator />
+                    <!-- Round 17, #864: shells to MpCmdRun.exe -Scan -ScanType 3 -File <image path>. -->
+                    <MenuItem Header="Scan with Windows Defender" Command="{Binding ScanWithDefenderCommand}" />
                 </ContextMenu>
             </DataGrid.ContextMenu>
         </DataGrid>

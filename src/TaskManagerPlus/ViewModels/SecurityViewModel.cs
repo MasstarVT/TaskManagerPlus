@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
 using System.Text;
+using System.Windows;
 using Microsoft.Win32;
 using TaskManagerPlus.Common;
 using TaskManagerPlus.Models;
@@ -137,6 +138,87 @@ public sealed class SecurityViewModel : ObservableObject
     /// <summary>Round 16, #858.</summary>
     public AsyncRelayCommand ScanUnsignedNetworkActivityCommand { get; }
 
+    // ==================================================================================
+    // Round 17, #859-870: "Protection status" section - Defender/third-party AV/ASR
+    // posture. See DefenderService for the read logic; everything here is on-demand,
+    // grouped the same way as DefenderService's own comment explains (cheap reads under one
+    // "Refresh protection status" action, event-log/quarantine/scan actions each behind
+    // their own button).
+    // ==================================================================================
+
+    private DefenderService.ComputerStatus? _defenderStatus;
+    public DefenderService.ComputerStatus? DefenderStatus { get => _defenderStatus; private set => SetProperty(ref _defenderStatus, value); }
+
+    private DefenderService.TamperProtectionStatus? _tamperProtection;
+    public DefenderService.TamperProtectionStatus? TamperProtection { get => _tamperProtection; private set => SetProperty(ref _tamperProtection, value); }
+
+    private DefenderService.FeatureToggles? _featureToggles;
+    public DefenderService.FeatureToggles? FeatureToggles { get => _featureToggles; private set => SetProperty(ref _featureToggles, value); }
+
+    private DefenderService.PolicyDiagnosis? _policyDiagnosis;
+    public DefenderService.PolicyDiagnosis? PolicyDiagnosis { get => _policyDiagnosis; private set => SetProperty(ref _policyDiagnosis, value); }
+
+    public ObservableCollection<DefenderService.ExclusionEntry> ExclusionAudit { get; } = new();
+    public ObservableCollection<DefenderService.AsrRuleStatus> AsrRules { get; } = new();
+
+    private bool _isRefreshingProtectionStatus;
+    public bool IsRefreshingProtectionStatus { get => _isRefreshingProtectionStatus; private set => SetProperty(ref _isRefreshingProtectionStatus, value); }
+
+    private string? _protectionStatusMessage;
+    public string? ProtectionStatusMessage { get => _protectionStatusMessage; private set => SetProperty(ref _protectionStatusMessage, value); }
+
+    // #861: scan history event timeline (separate from the cheap QuickScan*/FullScan* times on
+    // DefenderStatus above, since this walks the Operational log).
+    public ObservableCollection<DefenderService.DefenderTimelineEvent> ScanHistoryTimeline { get; } = new();
+    private bool _isLoadingScanHistory;
+    public bool IsLoadingScanHistory { get => _isLoadingScanHistory; private set => SetProperty(ref _isLoadingScanHistory, value); }
+    private string? _scanHistoryStatus;
+    public string? ScanHistoryStatus { get => _scanHistoryStatus; private set => SetProperty(ref _scanHistoryStatus, value); }
+
+    // #862: threat detection history (WMI detections + event timeline).
+    public ObservableCollection<DefenderService.ThreatDetectionRecord> ThreatDetections { get; } = new();
+    public ObservableCollection<DefenderService.DefenderTimelineEvent> ThreatEventTimeline { get; } = new();
+    private bool _isLoadingThreatHistory;
+    public bool IsLoadingThreatHistory { get => _isLoadingThreatHistory; private set => SetProperty(ref _isLoadingThreatHistory, value); }
+    private string? _threatHistoryStatus;
+    public string? ThreatHistoryStatus { get => _threatHistoryStatus; private set => SetProperty(ref _threatHistoryStatus, value); }
+
+    // #863: quarantine browser.
+    public ObservableCollection<DefenderService.QuarantineItem> QuarantineItems { get; } = new();
+    private bool _isLoadingQuarantine;
+    public bool IsLoadingQuarantine { get => _isLoadingQuarantine; private set => SetProperty(ref _isLoadingQuarantine, value); }
+    private string? _quarantineStatus;
+    public string? QuarantineStatus { get => _quarantineStatus; private set => SetProperty(ref _quarantineStatus, value); }
+
+    // #867: ASR block/audit event timeline (rule configuration itself lives in AsrRules above,
+    // populated by the cheap RefreshProtectionStatusCommand).
+    public ObservableCollection<DefenderService.DefenderTimelineEvent> AsrEventTimeline { get; } = new();
+    private bool _isLoadingAsrEvents;
+    public bool IsLoadingAsrEvents { get => _isLoadingAsrEvents; private set => SetProperty(ref _isLoadingAsrEvents, value); }
+    private string? _asrEventStatus;
+    public string? AsrEventStatus { get => _asrEventStatus; private set => SetProperty(ref _asrEventStatus, value); }
+
+    // #864: run a scan - streamed output, Cancel support.
+    public ObservableCollection<string> ScanOutputLines { get; } = new();
+    private Process? _runningScanProcess;
+    private bool _isScanRunning;
+    public bool IsScanRunning { get => _isScanRunning; private set => SetProperty(ref _isScanRunning, value); }
+    private string? _scanRunStatus;
+    public string? ScanRunStatus { get => _scanRunStatus; private set => SetProperty(ref _scanRunStatus, value); }
+
+    public AsyncRelayCommand RefreshProtectionStatusCommand { get; }
+    public AsyncRelayCommand LoadScanHistoryCommand { get; }
+    public AsyncRelayCommand LoadThreatHistoryCommand { get; }
+    public AsyncRelayCommand LoadQuarantineCommand { get; }
+    public RelayCommand RestoreQuarantineItemCommand { get; }
+    public RelayCommand PurgeQuarantineItemCommand { get; }
+    public AsyncRelayCommand LoadAsrEventsCommand { get; }
+    public RelayCommand RunQuickScanCommand { get; }
+    public RelayCommand RunFullScanCommand { get; }
+    public RelayCommand RunFolderScanCommand { get; }
+    public RelayCommand RunOfflineScanCommand { get; }
+    public RelayCommand CancelScanCommand { get; }
+
     public SecurityViewModel()
     {
         ScanAutorunsCommand = new AsyncRelayCommand(ScanAutorunsAsync);
@@ -157,6 +239,326 @@ public sealed class SecurityViewModel : ObservableObject
 
         ScanLsassHandlesCommand = new AsyncRelayCommand(ScanLsassHandlesAsync);
         ScanUnsignedNetworkActivityCommand = new AsyncRelayCommand(ScanUnsignedNetworkActivityAsync);
+
+        RefreshProtectionStatusCommand = new AsyncRelayCommand(RefreshProtectionStatusAsync);
+        LoadScanHistoryCommand = new AsyncRelayCommand(LoadScanHistoryAsync);
+        LoadThreatHistoryCommand = new AsyncRelayCommand(LoadThreatHistoryAsync);
+        LoadQuarantineCommand = new AsyncRelayCommand(LoadQuarantineAsync);
+        RestoreQuarantineItemCommand = new RelayCommand(param => RestoreQuarantineItem(param as DefenderService.QuarantineItem));
+        PurgeQuarantineItemCommand = new RelayCommand(param => PurgeQuarantineItem(param as DefenderService.QuarantineItem));
+        LoadAsrEventsCommand = new AsyncRelayCommand(LoadAsrEventsAsync);
+        RunQuickScanCommand = new RelayCommand(_ => RunScan(DefenderService.DefenderScanType.Quick), _ => !IsScanRunning);
+        RunFullScanCommand = new RelayCommand(_ => RunScan(DefenderService.DefenderScanType.Full), _ => !IsScanRunning);
+        RunFolderScanCommand = new RelayCommand(_ => RunFolderScan(), _ => !IsScanRunning);
+        RunOfflineScanCommand = new RelayCommand(_ => RunOfflineScan(), _ => !IsScanRunning);
+        CancelScanCommand = new RelayCommand(_ => CancelScan(), _ => IsScanRunning);
+    }
+
+    /// <summary>#859/#860/#865/#866/#868/#869/#870: everything cheap enough to read on one click -
+    /// no event-log walk, no shelling out. See DefenderService's class remarks for why this split
+    /// exists.</summary>
+    private async Task RefreshProtectionStatusAsync()
+    {
+        IsRefreshingProtectionStatus = true;
+        ProtectionStatusMessage = null;
+        try
+        {
+            // Snapshot on the UI thread first (ObservableCollection isn't thread-safe to enumerate
+            // concurrently with a UI-thread mutation) - same discipline CheckWritePermissionsAsync
+            // already uses above for the same AutorunEntries collection.
+            var persistenceSnapshot = AutorunEntries.Count > 0 ? AutorunEntries.ToList() : null;
+
+            var result = await Task.Run(() =>
+            {
+                var (status, statusFindings) = DefenderService.ReadComputerStatus();
+                var tamper = DefenderService.ReadTamperProtection(status.IsTamperProtected);
+                var toggles = DefenderService.ReadFeatureToggles();
+                var puaFinding = DefenderService.BuildPuaProtectionFinding(toggles);
+                var exclusions = DefenderService.ReadExclusionsExtended();
+                var exclusionFindings = DefenderService.BuildExclusionFindings(exclusions);
+                var asrRules = DefenderService.ReadAsrRules(out var asrQueryOk);
+                var avProducts = DefenderService.ReadAntivirusProducts(out _);
+                var policyDiagnosis = DefenderService.DiagnosePolicyState(avProducts);
+                var policyFinding = DefenderService.BuildPolicyFinding(policyDiagnosis);
+                var duplicateFinding = DefenderService.DiagnoseDuplicatedRealTimeScanners(avProducts, persistenceSnapshot ?? AutorunsService.Scan());
+
+                var allFindings = new List<SecurityFinding>();
+                allFindings.AddRange(statusFindings);
+                if (puaFinding is not null) allFindings.Add(puaFinding);
+                allFindings.AddRange(exclusionFindings);
+                allFindings.Add(policyFinding);
+                if (duplicateFinding is not null) allFindings.Add(duplicateFinding);
+
+                return (status, tamper, toggles, exclusions, asrRules, asrQueryOk, policyDiagnosis, allFindings);
+            });
+
+            DefenderStatus = result.status;
+            TamperProtection = result.tamper;
+            FeatureToggles = result.toggles;
+            PolicyDiagnosis = result.policyDiagnosis;
+
+            ExclusionAudit.Clear();
+            foreach (var e in result.exclusions) ExclusionAudit.Add(e);
+
+            AsrRules.Clear();
+            foreach (var r in result.asrRules) AsrRules.Add(r);
+
+            foreach (var f in result.allFindings) Findings.Add(f);
+
+            ProtectionStatusMessage = result.status.Available
+                ? $"Protection status refreshed - {result.exclusions.Count} exclusion(s), {result.allFindings.Count} new finding(s). ASR rule configuration {(result.asrQueryOk ? "read" : "unavailable")}."
+                : $"Couldn't read Defender's computer status: {result.status.QueryError}";
+        }
+        catch (Exception ex)
+        {
+            ProtectionStatusMessage = $"Refresh failed: {ex.Message}";
+        }
+        finally
+        {
+            IsRefreshingProtectionStatus = false;
+        }
+    }
+
+    private async Task LoadScanHistoryAsync()
+    {
+        IsLoadingScanHistory = true;
+        try
+        {
+            var (events, logAvailable) = await Task.Run(() =>
+            {
+                var e = DefenderService.ReadScanHistoryEvents(out var ok);
+                return (e, ok);
+            });
+
+            ScanHistoryTimeline.Clear();
+            foreach (var e in events) ScanHistoryTimeline.Add(e);
+
+            ScanHistoryStatus = logAvailable
+                ? $"{events.Count} scan event(s) in the last 90 days."
+                : "Couldn't read the Defender Operational event log (unavailable, access denied, or the channel isn't enabled).";
+        }
+        catch (Exception ex)
+        {
+            ScanHistoryStatus = $"Couldn't load scan history: {ex.Message}";
+        }
+        finally
+        {
+            IsLoadingScanHistory = false;
+        }
+    }
+
+    private async Task LoadThreatHistoryAsync()
+    {
+        IsLoadingThreatHistory = true;
+        try
+        {
+            var result = await Task.Run(() =>
+            {
+                var detections = DefenderService.ReadThreatDetectionsWmi(out var wmiOk);
+                var events = DefenderService.ReadThreatEvents(out var logOk);
+                var findings = DefenderService.BuildThreatFindings(detections, events);
+                return (detections, events, findings, wmiOk, logOk);
+            });
+
+            ThreatDetections.Clear();
+            foreach (var d in result.detections) ThreatDetections.Add(d);
+
+            ThreatEventTimeline.Clear();
+            foreach (var e in result.events) ThreatEventTimeline.Add(e);
+
+            foreach (var f in result.findings) Findings.Add(f);
+
+            string logNote = result.logOk ? string.Empty : " (couldn't read the Defender Operational event log)";
+            ThreatHistoryStatus = $"{result.detections.Count} WMI detection(s), {result.events.Count} event(s) in the last 90 days{logNote}" +
+                (result.findings.Count > 0 ? $" - {result.findings.Count} new finding(s)." : ".");
+        }
+        catch (Exception ex)
+        {
+            ThreatHistoryStatus = $"Couldn't load threat history: {ex.Message}";
+        }
+        finally
+        {
+            IsLoadingThreatHistory = false;
+        }
+    }
+
+    private async Task LoadQuarantineAsync()
+    {
+        IsLoadingQuarantine = true;
+        try
+        {
+            var (items, error) = await Task.Run(() =>
+            {
+                var i = DefenderService.ListQuarantine(out var err);
+                return (i, err);
+            });
+
+            QuarantineItems.Clear();
+            foreach (var i in items) QuarantineItems.Add(i);
+
+            QuarantineStatus = error ?? $"{items.Count} quarantined item(s).";
+        }
+        catch (Exception ex)
+        {
+            QuarantineStatus = $"Couldn't list quarantined items: {ex.Message}";
+        }
+        finally
+        {
+            IsLoadingQuarantine = false;
+        }
+    }
+
+    /// <summary>#863: owner-initiated only - never runs automatically. Confirmation dialog matches
+    /// ProcessesViewModel.EndSelected's MessageBox.Show(YesNo, Warning) convention.</summary>
+    private void RestoreQuarantineItem(DefenderService.QuarantineItem? item)
+    {
+        if (item is null) return;
+        var confirm = MessageBox.Show(
+            $"Restore \"{item.ThreatName}\" to its original location ({item.FilePath})?\nThis brings back a file Defender quarantined - only do this if you're sure it's safe.",
+            "Restore quarantined item", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        var (success, output) = DefenderService.RestoreQuarantineItem(item.ThreatName);
+        QuarantineStatus = success ? $"Restored \"{item.ThreatName}\": {output}" : $"Restore failed for \"{item.ThreatName}\": {output}";
+    }
+
+    /// <summary>#863: MpCmdRun has no cleanly-documented per-item permanent-purge switch - implemented
+    /// as restore, then delete the restored file, per the item's own allowed interpretation.</summary>
+    private void PurgeQuarantineItem(DefenderService.QuarantineItem? item)
+    {
+        if (item is null) return;
+        var confirm = MessageBox.Show(
+            $"Permanently purge \"{item.ThreatName}\" ({item.FilePath})?\nMpCmdRun has no direct per-item purge command, so this restores the file and then immediately deletes it - the net effect is the same as a permanent delete, but briefly touches disk as a real file. This cannot be undone.",
+            "Purge quarantined item", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        var (success, output) = DefenderService.PurgeQuarantineItem(item.ThreatName, item.FilePath);
+        QuarantineStatus = success ? $"Purged \"{item.ThreatName}\": {output}" : $"Purge failed for \"{item.ThreatName}\": {output}";
+    }
+
+    private async Task LoadAsrEventsAsync()
+    {
+        IsLoadingAsrEvents = true;
+        try
+        {
+            var (events, logAvailable) = await Task.Run(() =>
+            {
+                var e = DefenderService.ReadAsrEvents(out var ok);
+                return (e, ok);
+            });
+
+            AsrEventTimeline.Clear();
+            foreach (var e in events) AsrEventTimeline.Add(e);
+
+            AsrEventStatus = logAvailable
+                ? $"{events.Count} ASR block/audit event(s) in the last 90 days."
+                : "Couldn't read the Defender Operational event log (unavailable, access denied, or the channel isn't enabled).";
+        }
+        catch (Exception ex)
+        {
+            AsrEventStatus = $"Couldn't load ASR events: {ex.Message}";
+        }
+        finally
+        {
+            IsLoadingAsrEvents = false;
+        }
+    }
+
+    /// <summary>#864: Quick/Full scan - streamed output line-by-line via
+    /// DefenderService.StartStreamingProcess, marshaled to the UI thread the same way
+    /// StartupViewModel/NetworkViewModel/StorageViewModel/CpuViewModel already do for cross-thread
+    /// ObservableCollection updates.</summary>
+    private void RunScan(DefenderService.DefenderScanType type, string? customPath = null)
+    {
+        if (IsScanRunning) return;
+
+        ScanOutputLines.Clear();
+        ScanRunStatus = type switch
+        {
+            DefenderService.DefenderScanType.Quick => "Running a Quick scan...",
+            DefenderService.DefenderScanType.Full => "Running a Full scan - this can take a long time.",
+            _ => $"Scanning \"{customPath}\"...",
+        };
+        IsScanRunning = true;
+
+        try
+        {
+            string exe = DefenderService.ResolveMpCmdRunPath();
+            string args = DefenderService.BuildScanArgs(type, customPath);
+            _runningScanProcess = DefenderService.StartStreamingProcess(exe, args, AppendScanOutputLine);
+            _runningScanProcess.Exited += (_, _) => OnScanProcessExited();
+        }
+        catch (Exception ex)
+        {
+            IsScanRunning = false;
+            ScanRunStatus = $"Couldn't start the scan: {ex.Message}";
+        }
+    }
+
+    /// <summary>#864: "Scan this folder..." - Microsoft.Win32.OpenFolderDialog (.NET 8 WPF), the
+    /// same Microsoft.Win32.*Dialog family this ViewModel already uses for Save/OpenFileDialog.</summary>
+    private void RunFolderScan()
+    {
+        var dialog = new OpenFolderDialog { Title = "Choose a folder for Windows Defender to scan" };
+        if (dialog.ShowDialog() != true) return;
+        RunScan(DefenderService.DefenderScanType.Custom, dialog.FolderName);
+    }
+
+    /// <summary>#864: Defender Offline scan - restarts the PC, so this requires an explicit,
+    /// prominent confirmation naming that consequence before running Start-MpWDOScan.</summary>
+    private void RunOfflineScan()
+    {
+        if (IsScanRunning) return;
+
+        var confirm = MessageBox.Show(
+            "This starts a Windows Defender Offline scan, which RESTARTS THE PC immediately to scan outside of Windows.\n\nSave any open work before continuing. Continue?",
+            "Defender Offline scan - this restarts the PC", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        ScanOutputLines.Clear();
+        ScanRunStatus = "Starting Defender Offline scan (Start-MpWDOScan) - the PC will restart shortly.";
+        IsScanRunning = true;
+
+        try
+        {
+            var (exe, args) = DefenderService.BuildOfflineScanCommand();
+            _runningScanProcess = DefenderService.StartStreamingProcess(exe, args, AppendScanOutputLine);
+            _runningScanProcess.Exited += (_, _) => OnScanProcessExited();
+        }
+        catch (Exception ex)
+        {
+            IsScanRunning = false;
+            ScanRunStatus = $"Couldn't start the offline scan: {ex.Message}";
+        }
+    }
+
+    private void CancelScan()
+    {
+        try { _runningScanProcess?.Kill(entireProcessTree: true); }
+        catch { /* best-effort - it may have already exited */ }
+        ScanRunStatus = "Scan cancelled.";
+    }
+
+    private void AppendScanOutputLine(string line)
+    {
+        System.Windows.Application.Current?.Dispatcher.Invoke(() =>
+        {
+            ScanOutputLines.Add(line);
+            // Cap the visible log so a long full scan doesn't grow this collection without bound.
+            while (ScanOutputLines.Count > 2000) ScanOutputLines.RemoveAt(0);
+        });
+    }
+
+    private void OnScanProcessExited()
+    {
+        System.Windows.Application.Current?.Dispatcher.Invoke(() =>
+        {
+            int? exitCode = null;
+            try { exitCode = _runningScanProcess?.ExitCode; } catch { /* process object disposed/inaccessible */ }
+            ScanRunStatus = $"Scan finished (exit code {(exitCode?.ToString() ?? "unknown")}).";
+            IsScanRunning = false;
+            _runningScanProcess = null;
+        });
     }
 
     private async Task ScanAutorunsAsync()

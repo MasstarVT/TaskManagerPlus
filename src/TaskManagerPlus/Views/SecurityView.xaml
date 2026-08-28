@@ -474,6 +474,345 @@
                 </StackPanel>
             </Border>
 
+            <!-- Round 17, #859-870: "Protection status" - Windows Defender / third-party AV /
+                 Attack Surface Reduction posture. See DefenderService for the read logic. Cheap
+                 registry/WMI reads share one "Refresh protection status" button; event-log
+                 timelines, the quarantine list, and running a scan each stay behind their own
+                 button since those are genuinely slow/long-running. -->
+            <Border BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,1,0,0" Padding="0,16,0,0" Margin="0,16,0,0">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="Protection status" FontSize="14" FontWeight="SemiBold" />
+                            <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}"
+                                       Text="Windows Defender's own state, signature freshness, exclusions, Tamper Protection, Attack Surface Reduction rules, and third-party antivirus cross-checks - all on-demand, all read-only unless you explicitly click Restore/Purge/Scan below." />
+                        </StackPanel>
+                        <Button Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Top" Style="{StaticResource PrimaryButton}" Command="{Binding RefreshProtectionStatusCommand}">
+                            <TextBlock>
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="Refresh protection status" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsRefreshingProtectionStatus}" Value="True">
+                                                <Setter Property="Text" Value="Refreshing..." />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Button>
+                    </Grid>
+                    <TextBlock Text="{Binding ProtectionStatusMessage}" TextWrapping="Wrap" Margin="0,4,0,12" Foreground="{DynamicResource TextSecondaryBrush}" />
+
+                    <!-- #866: Tamper Protection - shown prominently near the top since it explains
+                         why other reads below might come back empty/denied; the UI text says so
+                         explicitly rather than a bare "Unknown". -->
+                    <Border Padding="10,8" Margin="0,0,0,12" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6"
+                            Visibility="{Binding TamperProtection, Converter={StaticResource NullToVisibilityConverter}}">
+                        <StackPanel>
+                            <TextBlock TextWrapping="Wrap">
+                                <Run Text="Tamper Protection: " FontWeight="SemiBold" />
+                                <Run Text="{Binding TamperProtection.State, Mode=OneWay}" FontWeight="SemiBold" />
+                                <Run Text=" (source: " /><Run Text="{Binding TamperProtection.SourceText, Mode=OneWay}" /><Run Text=")" />
+                            </TextBlock>
+                            <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}"
+                                       Text="{Binding TamperProtection.DisclaimerText}" />
+                        </StackPanel>
+                    </Border>
+
+                    <!-- #859/#860: Defender status card + signature/platform freshness. -->
+                    <Border Padding="10,8" Margin="0,0,0,12" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6"
+                            Visibility="{Binding DefenderStatus, Converter={StaticResource NullToVisibilityConverter}}">
+                        <StackPanel>
+                            <TextBlock Text="Windows Defender status" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                            <TextBlock Margin="0,0,0,8" FontSize="14" FontWeight="SemiBold" TextWrapping="Wrap">
+                                <Run Text="Running mode: " /><Run Text="{Binding DefenderStatus.AmRunningMode, Mode=OneWay}" />
+                            </TextBlock>
+                            <UniformGrid Columns="3" Rows="2">
+                                <TextBlock Margin="0,0,8,4"><Run Text="Real-time protection: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding DefenderStatus.RealTimeProtectionText, Mode=OneWay}" /></TextBlock>
+                                <TextBlock Margin="0,0,8,4"><Run Text="Behavior monitor: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding DefenderStatus.BehaviorMonitorText, Mode=OneWay}" /></TextBlock>
+                                <TextBlock Margin="0,0,8,4"><Run Text="On-access protection: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding DefenderStatus.OnAccessProtectionText, Mode=OneWay}" /></TextBlock>
+                                <TextBlock Margin="0,0,8,4"><Run Text="Antispyware: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding DefenderStatus.AntispywareEnabledText, Mode=OneWay}" /></TextBlock>
+                                <TextBlock Margin="0,0,8,4"><Run Text="Antivirus: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding DefenderStatus.AntivirusEnabledText, Mode=OneWay}" /></TextBlock>
+                            </UniformGrid>
+                            <Border BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,1,0,0" Padding="0,8,0,0" Margin="0,8,0,0">
+                                <StackPanel>
+                                    <TextBlock Text="Signature / platform freshness" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                                    <TextBlock TextWrapping="Wrap"><Run Text="Antivirus signatures: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding DefenderStatus.AntivirusSignatureVersion, Mode=OneWay}" /><Run Text=" (" /><Run Text="{Binding DefenderStatus.AntivirusSignatureAgeDays, Mode=OneWay, StringFormat={}{0} day(s) old}" /><Run Text=")" /></TextBlock>
+                                    <TextBlock Margin="0,2,0,0" TextWrapping="Wrap"><Run Text="Antispyware signatures: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding DefenderStatus.AntispywareSignatureVersion, Mode=OneWay}" /><Run Text=" (" /><Run Text="{Binding DefenderStatus.AntispywareSignatureAgeDays, Mode=OneWay, StringFormat={}{0} day(s) old}" /><Run Text=")" /></TextBlock>
+                                    <TextBlock Margin="0,2,0,0" TextWrapping="Wrap"><Run Text="Engine / product version: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding DefenderStatus.AmEngineVersion, Mode=OneWay}" /><Run Text=" / " /><Run Text="{Binding DefenderStatus.AmProductVersion, Mode=OneWay}" /></TextBlock>
+                                    <TextBlock Margin="0,2,0,0" TextWrapping="Wrap"><Run Text="Last quick scan ended: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding DefenderStatus.QuickScanEndedText, Mode=OneWay}" /><Run Text=" (source: " /><Run Text="{Binding DefenderStatus.LastQuickScanSource, Mode=OneWay}" /><Run Text=")" /></TextBlock>
+                                    <TextBlock Margin="0,2,0,0" TextWrapping="Wrap"><Run Text="Last full scan ended: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding DefenderStatus.FullScanEndedText, Mode=OneWay}" /></TextBlock>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- #868: extra feature toggles, PUA protection called out prominently. -->
+                    <Border Padding="10,8" Margin="0,0,0,12" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6"
+                            Visibility="{Binding FeatureToggles, Converter={StaticResource NullToVisibilityConverter}}">
+                        <StackPanel>
+                            <TextBlock Text="Feature toggles" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                            <Border Padding="8" Margin="0,0,0,8" CornerRadius="4" Background="{DynamicResource BgPanelBrush}"
+                                    Visibility="{Binding FeatureToggles.PuaProtectionOff, Converter={StaticResource BoolToVisibilityConverter}}">
+                                <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource WarningBrush}"
+                                           Text="Potentially Unwanted Application (PUA) protection is OFF - Windows' own default, but the single most relevant Defender setting for the bloatware/adware/bundleware problem this tab is about. Consider turning it on under Windows Security &gt; App &amp; browser control." />
+                            </Border>
+                            <UniformGrid Columns="2" Rows="3">
+                                <TextBlock Margin="0,0,8,4"><Run Text="Controlled folder access: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding FeatureToggles.ControlledFolderAccessText, Mode=OneWay}" /></TextBlock>
+                                <TextBlock Margin="0,0,8,4"><Run Text="Network protection: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding FeatureToggles.NetworkProtectionText, Mode=OneWay}" /></TextBlock>
+                                <TextBlock Margin="0,0,8,4"><Run Text="PUA protection: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding FeatureToggles.PuaProtectionText, Mode=OneWay}" /></TextBlock>
+                                <TextBlock Margin="0,0,8,4"><Run Text="Cloud-delivered protection: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding FeatureToggles.MapsReportingText, Mode=OneWay}" /></TextBlock>
+                                <TextBlock Margin="0,0,8,4"><Run Text="Sample submission: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding FeatureToggles.SubmitSamplesConsentText, Mode=OneWay}" /></TextBlock>
+                                <TextBlock Margin="0,0,8,4"><Run Text="Cloud block level: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding FeatureToggles.CloudBlockLevelText, Mode=OneWay}" /></TextBlock>
+                            </UniformGrid>
+                            <TextBlock Margin="0,6,0,0" TextWrapping="Wrap" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}">
+                                <Run Text="Controlled folder access allowed apps: " />
+                                <Run Text="{Binding FeatureToggles.ControlledFolderAllowedApps, Converter={StaticResource StringListJoinConverter}, Mode=OneWay}" />
+                            </TextBlock>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- #869: policy/service diagnosis. -->
+                    <Border Padding="10,8" Margin="0,0,0,12" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6"
+                            Visibility="{Binding PolicyDiagnosis, Converter={StaticResource NullToVisibilityConverter}}">
+                        <StackPanel>
+                            <TextBlock Text="Policy / service diagnosis" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                            <TextBlock FontWeight="SemiBold" Text="{Binding PolicyDiagnosis.Verdict}" />
+                            <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" Text="{Binding PolicyDiagnosis.Detail}" />
+                        </StackPanel>
+                    </Border>
+
+                    <!-- #865: exclusion audit, extended. -->
+                    <TextBlock Text="Defender exclusions (Paths/Extensions/Processes/IP addresses/Temporary paths - local + policy + WMI, deduped)"
+                               TextWrapping="Wrap" Margin="0,0,0,6" Foreground="{DynamicResource TextSecondaryBrush}" />
+                    <DataGrid IsReadOnly="True" MaxHeight="220" Margin="0,0,0,16" ItemsSource="{Binding ExclusionAudit}">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Category" Binding="{Binding Category}" Width="1*" />
+                            <DataGridTextColumn Header="Value" Binding="{Binding Value}" Width="2.4*" />
+                            <DataGridTextColumn Header="Source" Binding="{Binding Source}" Width="1.6*" />
+                            <DataGridTemplateColumn Header="Risk" Width="220">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding RiskReason}" TextWrapping="Wrap" FontSize="11.5">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsHighRisk}" Value="True">
+                                                            <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+
+                    <!-- #867: per-rule ASR status + block/audit event timeline. -->
+                    <Grid Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" VerticalAlignment="Center" TextWrapping="Wrap"
+                                   Text="Attack Surface Reduction rules - configured status per rule (populated by Refresh above), plus what each rule actually blocked/audited recently."
+                                   Foreground="{DynamicResource TextSecondaryBrush}" />
+                        <Button Grid.Column="1" Margin="12,0,0,0" Command="{Binding LoadAsrEventsCommand}">
+                            <TextBlock>
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="Load ASR block/audit events" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsLoadingAsrEvents}" Value="True">
+                                                <Setter Property="Text" Value="Loading..." />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Button>
+                    </Grid>
+                    <DataGrid IsReadOnly="True" MaxHeight="200" Margin="0,0,0,8" ItemsSource="{Binding AsrRules}">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Rule" Binding="{Binding FriendlyName}" Width="3*" />
+                            <DataGridTextColumn Header="Status" Binding="{Binding ActionText}" Width="1*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <TextBlock Text="{Binding AsrEventStatus}" TextWrapping="Wrap" Margin="0,0,0,4" Foreground="{DynamicResource TextSecondaryBrush}" />
+                    <ListBox ItemsSource="{Binding AsrEventTimeline}" MaxHeight="140" Margin="0,0,0,16" Background="Transparent" BorderThickness="0">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock FontSize="12" TextWrapping="Wrap">
+                                    <Run Text="{Binding Time, Mode=OneWay, StringFormat=g}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                    <Run Text=" - " /><Run Text="{Binding EventType, Mode=OneWay}" FontWeight="SemiBold" />
+                                    <Run Text=" - " /><Run Text="{Binding Summary, Mode=OneWay}" />
+                                </TextBlock>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+
+                    <!-- #861: scan history. -->
+                    <Grid Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" VerticalAlignment="Center" TextWrapping="Wrap"
+                                   Text="Scan history - Defender Operational log events 1000 (started)/1001/1002 (completed variants), last 90 days."
+                                   Foreground="{DynamicResource TextSecondaryBrush}" />
+                        <Button Grid.Column="1" Margin="12,0,0,0" Command="{Binding LoadScanHistoryCommand}">
+                            <TextBlock>
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="Load scan history" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsLoadingScanHistory}" Value="True">
+                                                <Setter Property="Text" Value="Loading..." />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Button>
+                    </Grid>
+                    <TextBlock Text="{Binding ScanHistoryStatus}" TextWrapping="Wrap" Margin="0,0,0,4" Foreground="{DynamicResource TextSecondaryBrush}" />
+                    <ListBox ItemsSource="{Binding ScanHistoryTimeline}" MaxHeight="160" Margin="0,0,0,16" Background="Transparent" BorderThickness="0">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock FontSize="12" TextWrapping="Wrap">
+                                    <Run Text="{Binding Time, Mode=OneWay, StringFormat=g}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                    <Run Text=" - " /><Run Text="{Binding EventType, Mode=OneWay}" FontWeight="SemiBold" />
+                                </TextBlock>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+
+                    <!-- #862: threat detection history. -->
+                    <Grid Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" VerticalAlignment="Center" TextWrapping="Wrap"
+                                   Text="Threat detection history - MSFT_MpThreatDetection/MSFT_MpThreat plus Operational events 1116/1117, last 90 days."
+                                   Foreground="{DynamicResource TextSecondaryBrush}" />
+                        <Button Grid.Column="1" Margin="12,0,0,0" Command="{Binding LoadThreatHistoryCommand}">
+                            <TextBlock>
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="Load threat history" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsLoadingThreatHistory}" Value="True">
+                                                <Setter Property="Text" Value="Loading..." />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Button>
+                    </Grid>
+                    <TextBlock Text="{Binding ThreatHistoryStatus}" TextWrapping="Wrap" Margin="0,0,0,4" Foreground="{DynamicResource TextSecondaryBrush}" />
+                    <DataGrid IsReadOnly="True" MaxHeight="180" Margin="0,0,0,8" ItemsSource="{Binding ThreatDetections}">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Detected" Binding="{Binding DetectionTime, StringFormat=g}" Width="1.2*" />
+                            <DataGridTextColumn Header="Threat" Binding="{Binding ThreatName}" Width="2*" />
+                            <DataGridTextColumn Header="Process" Binding="{Binding ProcessName}" Width="1.4*" />
+                            <DataGridTextColumn Header="Severity" Binding="{Binding Severity}" Width="0.8*" />
+                            <DataGridTextColumn Header="Action succeeded" Binding="{Binding ActionSuccess}" Width="1*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <ListBox ItemsSource="{Binding ThreatEventTimeline}" MaxHeight="140" Margin="0,0,0,16" Background="Transparent" BorderThickness="0">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock FontSize="12" TextWrapping="Wrap">
+                                    <Run Text="{Binding Time, Mode=OneWay, StringFormat=g}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                    <Run Text=" - " /><Run Text="{Binding EventType, Mode=OneWay}" FontWeight="SemiBold" />
+                                    <Run Text=" - " /><Run Text="{Binding Summary, Mode=OneWay}" />
+                                </TextBlock>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+
+                    <!-- #863: quarantine browser - owner-initiated Restore/Purge per row only. -->
+                    <Grid Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" VerticalAlignment="Center" TextWrapping="Wrap"
+                                   Text="Quarantine - items Defender has already quarantined (MpCmdRun.exe -Restore -ListAll). Restore/Purge never run automatically."
+                                   Foreground="{DynamicResource TextSecondaryBrush}" />
+                        <Button Grid.Column="1" Margin="12,0,0,0" Command="{Binding LoadQuarantineCommand}">
+                            <TextBlock>
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="Load quarantine items" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsLoadingQuarantine}" Value="True">
+                                                <Setter Property="Text" Value="Loading..." />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Button>
+                    </Grid>
+                    <TextBlock Text="{Binding QuarantineStatus}" TextWrapping="Wrap" Margin="0,0,0,4" Foreground="{DynamicResource TextSecondaryBrush}" />
+                    <DataGrid IsReadOnly="True" MaxHeight="220" Margin="0,0,0,16" ItemsSource="{Binding QuarantineItems}" AutoGenerateColumns="False">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Threat" Binding="{Binding ThreatName}" Width="1.6*" />
+                            <DataGridTextColumn Header="Path" Binding="{Binding FilePath}" Width="2.4*" />
+                            <DataGridTextColumn Header="Detected" Binding="{Binding DetectionTimeText}" Width="1.2*" />
+                            <DataGridTemplateColumn Header="Actions" Width="170">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Orientation="Horizontal">
+                                            <Button Content="Restore" Margin="0,2,6,2" Padding="6,2"
+                                                    Command="{Binding DataContext.RestoreQuarantineItemCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                    CommandParameter="{Binding}" />
+                                            <Button Content="Purge" Margin="0,2,0,2" Padding="6,2" Style="{StaticResource DangerButton}"
+                                                    Command="{Binding DataContext.PurgeQuarantineItemCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                    CommandParameter="{Binding}" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+
+                    <!-- #864: run a scan - Quick/Full/folder/offline, streamed output, Cancel. -->
+                    <TextBlock Text="Run a scan" FontSize="13" FontWeight="SemiBold" Margin="0,0,0,6" />
+                    <WrapPanel Margin="0,0,0,8">
+                        <Button Content="Quick scan" Margin="0,0,8,8" Command="{Binding RunQuickScanCommand}" />
+                        <Button Content="Full scan" Margin="0,0,8,8" Command="{Binding RunFullScanCommand}" />
+                        <Button Content="Scan this folder..." Margin="0,0,8,8" Command="{Binding RunFolderScanCommand}" />
+                        <Button Content="Defender Offline scan..." Margin="0,0,8,8" Command="{Binding RunOfflineScanCommand}"
+                                ToolTip="Runs Start-MpWDOScan - restarts the PC immediately. A prominent confirmation appears before this runs." />
+                        <Button Content="Cancel" Margin="0,0,8,8" Style="{StaticResource DangerButton}" Command="{Binding CancelScanCommand}" />
+                    </WrapPanel>
+                    <TextBlock Text="{Binding ScanRunStatus}" TextWrapping="Wrap" Margin="0,0,0,4" Foreground="{DynamicResource TextSecondaryBrush}" />
+                    <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="8">
+                        <ScrollViewer MaxHeight="180" VerticalScrollBarVisibility="Auto">
+                            <ItemsControl ItemsSource="{Binding ScanOutputLines}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding}" FontFamily="Consolas" FontSize="11" TextWrapping="Wrap" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </ScrollViewer>
+                    </Border>
+                </StackPanel>
+            </Border>
+
         </StackPanel>
     </ScrollViewer>
 </UserControl>

@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.IO;
 using System.Windows;
 using System.Windows.Data;
 using System.Windows.Threading;
@@ -156,6 +157,8 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
     public RelayCommand ViewPrivilegesCommand { get; }
     /// <summary>Round 16, #856.</summary>
     public RelayCommand DecodeEncodedCommandCommand { get; }
+    /// <summary>Round 17, #864: "Scan this process's image file" context-menu item.</summary>
+    public AsyncRelayCommand ScanWithDefenderCommand { get; }
     public RelayCommand TrimWorkingSetCommand { get; }
     public RelayCommand SuspendCommand { get; }
     public RelayCommand ResumeCommand { get; }
@@ -213,6 +216,7 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
         ViewMitigationsCommand = new RelayCommand(_ => _ = LoadSelectedProcessMitigationsAsync(), _ => SelectedProcess is not null);
         ViewPrivilegesCommand = new RelayCommand(_ => _ = LoadSelectedProcessPrivilegesAsync(), _ => SelectedProcess is not null);
         DecodeEncodedCommandCommand = new RelayCommand(_ => DecodeEncodedCommand(), _ => HasEncodedCommand());
+        ScanWithDefenderCommand = new AsyncRelayCommand(ScanSelectedWithDefenderAsync, () => !string.IsNullOrWhiteSpace(SelectedProcess?.FilePath));
         TrimWorkingSetCommand = new RelayCommand(_ => TrimWorkingSet(), _ => SelectedProcess is not null);
         SuspendCommand = new RelayCommand(_ => SetSuspended(true), _ => SelectedProcess is not null);
         ResumeCommand = new RelayCommand(_ => SetSuspended(false), _ => SelectedProcess is not null);
@@ -629,6 +633,38 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
         catch (Exception ex)
         {
             DecodedCommandLineText = $"(couldn't decode - {ex.Message})";
+        }
+    }
+
+    /// <summary>Round 17, #864: "Scan this process's image file" - shells to MpCmdRun.exe
+    /// -Scan -ScanType 3 -File &lt;image path&gt; and reports the result via StatusMessage. A quick
+    /// trigger from the Processes tab, distinct from the Security tab's full streamed-output scan
+    /// UI - this one just waits (up to 5 minutes) and reports pass/fail.</summary>
+    private async Task ScanSelectedWithDefenderAsync()
+    {
+        var target = SelectedProcess;
+        if (target is null || string.IsNullOrWhiteSpace(target.FilePath))
+        {
+            StatusMessage = "Selected process has no resolvable image path.";
+            return;
+        }
+
+        string path = target.FilePath;
+        StatusMessage = $"Scanning {Path.GetFileName(path)} with Windows Defender...";
+        try
+        {
+            var (exitCode, output) = await Task.Run(() => DefenderService.RunCapturedWithExitCode(
+                DefenderService.ResolveMpCmdRunPath(),
+                DefenderService.BuildScanArgs(DefenderService.DefenderScanType.Custom, path),
+                TimeSpan.FromMinutes(5)));
+
+            StatusMessage = exitCode == 0
+                ? $"Defender scan of {Path.GetFileName(path)} finished - no threats reported."
+                : $"Defender scan of {Path.GetFileName(path)} finished (exit code {exitCode}). {output.Trim()}";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Couldn't run Defender scan: {ex.Message}";
         }
     }
 
