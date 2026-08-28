@@ -199,8 +199,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         // EnergyThermals now needs to be constructed before Cpu/Storage (both take a reference
         // to it - Cpu for its thermal-throttle flag, Storage for its per-drive temperature list -
         // see each view-model's remarks) and before Summary as before (#64's Health Check card).
+        // #233: Cpu also takes Responsiveness (for its deep-idle-exit-latency flag) - Responsiveness
+        // is a field initializer (see its own declaration above), so it's already a real instance
+        // by the time this constructor body runs, the same "reach a sibling ViewModel via
+        // constructor reference" pattern #221's Network/Responsiveness wiring already established.
         EnergyThermals = new EnergyThermalsViewModel(Performance);
-        Cpu = new CpuViewModel(Performance, EnergyThermals, Processes);
+        Cpu = new CpuViewModel(Performance, EnergyThermals, Processes, Responsiveness);
         Memory = new MemoryViewModel(Performance, Processes);
         Storage = new StorageViewModel(Performance, EnergyThermals);
         // #221: Responsiveness is a field initializer (declared/constructed before this

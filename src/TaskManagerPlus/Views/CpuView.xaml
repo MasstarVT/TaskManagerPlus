@@ -230,6 +230,24 @@
                                     ValueText="{Binding Performance.CpuC3Percent, StringFormat={}{0:0.0}}" Unit="%"
                                     AccentBrush="{DynamicResource AccentBrush}" />
                 </UniformGrid>
+
+                <!-- #233: deep-idle-exit-latency quick flag - heavy C3 residency alongside an
+                     elevated worst-observed DPC latency (from the Responsiveness tab) for several
+                     consecutive ticks in a row. See CpuViewModel.DeepIdleExitLatencySuspected's
+                     remarks. -->
+                <TextBlock Text="{Binding DeepIdleExitLatencyText}" Foreground="{DynamicResource WarningBrush}"
+                           FontSize="11" FontStyle="Italic" TextWrapping="Wrap" Margin="0,8,0,0">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding DeepIdleExitLatencySuspected}" Value="True">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
             </StackPanel>
 
             <!-- CPU diagnostics: interrupt/DPC time (#13, a sustained spike usually means a bad

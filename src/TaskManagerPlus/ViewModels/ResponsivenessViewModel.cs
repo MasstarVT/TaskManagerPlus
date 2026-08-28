@@ -190,6 +190,78 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
     public RelayCommand OpenCaptureCommand { get; }
     public RelayCommand OpenReportCommand { get; }
 
+    // #225/#234: current timer resolution + derived wake-ups/sec and coalescing inference - rides
+    // the cheap always-on _lightTimer tick (see SampleLight), same as the watchdog/per-core rows.
+    private TimerResolutionInfo _timerResolution = new() { StatusText = "Loading..." };
+    public TimerResolutionInfo TimerResolution { get => _timerResolution; private set => SetProperty(ref _timerResolution, value); }
+
+    // #228: QPC frequency/drift check - deliberately on-demand only (a ~1.5s blocking-ish
+    // measurement), not part of the light tick. Null until "Check QPC" has been pressed once.
+    private QpcDriftResult? _qpcDrift;
+    public QpcDriftResult? QpcDrift { get => _qpcDrift; private set => SetProperty(ref _qpcDrift, value); }
+
+    private bool _isCheckingQpc;
+    public bool IsCheckingQpc { get => _isCheckingQpc; private set => SetProperty(ref _isCheckingQpc, value); }
+
+    public AsyncRelayCommand CheckQpcCommand { get; }
+
+    // #226: who's holding a raised timer-resolution request - a short (15s) /energy run merged
+    // with a best-effort registry name scan, both on-demand (see PowerReportService's remarks).
+    public ObservableCollection<TimerResolutionRequesterRow> TimerResolutionRequesters { get; } = new();
+
+    private bool _isCheckingTimerRequesters;
+    public bool IsCheckingTimerRequesters { get => _isCheckingTimerRequesters; private set => SetProperty(ref _isCheckingTimerRequesters, value); }
+
+    private string _timerRequestersStatusText = "Not checked yet.";
+    public string TimerRequestersStatusText { get => _timerRequestersStatusText; private set => SetProperty(ref _timerRequestersStatusText, value); }
+
+    public AsyncRelayCommand CheckTimerRequestersCommand { get; }
+
+    // #229: full powercfg /energy Errors/Warnings report - the slow (60s) diagnostic, always an
+    // explicit button, never anything close to a timer per CLAUDE.md's on-demand rule.
+    public ObservableCollection<EnergyReportFinding> EnergyReportFindings { get; } = new();
+
+    private bool _isRunningEnergyReport;
+    public bool IsRunningEnergyReport { get => _isRunningEnergyReport; private set => SetProperty(ref _isRunningEnergyReport, value); }
+
+    private string _energyReportStatusText = "Not run yet — takes about 60 seconds.";
+    public string EnergyReportStatusText { get => _energyReportStatusText; private set => SetProperty(ref _energyReportStatusText, value); }
+
+    private string? _energyReportPath;
+
+    public AsyncRelayCommand RunEnergyReportCommand { get; }
+    public RelayCommand OpenEnergyReportCommand { get; }
+
+    // #230: outstanding power requests (powercfg /requests) - fast/cheap, loaded at start-up plus
+    // a manual refresh button, same tier as the #217-220 device-topology load.
+    public ObservableCollection<PowerRequestRow> PowerRequestRows { get; } = new();
+
+    private bool _isLoadingPowerRequests;
+    public bool IsLoadingPowerRequests { get => _isLoadingPowerRequests; private set => SetProperty(ref _isLoadingPowerRequests, value); }
+
+    private string _powerRequestsStatusText = "Not loaded yet.";
+    public string PowerRequestsStatusText { get => _powerRequestsStatusText; private set => SetProperty(ref _powerRequestsStatusText, value); }
+
+    public AsyncRelayCommand LoadPowerRequestsCommand { get; }
+
+    // #231: modern-standby drain / top activators (powercfg /sleepstudy) - on-demand only, and the
+    // whole card is hidden (not just empty) on hardware with no modern-standby support at all.
+    public ObservableCollection<SleepStudyActivatorRow> SleepStudyActivators { get; } = new();
+
+    private bool _modernStandbySupported;
+    public bool ModernStandbySupported { get => _modernStandbySupported; private set => SetProperty(ref _modernStandbySupported, value); }
+
+    private bool _isRunningSleepStudy;
+    public bool IsRunningSleepStudy { get => _isRunningSleepStudy; private set => SetProperty(ref _isRunningSleepStudy, value); }
+
+    private string _sleepStudyStatusText = string.Empty;
+    public string SleepStudyStatusText { get => _sleepStudyStatusText; private set => SetProperty(ref _sleepStudyStatusText, value); }
+
+    private string? _sleepStudyReportPath;
+
+    public AsyncRelayCommand RunSleepStudyCommand { get; }
+    public RelayCommand OpenSleepStudyReportCommand { get; }
+
     public ResponsivenessViewModel()
     {
         HiddenXAxes = new[]
@@ -247,6 +319,14 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
         CheckWifiScanStormCommand = new AsyncRelayCommand(CheckWifiScanStormAsync, () => !IsCheckingWifiScanStorm);
         ScanUsbChurnCommand = new AsyncRelayCommand(ScanUsbChurnAsync, () => !IsScanningUsbChurn);
 
+        CheckQpcCommand = new AsyncRelayCommand(CheckQpcAsync, () => !IsCheckingQpc);
+        CheckTimerRequestersCommand = new AsyncRelayCommand(CheckTimerRequestersAsync, () => !IsCheckingTimerRequesters);
+        RunEnergyReportCommand = new AsyncRelayCommand(RunEnergyReportAsync, () => !IsRunningEnergyReport);
+        OpenEnergyReportCommand = new RelayCommand(() => { if (_energyReportPath is not null) WprCaptureService.OpenInDefaultApp(_energyReportPath); }, () => _energyReportPath is not null);
+        LoadPowerRequestsCommand = new AsyncRelayCommand(LoadPowerRequestsAsync, () => !IsLoadingPowerRequests);
+        RunSleepStudyCommand = new AsyncRelayCommand(RunSleepStudyAsync, () => !IsRunningSleepStudy && ModernStandbySupported);
+        OpenSleepStudyReportCommand = new RelayCommand(() => { if (_sleepStudyReportPath is not null) WprCaptureService.OpenInDefaultApp(_sleepStudyReportPath); }, () => _sleepStudyReportPath is not null);
+
         _lightTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(2) };
         _lightTimer.Tick += (_, _) => SampleLight();
         _lightTimer.Start();
@@ -255,6 +335,8 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
         Watchdog = DpcWatchdogService.Read();
         _ = LoadDriverIdentitiesAsync();
         _ = LoadDeviceTopologyAsync();
+        _ = LoadPowerRequestsAsync(); // #230: fast shell-out, load at start-up like the device-topology block.
+        _ = CheckModernStandbySupportAsync(); // #231: gates RunSleepStudyCommand/the card's own visibility.
     }
 
     /// <summary>#211/#216: driver metadata join plus the best-effort driver-file -> device-name
@@ -293,7 +375,11 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
             var interruptMgmtTask = InterruptManagementService.LoadAsync();
             var problemDevicesTask = ProblemDeviceService.LoadAsync();
             var platformSettingsTask = PowerSchemeInterruptSteeringService.ReadInterruptSteeringSettingsAsync();
-            await Task.WhenAll(irqTask, interruptMgmtTask, problemDevicesTask, platformSettingsTask);
+            // #227/#232: plain bcdedit/powercfg -q text parses - fast enough to ride this same
+            // start-up-plus-manual-refresh load rather than needing their own button.
+            var bootConfigTask = BootConfigTimerService.ReadAsync();
+            var latencySettingsTask = LatencyPowerSettingsService.ReadLatencySensitiveSettingsAsync();
+            await Task.WhenAll(irqTask, interruptMgmtTask, problemDevicesTask, platformSettingsTask, bootConfigTask, latencySettingsTask);
 
             IrqShareRows.Clear();
             foreach (var r in irqTask.Result) IrqShareRows.Add(r);
@@ -306,6 +392,8 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
 
             PlatformLatencySettings.Clear();
             foreach (var r in platformSettingsTask.Result) PlatformLatencySettings.Add(r);
+            foreach (var r in bootConfigTask.Result) PlatformLatencySettings.Add(r);
+            foreach (var r in latencySettingsTask.Result) PlatformLatencySettings.Add(r);
 
             DeviceTopologyStatusText = $"Loaded — {IrqShareRows.Count} IRQ lines, {DeviceInterruptRows.Count} devices with interrupt policy, {ProblemDeviceRows.Count} problem device(s).";
         }
@@ -365,6 +453,152 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
         }
     }
 
+    /// <summary>#228: on-demand QPC frequency/drift check - a quick (~1.5s) blocking-ish
+    /// measurement, deliberately not folded into SampleLight's cheap tick.</summary>
+    private async Task CheckQpcAsync()
+    {
+        if (IsCheckingQpc) return;
+        IsCheckingQpc = true;
+        try
+        {
+            QpcDrift = await TimerResolutionService.CheckQpcDriftAsync(TimeSpan.FromSeconds(1.5), CancellationToken.None);
+        }
+        finally
+        {
+            IsCheckingQpc = false;
+        }
+    }
+
+    /// <summary>#226: a short (15s) powercfg /energy run focused on the "Platform Timer
+    /// Resolution" finding, merged with a best-effort GlobalTimerResolutionRequests registry name
+    /// scan - see PowerReportService's remarks for both sources.</summary>
+    private async Task CheckTimerRequestersAsync()
+    {
+        if (IsCheckingTimerRequesters) return;
+        IsCheckingTimerRequesters = true;
+        TimerRequestersStatusText = "Running a 15-second powercfg /energy scan...";
+        try
+        {
+            var (_, message, energyRows) = await PowerReportService.RunTimerResolutionRequestersAsync(CancellationToken.None);
+            var (regPresent, regRows) = PowerReportService.ReadGlobalTimerResolutionRequestsFromRegistry();
+
+            TimerResolutionRequesters.Clear();
+            foreach (var r in energyRows) TimerResolutionRequesters.Add(r);
+            foreach (var r in regRows) TimerResolutionRequesters.Add(r);
+
+            string regNote = regPresent
+                ? (regRows.Count > 0 ? $"{regRows.Count} name(s) also recovered from the registry." : "Registry value present, but no process name could be recovered from it.")
+                : "GlobalTimerResolutionRequests isn't available on this Windows build.";
+            TimerRequestersStatusText = $"{message} {regNote}";
+        }
+        catch (Exception ex)
+        {
+            TimerRequestersStatusText = $"Check failed: {ex.Message}";
+        }
+        finally
+        {
+            IsCheckingTimerRequesters = false;
+        }
+    }
+
+    /// <summary>#229: the full powercfg /energy Errors/Warnings report - Microsoft's documented
+    /// 60s duration, always an explicit button per CLAUDE.md's on-demand rule.</summary>
+    private async Task RunEnergyReportAsync()
+    {
+        if (IsRunningEnergyReport) return;
+        IsRunningEnergyReport = true;
+        EnergyReportStatusText = "Running powercfg /energy for about 60 seconds...";
+        try
+        {
+            var (ok, message, path, findings) = await PowerReportService.RunEnergyReportAsync(CancellationToken.None);
+            EnergyReportFindings.Clear();
+            foreach (var f in findings) EnergyReportFindings.Add(f);
+            _energyReportPath = ok ? path : null;
+            OpenEnergyReportCommand.RaiseCanExecuteChanged();
+            EnergyReportStatusText = message;
+        }
+        catch (Exception ex)
+        {
+            EnergyReportStatusText = $"Run failed: {ex.Message}";
+        }
+        finally
+        {
+            IsRunningEnergyReport = false;
+        }
+    }
+
+    /// <summary>#230: `powercfg /requests` - fast/cheap, loaded at start-up plus this manual
+    /// refresh, same tier as the #217-220 device-topology load.</summary>
+    private async Task LoadPowerRequestsAsync()
+    {
+        if (IsLoadingPowerRequests) return;
+        IsLoadingPowerRequests = true;
+        try
+        {
+            var rows = await LatencyPowerSettingsService.ReadPowerRequestsAsync();
+            PowerRequestRows.Clear();
+            foreach (var r in rows) PowerRequestRows.Add(r);
+            PowerRequestsStatusText = rows.Count == 0 ? "No outstanding power requests." : $"{rows.Count} outstanding power request(s).";
+        }
+        catch (Exception ex)
+        {
+            PowerRequestsStatusText = $"Load failed: {ex.Message}";
+        }
+        finally
+        {
+            IsLoadingPowerRequests = false;
+        }
+    }
+
+    /// <summary>#231: gates the modern-standby drain card's visibility and RunSleepStudyCommand -
+    /// reuses PowerPlanService.ReadSleepStateSupportAsync's own `powercfg /a` parse (Round 12 #91)
+    /// rather than re-implementing the same "S0 Low Power Idle" text check a second time.</summary>
+    private async Task CheckModernStandbySupportAsync()
+    {
+        try
+        {
+            string support = await PowerPlanService.ReadSleepStateSupportAsync();
+            ModernStandbySupported = support.StartsWith("Modern Standby", StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            ModernStandbySupported = false;
+        }
+        finally
+        {
+            // AsyncRelayCommand has no RaiseCanExecuteChanged of its own (its CanExecute is
+            // re-queried via CommandManager the same way RelayCommand's does) - invalidate directly
+            // since ModernStandbySupported just changed outside of any command's own Execute.
+            System.Windows.Input.CommandManager.InvalidateRequerySuggested();
+        }
+    }
+
+    /// <summary>#231: on-demand powercfg /sleepstudy (falling back to /systemsleepdiagnostics) -
+    /// only reachable when ModernStandbySupported is true (RunSleepStudyCommand's own CanExecute).</summary>
+    private async Task RunSleepStudyAsync()
+    {
+        if (IsRunningSleepStudy || !ModernStandbySupported) return;
+        IsRunningSleepStudy = true;
+        SleepStudyStatusText = "Running powercfg /sleepstudy...";
+        try
+        {
+            var (ok, message, path, activators) = await PowerReportService.RunSleepStudyAsync(CancellationToken.None);
+            SleepStudyActivators.Clear();
+            foreach (var a in activators) SleepStudyActivators.Add(a);
+            _sleepStudyReportPath = ok ? path : null;
+            OpenSleepStudyReportCommand.RaiseCanExecuteChanged();
+            SleepStudyStatusText = message;
+        }
+        catch (Exception ex)
+        {
+            SleepStudyStatusText = $"Run failed: {ex.Message}";
+        }
+        finally
+        {
+            IsRunningSleepStudy = false;
+        }
+    }
+
     /// <summary>#204/#205/#206: the cheap always-on tick - registry read plus two syscall/perf-
     /// counter samples, none of which need Task.Run (all are fast, non-blocking reads matching the
     /// other lightweight per-tick services in this app).</summary>
@@ -372,6 +606,10 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
     {
         Watchdog = DpcWatchdogService.Read();
         OnPropertyChanged(nameof(WatchdogHeadroomPercent));
+
+        // #225/#234: cheap NtQueryTimerResolution syscall - fine on the light tick, same tier as
+        // the watchdog registry read above.
+        TimerResolution = TimerResolutionService.Read();
 
         var coreRows = _perCore.SampleCoreDpcInterrupt();
         if (coreRows.Count > 0)

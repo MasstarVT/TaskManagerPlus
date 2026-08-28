@@ -250,3 +250,86 @@ public sealed class ProblemDeviceRow
     public int ConfigManagerErrorCode { get; init; }
     public string ErrorText { get; init; } = string.Empty;
 }
+
+/// <summary>#225/#228/#234: current system timer resolution (NtQueryTimerResolution) plus the
+/// derived wake-ups/sec and a threshold-based timer-coalescing inference - see
+/// TimerResolutionService.Read's remarks. All-zero/empty StatusText-only means the read failed;
+/// callers should show StatusText rather than the zeroed numeric fields in that case.</summary>
+public sealed class TimerResolutionInfo
+{
+    public double CurrentMs { get; init; }
+
+    /// <summary>NtQueryTimerResolution's "MinimumTime" - the finest (best/shortest) interval this
+    /// system can be raised to.</summary>
+    public double FinestMs { get; init; }
+
+    /// <summary>NtQueryTimerResolution's "MaximumTime" - the coarsest (worst/longest) interval,
+    /// i.e. the un-raised default for this system.</summary>
+    public double CoarsestMs { get; init; }
+
+    public double WakeupsPerSec { get; init; }
+
+    /// <summary>#225: true when CurrentMs is meaningfully below the ~15.6ms Windows default -
+    /// a permanently raised resolution is both a battery drain and a hint some app is busy-waiting.</summary>
+    public bool IsRaised { get; init; }
+
+    public string StatusText { get; init; } = string.Empty;
+
+    /// <summary>#234: plain-English, explicitly-labeled inference (not a direct API/tool read -
+    /// none exists) of whether timer coalescing is likely defeated at the current resolution.</summary>
+    public string CoalescingInferenceText { get; init; } = string.Empty;
+}
+
+/// <summary>#228: QPC frequency plus a short drift measurement against
+/// GetSystemTimePreciseAsFileTime - see TimerResolutionService.CheckQpcDriftAsync's remarks. Null
+/// on the ResponsivenessViewModel until the on-demand "Check QPC" button has been pressed at least
+/// once.</summary>
+public sealed class QpcDriftResult
+{
+    public long FrequencyHz { get; init; }
+    public double DriftPpm { get; init; }
+    public bool LooksStable { get; init; }
+    public string StatusText { get; init; } = string.Empty;
+}
+
+/// <summary>#226: one process (or best-effort name) identified as holding/having held an
+/// outstanding raised-timer-resolution request - either from a powercfg /energy report's
+/// "Platform Timer Resolution" finding, or a best-effort name scan of the undocumented
+/// GlobalTimerResolutionRequests registry value. See PowerReportService's remarks for both
+/// sources.</summary>
+public sealed class TimerResolutionRequesterRow
+{
+    public string ProcessName { get; init; } = string.Empty;
+    public string Detail { get; init; } = string.Empty;
+}
+
+/// <summary>#229: one Error/Warning row parsed from a powercfg /energy HTML report's
+/// Errors/Warnings table - see PowerReportService.ParseFindings' remarks. A tolerant, best-effort
+/// scrape: a Windows-build HTML layout change means fewer/no findings parse, never a fabricated
+/// row.</summary>
+public sealed class EnergyReportFinding
+{
+    public string Severity { get; init; } = string.Empty; // "Error" or "Warning"
+    public string Description { get; init; } = string.Empty;
+    public string Detail { get; init; } = string.Empty;
+}
+
+/// <summary>#230: one outstanding power request from `powercfg /requests` - Type is the section
+/// (DISPLAY/SYSTEM/AWAYMODE/EXECUTION/PERFBOOST) and Holder is the process/service/driver name the
+/// tool's own text output already names, plus any reason text it gave. An EXECUTION or PERFBOOST
+/// request held forever changes scheduling/idle behavior and is otherwise completely invisible.</summary>
+public sealed class PowerRequestRow
+{
+    public string Type { get; init; } = string.Empty;
+    public string Holder { get; init; } = string.Empty;
+}
+
+/// <summary>#231: one top "activator" row from a powercfg /sleepstudy (or /systemsleepdiagnostics
+/// fallback) HTML report - the component that kept the system from idling during modern standby.
+/// Same tolerant best-effort HTML scrape as #229's findings - see
+/// PowerReportService.ParseActivators' remarks.</summary>
+public sealed class SleepStudyActivatorRow
+{
+    public string Name { get; init; } = string.Empty;
+    public string Detail { get; init; } = string.Empty;
+}

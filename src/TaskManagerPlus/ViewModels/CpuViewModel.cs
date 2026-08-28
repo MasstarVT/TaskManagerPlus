@@ -28,8 +28,22 @@ public sealed class CpuViewModel : ObservableObject, IDisposable
 {
     private readonly EnergyThermalsViewModel _energyThermals;
     private readonly ProcessesViewModel _processes;
+    private readonly ResponsivenessViewModel _responsiveness;
     private readonly DispatcherTimer _throttleTimer;
     private bool _affinityRefreshInFlight;
+
+    // #233: "large share of residency" in the deepest package C-state (C3 - the deepest tier this
+    // app reads) for the deep-idle-exit-latency flag below.
+    private const double DeepCStateThresholdPercent = 40.0;
+
+    // Matches DpcTimeToBrushConverter's own amber threshold (#202) - the task's own framing for
+    // "elevated" DPC latency.
+    private const double ElevatedDpcThresholdUs = 250.0;
+
+    // "Repeatedly", not a one-off blip - a few consecutive 2s throttle-timer ticks (~6s) of both
+    // conditions holding at once before the flag raises.
+    private const int SustainedTicksRequired = 3;
+    private int _deepIdleLatencyStreak;
 
     public PerformanceViewModel Performance { get; }
 
@@ -88,6 +102,24 @@ public sealed class CpuViewModel : ObservableObject, IDisposable
     /// </summary>
     public string ThrottleReason => IsThrottling ? "Thermal" : IsPowerLimited ? "Power" : "None";
 
+    /// <summary>
+    /// #233: extends the existing C-state residency display (#83) with a heuristic flag - when the
+    /// CPU is spending a large share of its idle time in the deepest package C-state this app reads
+    /// (C3) AND the Responsiveness tab's worst observed DPC latency is also elevated (above the same
+    /// 250us amber threshold DpcTimeToBrushConverter uses, #202) for several consecutive ticks in a
+    /// row (not a one-off blip), flags that the deep-idle exit itself may be adding to that latency -
+    /// waking from a deep C-state measurably takes longer than from a shallow one or C0, so a driver
+    /// that looks "slow" in the DPC-by-driver table might really just be paying a wake-up-latency
+    /// tax. "Quick flag, not a verdict" - same heuristic tier as IsThrottling/IsPowerLimited above.
+    /// Always false when CStatesAvailable is false (older CPU/Windows generation), same as the
+    /// residency display itself hides in that case.
+    /// </summary>
+    private bool _deepIdleExitLatencySuspected;
+    public bool DeepIdleExitLatencySuspected { get => _deepIdleExitLatencySuspected; private set => SetProperty(ref _deepIdleExitLatencySuspected, value); }
+
+    private string _deepIdleExitLatencyText = string.Empty;
+    public string DeepIdleExitLatencyText { get => _deepIdleExitLatencyText; private set => SetProperty(ref _deepIdleExitLatencyText, value); }
+
     /// <summary>Pass-through: true only on genuinely hybrid CPUs. The view should hide the
     /// P-core/E-core color distinction entirely when this is false.</summary>
     public bool HasHybridTopology => Performance.HasHybridTopology;
@@ -107,18 +139,20 @@ public sealed class CpuViewModel : ObservableObject, IDisposable
     /// </summary>
     public ObservableCollection<CoreGroup> CoreGroups { get; } = new();
 
-    public CpuViewModel(PerformanceViewModel performance, EnergyThermalsViewModel energyThermals, ProcessesViewModel processes)
+    public CpuViewModel(PerformanceViewModel performance, EnergyThermalsViewModel energyThermals, ProcessesViewModel processes, ResponsivenessViewModel responsiveness)
     {
         Performance = performance;
         _energyThermals = energyThermals;
         _processes = processes;
+        _responsiveness = responsiveness;
         performance.Cores.CollectionChanged += OnCoresCollectionChanged;
         RebuildGroups();
 
         _throttleTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(2) };
-        _throttleTimer.Tick += (_, _) => { RefreshThrottleStatus(); _ = RefreshCoreAffinityAsync(); };
+        _throttleTimer.Tick += (_, _) => { RefreshThrottleStatus(); RefreshDeepIdleLatencyFlag(); _ = RefreshCoreAffinityAsync(); };
         _throttleTimer.Start();
         RefreshThrottleStatus();
+        RefreshDeepIdleLatencyFlag();
 
         // #25/#28/#29/#30: static, so read once in the background rather than adding this to the
         // per-tick timer above.
@@ -207,6 +241,23 @@ public sealed class CpuViewModel : ObservableObject, IDisposable
             : string.Empty;
 
         OnPropertyChanged(nameof(ThrottleReason));
+    }
+
+    /// <summary>#233: see DeepIdleExitLatencySuspected's remarks. Runs on the same 2s
+    /// _throttleTimer cadence as RefreshThrottleStatus above.</summary>
+    private void RefreshDeepIdleLatencyFlag()
+    {
+        bool eligible = Performance.CStatesAvailable
+            && Performance.CpuC3Percent >= DeepCStateThresholdPercent
+            && _responsiveness.HighestDpcUs >= ElevatedDpcThresholdUs;
+
+        _deepIdleLatencyStreak = eligible ? _deepIdleLatencyStreak + 1 : 0;
+
+        bool suspected = _deepIdleLatencyStreak >= SustainedTicksRequired;
+        DeepIdleExitLatencySuspected = suspected;
+        DeepIdleExitLatencyText = suspected
+            ? $"Deep idle exit may be adding latency: {Performance.CpuC3Percent:0}% C3 residency alongside a {_responsiveness.HighestDpcUs:0} µs worst DPC — try testing with minimum processor state at 100% to rule this out. Quick flag, not a verdict."
+            : string.Empty;
     }
 
     private void OnCoresCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)

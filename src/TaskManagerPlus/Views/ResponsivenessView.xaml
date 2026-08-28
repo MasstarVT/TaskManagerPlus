@@ -262,25 +262,185 @@
                 </StackPanel>
             </Border>
 
-            <!-- #220: Platform latency settings - a small, generically-named list intended for
-                 later chunks in this domain to append more rows to. -->
+            <!-- #220/#227/#232: Platform latency settings - a small, generically-named list later
+                 chunks in this domain append more rows to; #227 (bcdedit boot-config timer flags)
+                 and #232 (powercfg -q latency-relevant processor settings) both land here. Each
+                 row's optional Note (informational context / "quick flag, not a verdict" wording)
+                 renders as a wrapped subtext line when present. -->
             <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
                 <StackPanel>
                     <TextBlock Text="Platform latency settings" FontWeight="SemiBold" Margin="0,0,0,6" />
                     <ItemsControl ItemsSource="{Binding PlatformLatencySettings}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <Grid Margin="0,0,0,6">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0" Text="{Binding SettingName}" FontSize="12.5" VerticalAlignment="Center" />
-                                    <TextBlock Grid.Column="1" Text="{Binding ValueText}" FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center" />
-                                </Grid>
+                                <StackPanel Margin="0,0,0,8">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="{Binding SettingName}" FontSize="12.5" VerticalAlignment="Center" />
+                                        <TextBlock Grid.Column="1" Text="{Binding ValueText}" FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                    </Grid>
+                                    <TextBlock Text="{Binding Note}" Foreground="{DynamicResource TextSecondaryBrush}"
+                                               FontSize="11" FontStyle="Italic" TextWrapping="Wrap" Margin="0,2,0,0">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding Note, Converter={StaticResource StringNotEmptyConverter}}" Value="True">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </StackPanel>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #225/#228/#234: current timer resolution readout, QPC frequency/drift check, and a
+                 timer-coalescing inference, all derived from TimerResolutionService. #226 ("who
+                 raised it") is listed underneath as its own on-demand button + results list, per
+                 the task's own framing. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Timer resolution &amp; QPC" FontWeight="SemiBold" Margin="0,0,0,6" />
+                    <UniformGrid Columns="2" Margin="0,0,0,10">
+                        <views:VfdMeter Title="Current resolution" Glow="True" Margin="0,0,8,0"
+                                        ValueText="{Binding TimerResolution.CurrentMs, StringFormat={}{0:0.###}}" Unit="ms"
+                                        SubText="{Binding TimerResolution.WakeupsPerSec, StringFormat={}{0:0} wake-ups/sec}">
+                            <views:VfdMeter.Style>
+                                <Style TargetType="views:VfdMeter">
+                                    <Setter Property="AccentBrush" Value="{DynamicResource TextSecondaryBrush}" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding TimerResolution.IsRaised}" Value="True">
+                                            <Setter Property="AccentBrush" Value="{DynamicResource WarningBrush}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </views:VfdMeter.Style>
+                        </views:VfdMeter>
+                        <views:VfdMeter Title="Range" Glow="False" Margin="8,0,0,0"
+                                        ValueText="{Binding TimerResolution.FinestMs, StringFormat={}{0:0.###}}" Unit="ms finest"
+                                        SubText="{Binding TimerResolution.CoarsestMs, StringFormat={}up to {0:0.###} ms coarsest}"
+                                        AccentBrush="{DynamicResource TextSecondaryBrush}" />
+                    </UniformGrid>
+                    <TextBlock Text="{Binding TimerResolution.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,4" />
+                    <TextBlock Text="{Binding TimerResolution.CoalescingInferenceText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" FontStyle="Italic" TextWrapping="Wrap" Margin="0,0,0,10" />
+
+                    <WrapPanel Margin="0,0,0,4">
+                        <Button Content="Check QPC" Command="{Binding CheckQpcCommand}" Padding="10,4" Margin="0,0,8,4" />
+                        <TextBlock Text="A quick ~1.5s check that the QPC clock this whole tab's microsecond readings are built on isn't drifting against the system clock." VerticalAlignment="Center"
+                                   Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,4" />
+                    </WrapPanel>
+                    <TextBlock Text="{Binding QpcDrift.StatusText}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,10">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding QpcDrift.LooksStable}" Value="False">
+                                        <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
+                    <Separator Margin="0,0,0,10" />
+
+                    <TextBlock Text="#226: who raised it" FontWeight="SemiBold" FontSize="12.5" Margin="0,0,0,4" />
+                    <TextBlock Text="Runs a short (~15s) powercfg /energy scan for the &quot;Platform Timer Resolution&quot; finding, plus a best-effort read of the (undocumented, not present on every Windows build) GlobalTimerResolutionRequests registry value."
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,8" />
+                    <Button Content="Check now (~15s)" Command="{Binding CheckTimerRequestersCommand}" HorizontalAlignment="Left" Padding="10,4" Margin="0,0,0,8" />
+                    <TextBlock Text="{Binding TimerRequestersStatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8" />
+                    <DataGrid ItemsSource="{Binding TimerResolutionRequesters}" MaxHeight="160">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Process" Binding="{Binding ProcessName}" Width="1.4*" />
+                            <DataGridTextColumn Header="Detail" Binding="{Binding Detail}" Width="2.6*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- #229: full powercfg /energy Errors/Warnings report - the slow (~60s) diagnostic,
+                 always an explicit button per CLAUDE.md's on-demand rule. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Energy &amp; latency report" FontWeight="SemiBold" Margin="0,0,0,6" />
+                    <TextBlock Text="Runs powercfg /energy's full system diagnostic and parses its Errors/Warnings rows (USB selective-suspend violations, outstanding power requests, timer resolution, disabled processor idle, device sleep-blockers, and more)."
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8" />
+                    <WrapPanel Margin="0,0,0,8">
+                        <Button Content="Run report (~60 seconds)" Command="{Binding RunEnergyReportCommand}" Style="{StaticResource SuccessButton}" Margin="0,0,8,4" />
+                        <Button Content="Open full report" Command="{Binding OpenEnergyReportCommand}" Margin="0,0,8,4" />
+                    </WrapPanel>
+                    <TextBlock Text="{Binding EnergyReportStatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8" />
+                    <DataGrid ItemsSource="{Binding EnergyReportFindings}" MaxHeight="240">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Severity" Binding="{Binding Severity}" Width="80" />
+                            <DataGridTextColumn Header="Description" Binding="{Binding Description}" Width="1.6*" />
+                            <DataGridTextColumn Header="Detail" Binding="{Binding Detail}" Width="2.4*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- #230: outstanding power requests (powercfg /requests) - fast/cheap, loaded at
+                 start-up plus a manual refresh, same tier as the #217-220 device-topology load. An
+                 EXECUTION or PERFBOOST request held forever changes scheduling/idle behavior and is
+                 otherwise completely invisible. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <Grid Margin="0,0,0,6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Outstanding power requests" FontWeight="SemiBold" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Refresh" Command="{Binding LoadPowerRequestsCommand}" Padding="10,4" />
+                    </Grid>
+                    <TextBlock Text="{Binding PowerRequestsStatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8" />
+                    <DataGrid ItemsSource="{Binding PowerRequestRows}" MaxHeight="200">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Type" Binding="{Binding Type}" Width="110" />
+                            <DataGridTextColumn Header="Holder" Binding="{Binding Holder}" Width="3*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- #231: modern-standby drain / top activators (powercfg /sleepstudy) - on-demand
+                 only, and hidden entirely (not just empty) when this machine has no modern-standby
+                 support at all. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Setter Property="Visibility" Value="Visible" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding ModernStandbySupported}" Value="False">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Modern-standby drain" FontWeight="SemiBold" Margin="0,0,0,6" />
+                    <TextBlock Text="Runs powercfg /sleepstudy (falling back to /systemsleepdiagnostics if unsupported) and lists the top activators — components that kept the system from idling during modern standby, the classic 'feels sluggish after waking a laptop' cause."
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8" />
+                    <WrapPanel Margin="0,0,0,8">
+                        <Button Content="Run sleep study" Command="{Binding RunSleepStudyCommand}" Margin="0,0,8,4" />
+                        <Button Content="Open full report" Command="{Binding OpenSleepStudyReportCommand}" Margin="0,0,8,4" />
+                    </WrapPanel>
+                    <TextBlock Text="{Binding SleepStudyStatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8" />
+                    <DataGrid ItemsSource="{Binding SleepStudyActivators}" MaxHeight="200">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Activator" Binding="{Binding Name}" Width="1.6*" />
+                            <DataGridTextColumn Header="Detail" Binding="{Binding Detail}" Width="2.4*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
                 </StackPanel>
             </Border>
 
