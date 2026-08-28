@@ -17,8 +17,18 @@ public sealed class StabilityEvent
 
     /// <summary>Bugcheck code, only ever populated for a Kernel-Power event 41 - see
     /// EventLogService.ExtractBugcheckCode for why this is best-effort (the insertion-string
-    /// layout isn't a documented, versioned contract).</summary>
-    public string? BugcheckCode { get; init; }
+    /// layout isn't a documented, versioned contract). #191: mutable (not init-only), like
+    /// EventRecordRow's Kb* properties, so EventLogService.Query's second pass can overwrite this
+    /// with the richer Microsoft-Windows-WER-SystemErrorReporting 1001 code when one is found
+    /// nearby - the event-41 property-index guess stays the value here only when no richer event
+    /// was found.</summary>
+    public string? BugcheckCode { get; set; }
+
+    /// <summary>#191: the richer bugcheck detail (all four parameters + dump path) recovered from a
+    /// nearby Microsoft-Windows-WER-SystemErrorReporting 1001 event, when one was found - null
+    /// leaves BugcheckCode as the existing event-41 best-effort guess with no further detail
+    /// available, per CLAUDE.md's "degrade, never fabricate" rule.</summary>
+    public BugcheckDetail? BugcheckDetail { get; set; }
 
     /// <summary>#168: a fuller, non-truncated parse of this event's own message - only ever populated
     /// for ".NET Runtime" event 1026 (managed exception type + top stack frames) and "Application
@@ -41,6 +51,30 @@ public sealed class MinidumpInfo
     public string FileName { get; init; } = string.Empty;
     public DateTime Timestamp { get; init; }
     public string? BugcheckCode { get; init; }
+
+    /// <summary>#191: the richer bugcheck detail for this specific dump file, when a
+    /// Microsoft-Windows-WER-SystemErrorReporting 1001 event names this exact file path (an
+    /// authoritative match - Windows itself named the file) or, failing that, when one was found
+    /// within a few minutes of this dump's timestamp (the same proximity heuristic
+    /// EventLogService.ReadMinidumps already used for BugcheckCode alone). Null falls back to
+    /// BugcheckCode's existing event-41-only value with no further detail.</summary>
+    public BugcheckDetail? BugcheckDetail { get; init; }
+}
+
+/// <summary>#191: the full bugcheck detail Microsoft-Windows-WER-SystemErrorReporting's own event
+/// 1001 carries in its message text - "0x00000133 (0x..., 0x..., 0x..., 0x...)" plus the dump file
+/// path Windows itself wrote. Far more reliable than Kernel-Power 41's undocumented property-index
+/// layout (EventLogService.ExtractBugcheckCode), but not logged on every Windows edition/crash, so
+/// this is preferred when found and the event-41 guess stays as fallback - see
+/// EventLogService.ReadWerBugcheckEvents.</summary>
+public sealed class BugcheckDetail
+{
+    public string Code { get; init; } = string.Empty;
+    public string Parameter1 { get; init; } = string.Empty;
+    public string Parameter2 { get; init; } = string.Empty;
+    public string Parameter3 { get; init; } = string.Empty;
+    public string Parameter4 { get; init; } = string.Empty;
+    public string? DumpFilePath { get; init; }
 }
 
 /// <summary>One day's worth of Critical/Error event counts (#1 - Reliability History) - bucketed

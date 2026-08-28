@@ -71,6 +71,11 @@ public sealed class StabilityViewModel : ObservableObject
     // above), needed for #163's "Application Error" 1000 combine and #164's "Application Hang" 1002 read.
     private readonly WerReportService _wer = new(new EventLogExplorerService());
 
+    // #184-190: kernel/storage/driver event-family cards - its own EventLogExplorerService
+    // instance (same "each ViewModel composes its own Services/* instances directly" convention as
+    // _kb/_anomaly/_timeline/_wer above).
+    private readonly KernelEventFamilyService _kernelFamily = new(new EventLogExplorerService());
+
     /// <summary>The last WER report scan's results, stashed so RefreshTimelineExtrasAsync's
     /// BuildTimeline call (#161) can fold them into the unified timeline without a second scan.</summary>
     private List<WerReportInfo> _lastWerReports = new();
@@ -165,6 +170,39 @@ public sealed class StabilityViewModel : ObservableObject
     // ---- #167: error reporting configuration check ----
     private WerConfigStatus _werConfigStatus = new();
     public WerConfigStatus WerConfigStatus { get => _werConfigStatus; private set => SetProperty(ref _werConfigStatus, value); }
+
+    // ---- #184: storage errors grouped by physical disk ----
+    public ObservableCollection<StorageErrorDiskGroup> StorageErrorGroups { get; } = new();
+
+    // ---- #185: shadow copy / VSS family ("Backup and restore points") ----
+    public ObservableCollection<ShadowCopyEventInfo> ShadowCopyEvents { get; } = new();
+    public ObservableCollection<ShadowStorageVolumeInfo> ShadowStorageVolumes { get; } = new();
+
+    private string? _shadowCopyStatusText;
+    public string? ShadowCopyStatusText { get => _shadowCopyStatusText; private set => SetProperty(ref _shadowCopyStatusText, value); }
+
+    // ---- #186: WHEA corrected-hardware-error rate ----
+    private WheaErrorSummary _wheaSummary = new();
+    public WheaErrorSummary WheaSummary { get => _wheaSummary; private set => SetProperty(ref _wheaSummary, value); }
+
+    public ObservableCollection<double> WheaDailyCounts { get; } = new();
+    private readonly ColumnSeries<double> _wheaDailyColumns;
+    public ISeries[] WheaDailySeries { get; }
+    public Axis[] WheaDailyXAxes { get; }
+    public Axis[] WheaDailyYAxes { get; }
+
+    // ---- #187: driver load failures ----
+    public ObservableCollection<DriverFailureEvent> DriverFailures { get; } = new();
+
+    // ---- #188: chkdsk / autochk results ----
+    public ObservableCollection<ChkdskRunInfo> ChkdskResults { get; } = new();
+
+    // ---- #189: Windows Memory Diagnostic results ----
+    private MemoryDiagnosticStatus _memoryDiagnosticStatus = new();
+    public MemoryDiagnosticStatus MemoryDiagnosticStatus { get => _memoryDiagnosticStatus; private set => SetProperty(ref _memoryDiagnosticStatus, value); }
+
+    // ---- #190: power-transition failure family ----
+    public ObservableCollection<PowerTransitionIncident> PowerTransitionIncidents { get; } = new();
 
     /// <summary>#128: "New error types this week" - (provider, eventId) signatures present only in
     /// the last 7 days of RecentEvents' 30-day window, with no occurrence in the older 23 days of
@@ -388,6 +426,41 @@ public sealed class StabilityViewModel : ObservableObject
             },
         };
 
+        // #186: WHEA corrected-hardware-error daily count - the same small single-series
+        // column-chart shape as DailyEventColumns above, just without the #169 overlay line (WHEA
+        // has no equivalent second data source to compare against).
+        _wheaDailyColumns = new ColumnSeries<double>
+        {
+            Values = WheaDailyCounts,
+            Fill = new SolidColorPaint(SKColors.Goldenrod.WithAlpha(200)),
+            Stroke = null,
+            MaxBarWidth = 10,
+        };
+        WheaDailySeries = new ISeries[] { _wheaDailyColumns };
+        WheaDailyXAxes = new[]
+        {
+            new Axis
+            {
+                Labels = Array.Empty<string>(),
+                LabelsRotation = 0,
+                MinStep = 1,
+                ForceStepToMin = true,
+                LabelsPaint = new SolidColorPaint(AxisTextColor),
+                SeparatorsPaint = null,
+            },
+        };
+        WheaDailyYAxes = new[]
+        {
+            new Axis
+            {
+                MinLimit = 0,
+                MinStep = 1,
+                Labeler = v => $"{v:0}",
+                LabelsPaint = new SolidColorPaint(AxisTextColor),
+                SeparatorsPaint = new SolidColorPaint(AxisSeparatorColor) { StrokeThickness = 1 },
+            },
+        };
+
         _ = RefreshAsync();
     }
 
@@ -400,6 +473,10 @@ public sealed class StabilityViewModel : ObservableObject
         DailyEventXAxes[0].LabelsPaint = new SolidColorPaint(textSk);
         DailyEventYAxes[0].LabelsPaint = new SolidColorPaint(textSk);
         DailyEventYAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
+
+        WheaDailyXAxes[0].LabelsPaint = new SolidColorPaint(textSk);
+        WheaDailyYAxes[0].LabelsPaint = new SolidColorPaint(textSk);
+        WheaDailyYAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
     }
 
     private async Task RefreshAsync()
@@ -420,6 +497,10 @@ public sealed class StabilityViewModel : ObservableObject
             // #161-167: WER report queue/archive scan, hangs, storage footprint, LocalDumps and
             // error-reporting-config reads - folded into this same on-demand refresh, never a new timer.
             await RefreshWerAsync();
+
+            // #184-190: kernel/storage/driver event-family cards - folded into this same on-demand
+            // refresh, never a new timer.
+            await RefreshKernelEventFamiliesAsync();
 
             // #137/#142/#143/#144: folded into this same on-demand refresh, never a new timer.
             await RefreshTimelineExtrasAsync(snapshot);
@@ -545,6 +626,70 @@ public sealed class StabilityViewModel : ObservableObject
 
         try { WerConfigStatus = await Task.Run(() => _wer.ReadConfigStatus()); }
         catch { /* degrade - keeps its previous value (Unknown on first load) */ }
+    }
+
+    /// <summary>#184-190: each family read is wrapped independently so one failing part (a locked-
+    /// down channel, driverquery.exe blocked by policy, vssadmin.exe missing) doesn't blank out the
+    /// others that already succeeded - the same tolerance RefreshWerAsync/RefreshTimelineExtrasAsync
+    /// above already apply to their own multi-part reads.</summary>
+    private async Task RefreshKernelEventFamiliesAsync()
+    {
+        try
+        {
+            var groups = await Task.Run(() => _kernelFamily.ReadStorageErrors());
+            StorageErrorGroups.Clear();
+            foreach (var g in groups) StorageErrorGroups.Add(g);
+        }
+        catch { /* degrade to an empty storage-error list */ }
+
+        try
+        {
+            var status = await Task.Run(() => _kernelFamily.ReadShadowCopyStatus());
+            ShadowCopyEvents.Clear();
+            foreach (var e in status.Events) ShadowCopyEvents.Add(e);
+            ShadowStorageVolumes.Clear();
+            foreach (var v in status.StorageVolumes) ShadowStorageVolumes.Add(v);
+            ShadowCopyStatusText = status.VssAdminError;
+        }
+        catch (Exception ex) { ShadowCopyStatusText = $"Couldn't read shadow copy status: {ex.Message}"; }
+
+        try
+        {
+            WheaSummary = await Task.Run(() => _kernelFamily.ReadWheaErrors());
+            WheaDailyCounts.Clear();
+            foreach (var d in WheaSummary.DailyCounts) WheaDailyCounts.Add(d.Count);
+            WheaDailyXAxes[0].Labels = WheaSummary.DailyCounts
+                .Select((d, i) => i % 5 == 0 ? d.Date.ToString("M/d") : string.Empty)
+                .ToArray();
+        }
+        catch { /* degrade to an empty WHEA chart */ }
+
+        try
+        {
+            var failures = await Task.Run(() => _kernelFamily.ReadDriverFailures());
+            DriverFailures.Clear();
+            foreach (var f in failures) DriverFailures.Add(f);
+        }
+        catch { /* degrade to an empty driver-failures list */ }
+
+        try
+        {
+            var chkdsk = await Task.Run(() => _kernelFamily.ReadChkdskResults());
+            ChkdskResults.Clear();
+            foreach (var c in chkdsk) ChkdskResults.Add(c);
+        }
+        catch { /* degrade to an empty chkdsk list */ }
+
+        try { MemoryDiagnosticStatus = await Task.Run(() => _kernelFamily.ReadMemoryDiagnosticStatus()); }
+        catch { /* degrade - keeps its previous value */ }
+
+        try
+        {
+            var incidents = await Task.Run(() => _kernelFamily.ReadPowerTransitionIncidents());
+            PowerTransitionIncidents.Clear();
+            foreach (var i in incidents) PowerTransitionIncidents.Add(i);
+        }
+        catch { /* degrade to an empty power-transition list */ }
     }
 
     /// <summary>#169/#170/#172/#173/#174: Reliability Monitor data - reads Windows' own per-day

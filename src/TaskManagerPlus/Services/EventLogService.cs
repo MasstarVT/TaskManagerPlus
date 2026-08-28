@@ -28,7 +28,23 @@ public sealed class EventLogService
     // Windows Error Reporting's own "a Blue Screen just happened" summary entry (Application log).
     private const int BlueScreenEventId = 1001;
 
+    // #191: a *different* provider/channel from BlueScreenEventId above despite sharing the same
+    // event ID number (1001) - this one is System-log, and its message text carries the full
+    // bugcheck line ("0x00000133 (0x..., 0x..., 0x..., 0x...)") plus the actual dump file path,
+    // which Kernel-Power 41's insertion strings never do. See ReadWerBugcheckEvents.
+    private const string WerSystemErrorReportingProvider = "Microsoft-Windows-WER-SystemErrorReporting";
+    private const int WerBugcheckEventId = 1001;
+
     private static readonly Regex FaultingModuleRegex = new(@"Faulting module name:\s*([^,\r\n]+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    // #191: the bugcheck code plus its four parameters, as WER-SystemErrorReporting 1001 renders
+    // them in its message text - not a documented, versioned contract either, but a far more
+    // reliable one than Kernel-Power 41's raw property-index guess (this is the same text format
+    // WhoCrashed/BlueScreenView parse from the equivalent minidump header).
+    private static readonly Regex WerBugcheckLineRegex = new(
+        @"(0x[0-9A-Fa-f]{8})\s*\(\s*(0x[0-9A-Fa-f]+)\s*,\s*(0x[0-9A-Fa-f]+)\s*,\s*(0x[0-9A-Fa-f]+)\s*,\s*(0x[0-9A-Fa-f]+)\s*\)",
+        RegexOptions.Compiled);
+    private static readonly Regex WerDumpPathRegex = new(@"([A-Za-z]:\\[^\r\n]*?\.dmp)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     public StabilitySnapshot Query()
     {
@@ -55,6 +71,22 @@ public sealed class EventLogService
 
         var (lowMemCount, lowMemLast) = ReadLowMemoryEvents();
 
+        // #191: prefer the richer WER-SystemErrorReporting 1001 bugcheck detail (all four
+        // parameters + dump path) over the event-41 property-index guess ReadLog already filled in
+        // above, when a WER 1001 was logged within 10 minutes of the Kernel-Power 41 - the existing
+        // guess stays untouched (fallback) for any 41 with no matching WER 1001 nearby.
+        var werBugchecks = ReadWerBugcheckEvents();
+        foreach (var kp41 in events.Where(e => e.EventId == KernelPowerEventId))
+        {
+            var nearest = werBugchecks
+                .Where(w => Math.Abs((w.Timestamp - kp41.TimeCreated).TotalMinutes) < 10)
+                .OrderBy(w => Math.Abs((w.Timestamp - kp41.TimeCreated).TotalMinutes))
+                .FirstOrDefault();
+            if (nearest is null) continue;
+            kp41.BugcheckDetail = nearest.Detail;
+            kp41.BugcheckCode = nearest.Detail.Code; // authoritative - overrides the property-index guess
+        }
+
         return new StabilitySnapshot
         {
             RecentEvents = events.Take(MaxEventsPerLog).ToList(),
@@ -63,11 +95,79 @@ public sealed class EventLogService
             TdrEventCount = tdrEvents.Count,
             LastTdrEvent = tdrEvents.FirstOrDefault()?.TimeCreated,
             LastCrashTime = lastCrash?.TimeCreated,
-            Minidumps = ReadMinidumps(shutdownEvents),
+            Minidumps = ReadMinidumps(shutdownEvents, werBugchecks),
             DailyCounts = BuildDailyCounts(events),
             LowMemoryEventCount = lowMemCount,
             LastLowMemoryEvent = lowMemLast,
         };
+    }
+
+    private sealed class WerBugcheckHit
+    {
+        public DateTime Timestamp { get; init; }
+        public BugcheckDetail Detail { get; init; } = new();
+    }
+
+    /// <summary>#191: reads Microsoft-Windows-WER-SystemErrorReporting 1001 (System log - a
+    /// different provider/channel from WerReportService's Application-log WER 1001, despite the
+    /// same event ID number) and regex-parses each one's message text for the bugcheck line and
+    /// dump file path. An event whose text doesn't match the expected "0x... (0x...,0x...,0x...,
+    /// 0x...)" shape is skipped (older Windows editions, or a non-bugcheck WER-SystemErrorReporting
+    /// entry) rather than producing a half-filled BugcheckDetail - degrades to "no richer detail",
+    /// leaving the event-41 guess as the only source, same as every other event-log read in this
+    /// service.</summary>
+    private static List<WerBugcheckHit> ReadWerBugcheckEvents()
+    {
+        var hits = new List<WerBugcheckHit>();
+        try
+        {
+            long maxAgeMs = LookbackDays * 24L * 60 * 60 * 1000;
+            var query = new EventLogQuery("System", PathType.LogName,
+                $"*[System[Provider[@Name='{WerSystemErrorReportingProvider}'] and (EventID={WerBugcheckEventId}) and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]")
+            {
+                ReverseDirection = true,
+            };
+
+            using var reader = new EventLogReader(query);
+            int count = 0;
+            const int maxEvents = 200; // generous - a well-behaved PC has few to none of these in 30 days
+            while (count < maxEvents && reader.ReadEvent() is { } record)
+            {
+                using (record)
+                {
+                    count++;
+                    if (record.TimeCreated is null) continue;
+
+                    string message;
+                    try { message = record.FormatDescription() ?? string.Empty; }
+                    catch { message = string.Empty; } // provider's message file isn't registered - skip this one
+
+                    var lineMatch = WerBugcheckLineRegex.Match(message);
+                    if (!lineMatch.Success) continue; // text doesn't carry the expected bugcheck line - nothing usable
+
+                    var dumpMatch = WerDumpPathRegex.Match(message);
+                    hits.Add(new WerBugcheckHit
+                    {
+                        Timestamp = record.TimeCreated.Value,
+                        Detail = new BugcheckDetail
+                        {
+                            Code = lineMatch.Groups[1].Value,
+                            Parameter1 = lineMatch.Groups[2].Value,
+                            Parameter2 = lineMatch.Groups[3].Value,
+                            Parameter3 = lineMatch.Groups[4].Value,
+                            Parameter4 = lineMatch.Groups[5].Value,
+                            DumpFilePath = dumpMatch.Success ? dumpMatch.Groups[1].Value.Trim() : null,
+                        },
+                    });
+                }
+            }
+        }
+        catch
+        {
+            // Provider/log unavailable, or this Windows edition doesn't log this event at all -
+            // degrade to "no richer detail" (the event-41 guess remains the only source).
+        }
+        return hits;
     }
 
     // Round 8 #40: low-memory resource-exhaustion events are logged by a dedicated Windows
@@ -203,12 +303,16 @@ public sealed class EventLogService
         }
     }
 
-    /// <summary>Correlates each minidump file's timestamp with the nearest Kernel-Power 41 event
-    /// (within 10 minutes) to recover its bugcheck code (#3) - parsing the bugcheck code directly
-    /// out of the .dmp binary format would need a full MINIDUMP-stream reader, a much larger and
-    /// more fragile undertaking than reusing the event log entry already read for the shutdown
-    /// banner above.</summary>
-    private static List<MinidumpInfo> ReadMinidumps(List<StabilityEvent> shutdownEvents)
+    /// <summary>Correlates each minidump file with a bugcheck code/detail (#3), preferring an exact
+    /// match over a proximity guess: #191's WER-SystemErrorReporting 1001 events sometimes name the
+    /// dump file's path directly (authoritative - Windows itself wrote that path), so a filename
+    /// match against <paramref name="werBugchecks"/> is tried first; when none matches, this falls
+    /// back to the original approach of correlating the file's timestamp with the nearest
+    /// Kernel-Power 41 event (within 10 minutes) via <paramref name="shutdownEvents"/>. Parsing the
+    /// bugcheck code directly out of the .dmp binary format would need a full MINIDUMP-stream
+    /// reader, a much larger and more fragile undertaking than reusing event log entries already
+    /// read elsewhere in this class.</summary>
+    private static List<MinidumpInfo> ReadMinidumps(List<StabilityEvent> shutdownEvents, List<WerBugcheckHit> werBugchecks)
     {
         var dumps = new List<MinidumpInfo>();
         try
@@ -221,16 +325,25 @@ public sealed class EventLogService
             foreach (var file in Directory.GetFiles(dir, "*.dmp"))
             {
                 var info = new FileInfo(file);
-                var nearest = bugchecks
-                    .Where(e => Math.Abs((e.TimeCreated - info.LastWriteTime).TotalMinutes) < 10)
-                    .OrderBy(e => Math.Abs((e.TimeCreated - info.LastWriteTime).TotalMinutes))
-                    .FirstOrDefault();
+
+                // #191: an exact dump-file-path match from a WER 1001 event, when one exists, beats
+                // the timestamp-proximity guess below.
+                var exactMatch = werBugchecks.FirstOrDefault(w =>
+                    w.Detail.DumpFilePath is { } p && string.Equals(Path.GetFileName(p), info.Name, StringComparison.OrdinalIgnoreCase));
+
+                var nearest = exactMatch is null
+                    ? bugchecks
+                        .Where(e => Math.Abs((e.TimeCreated - info.LastWriteTime).TotalMinutes) < 10)
+                        .OrderBy(e => Math.Abs((e.TimeCreated - info.LastWriteTime).TotalMinutes))
+                        .FirstOrDefault()
+                    : null;
 
                 dumps.Add(new MinidumpInfo
                 {
                     FileName = info.Name,
                     Timestamp = info.LastWriteTime,
-                    BugcheckCode = nearest?.BugcheckCode,
+                    BugcheckCode = exactMatch?.Detail.Code ?? nearest?.BugcheckCode,
+                    BugcheckDetail = exactMatch?.Detail,
                 });
             }
         }
