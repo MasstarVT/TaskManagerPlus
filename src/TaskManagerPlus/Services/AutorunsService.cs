@@ -1,3 +1,4 @@
+using System.Management;
 using Microsoft.Win32;
 using TaskManagerPlus.Models;
 
@@ -58,6 +59,16 @@ public static class AutorunsService
         AddPrintSpoolerItems(entries, findings);
         AddNetshHelperItems(entries, findings);
         AddWinsockLspItems(entries, findings);
+        AddMinifilterItems(entries, findings);
+        AddKernelDriverItems(entries, findings);
+        AddServicePathHygieneItems(entries, findings);
+        AddWmiEventSubscriptionItems(entries, findings);
+        AddActiveSetupItems(entries, findings);
+        AddLegacyLogonItems(entries, findings);
+        AddGroupPolicyScriptItems(entries, findings);
+        AddBrowserHelperObjectItems(entries, findings);
+        AddComHijackItems(entries, findings);
+        AddShellVerbHijackItems(entries, findings);
 
         return entries
             .OrderBy(e => e.Category, StringComparer.OrdinalIgnoreCase)
@@ -1165,6 +1176,1143 @@ public static class AutorunsService
         {
             // netsh unavailable/failed/timed out - contribute nothing, same as every other
             // optional shelled-out data source in this app.
+        }
+    }
+
+    // #819: Minifilter driver list - `fltmc filters`/`fltmc instances` parsed defensively (the
+    // documented column layout is stable across Windows 10/11 builds, but this doesn't assume it -
+    // if the exact layout can't be read, the filter name (always the first column) is still kept
+    // and the rest degrades to "Unknown" rather than throwing). Each filter name is then resolved
+    // to its own Services registry entry for a signature check - minifilters are ordinary drivers
+    // registered the same way as any other. Altitude ordering (surfaced in RawCommand) is what
+    // makes a stacked-AV or leftover-uninstalled-AV-filter problem visible to a human reading the
+    // list, not something this code judges on its own.
+    private static void AddMinifilterItems(List<AutorunEntry> items, List<SecurityFinding> findings)
+    {
+        try
+        {
+            string filtersOutput = RunCapturedSync("fltmc.exe", "filters", TimeSpan.FromSeconds(10));
+            var filterInfo = ParseFltmcFilters(filtersOutput);
+            if (filterInfo.Count == 0) return; // fltmc unavailable/no filters/unparseable output
+
+            string instancesOutput = RunCapturedSync("fltmc.exe", "instances", TimeSpan.FromSeconds(10));
+            var volumesByFilter = ParseFltmcInstances(instancesOutput);
+
+            foreach (var (name, (altitude, frame)) in filterInfo)
+            {
+                var (rawImagePath, resolvedPath) = ResolveServiceImagePath(name);
+                bool exists = !string.IsNullOrWhiteSpace(resolvedPath) && System.IO.File.Exists(resolvedPath);
+                string status = exists ? SignatureCheckService.GetStatus(resolvedPath) : "Unknown";
+                string volumes = volumesByFilter.TryGetValue(name, out var v) && v.Count > 0 ? string.Join(", ", v) : "(none attached)";
+                string location = $"fltmc filters: {name}";
+
+                var raw = $"altitude {altitude}, frame {frame}, volumes: {volumes}";
+                if (!string.IsNullOrWhiteSpace(rawImagePath)) raw += $", image {rawImagePath}";
+
+                var entry = new AutorunEntry
+                {
+                    Category = "Minifilter",
+                    Name = name,
+                    RawCommand = raw,
+                    ResolvedPath = resolvedPath,
+                    Publisher = "Unknown",
+                    SignatureStatus = status,
+                    Location = location,
+                    Enabled = true,
+                };
+                items.Add(entry);
+
+                if (exists && status.Equals("Unsigned", StringComparison.OrdinalIgnoreCase))
+                {
+                    findings.Add(new SecurityFinding
+                    {
+                        Severity = FindingSeverity.Medium,
+                        Title = $"Unsigned minifilter driver: {name}",
+                        Reason = $"\"{name}\" is attached at altitude {altitude} in the file I/O path (volumes: {volumes}), and its driver file doesn't carry a valid Authenticode signature. Altitude ordering makes a stacked-AV problem or a leftover uninstalled AV filter sitting in the I/O path visible - worth a look.",
+                        Path = location,
+                        WhatDisablingDoes = "Uninstalling the owning security/backup product removes its minifilter from the stack cleanly; only do this for one you don't recognize, since legitimate security/backup software installs minifilters here routinely. Quick flag, not a verdict.",
+                        RelatedEntry = entry,
+                    });
+                }
+            }
+        }
+        catch
+        {
+            // fltmc unavailable/failed/timed out - contribute nothing, same tradeoff as #818's netsh call.
+        }
+    }
+
+    /// <summary>Parses `fltmc filters` output into name -&gt; (altitude, frame). Defensive by
+    /// design: skips the header and the dashed separator line, splits remaining lines on runs of
+    /// 2+ spaces (the columns are whitespace-padded, not delimited), and if a line doesn't have
+    /// enough columns to read altitude/frame it still keeps the filter name with "Unknown" for the
+    /// rest rather than dropping the row - the exact column layout isn't documented to be stable
+    /// across every Windows build.</summary>
+    private static Dictionary<string, (string Altitude, string Frame)> ParseFltmcFilters(string output)
+    {
+        var result = new Dictionary<string, (string, string)>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(output)) return result;
+
+        foreach (var rawLine in output.Split('\n'))
+        {
+            var line = rawLine.TrimEnd('\r');
+            if (string.IsNullOrWhiteSpace(line)) continue;
+            if (line.Contains("Filter Name", StringComparison.OrdinalIgnoreCase)) continue; // header
+            if (line.Trim().Trim('-').Length == 0) continue; // dashed separator line
+
+            var columns = System.Text.RegularExpressions.Regex.Split(line.Trim(), @"\s{2,}");
+            if (columns.Length == 0 || string.IsNullOrWhiteSpace(columns[0])) continue;
+
+            var name = columns[0].Trim();
+            string altitude = columns.Length > 2 ? columns[2].Trim() : "Unknown";
+            string frame = columns.Length > 3 ? columns[3].Trim() : "Unknown";
+            result[name] = (altitude, frame);
+        }
+        return result;
+    }
+
+    /// <summary>Parses `fltmc instances` output into filter name -&gt; attached volumes, same
+    /// defensive column-splitting approach as ParseFltmcFilters.</summary>
+    private static Dictionary<string, List<string>> ParseFltmcInstances(string output)
+    {
+        var result = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(output)) return result;
+
+        foreach (var rawLine in output.Split('\n'))
+        {
+            var line = rawLine.TrimEnd('\r');
+            if (string.IsNullOrWhiteSpace(line)) continue;
+            if (line.Contains("Filter Name", StringComparison.OrdinalIgnoreCase)) continue;
+            if (line.Trim().Trim('-').Length == 0) continue;
+
+            var columns = System.Text.RegularExpressions.Regex.Split(line.Trim(), @"\s{2,}");
+            if (columns.Length < 2) continue;
+
+            var name = columns[0].Trim();
+            var volume = columns[1].Trim();
+            if (!result.TryGetValue(name, out var list))
+            {
+                list = new List<string>();
+                result[name] = list;
+            }
+            if (!list.Contains(volume, StringComparer.OrdinalIgnoreCase)) list.Add(volume);
+        }
+        return result;
+    }
+
+    /// <summary>Looks up one service/driver's ImagePath under
+    /// SYSTEM\CurrentControlSet\Services\&lt;name&gt; and resolves it to a real file path via
+    /// ResolveDriverImagePath - shared by the minifilter list (#819) which only has a filter name
+    /// to start from.</summary>
+    private static (string RawImagePath, string ResolvedPath) ResolveServiceImagePath(string serviceName)
+    {
+        try
+        {
+            using var key = Registry.LocalMachine.OpenSubKey($@"SYSTEM\CurrentControlSet\Services\{serviceName}");
+            var imagePath = key?.GetValue("ImagePath") as string;
+            if (string.IsNullOrWhiteSpace(imagePath)) return (string.Empty, string.Empty);
+            return (imagePath, ResolveDriverImagePath(imagePath));
+        }
+        catch
+        {
+            return (string.Empty, string.Empty);
+        }
+    }
+
+    /// <summary>Resolves a driver-style ImagePath value (`\SystemRoot\System32\drivers\x.sys`, a
+    /// native `\??\` prefix, a bare filename, or an already-rooted path) to a real filesystem path.
+    /// A bare filename with no path at all is assumed to live in System32\drivers, since that's
+    /// where the overwhelming majority of real driver ImagePath values without a full path point.</summary>
+    private static string ResolveDriverImagePath(string? imagePath)
+    {
+        if (string.IsNullOrWhiteSpace(imagePath)) return string.Empty;
+
+        var path = imagePath.Trim().Trim('"');
+        const string systemRootPrefix = @"\SystemRoot\";
+        const string nativePrefix = @"\??\";
+
+        if (path.StartsWith(systemRootPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            path = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), path[systemRootPrefix.Length..]);
+        }
+        else if (path.StartsWith(nativePrefix, StringComparison.Ordinal))
+        {
+            path = path[nativePrefix.Length..];
+        }
+        else if (!System.IO.Path.IsPathRooted(path))
+        {
+            // Either a relative "system32\drivers\x.sys"-shaped path or a bare filename - both
+            // resolve against System32\drivers, the standard home for kernel/FS drivers.
+            var trimmedRelative = path.TrimStart('\\');
+            path = trimmedRelative.StartsWith("system32", StringComparison.OrdinalIgnoreCase)
+                ? System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), trimmedRelative)
+                : System.IO.Path.Combine(Environment.SystemDirectory, "drivers", trimmedRelative);
+        }
+
+        return Environment.ExpandEnvironmentVariables(path);
+    }
+
+    // #820: Boot-start and kernel driver audit - walks every Services subkey (hundreds on a typical
+    // machine; that's fine, this is an on-demand scan behind the same Scan button as everything
+    // else) looking for Type 1 (kernel driver) or 2 (file-system driver) entries. An unsigned or
+    // non-standard-path kernel driver is one of the single most useful malware/rootkit signals a
+    // user-mode app can honestly produce, since kernel code runs with no further permission checks
+    // once loaded.
+    private static void AddKernelDriverItems(List<AutorunEntry> items, List<SecurityFinding> findings)
+    {
+        const string keyPath = @"SYSTEM\CurrentControlSet\Services";
+        try
+        {
+            using var servicesKey = Registry.LocalMachine.OpenSubKey(keyPath);
+            if (servicesKey is null) return;
+
+            var standardDriverDir = System.IO.Path.Combine(Environment.SystemDirectory, "drivers");
+
+            foreach (var serviceName in servicesKey.GetSubKeyNames())
+            {
+                try
+                {
+                    using var sub = servicesKey.OpenSubKey(serviceName);
+                    if (sub is null) continue;
+                    if (sub.GetValue("Type") is not int type || (type != 1 && type != 2)) continue;
+
+                    var imagePath = sub.GetValue("ImagePath") as string;
+                    if (string.IsNullOrWhiteSpace(imagePath)) continue; // no binary recorded - nothing to check
+
+                    int startValue = sub.GetValue("Start") is int s ? s : -1;
+                    string startFriendly = startValue switch
+                    {
+                        0 => "Boot",
+                        1 => "System",
+                        2 => "Automatic",
+                        3 => "Manual",
+                        4 => "Disabled",
+                        _ => "Unknown",
+                    };
+
+                    var resolved = ResolveDriverImagePath(imagePath);
+                    bool exists = !string.IsNullOrWhiteSpace(resolved) && System.IO.File.Exists(resolved);
+                    string status = exists ? SignatureCheckService.GetStatus(resolved) : "Unknown";
+                    string? resolvedDir = exists ? System.IO.Path.GetDirectoryName(resolved) : null;
+                    bool outsideStandardPath = exists && resolvedDir is not null && !resolvedDir.Equals(standardDriverDir, StringComparison.OrdinalIgnoreCase);
+
+                    var location = $@"HKLM\{keyPath}\{serviceName}\ImagePath";
+                    var entry = new AutorunEntry
+                    {
+                        Category = "Kernel Driver",
+                        Name = serviceName,
+                        RawCommand = $"{startFriendly} start ({(type == 1 ? "kernel driver" : "file system driver")}), {imagePath}",
+                        ResolvedPath = resolved,
+                        Publisher = "Unknown",
+                        SignatureStatus = status,
+                        Location = location,
+                        Enabled = startValue != 4,
+                    };
+                    items.Add(entry);
+
+                    var issues = new List<string>();
+                    if (!exists) issues.Add("its resolved file wasn't found on disk");
+                    if (exists && status.Equals("Unsigned", StringComparison.OrdinalIgnoreCase)) issues.Add("its file isn't signed");
+                    if (outsideStandardPath) issues.Add($"it loads from outside System32\\drivers (\"{resolved}\")");
+                    if (issues.Count == 0) continue;
+
+                    bool highSeverity = !exists || status.Equals("Unsigned", StringComparison.OrdinalIgnoreCase);
+                    findings.Add(new SecurityFinding
+                    {
+                        Severity = highSeverity ? FindingSeverity.High : FindingSeverity.Medium,
+                        Title = $"Kernel driver worth checking: {serviceName}",
+                        Reason = $"{serviceName} ({startFriendly} start) - {string.Join("; ", issues)}. An unsigned or non-standard-path kernel driver is one of the single most useful malware/rootkit signals a user-mode app can honestly produce.",
+                        Path = location,
+                        WhatDisablingDoes = "Setting Start to 4 (Disabled) via the Services tab or sc.exe stops the driver from loading at next boot without deleting its registration; only do this for one you don't recognize - some legitimate vendor drivers are unsigned test-signed drivers or intentionally live outside System32\\drivers. Quick flag, not a verdict.",
+                        RelatedEntry = entry,
+                    });
+                }
+                catch
+                {
+                    // One bad subkey shouldn't stop the rest.
+                }
+            }
+        }
+        catch
+        {
+            // Key inaccessible - contribute nothing.
+        }
+    }
+
+    // #821: Service path hygiene audit - three independent checks over the same Services key as
+    // #820, restricted to Win32 service types (Type 1/2 kernel/FS drivers are #820's job instead):
+    // (a) an unquoted ImagePath whose path portion contains a space - the classic
+    // privilege-escalation footgun where Windows tries each space-delimited prefix as its own
+    // executable; (b) an svchost.exe -k <group> entry whose ServiceDll (under the service's
+    // Parameters subkey) resolves somewhere user-writable, using a simple path-prefix heuristic
+    // (Temp/AppData/LocalAppData/Public/user-profile root) rather than a full ACL check - a real
+    // icacls-based writability check is #845's job, not this one; (c) a binary that's missing
+    // entirely. Every finding names the exact service name so a user can cross-reference it on the
+    // Services tab themselves - no navigation wiring, just a clear name in the text.
+    //
+    // Omitted deliberately: "recently created relative to Windows install" (registry key creation
+    // time isn't reliably available through .NET's Registry APIs without extra native interop,
+    // which is out of scope for this item).
+    private static void AddServicePathHygieneItems(List<AutorunEntry> items, List<SecurityFinding> findings)
+    {
+        const string keyPath = @"SYSTEM\CurrentControlSet\Services";
+        try
+        {
+            using var servicesKey = Registry.LocalMachine.OpenSubKey(keyPath);
+            if (servicesKey is null) return;
+
+            var userWritableRoots = BuildUserWritableRoots();
+
+            foreach (var serviceName in servicesKey.GetSubKeyNames())
+            {
+                try
+                {
+                    using var sub = servicesKey.OpenSubKey(serviceName);
+                    if (sub is null) continue;
+                    if (sub.GetValue("Type") is int type && (type == 1 || type == 2)) continue; // drivers - #820's job
+
+                    var imagePath = sub.GetValue("ImagePath") as string;
+                    if (string.IsNullOrWhiteSpace(imagePath)) continue;
+
+                    var location = $@"HKLM\{keyPath}\{serviceName}\ImagePath";
+
+                    CheckUnquotedServicePath(items, findings, serviceName, imagePath, location);
+
+                    if (imagePath.Contains("svchost.exe", StringComparison.OrdinalIgnoreCase) &&
+                        imagePath.Contains("-k", StringComparison.OrdinalIgnoreCase))
+                    {
+                        CheckSvchostServiceDll(items, findings, sub, serviceName, keyPath, userWritableRoots);
+                    }
+
+                    var exePath = StartupManagerService.ExtractPath(imagePath);
+                    var expandedExePath = string.IsNullOrWhiteSpace(exePath) ? string.Empty : Environment.ExpandEnvironmentVariables(exePath);
+                    if (!string.IsNullOrWhiteSpace(expandedExePath) && !System.IO.File.Exists(expandedExePath))
+                    {
+                        var entry = new AutorunEntry
+                        {
+                            Category = "Service Hygiene",
+                            Name = serviceName,
+                            RawCommand = imagePath,
+                            ResolvedPath = expandedExePath,
+                            Publisher = "Unknown",
+                            SignatureStatus = "Unknown",
+                            Location = location,
+                            Enabled = true,
+                        };
+                        items.Add(entry);
+
+                        findings.Add(new SecurityFinding
+                        {
+                            Severity = FindingSeverity.Medium,
+                            Title = $"Service binary missing: {serviceName}",
+                            Reason = $"The service \"{serviceName}\" (look it up by this exact name on the Services tab) points at \"{expandedExePath}\", which wasn't found on disk.",
+                            Path = location,
+                            WhatDisablingDoes = "A missing binary usually means a leftover/orphaned service registration from an uninstalled product - removing the service (sc.exe delete) is reasonable once you confirm it's not something still needed. Quick flag, not a verdict.",
+                            RelatedEntry = entry,
+                        });
+                    }
+                }
+                catch
+                {
+                    // One bad subkey shouldn't stop the rest.
+                }
+            }
+        }
+        catch
+        {
+            // Key inaccessible - contribute nothing.
+        }
+    }
+
+    private static void CheckUnquotedServicePath(List<AutorunEntry> items, List<SecurityFinding> findings, string serviceName, string imagePath, string location)
+    {
+        var trimmed = imagePath.TrimStart();
+        if (trimmed.StartsWith("\"", StringComparison.Ordinal)) return; // already quoted
+
+        int exeIdx = trimmed.IndexOf(".exe", StringComparison.OrdinalIgnoreCase);
+        if (exeIdx < 0) return; // not a recognizable exe path - nothing to check
+
+        var pathPortion = trimmed[..(exeIdx + 4)];
+        if (!pathPortion.Contains(' ')) return; // no space before .exe - not vulnerable
+
+        var entry = new AutorunEntry
+        {
+            Category = "Service Hygiene",
+            Name = serviceName,
+            RawCommand = imagePath,
+            ResolvedPath = pathPortion,
+            Publisher = "Unknown",
+            SignatureStatus = "Unknown",
+            Location = location,
+            Enabled = true,
+        };
+        items.Add(entry);
+
+        findings.Add(new SecurityFinding
+        {
+            Severity = FindingSeverity.Medium,
+            Title = $"Unquoted service path with a space: {serviceName}",
+            Reason = $"The service \"{serviceName}\" (look it up by this exact name on the Services tab) has an unquoted ImagePath with a space before the .exe (\"{pathPortion}\") - classic privilege-escalation footgun, since Windows tries each space-delimited prefix as its own executable before the real one (e.g. a planted C:\\Program.exe would win).",
+            Path = location,
+            WhatDisablingDoes = "Wrapping the ImagePath value in quotes (via regedit or `sc.exe config <name> binPath= \"...\"`) closes the gap; only do this if you're comfortable editing service configuration. Quick flag, not a verdict.",
+            RelatedEntry = entry,
+        });
+    }
+
+    private static void CheckSvchostServiceDll(List<AutorunEntry> items, List<SecurityFinding> findings, RegistryKey serviceKey, string serviceName, string keyPath, string[] userWritableRoots)
+    {
+        try
+        {
+            using var parametersKey = serviceKey.OpenSubKey("Parameters");
+            var serviceDll = parametersKey?.GetValue("ServiceDll") as string;
+            if (string.IsNullOrWhiteSpace(serviceDll)) return;
+
+            var expanded = Environment.ExpandEnvironmentVariables(serviceDll);
+            bool userWritable = userWritableRoots.Any(root => !string.IsNullOrWhiteSpace(root) && expanded.StartsWith(root, StringComparison.OrdinalIgnoreCase));
+            if (!userWritable) return;
+
+            var location = $@"HKLM\{keyPath}\{serviceName}\Parameters\ServiceDll";
+            var entry = new AutorunEntry
+            {
+                Category = "Service Hygiene",
+                Name = serviceName,
+                RawCommand = serviceDll,
+                ResolvedPath = expanded,
+                Publisher = "Unknown",
+                SignatureStatus = System.IO.File.Exists(expanded) ? SignatureCheckService.GetStatus(expanded) : "Unknown",
+                Location = location,
+                Enabled = true,
+            };
+            items.Add(entry);
+
+            findings.Add(new SecurityFinding
+            {
+                Severity = FindingSeverity.High,
+                Title = $"svchost service DLL in a user-writable location: {serviceName}",
+                Reason = $"The svchost-hosted service \"{serviceName}\" (look it up by this exact name on the Services tab) has a ServiceDll of \"{expanded}\", under a Temp/AppData/Public/user-profile location. Simplified path-prefix heuristic, not a full ACL/icacls writability check (that's a separate, more thorough check).",
+                Path = location,
+                WhatDisablingDoes = "svchost.exe typically runs as SYSTEM or another high-privilege account - a DLL loaded from a location an ordinary user can write to is a privilege-escalation risk if it's actually writable by less-privileged accounts. Verify what installed this before removing anything. Quick flag, not a verdict.",
+                RelatedEntry = entry,
+            });
+        }
+        catch
+        {
+            // Parameters subkey inaccessible (or absent - most services don't use svchost hosting) - skip.
+        }
+    }
+
+    private static string[] BuildUserWritableRoots()
+    {
+        var roots = new List<string>();
+        try { roots.Add(Environment.GetEnvironmentVariable("TEMP") ?? string.Empty); } catch { }
+        try { roots.Add(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData)); } catch { }
+        try { roots.Add(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)); } catch { }
+        try { roots.Add(Environment.ExpandEnvironmentVariables("%Public%")); } catch { }
+        try { roots.Add(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)); } catch { }
+        return roots.Where(r => !string.IsNullOrWhiteSpace(r)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
+    // #822: WMI permanent event subscriptions - the classic "fileless" persistence mechanism:
+    // invisible to Task Manager entirely, since nothing here is a process until its filter's WQL
+    // condition actually fires. root\subscription is empty on the overwhelming majority of clean
+    // machines, and WMI itself can be unavailable in constrained environments, so the whole thing is
+    // one try/catch that degrades to nothing rather than a scan failure.
+    private static void AddWmiEventSubscriptionItems(List<AutorunEntry> items, List<SecurityFinding> findings)
+    {
+        try
+        {
+            var scope = new ManagementScope(@"root\subscription");
+            scope.Connect();
+
+            var filterDescriptions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            using (var filterSearcher = new ManagementObjectSearcher(scope, new ObjectQuery("SELECT * FROM __EventFilter")))
+            using (var filterResults = filterSearcher.Get())
+            {
+                foreach (ManagementObject mo in filterResults)
+                {
+                    using (mo)
+                    {
+                        var name = mo["Name"] as string ?? "(unnamed)";
+                        var query = mo["Query"] as string ?? string.Empty;
+                        var relativePath = mo.Path.RelativePath;
+                        filterDescriptions[relativePath] = $"{name}: {query}";
+
+                        items.Add(new AutorunEntry
+                        {
+                            Category = "WMI Subscription",
+                            Name = $"Filter: {name}",
+                            RawCommand = query,
+                            ResolvedPath = string.Empty,
+                            Publisher = "Unknown",
+                            SignatureStatus = "Unknown",
+                            Location = $@"root\subscription\{relativePath}",
+                            Enabled = true,
+                        });
+                    }
+                }
+            }
+
+            var consumerDescriptions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            using (var consumerSearcher = new ManagementObjectSearcher(scope, new ObjectQuery("SELECT * FROM __EventConsumer")))
+            using (var consumerResults = consumerSearcher.Get())
+            {
+                foreach (ManagementObject mo in consumerResults)
+                {
+                    using (mo)
+                    {
+                        var className = mo.ClassPath.ClassName;
+                        var name = mo["Name"] as string ?? "(unnamed)";
+                        var relativePath = mo.Path.RelativePath;
+
+                        // CommandLineEventConsumer and ActiveScriptEventConsumer are the two
+                        // actually-dangerous consumer subtypes (they run an arbitrary command/script);
+                        // every other consumer class is still listed, just without special-cased detail.
+                        string description = className switch
+                        {
+                            "CommandLineEventConsumer" => $"runs command line: {mo["CommandLineTemplate"] as string}",
+                            "ActiveScriptEventConsumer" => $"runs {mo["ScriptingEngine"] as string} script: {(mo["ScriptText"] as string) ?? (mo["ScriptFileName"] as string) ?? "(script text unavailable)"}",
+                            _ => $"{className} consumer",
+                        };
+                        consumerDescriptions[relativePath] = $"{name} ({className}) - {description}";
+
+                        items.Add(new AutorunEntry
+                        {
+                            Category = "WMI Subscription",
+                            Name = $"Consumer: {name}",
+                            RawCommand = description,
+                            ResolvedPath = string.Empty,
+                            Publisher = "Unknown",
+                            SignatureStatus = "Unknown",
+                            Location = $@"root\subscription\{relativePath}",
+                            Enabled = true,
+                        });
+                    }
+                }
+            }
+
+            using var bindingSearcher = new ManagementObjectSearcher(scope, new ObjectQuery("SELECT * FROM __FilterToConsumerBinding"));
+            using var bindingResults = bindingSearcher.Get();
+            foreach (ManagementObject mo in bindingResults)
+            {
+                using (mo)
+                {
+                    var filterRef = mo["Filter"] as string ?? string.Empty;
+                    var consumerRef = mo["Consumer"] as string ?? string.Empty;
+                    var filterKey = ExtractWmiRelativePath(filterRef);
+                    var consumerKey = ExtractWmiRelativePath(consumerRef);
+                    var filterDesc = filterDescriptions.TryGetValue(filterKey, out var fd) ? fd : filterRef;
+                    var consumerDesc = consumerDescriptions.TryGetValue(consumerKey, out var cd) ? cd : consumerRef;
+
+                    var location = $"root\\subscription binding: {filterRef} -> {consumerRef}";
+                    var entry = new AutorunEntry
+                    {
+                        Category = "WMI Subscription",
+                        Name = "Filter-to-consumer binding",
+                        RawCommand = $"{filterDesc} => {consumerDesc}",
+                        ResolvedPath = string.Empty,
+                        Publisher = "Unknown",
+                        SignatureStatus = "Unknown",
+                        Location = location,
+                        Enabled = true,
+                    };
+                    items.Add(entry);
+
+                    findings.Add(new SecurityFinding
+                    {
+                        Severity = FindingSeverity.High,
+                        Title = "WMI permanent event subscription bound",
+                        Reason = $"Fileless WMI persistence is invisible to Task Manager entirely; a bound CommandLine/ActiveScript consumer runs its command/script whenever its filter's WQL condition fires. Filter: {filterDesc}. Consumer: {consumerDesc}.",
+                        Path = location,
+                        WhatDisablingDoes = "Removing the __FilterToConsumerBinding (and the underlying filter/consumer instances, via WMI/PowerShell's Remove-WmiObject or wbemtest) stops this from firing again; only do this for a subscription you don't recognize - some legitimate management/monitoring tooling does use this mechanism deliberately. Quick flag, not a verdict.",
+                        RelatedEntry = entry,
+                    });
+                }
+            }
+        }
+        catch
+        {
+            // root\subscription empty/absent (the normal case) or WMI unavailable in this
+            // environment - contribute nothing.
+        }
+    }
+
+    /// <summary>WMI object-path references (as seen in __FilterToConsumerBinding's Filter/Consumer
+    /// values) look like `\\.\root\subscription:__EventFilter.Name="X"` - this strips everything up
+    /// to and including the last colon so the remainder matches ManagementPath.RelativePath's
+    /// format ("__EventFilter.Name=\"X\"") used as the dictionary key above.</summary>
+    private static string ExtractWmiRelativePath(string wmiRefPath)
+    {
+        int idx = wmiRefPath.LastIndexOf(':');
+        return idx >= 0 ? wmiRefPath[(idx + 1)..] : wmiRefPath;
+    }
+
+    // #823: Active Setup stub commands - StubPath runs once per user the first time that user logs
+    // on after the component's Version differs from what's recorded in that user's own HKCU mirror,
+    // a legitimate-but-still-a-persistence-mechanism Windows uses for per-user first-run setup. A
+    // mismatched/missing HKCU version means the StubPath command will run again at this user's next
+    // logon - surfaced as a name suffix rather than a separate field, per the item's own guidance.
+    private static void AddActiveSetupItems(List<AutorunEntry> items, List<SecurityFinding> findings)
+    {
+        const string keyPath = @"SOFTWARE\Microsoft\Active Setup\Installed Components";
+        try
+        {
+            using var key = Registry.LocalMachine.OpenSubKey(keyPath);
+            if (key is null) return;
+
+            foreach (var subName in key.GetSubKeyNames())
+            {
+                try
+                {
+                    using var sub = key.OpenSubKey(subName);
+                    var stubPath = sub?.GetValue("StubPath") as string;
+                    if (string.IsNullOrWhiteSpace(stubPath)) continue;
+
+                    var hklmVersion = sub?.GetValue("Version") as string ?? string.Empty;
+                    string? hkcuVersion = null;
+                    try
+                    {
+                        using var hkcuSub = Registry.CurrentUser.OpenSubKey($@"{keyPath}\{subName}");
+                        hkcuVersion = hkcuSub?.GetValue("Version") as string;
+                    }
+                    catch
+                    {
+                        // No HKCU mirror for this user yet - treated the same as "missing" below.
+                    }
+
+                    bool willRerun = !hklmVersion.Equals(hkcuVersion, StringComparison.OrdinalIgnoreCase);
+
+                    var friendlyName = sub?.GetValue(null) as string;
+                    var displayName = string.IsNullOrWhiteSpace(friendlyName) ? subName : friendlyName;
+                    if (willRerun) displayName += " (will re-run at next logon)";
+
+                    var location = $@"HKLM\{keyPath}\{subName}\StubPath";
+                    var entry = BuildEntry("Active Setup", displayName, stubPath, location);
+                    items.Add(entry);
+
+                    if (willRerun)
+                    {
+                        findings.Add(new SecurityFinding
+                        {
+                            Severity = FindingSeverity.Low,
+                            Title = $"Active Setup component will re-run at next logon: {subName}",
+                            Reason = $"This user's HKCU version marker for \"{subName}\" is {(hkcuVersion is null ? "missing" : $"\"{hkcuVersion}\"")}, which doesn't match the HKLM version \"{hklmVersion}\" - Windows will re-run its StubPath command (\"{stubPath}\") the next time this user logs on.",
+                            Path = location,
+                            WhatDisablingDoes = "Setting the HKCU Version value to match HKLM prevents the re-run; only do this if you understand what the stub command does. Quick flag, not a verdict - a version mismatch is often just a pending legitimate per-user setup step (e.g. a newly-created user profile).",
+                            RelatedEntry = entry,
+                        });
+                    }
+                }
+                catch
+                {
+                    // One bad subkey shouldn't stop the rest.
+                }
+            }
+        }
+        catch
+        {
+            // Key inaccessible (or absent) - contribute nothing.
+        }
+    }
+
+    // #824: Explorer legacy load/run values and the per-user logon script - all three still execute
+    // at logon and none of them surface anywhere in Windows' own UI (not even the classic
+    // msconfig/Task Manager Startup list), which is exactly why they're worth a dedicated check.
+    private static void AddLegacyLogonItems(List<AutorunEntry> items, List<SecurityFinding> findings)
+    {
+        const string windowsKeyPath = @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Windows";
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(windowsKeyPath);
+            if (key is not null)
+            {
+                AddLegacyLogonValue(items, findings, key, $@"HKCU\{windowsKeyPath}", "load");
+                AddLegacyLogonValue(items, findings, key, $@"HKCU\{windowsKeyPath}", "run");
+            }
+        }
+        catch
+        {
+            // Key inaccessible - contribute nothing from this half.
+        }
+
+        try
+        {
+            using var envKey = Registry.CurrentUser.OpenSubKey("Environment");
+            if (envKey is not null)
+            {
+                AddLegacyLogonValue(items, findings, envKey, @"HKCU\Environment", "UserInitMprLogonScript");
+            }
+        }
+        catch
+        {
+            // Key inaccessible - contribute nothing from this half.
+        }
+    }
+
+    private static void AddLegacyLogonValue(List<AutorunEntry> items, List<SecurityFinding> findings, RegistryKey key, string location, string valueName)
+    {
+        var raw = key.GetValue(valueName) as string;
+        if (string.IsNullOrWhiteSpace(raw)) return; // empty/absent is the expected, normal case
+
+        var entryLocation = $@"{location}\{valueName}";
+        var entry = BuildEntry("Legacy Logon", valueName, raw, entryLocation);
+        items.Add(entry);
+
+        findings.Add(new SecurityFinding
+        {
+            Severity = FindingSeverity.Medium,
+            Title = $"Legacy logon value set: {valueName}",
+            Reason = $"\"{valueName}\" is set to \"{raw}\" - it still executes at logon and no Windows UI surfaces it.",
+            Path = entryLocation,
+            WhatDisablingDoes = "Clearing this value stops it from running at the next logon; only do this for a command you don't recognize. Quick flag, not a verdict - a small amount of legacy IME/accessibility software still uses \"load\"/\"run\" deliberately.",
+            RelatedEntry = entry,
+        });
+    }
+
+    // #825: Group Policy script audit - both the modern registry-based Startup/Shutdown/Logon/
+    // Logoff script registrations (walked one level of numbered subkeys, then a nested numbered
+    // subkey holding CmdLine/Parameters, tolerated defensively the same way RunOnceEx above is) and
+    // a best-effort raw read of the legacy scripts.ini/psscripts.ini files GPO also still writes.
+    // Genuinely common leftover on ex-corporate machines where a stale local/cached GPO still runs
+    // something at every boot/logon long after the machine left that domain.
+    private static void AddGroupPolicyScriptItems(List<AutorunEntry> items, List<SecurityFinding> findings)
+    {
+        AddGpScriptRegistryItems(items, findings, Registry.LocalMachine, "HKLM", @"SOFTWARE\Microsoft\Windows\CurrentVersion\Group Policy\Scripts\Startup", "GP Script (Startup)");
+        AddGpScriptRegistryItems(items, findings, Registry.LocalMachine, "HKLM", @"SOFTWARE\Microsoft\Windows\CurrentVersion\Group Policy\Scripts\Shutdown", "GP Script (Shutdown)");
+        AddGpScriptRegistryItems(items, findings, Registry.CurrentUser, "HKCU", @"SOFTWARE\Microsoft\Windows\CurrentVersion\Group Policy\Scripts\Logon", "GP Script (Logon)");
+        AddGpScriptRegistryItems(items, findings, Registry.CurrentUser, "HKCU", @"SOFTWARE\Microsoft\Windows\CurrentVersion\Group Policy\Scripts\Logoff", "GP Script (Logoff)");
+
+        var windowsDir = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+        AddGpScriptIniFile(items, findings, System.IO.Path.Combine(windowsDir, @"System32\GroupPolicy\Machine\Scripts\scripts.ini"), "GP scripts.ini (Machine)");
+        AddGpScriptIniFile(items, findings, System.IO.Path.Combine(windowsDir, @"System32\GroupPolicy\Machine\Scripts\psscripts.ini"), "GP psscripts.ini (Machine)");
+        AddGpScriptIniFile(items, findings, System.IO.Path.Combine(windowsDir, @"System32\GroupPolicy\User\Scripts\scripts.ini"), "GP scripts.ini (User)");
+        AddGpScriptIniFile(items, findings, System.IO.Path.Combine(windowsDir, @"System32\GroupPolicy\User\Scripts\psscripts.ini"), "GP psscripts.ini (User)");
+    }
+
+    private static void AddGpScriptRegistryItems(List<AutorunEntry> items, List<SecurityFinding> findings, RegistryKey hive, string hiveLabel, string keyPath, string category)
+    {
+        try
+        {
+            using var key = hive.OpenSubKey(keyPath);
+            if (key is null) return;
+
+            foreach (var numberedName in key.GetSubKeyNames())
+            {
+                try
+                {
+                    using var numberedKey = key.OpenSubKey(numberedName);
+                    if (numberedKey is null) continue;
+
+                    foreach (var innerName in numberedKey.GetSubKeyNames())
+                    {
+                        try
+                        {
+                            using var innerKey = numberedKey.OpenSubKey(innerName);
+                            var cmdLine = innerKey?.GetValue("CmdLine") as string;
+                            if (string.IsNullOrWhiteSpace(cmdLine)) continue;
+
+                            var parameters = innerKey?.GetValue("Parameters") as string;
+                            var raw = string.IsNullOrWhiteSpace(parameters) ? cmdLine : $"{cmdLine} {parameters}";
+                            var location = $@"{hiveLabel}\{keyPath}\{numberedName}\{innerName}";
+                            var entry = BuildEntry(category, $"{numberedName}/{innerName}", raw, location);
+                            items.Add(entry);
+
+                            findings.Add(new SecurityFinding
+                            {
+                                Severity = FindingSeverity.Low,
+                                Title = $"{category} script configured",
+                                Reason = $"\"{raw}\" runs via Group Policy scripts - common on ex-corporate machines where a leftover (often stale/cached) policy still runs something at every boot/logon.",
+                                Path = location,
+                                WhatDisablingDoes = "Removing the policy (via gpedit.msc, or `gpupdate /force` after leaving the domain/removing the GPO) stops it from running; deleting this registry branch directly works too but won't survive the next policy refresh if the GPO is still actually applied. Quick flag, not a verdict.",
+                                RelatedEntry = entry,
+                            });
+                        }
+                        catch
+                        {
+                            // One bad inner subkey shouldn't stop the rest.
+                        }
+                    }
+                }
+                catch
+                {
+                    // One bad numbered subkey shouldn't stop the rest.
+                }
+            }
+        }
+        catch
+        {
+            // Key inaccessible (or absent - the common case outside a domain) - contribute nothing.
+        }
+    }
+
+    private static void AddGpScriptIniFile(List<AutorunEntry> items, List<SecurityFinding> findings, string filePath, string category)
+    {
+        try
+        {
+            if (!System.IO.File.Exists(filePath)) return;
+
+            var content = System.IO.File.ReadAllText(filePath);
+            if (string.IsNullOrWhiteSpace(content)) return; // present but empty - nothing to surface
+
+            var entry = new AutorunEntry
+            {
+                Category = category,
+                Name = System.IO.Path.GetFileName(filePath),
+                RawCommand = content.Trim(),
+                ResolvedPath = filePath,
+                Publisher = "Unknown",
+                SignatureStatus = "Unknown",
+                Location = filePath,
+                Enabled = true,
+            };
+            items.Add(entry);
+
+            findings.Add(new SecurityFinding
+            {
+                Severity = FindingSeverity.Low,
+                Title = $"{category} has content",
+                Reason = $"\"{filePath}\" is non-empty - common on ex-corporate machines where a leftover policy still runs something at every boot/logon.",
+                Path = filePath,
+                WhatDisablingDoes = "Removing the owning Group Policy Object (via gpedit.msc, or by leaving the domain) is the clean fix; deleting this file directly can be undone by the next policy refresh if the GPO is still actually applied. Quick flag, not a verdict.",
+                RelatedEntry = entry,
+            });
+        }
+        catch
+        {
+            // File unreadable (permissions, in use, ...) - contribute nothing from this file.
+        }
+    }
+
+    // #826: Browser Helper Objects and legacy Internet Explorer hooks - each subkey/value name here
+    // is a CLSID, resolved to a friendly name and backing DLL the same way ShellExtensionService
+    // resolves shell-extension CLSIDs (HKEY_CLASSES_ROOT\CLSID\{guid}). Legacy (IE itself is gone
+    // from modern Windows, but Explorer's own BHO loading and the registry keys both still exist and
+    // some third-party installers still populate them), so these rows carry no finding on their own
+    // - only an unsigned resolved DLL is worth a (Low-severity) flag.
+    private static void AddBrowserHelperObjectItems(List<AutorunEntry> items, List<SecurityFinding> findings)
+    {
+        AddClsidSubkeyHooks(items, findings, Registry.LocalMachine, "HKLM", @"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Browser Helper Objects", "Browser Helper Object");
+        AddClsidSubkeyHooks(items, findings, Registry.LocalMachine, "HKLM (32-bit)", @"SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Explorer\Browser Helper Objects", "Browser Helper Object");
+        AddClsidSubkeyHooks(items, findings, Registry.CurrentUser, "HKCU", @"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Browser Helper Objects", "Browser Helper Object");
+
+        AddClsidValueHooks(items, findings, Registry.LocalMachine, "HKLM", @"SOFTWARE\Microsoft\Internet Explorer\Toolbar", "IE Toolbar");
+        AddClsidValueHooks(items, findings, Registry.LocalMachine, "HKLM (32-bit)", @"SOFTWARE\Wow6432Node\Microsoft\Internet Explorer\Toolbar", "IE Toolbar");
+        AddClsidSubkeyHooks(items, findings, Registry.LocalMachine, "HKLM", @"SOFTWARE\Microsoft\Internet Explorer\Extensions", "IE Hook");
+        AddClsidSubkeyHooks(items, findings, Registry.LocalMachine, "HKLM (32-bit)", @"SOFTWARE\Wow6432Node\Microsoft\Internet Explorer\Extensions", "IE Hook");
+        AddClsidValueHooks(items, findings, Registry.LocalMachine, "HKLM", @"SOFTWARE\Microsoft\Internet Explorer\URLSearchHooks", "IE Hook");
+        AddClsidSubkeyHooks(items, findings, Registry.LocalMachine, "HKLM", @"SOFTWARE\Microsoft\Internet Explorer\Explorer Bars", "IE Hook");
+    }
+
+    private static void AddClsidSubkeyHooks(List<AutorunEntry> items, List<SecurityFinding> findings, RegistryKey hive, string hiveLabel, string keyPath, string category)
+    {
+        try
+        {
+            using var key = hive.OpenSubKey(keyPath);
+            if (key is null) return;
+
+            foreach (var clsid in key.GetSubKeyNames())
+            {
+                AddClsidHookEntry(items, findings, category, clsid, $@"{hiveLabel}\{keyPath}\{clsid}");
+            }
+        }
+        catch
+        {
+            // Key inaccessible (or absent - the common case on modern Windows) - contribute nothing.
+        }
+    }
+
+    private static void AddClsidValueHooks(List<AutorunEntry> items, List<SecurityFinding> findings, RegistryKey hive, string hiveLabel, string keyPath, string category)
+    {
+        try
+        {
+            using var key = hive.OpenSubKey(keyPath);
+            if (key is null) return;
+
+            foreach (var clsid in key.GetValueNames())
+            {
+                if (string.IsNullOrWhiteSpace(clsid)) continue;
+                AddClsidHookEntry(items, findings, category, clsid, $@"{hiveLabel}\{keyPath}\{clsid}");
+            }
+        }
+        catch
+        {
+            // Key inaccessible (or absent - the common case on modern Windows) - contribute nothing.
+        }
+    }
+
+    private static void AddClsidHookEntry(List<AutorunEntry> items, List<SecurityFinding> findings, string category, string clsid, string location)
+    {
+        var (name, dllPath) = ResolveClsidToNameAndDll(clsid);
+        var displayName = string.IsNullOrWhiteSpace(name) ? clsid : name;
+        bool exists = !string.IsNullOrWhiteSpace(dllPath) && System.IO.File.Exists(dllPath);
+        var status = exists ? SignatureCheckService.GetStatus(dllPath) : "Unknown";
+
+        var entry = new AutorunEntry
+        {
+            Category = category,
+            Name = displayName,
+            RawCommand = clsid,
+            ResolvedPath = dllPath,
+            Publisher = "Unknown",
+            SignatureStatus = status,
+            Location = location,
+            Enabled = true,
+        };
+        items.Add(entry);
+
+        if (exists && status.Equals("Unsigned", StringComparison.OrdinalIgnoreCase))
+        {
+            findings.Add(new SecurityFinding
+            {
+                Severity = FindingSeverity.Low,
+                Title = $"Unsigned {category.ToLowerInvariant()}: {displayName}",
+                Reason = $"\"{displayName}\" ({clsid}) loads \"{dllPath}\" and doesn't carry a valid Authenticode signature. Legacy mechanism, but still surfaced since Explorer/IE will still load it if registered.",
+                Path = location,
+                WhatDisablingDoes = "Removing this registration stops the hook from loading; only do this for one you don't recognize. Quick flag, not a verdict.",
+                RelatedEntry = entry,
+            });
+        }
+    }
+
+    /// <summary>Resolves a CLSID to its friendly name and InprocServer32 DLL path via
+    /// HKEY_CLASSES_ROOT\CLSID\{guid}, the same lookup ShellExtensionService.ResolveClsid performs
+    /// for shell-extension CLSIDs - kept as a small local copy here (rather than exposing
+    /// ShellExtensionService's private helper) since it's used by several independent categories in
+    /// this file (#826-828).</summary>
+    private static (string Name, string DllPath) ResolveClsidToNameAndDll(string clsid)
+    {
+        try
+        {
+            using var key = Registry.ClassesRoot.OpenSubKey($@"CLSID\{clsid}");
+            if (key is null) return (string.Empty, string.Empty);
+
+            string name = key.GetValue(null) as string ?? string.Empty;
+            string dll = string.Empty;
+            using (var inproc = key.OpenSubKey("InprocServer32"))
+            {
+                dll = inproc?.GetValue(null) as string ?? string.Empty;
+            }
+            return (name, string.IsNullOrWhiteSpace(dll) ? string.Empty : Environment.ExpandEnvironmentVariables(dll));
+        }
+        catch
+        {
+            return (string.Empty, string.Empty);
+        }
+    }
+
+    // #827: Per-user COM hijack detector - a CLSID registered under both HKCU\Software\Classes\CLSID
+    // and HKLM\SOFTWARE\Classes\CLSID silently resolves to the HKCU copy for that user (COM's
+    // documented per-user-overrides-machine-wide precedence), so any CLSID present in both is worth
+    // a High finding regardless of where its DLL lives. Separately, any HKCU CLSID whose
+    // InprocServer32 DLL resolves into a Temp/AppData location is flagged even without a shadow
+    // match. Only the flagged CLSIDs are added as rows/findings - listing every benign per-user
+    // CLSID (there can be hundreds) would just be noise, and the HashSet-then-single-pass shape
+    // keeps the actual comparison cheap regardless.
+    private static void AddComHijackItems(List<AutorunEntry> items, List<SecurityFinding> findings)
+    {
+        try
+        {
+            var hklmClsids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                using var hklmKey = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Classes\CLSID");
+                if (hklmKey is not null)
+                {
+                    foreach (var name in hklmKey.GetSubKeyNames()) hklmClsids.Add(name);
+                }
+            }
+            catch
+            {
+                // If HKLM enumeration fails, the shadow-check below simply never matches - the
+                // user-writable-path check still runs independently.
+            }
+
+            using var hkcuKey = Registry.CurrentUser.OpenSubKey(@"Software\Classes\CLSID");
+            if (hkcuKey is null) return;
+
+            foreach (var clsid in hkcuKey.GetSubKeyNames())
+            {
+                try
+                {
+                    using var sub = hkcuKey.OpenSubKey(clsid);
+                    string? dllPath = null;
+                    using (var inproc = sub?.OpenSubKey("InprocServer32"))
+                    {
+                        dllPath = inproc?.GetValue(null) as string;
+                    }
+                    var expandedDll = string.IsNullOrWhiteSpace(dllPath) ? string.Empty : Environment.ExpandEnvironmentVariables(dllPath);
+                    var location = $@"HKCU\Software\Classes\CLSID\{clsid}";
+
+                    bool shadowsHklm = hklmClsids.Contains(clsid);
+                    bool loadsFromUserWritable = !string.IsNullOrWhiteSpace(expandedDll) &&
+                        (expandedDll.Contains("AppData", StringComparison.OrdinalIgnoreCase) ||
+                         expandedDll.Contains("Temp", StringComparison.OrdinalIgnoreCase));
+
+                    if (!shadowsHklm && !loadsFromUserWritable) continue;
+
+                    var entry = new AutorunEntry
+                    {
+                        Category = "COM Hijack",
+                        Name = clsid,
+                        RawCommand = dllPath ?? string.Empty,
+                        ResolvedPath = expandedDll,
+                        Publisher = "Unknown",
+                        SignatureStatus = !string.IsNullOrWhiteSpace(expandedDll) && System.IO.File.Exists(expandedDll) ? SignatureCheckService.GetStatus(expandedDll) : "Unknown",
+                        Location = location,
+                        Enabled = true,
+                    };
+                    items.Add(entry);
+
+                    if (shadowsHklm)
+                    {
+                        findings.Add(new SecurityFinding
+                        {
+                            Severity = FindingSeverity.High,
+                            Title = $"Per-user COM registration shadows machine-wide CLSID {clsid}",
+                            Reason = $"A per-user COM registration for CLSID {clsid} shadows the machine-wide one for this user - silently redirects whatever calls this CLSID.",
+                            Path = location,
+                            WhatDisablingDoes = "Deleting this HKCU CLSID subkey restores the machine-wide registration for this user; only do this for a CLSID you don't recognize. Quick flag, not a verdict.",
+                            RelatedEntry = entry,
+                        });
+                    }
+
+                    if (loadsFromUserWritable)
+                    {
+                        findings.Add(new SecurityFinding
+                        {
+                            Severity = FindingSeverity.High,
+                            Title = $"Per-user COM object loads from a user-writable location: {clsid}",
+                            Reason = $"Per-user COM object CLSID {clsid} loads \"{expandedDll}\" from a user-writable temp/AppData location.",
+                            Path = location,
+                            WhatDisablingDoes = "Deleting this HKCU CLSID subkey stops the object from being loadable via COM; only do this for a CLSID you don't recognize. Quick flag, not a verdict.",
+                            RelatedEntry = entry,
+                        });
+                    }
+                }
+                catch
+                {
+                    // One bad subkey shouldn't stop the rest.
+                }
+            }
+        }
+        catch
+        {
+            // Key inaccessible - contribute nothing.
+        }
+    }
+
+    // #828: Shell verb and delay-load hijack check - ShellServiceObjectDelayLoad entries load a
+    // CLSID into Explorer at startup (resolved to name/DLL the same way #826/#827 do), and the
+    // default shell\open\command for a handful of high-value ProgIDs decides what actually launches
+    // for that file/protocol type system-wide. ms-settings is deliberately informational-only (no
+    // reliable single "stock" command text exists across Windows builds for this protocol handler).
+    private static void AddShellVerbHijackItems(List<AutorunEntry> items, List<SecurityFinding> findings)
+    {
+        AddDelayLoadItems(items, findings, Registry.CurrentUser, "HKCU");
+        AddDelayLoadItems(items, findings, Registry.LocalMachine, "HKLM");
+
+        static bool IsStockQuotedPercent1(string cmd) => cmd.Trim().Equals("\"%1\" %*", StringComparison.OrdinalIgnoreCase);
+
+        AddShellOpenCommandItem(items, findings, "exefile", IsStockQuotedPercent1);
+        AddShellOpenCommandItem(items, findings, "piffile", IsStockQuotedPercent1);
+        AddShellOpenCommandItem(items, findings, "comfile", IsStockQuotedPercent1);
+        AddShellOpenCommandItem(items, findings, "batfile", IsStockQuotedPercent1);
+        AddShellOpenCommandItem(items, findings, "cmdfile", IsStockQuotedPercent1);
+        AddShellOpenCommandItem(items, findings, "txtfile", cmd => cmd.Contains("notepad", StringComparison.OrdinalIgnoreCase));
+        AddShellOpenCommandItem(items, findings, "mscfile", cmd => cmd.Contains("mmc.exe", StringComparison.OrdinalIgnoreCase));
+        AddShellOpenCommandItem(items, findings, "ms-settings", null); // informational only - no reliable stock form across builds
+    }
+
+    private static void AddDelayLoadItems(List<AutorunEntry> items, List<SecurityFinding> findings, RegistryKey hive, string hiveLabel)
+    {
+        const string keyPath = @"Software\Microsoft\Windows\CurrentVersion\Explorer\ShellServiceObjectDelayLoad";
+        try
+        {
+            using var key = hive.OpenSubKey(keyPath);
+            if (key is null) return;
+
+            string location = $@"{hiveLabel}\{keyPath}";
+            foreach (var valueName in key.GetValueNames())
+            {
+                var clsid = key.GetValue(valueName) as string;
+                if (string.IsNullOrWhiteSpace(clsid)) continue;
+
+                var (resolvedName, dllPath) = ResolveClsidToNameAndDll(clsid.Trim());
+                var entryLocation = $@"{location}\{valueName}";
+                bool exists = !string.IsNullOrWhiteSpace(dllPath) && System.IO.File.Exists(dllPath);
+                var status = exists ? SignatureCheckService.GetStatus(dllPath) : "Unknown";
+
+                var entry = new AutorunEntry
+                {
+                    Category = "Shell Verb Hijack",
+                    Name = valueName,
+                    RawCommand = clsid,
+                    ResolvedPath = dllPath,
+                    Publisher = "Unknown",
+                    SignatureStatus = status,
+                    Location = entryLocation,
+                    Enabled = true,
+                };
+                items.Add(entry);
+
+                if (exists && status.Equals("Unsigned", StringComparison.OrdinalIgnoreCase))
+                {
+                    findings.Add(new SecurityFinding
+                    {
+                        Severity = FindingSeverity.Medium,
+                        Title = $"Unsigned ShellServiceObjectDelayLoad entry: {valueName}",
+                        Reason = $"\"{valueName}\" delay-loads CLSID {clsid} (\"{(string.IsNullOrWhiteSpace(resolvedName) ? "unresolved" : resolvedName)}\" - \"{dllPath}\") into Explorer at startup, and this DLL doesn't carry a valid Authenticode signature.",
+                        Path = entryLocation,
+                        WhatDisablingDoes = "Deleting this value stops the object from delay-loading into Explorer at startup; only do this for one you don't recognize. Quick flag, not a verdict.",
+                        RelatedEntry = entry,
+                    });
+                }
+            }
+        }
+        catch
+        {
+            // Key inaccessible (or absent) - contribute nothing.
+        }
+    }
+
+    private static void AddShellOpenCommandItem(List<AutorunEntry> items, List<SecurityFinding> findings, string progId, Func<string, bool>? isStock)
+    {
+        try
+        {
+            using var key = Registry.ClassesRoot.OpenSubKey($@"{progId}\shell\open\command");
+            var raw = key?.GetValue(null) as string;
+            if (string.IsNullOrWhiteSpace(raw)) return;
+
+            var location = $@"HKCR\{progId}\shell\open\command";
+            var entry = new AutorunEntry
+            {
+                Category = "Shell Open Command",
+                Name = progId,
+                RawCommand = raw,
+                ResolvedPath = StartupManagerService.ExtractPath(raw),
+                Publisher = "Unknown",
+                SignatureStatus = "Unknown",
+                Location = location,
+                Enabled = true,
+            };
+            items.Add(entry);
+
+            if (isStock is null) return; // ms-settings - informational only, no reliable stock form
+            if (isStock(raw)) return;
+
+            findings.Add(new SecurityFinding
+            {
+                Severity = FindingSeverity.High,
+                Title = $"Non-standard shell open command: {progId}",
+                Reason = $"The default shell\\open\\command for \"{progId}\" is \"{raw}\", which isn't the stock form Windows normally ships. Every file/action of this type launches through this command.",
+                Path = location,
+                WhatDisablingDoes = "Restoring the stock command value fixes normal launch behavior for this file type; only do this if you don't recognize the change. Quick flag, not a verdict.",
+                RelatedEntry = entry,
+            });
+        }
+        catch
+        {
+            // Key inaccessible (or absent - unusual for these well-known ProgIDs, but possible on a
+            // heavily locked-down or non-standard install) - contribute nothing.
         }
     }
 
