@@ -87,6 +87,23 @@ public sealed class AdapterHealthRow : ObservableObject
     public string LinkQualityReason { get => _linkQualityReason; set => SetProperty(ref _linkQualityReason, value); }
 }
 
+/// <summary>#570's "This app can't reach the network" wizard result - a guided assembly of signals
+/// this tab otherwise scatters across the Firewall/Proxy/Adapters/Connections cards, gathered fresh
+/// for one specific process/executable query at the moment the wizard runs (never cached - the
+/// whole point is "what does this look like right now"). A plain mutable class rather than a
+/// record, matching AdapterHealthRow's own "composite row assembled from several independent
+/// services" shape above.</summary>
+public sealed class NetworkTroubleshootReport
+{
+    public string Query { get; init; } = string.Empty;
+    public List<FirewallRuleInfo> MatchingFirewallRules { get; init; } = new();
+    public List<WfpDropEvent> MatchingWfpDrops { get; init; } = new();
+    public bool WfpChannelAvailable { get; init; }
+    public string ProxyApplicability { get; init; } = string.Empty;
+    public string VpnRouteSummary { get; init; } = string.Empty;
+    public List<TcpConnectionInfo> MatchingConnections { get; init; } = new();
+}
+
 /// <summary>
 /// Backs the Network tab. Mostly a thin composition over the shared PerformanceViewModel sampler
 /// - see CpuViewModel's remarks - but also owns one deliberate exception: a gateway/DNS
@@ -871,6 +888,182 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
     private PortExhaustionInfo? _portExhaustion;
     public PortExhaustionInfo? PortExhaustion { get => _portExhaustion; private set => SetProperty(ref _portExhaustion, value); }
 
+    // ---- suggestions.md #566-571: Firewall rules and blocked connections -------------------------
+    // New "Firewall" card. Everything here is on-demand only (per CLAUDE.md's on-demand-vs-polled
+    // convention - a COM/netsh sweep of hundreds of rules, an event-log scan, or an XML dump of the
+    // WFP engine state are all far too heavy for a tick), and every action that changes system state
+    // (#568's logging toggle, #569's audit-policy change) sits behind an explicit MessageBox.Show
+    // confirm, the same pattern RestartSelectedAdapter/DeleteWifiProfileAsync above already use.
+
+    // #566: profile status.
+    public ObservableCollection<FirewallProfileStatus> FirewallProfiles { get; } = new();
+    private bool _isLoadingFirewallProfiles;
+    public bool IsLoadingFirewallProfiles { get => _isLoadingFirewallProfiles; private set => SetProperty(ref _isLoadingFirewallProfiles, value); }
+    public AsyncRelayCommand RefreshFirewallProfilesCommand { get; }
+
+    // #567: full rule browser, filter box, and "this executable only" mode.
+    private List<FirewallRuleInfo> _allFirewallRules = new();
+    public ObservableCollection<FirewallRuleInfo> FilteredFirewallRules { get; } = new();
+    private bool _isLoadingFirewallRules;
+    public bool IsLoadingFirewallRules { get => _isLoadingFirewallRules; private set => SetProperty(ref _isLoadingFirewallRules, value); }
+    private string _firewallRulesStatusText = "Not loaded yet - this reads every configured firewall rule, which can take a few seconds.";
+    public string FirewallRulesStatusText { get => _firewallRulesStatusText; private set => SetProperty(ref _firewallRulesStatusText, value); }
+
+    private string _firewallRuleFilterText = string.Empty;
+    public string FirewallRuleFilterText
+    {
+        get => _firewallRuleFilterText;
+        set { if (SetProperty(ref _firewallRuleFilterText, value)) ApplyFirewallRuleFilter(); }
+    }
+
+    private bool _firewallFilterExecutableOnly;
+    public bool FirewallFilterExecutableOnly
+    {
+        get => _firewallFilterExecutableOnly;
+        set { if (SetProperty(ref _firewallFilterExecutableOnly, value)) ApplyFirewallRuleFilter(); }
+    }
+
+    public AsyncRelayCommand RefreshFirewallRulesCommand { get; }
+
+    // #568: blocked-connection log reader + the "enable dropped-packet logging" action.
+    public ObservableCollection<FirewallLogEntry> FirewallLogEntries { get; } = new();
+    private bool _isLoadingFirewallLog;
+    public bool IsLoadingFirewallLog { get => _isLoadingFirewallLog; private set => SetProperty(ref _isLoadingFirewallLog, value); }
+    private string _firewallLogStatusText = "Not loaded yet.";
+    public string FirewallLogStatusText { get => _firewallLogStatusText; private set => SetProperty(ref _firewallLogStatusText, value); }
+    public AsyncRelayCommand RefreshFirewallLogCommand { get; }
+    public AsyncRelayCommand EnableDroppedLoggingCommand { get; }
+
+    // #569: WFP drop auditing - enable action, then an on-demand scan with its own lookback window
+    // (mirroring #524/#530/#541's own on-demand event-log scans elsewhere on this tab).
+    private bool _isEnablingWfpAuditing;
+    public bool IsEnablingWfpAuditing { get => _isEnablingWfpAuditing; private set => SetProperty(ref _isEnablingWfpAuditing, value); }
+    private string _wfpAuditStatusText = "Not enabled yet - click \"Enable auditing\", then Scan after some blocked traffic occurs.";
+    public string WfpAuditStatusText { get => _wfpAuditStatusText; private set => SetProperty(ref _wfpAuditStatusText, value); }
+    public AsyncRelayCommand EnableWfpAuditingCommand { get; }
+
+    private double _wfpScanWindowHours = 24.0;
+    public double WfpScanWindowHours { get => _wfpScanWindowHours; set => SetProperty(ref _wfpScanWindowHours, Math.Clamp(value, 1.0, 720.0)); }
+    private bool _isScanningWfpDrops;
+    public bool IsScanningWfpDrops { get => _isScanningWfpDrops; private set => SetProperty(ref _isScanningWfpDrops, value); }
+    private string _wfpScanStatusText = "Not scanned yet.";
+    public string WfpScanStatusText { get => _wfpScanStatusText; private set => SetProperty(ref _wfpScanStatusText, value); }
+    public ObservableCollection<WfpDropEvent> WfpDropEvents { get; } = new();
+    public AsyncRelayCommand ScanWfpDropsCommand { get; }
+
+    // #571: read-only filter-driver/security-product stack inventory.
+    public ObservableCollection<WfpProviderInfo> WfpProviders { get; } = new();
+    public ObservableCollection<WfpCalloutInfo> WfpCallouts { get; } = new();
+    public ObservableCollection<BoundNetworkFilterDriver> BoundFilterDrivers { get; } = new();
+    private bool _isLoadingStackInventory;
+    public bool IsLoadingStackInventory { get => _isLoadingStackInventory; private set => SetProperty(ref _isLoadingStackInventory, value); }
+    private string _stackInventoryStatusText = "Not loaded yet.";
+    public string StackInventoryStatusText { get => _stackInventoryStatusText; private set => SetProperty(ref _stackInventoryStatusText, value); }
+    public AsyncRelayCommand RefreshStackInventoryCommand { get; }
+
+    // #570: "This app can't reach the network" wizard - a guided combination of #567/#569's own
+    // last-run data (freshly re-gathered, scoped to the query) plus the existing proxy/VPN readouts
+    // and the Connections grid. Wiring an actual right-click "jump here" from the Processes tab
+    // context menu would need new cross-ViewModel plumbing this app doesn't otherwise have (every
+    // existing cross-tab reach is the thin theme/accent-color wiring MainViewModel already owns, per
+    // CLAUDE.md's "Cross-tab coupling is deliberately thin" note) - out of scope for this pass, so
+    // this wizard is reached from its own button on this tab instead, with a free-text query field
+    // (process name or full executable path both work, since #567's own filter already matches
+    // either).
+    private string _wizardQuery = string.Empty;
+    public string WizardQuery { get => _wizardQuery; set => SetProperty(ref _wizardQuery, value); }
+    private bool _isRunningWizard;
+    public bool IsRunningWizard { get => _isRunningWizard; private set => SetProperty(ref _isRunningWizard, value); }
+    private string _wizardStatusText = "Enter a process name or executable path (e.g. \"chrome.exe\") and click Diagnose.";
+    public string WizardStatusText { get => _wizardStatusText; private set => SetProperty(ref _wizardStatusText, value); }
+    private NetworkTroubleshootReport? _wizardReport;
+    public NetworkTroubleshootReport? WizardReport { get => _wizardReport; private set => SetProperty(ref _wizardReport, value); }
+    public AsyncRelayCommand RunWizardCommand { get; }
+
+    // ---- suggestions.md #572-575: Proxy, PAC and Winsock ------------------------------------------
+    // Extends the existing read-only proxy readout (ProxyStatusText above, #47) into a full "Proxy"
+    // card (#572/#573/#574) plus a new "Stack" card for Winsock (#575) and the reset toolkit (#576).
+    // One combined Refresh loads all three proxy checks together since they all read from the same
+    // already-fetched ProxyConfigInfo; the bypass tester (#574) needs no I/O of its own once that's
+    // loaded.
+
+    private bool _isLoadingProxyCard;
+    public bool IsLoadingProxyCard { get => _isLoadingProxyCard; private set => SetProperty(ref _isLoadingProxyCard, value); }
+    public AsyncRelayCommand RefreshProxyCardCommand { get; }
+
+    // #572: PAC fetch/health.
+    private string _pacStatusText = "Not checked yet.";
+    public string PacStatusText { get => _pacStatusText; private set => SetProperty(ref _pacStatusText, value); }
+    private string? _pacBody;
+    public string? PacBody { get => _pacBody; private set => SetProperty(ref _pacBody, value); }
+
+    // "No PAC configured" is a normal, non-problem state, distinct from an attempted fetch that
+    // failed or came back slow - a separate flag rather than inferring a warning color off
+    // PacBody == null in the view (which would also match "not configured").
+    private bool _pacLooksProblematic;
+    public bool PacLooksProblematic { get => _pacLooksProblematic; private set => SetProperty(ref _pacLooksProblematic, value); }
+
+    // #573: per-user vs. machine-wide WinHTTP proxy divergence.
+    private ProxyDivergenceInfo? _proxyDivergence;
+    public ProxyDivergenceInfo? ProxyDivergence { get => _proxyDivergence; private set => SetProperty(ref _proxyDivergence, value); }
+
+    // #574: bypass list + "does this host bypass" tester.
+    public ObservableCollection<string> ProxyBypassEntries { get; } = new();
+    private string _bypassTestHostname = string.Empty;
+    public string BypassTestHostname { get => _bypassTestHostname; set => SetProperty(ref _bypassTestHostname, value); }
+    private string _bypassTestResultText = "Enter a hostname above and click Test.";
+    public string BypassTestResultText { get => _bypassTestResultText; private set => SetProperty(ref _bypassTestResultText, value); }
+    public RelayCommand TestBypassCommand { get; }
+
+    // #575: new "Stack" card - Winsock LSP catalog + reset (behind a reboot-required confirm).
+    public ObservableCollection<WinsockProviderEntry> WinsockProviders { get; } = new();
+    private int _winsockNonMicrosoftCount;
+    public int WinsockNonMicrosoftCount { get => _winsockNonMicrosoftCount; private set => SetProperty(ref _winsockNonMicrosoftCount, value); }
+    private bool _isLoadingWinsockCatalog;
+    public bool IsLoadingWinsockCatalog { get => _isLoadingWinsockCatalog; private set => SetProperty(ref _isLoadingWinsockCatalog, value); }
+    private string _winsockStatusText = "Not loaded yet.";
+    public string WinsockStatusText { get => _winsockStatusText; private set => SetProperty(ref _winsockStatusText, value); }
+    public AsyncRelayCommand RefreshWinsockCatalogCommand { get; }
+
+    private bool _isResettingWinsock;
+    public bool IsResettingWinsock { get => _isResettingWinsock; private set => SetProperty(ref _isResettingWinsock, value); }
+    private string _winsockResetStatusText = string.Empty;
+    public string WinsockResetStatusText { get => _winsockResetStatusText; private set => SetProperty(ref _winsockResetStatusText, value); }
+    public RelayCommand ResetWinsockCommand { get; }
+
+    // ---- suggestions.md #576: network stack reset toolkit ------------------------------------------
+    // Stack card. Each action is individually confirmed (RunStackResetAction below owns the shared
+    // confirm-then-run-then-log plumbing) rather than one "reset everything" button, since each one
+    // breaks something different and the user should be able to run just the one they need.
+    private bool _isRunningStackReset;
+    public bool IsRunningStackReset { get => _isRunningStackReset; private set => SetProperty(ref _isRunningStackReset, value); }
+    private string _stackResetStatusText = string.Empty;
+    public string StackResetStatusText { get => _stackResetStatusText; private set => SetProperty(ref _stackResetStatusText, value); }
+    public RelayCommand ResetIpStackCommand { get; }
+    public RelayCommand FlushDnsResolverCacheCommand { get; }
+    public RelayCommand ClearArpCacheCommand { get; }
+    public RelayCommand ResetNetBiosCacheCommand { get; }
+
+    // ---- suggestions.md #577: VPN default-route and DNS-leak check ---------------------------------
+    // Lands beside the existing #37 VPN presence indicator (HasActiveVpn/VpnStatusText above) in the
+    // Adapters card - a real behavioural check, on-demand (both a routing-table read and a live DNS
+    // query), unlike that heuristic's cheap NetworkInterface enumeration.
+    private bool _isCheckingVpnTunnel;
+    public bool IsCheckingVpnTunnel { get => _isCheckingVpnTunnel; private set => SetProperty(ref _isCheckingVpnTunnel, value); }
+    private VpnTunnelCheckResult? _vpnTunnelCheck;
+    public VpnTunnelCheckResult? VpnTunnelCheck { get => _vpnTunnelCheck; private set => SetProperty(ref _vpnTunnelCheck, value); }
+    public AsyncRelayCommand RunVpnTunnelCheckCommand { get; }
+
+    // ---- suggestions.md #578: orphaned virtual adapter detection -----------------------------------
+    // A new section on the existing Adapter health card (#547-556 above), not a separate card, per
+    // this item's own text.
+    public ObservableCollection<OrphanedAdapterInfo> OrphanedAdapters { get; } = new();
+    private bool _isScanningOrphanedAdapters;
+    public bool IsScanningOrphanedAdapters { get => _isScanningOrphanedAdapters; private set => SetProperty(ref _isScanningOrphanedAdapters, value); }
+    private string _orphanedAdapterStatusText = "Not scanned yet.";
+    public string OrphanedAdapterStatusText { get => _orphanedAdapterStatusText; private set => SetProperty(ref _orphanedAdapterStatusText, value); }
+    public AsyncRelayCommand ScanOrphanedAdaptersCommand { get; }
+
     public NetworkViewModel(PerformanceViewModel performance)
     {
         Performance = performance;
@@ -1102,6 +1295,51 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
 
         RefreshPortReservationCommand = new AsyncRelayCommand(RefreshPortReservationAsync, () => !IsLoadingPortReservation);
         _ = RefreshPortReservationAsync();
+
+        // #566-571: Firewall card wiring. All on-demand - none of this runs until the user opens
+        // the card and clicks something, per CLAUDE.md's on-demand-vs-polled convention.
+        RefreshFirewallProfilesCommand = new AsyncRelayCommand(RefreshFirewallProfilesAsync, () => !IsLoadingFirewallProfiles);
+        RefreshFirewallRulesCommand = new AsyncRelayCommand(RefreshFirewallRulesAsync, () => !IsLoadingFirewallRules);
+        RefreshFirewallLogCommand = new AsyncRelayCommand(RefreshFirewallLogAsync, () => !IsLoadingFirewallLog);
+        EnableDroppedLoggingCommand = new AsyncRelayCommand(EnableDroppedLoggingAsync, () => !IsLoadingFirewallLog);
+        EnableWfpAuditingCommand = new AsyncRelayCommand(EnableWfpAuditingAsync, () => !IsEnablingWfpAuditing);
+        ScanWfpDropsCommand = new AsyncRelayCommand(ScanWfpDropsAsync, () => !IsScanningWfpDrops);
+        RefreshStackInventoryCommand = new AsyncRelayCommand(RefreshStackInventoryAsync, () => !IsLoadingStackInventory);
+        RunWizardCommand = new AsyncRelayCommand(RunWizardAsync, () => !IsRunningWizard && !string.IsNullOrWhiteSpace(WizardQuery));
+        _ = RefreshFirewallProfilesAsync();
+
+        // #572-575: Proxy and Stack card wiring.
+        RefreshProxyCardCommand = new AsyncRelayCommand(RefreshProxyCardAsync, () => !IsLoadingProxyCard);
+        TestBypassCommand = new RelayCommand(_ => TestBypass());
+        RefreshWinsockCatalogCommand = new AsyncRelayCommand(RefreshWinsockCatalogAsync, () => !IsLoadingWinsockCatalog);
+        ResetWinsockCommand = new RelayCommand(ConfirmAndResetWinsock, () => !IsResettingWinsock);
+        _ = RefreshProxyCardAsync();
+        _ = RefreshWinsockCatalogAsync();
+
+        // #576: reset toolkit - each command routes through RunStackResetAction's shared
+        // confirm-then-run-then-log plumbing with its own action-specific warning text.
+        ResetIpStackCommand = new RelayCommand(_ => RunStackResetAction(
+            "Reset TCP/IP stack",
+            "Resets the TCP/IP stack to its installation defaults (`netsh int ip reset`). Fixes a corrupted Winsock/TCP-IP registry configuration, but wipes any custom IP settings, static routes, and some third-party network filter registrations. A restart is recommended afterward.",
+            NetworkStackResetService.ResetIpStackAsync));
+        FlushDnsResolverCacheCommand = new RelayCommand(_ => RunStackResetAction(
+            "Flush DNS resolver cache",
+            "Clears the local DNS resolver cache (`ipconfig /flushdns`). Safe and low-impact - the next lookup for any host is just slightly slower while the cache refills. Fixes a stale/poisoned cached DNS record.",
+            NetworkStackResetService.FlushDnsAsync));
+        ClearArpCacheCommand = new RelayCommand(_ => RunStackResetAction(
+            "Clear ARP cache",
+            "Clears the cached IP-to-MAC address mappings for the local network (`arp -d *`). Safe - Windows rebuilds it automatically as needed, with a brief delay on the next connection to each host. Fixes a stale ARP entry (e.g. after a device's network card was replaced).",
+            NetworkStackResetService.ClearArpCacheAsync));
+        ResetNetBiosCacheCommand = new RelayCommand(_ => RunStackResetAction(
+            "Reset NetBIOS name cache",
+            "Purges and reloads the NetBIOS name cache (`nbtstat -R`). Safe - only affects NetBIOS name resolution (mostly legacy Windows file-sharing/`\\\\computername` lookups), rebuilt automatically. Fixes a stale cached NetBIOS name-to-address mapping.",
+            NetworkStackResetService.ResetNetBiosCacheAsync));
+
+        // #577: VPN default-route / DNS-leak check wiring.
+        RunVpnTunnelCheckCommand = new AsyncRelayCommand(RunVpnTunnelCheckAsync, () => !IsCheckingVpnTunnel);
+
+        // #578: orphaned virtual adapter scan wiring.
+        ScanOrphanedAdaptersCommand = new AsyncRelayCommand(ScanOrphanedAdaptersAsync, () => !IsScanningOrphanedAdapters);
     }
 
     private async Task CheckConnectivityAsync()
@@ -2752,6 +2990,450 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
             IsLoadingWifiProfiles = false;
         }
         await RefreshWifiProfilesAsync();
+    }
+
+    // ---- #566-571 helpers (Firewall card) ------------------------------------------------------
+
+    private async Task RefreshFirewallProfilesAsync()
+    {
+        if (IsLoadingFirewallProfiles) return;
+        IsLoadingFirewallProfiles = true;
+        try
+        {
+            var profiles = await FirewallService.ReadProfileStatusAsync();
+            FirewallProfiles.Clear();
+            foreach (var p in profiles) FirewallProfiles.Add(p);
+        }
+        catch
+        {
+            // Best-effort - leave whatever was already loaded.
+        }
+        finally
+        {
+            IsLoadingFirewallProfiles = false;
+        }
+    }
+
+    /// <summary>#567: the on-demand rule sweep - hundreds of rules is common, so this is never
+    /// called automatically, only from the card's own "Load rules" button.</summary>
+    private async Task RefreshFirewallRulesAsync()
+    {
+        if (IsLoadingFirewallRules) return;
+        IsLoadingFirewallRules = true;
+        FirewallRulesStatusText = "Loading every firewall rule - this can take a few seconds...";
+        try
+        {
+            _allFirewallRules = await FirewallService.ReadRulesAsync();
+            ApplyFirewallRuleFilter();
+            FirewallRulesStatusText = $"{_allFirewallRules.Count} rule(s) loaded.";
+        }
+        catch (Exception ex)
+        {
+            FirewallRulesStatusText = $"Couldn't load firewall rules: {ex.Message}";
+        }
+        finally
+        {
+            IsLoadingFirewallRules = false;
+        }
+    }
+
+    private void ApplyFirewallRuleFilter()
+    {
+        var filtered = FirewallService.FilterRules(_allFirewallRules, FirewallRuleFilterText, FirewallFilterExecutableOnly);
+        FilteredFirewallRules.Clear();
+        foreach (var r in filtered) FilteredFirewallRules.Add(r);
+    }
+
+    /// <summary>#568: reads pfirewall.log's DROP entries.</summary>
+    private async Task RefreshFirewallLogAsync()
+    {
+        if (IsLoadingFirewallLog) return;
+        IsLoadingFirewallLog = true;
+        FirewallLogStatusText = "Loading...";
+        try
+        {
+            var result = await FirewallLogService.ReadDropEntriesAsync();
+            FirewallLogEntries.Clear();
+            foreach (var e in result.Entries) FirewallLogEntries.Add(e);
+            FirewallLogStatusText = result.Message ?? $"{result.Entries.Count} DROP entr{(result.Entries.Count == 1 ? "y" : "ies")}.";
+        }
+        catch (Exception ex)
+        {
+            FirewallLogStatusText = $"Couldn't read the firewall log: {ex.Message}";
+        }
+        finally
+        {
+            IsLoadingFirewallLog = false;
+        }
+    }
+
+    /// <summary>#568: behind an explicit Yes/No confirm since it's a persistent firewall
+    /// configuration change - same MessageBox.Show confirm-first pattern used throughout this
+    /// ViewModel.</summary>
+    private async Task EnableDroppedLoggingAsync()
+    {
+        var confirm = MessageBox.Show(
+            "Enable dropped-packet logging across all firewall profiles?\nWindows Firewall will begin writing every dropped packet to pfirewall.log - useful for diagnosis, but the log grows continuously and adds some disk I/O on a busy or heavily-filtered machine.",
+            "Enable dropped-packet logging", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        IsLoadingFirewallLog = true;
+        FirewallLogStatusText = "Enabling...";
+        try
+        {
+            FirewallLogStatusText = await FirewallLogService.EnableDroppedConnectionLoggingAsync();
+        }
+        catch (Exception ex)
+        {
+            FirewallLogStatusText = $"Failed: {ex.Message}";
+        }
+        finally
+        {
+            IsLoadingFirewallLog = false;
+        }
+    }
+
+    /// <summary>#569: behind an explicit Yes/No confirm since this is a persistent audit-policy
+    /// change with a real (if usually small) log-volume cost.</summary>
+    private async Task EnableWfpAuditingAsync()
+    {
+        var confirm = MessageBox.Show(
+            "Enable Windows Filtering Platform drop auditing?\nThis turns on two Security-log audit subcategories (\"Filtering Platform Packet Drop\" and \"Filtering Platform Connection\") so blocked traffic gets logged with the filter that blocked it. Adds Security-log volume on a busy machine - this app never turns it back off automatically.",
+            "Enable WFP drop auditing", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        IsEnablingWfpAuditing = true;
+        WfpAuditStatusText = "Enabling...";
+        try
+        {
+            WfpAuditStatusText = await WfpAuditService.EnableAuditingAsync();
+        }
+        catch (Exception ex)
+        {
+            WfpAuditStatusText = $"Failed: {ex.Message}";
+        }
+        finally
+        {
+            IsEnablingWfpAuditing = false;
+        }
+    }
+
+    private async Task ScanWfpDropsAsync()
+    {
+        if (IsScanningWfpDrops) return;
+        IsScanningWfpDrops = true;
+        WfpScanStatusText = "Scanning...";
+        try
+        {
+            var window = TimeSpan.FromHours(WfpScanWindowHours);
+            var result = await WfpAuditService.ScanAsync(window);
+
+            WfpDropEvents.Clear();
+            foreach (var e in result.Events) WfpDropEvents.Add(e);
+
+            WfpScanStatusText = !result.ChannelAvailable
+                ? "The Security log couldn't be read."
+                : result.Events.Count == 0
+                    ? $"No WFP drop events in the last {WfpScanWindowHours:0.#}h - either nothing was blocked, or auditing isn't enabled yet."
+                    : $"{result.Events.Count} event(s) in the last {WfpScanWindowHours:0.#}h." +
+                      (result.FilterNamesResolved ? string.Empty : " Rule names couldn't be resolved (netsh wfp show filters failed) - showing raw filter IDs.");
+        }
+        catch (Exception ex)
+        {
+            WfpScanStatusText = $"Scan failed: {ex.Message}";
+        }
+        finally
+        {
+            IsScanningWfpDrops = false;
+        }
+    }
+
+    /// <summary>#571: read-only, informational stack inventory.</summary>
+    private async Task RefreshStackInventoryAsync()
+    {
+        if (IsLoadingStackInventory) return;
+        IsLoadingStackInventory = true;
+        StackInventoryStatusText = "Loading...";
+        try
+        {
+            var result = await NetworkStackInventoryService.ReadAsync();
+
+            WfpProviders.Clear();
+            foreach (var p in result.Providers) WfpProviders.Add(p);
+            WfpCallouts.Clear();
+            foreach (var c in result.Callouts) WfpCallouts.Add(c);
+            BoundFilterDrivers.Clear();
+            foreach (var d in result.BoundDrivers) BoundFilterDrivers.Add(d);
+
+            int nonMs = result.BoundDrivers.Count(d => d.LooksNonMicrosoft);
+            StackInventoryStatusText = !result.WfpStateAvailable
+                ? $"WFP provider/callout list unavailable on this machine (netsh wfp show state failed to parse). {result.BoundDrivers.Count} bound filter driver(s) found ({nonMs} non-Microsoft)."
+                : $"{result.Providers.Count} provider(s), {result.Callouts.Count} callout(s), {result.BoundDrivers.Count} bound filter driver(s) ({nonMs} non-Microsoft).";
+        }
+        catch (Exception ex)
+        {
+            StackInventoryStatusText = $"Couldn't load the stack inventory: {ex.Message}";
+        }
+        finally
+        {
+            IsLoadingStackInventory = false;
+        }
+    }
+
+    /// <summary>#570: the guided wizard - gathers #567's rule filter, a fresh #569-style 24h WFP
+    /// scan, the existing proxy readout, a fresh #577 VPN/route check, and the existing Connections
+    /// grid, all scoped to one process-name/executable query.</summary>
+    private async Task RunWizardAsync()
+    {
+        string query = WizardQuery.Trim();
+        if (query.Length == 0 || IsRunningWizard) return;
+
+        IsRunningWizard = true;
+        WizardStatusText = "Gathering signals...";
+        try
+        {
+            var rules = await FirewallService.ReadRulesAsync();
+            var matchingRules = FirewallService.FilterRules(rules, query, executableOnly: true);
+
+            var wfpScan = await WfpAuditService.ScanAsync(TimeSpan.FromHours(24));
+            var matchingDrops = wfpScan.Events
+                .Where(e => e.ApplicationPath is not null && e.ApplicationPath.Contains(query, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            var proxy = NetworkDiagnosticsService.ReadProxyConfig();
+            string proxyText = proxy.Enabled
+                ? $"A system-wide proxy is configured ({(proxy.ProxyServer.Length > 0 ? proxy.ProxyServer : "no server set")}) - most apps using default WinHTTP/WinINet settings will route through it unless they implement their own network stack."
+                : "No system-wide proxy is configured - this app most likely connects directly.";
+
+            var vpnCheck = await VpnTunnelCheckService.CheckAsync();
+            string vpnText = vpnCheck.HasVpn
+                ? $"VPN adapter: {vpnCheck.VpnAdapterName}. {vpnCheck.DefaultRouteExplanation}"
+                : "No VPN adapter is currently active.";
+
+            var matchingConnections = Connections.Where(c => c.ProcessName.Contains(query, StringComparison.OrdinalIgnoreCase)).ToList();
+
+            WizardReport = new NetworkTroubleshootReport
+            {
+                Query = query,
+                MatchingFirewallRules = matchingRules,
+                MatchingWfpDrops = matchingDrops,
+                WfpChannelAvailable = wfpScan.ChannelAvailable,
+                ProxyApplicability = proxyText,
+                VpnRouteSummary = vpnText,
+                MatchingConnections = matchingConnections,
+            };
+
+            WizardStatusText = $"{matchingRules.Count} firewall rule(s), {matchingDrops.Count} WFP drop(s), {matchingConnections.Count} current connection(s) matching \"{query}\".";
+        }
+        catch (Exception ex)
+        {
+            WizardStatusText = $"Diagnosis failed: {ex.Message}";
+        }
+        finally
+        {
+            IsRunningWizard = false;
+        }
+    }
+
+    // ---- #572-575 helpers (Proxy and Stack cards) ------------------------------------------------
+
+    /// <summary>#572/#573/#574: one combined refresh - all three read from the same
+    /// already-fetched ProxyConfigInfo, so there's no benefit to three separate round trips.</summary>
+    private async Task RefreshProxyCardAsync()
+    {
+        if (IsLoadingProxyCard) return;
+        IsLoadingProxyCard = true;
+        try
+        {
+            var proxy = NetworkDiagnosticsService.ReadProxyConfig();
+
+            ProxyBypassEntries.Clear();
+            foreach (var e in ProxyDiagnosticsService.ParseBypassList(proxy.ProxyOverride)) ProxyBypassEntries.Add(e);
+
+            if (string.IsNullOrWhiteSpace(proxy.AutoConfigUrl))
+            {
+                PacStatusText = "No PAC/auto-config URL configured.";
+                PacBody = null;
+                PacLooksProblematic = false;
+            }
+            else
+            {
+                PacStatusText = "Fetching...";
+                var pac = await ProxyDiagnosticsService.FetchPacAsync(proxy.AutoConfigUrl);
+                PacBody = pac.Body;
+                PacLooksProblematic = !pac.Success || pac.IsSlow;
+                PacStatusText = pac.Success
+                    ? $"Fetched in {pac.ElapsedMs} ms" + (pac.IsSlow ? " - slow enough to cause a noticeable multi-second hang before every new connection." : ".")
+                    : $"Couldn't fetch the PAC script ({pac.ElapsedMs} ms): {pac.ErrorMessage}. An unreachable or slow PAC server causes the same multi-second per-connection hang.";
+            }
+
+            ProxyDivergence = await ProxyDiagnosticsService.ReadDivergenceAsync(proxy);
+        }
+        catch (Exception ex)
+        {
+            PacStatusText = $"Refresh failed: {ex.Message}";
+        }
+        finally
+        {
+            IsLoadingProxyCard = false;
+        }
+    }
+
+    private void TestBypass()
+    {
+        string host = BypassTestHostname.Trim();
+        if (host.Length == 0)
+        {
+            BypassTestResultText = "Enter a hostname above and click Test.";
+            return;
+        }
+
+        var proxy = NetworkDiagnosticsService.ReadProxyConfig();
+        bool bypasses = ProxyDiagnosticsService.TestBypasses(proxy.ProxyOverride, host);
+        BypassTestResultText = bypasses
+            ? $"\"{host}\" would bypass the proxy (connect directly) under the current rules."
+            : $"\"{host}\" would go through the proxy under the current rules.";
+    }
+
+    private async Task RefreshWinsockCatalogAsync()
+    {
+        if (IsLoadingWinsockCatalog) return;
+        IsLoadingWinsockCatalog = true;
+        WinsockStatusText = "Loading...";
+        try
+        {
+            var result = await WinsockService.ReadCatalogAsync();
+            WinsockProviders.Clear();
+            foreach (var p in result.Entries) WinsockProviders.Add(p);
+            WinsockNonMicrosoftCount = result.NonMicrosoftCount;
+
+            WinsockStatusText = result.NonMicrosoftCount == 0
+                ? $"{result.Entries.Count} catalog entr{(result.Entries.Count == 1 ? "y" : "ies")}, all under the Windows System32 folder."
+                : $"{result.Entries.Count} catalog entries - {result.NonMicrosoftCount} non-Microsoft provider(s) flagged below. Quick flag, not a verdict - a legitimate third-party provider (a VPN client, a firewall/AV suite) looks identical from here to a leftover corrupted one.";
+        }
+        catch (Exception ex)
+        {
+            WinsockStatusText = $"Couldn't load the Winsock catalog: {ex.Message}";
+        }
+        finally
+        {
+            IsLoadingWinsockCatalog = false;
+        }
+    }
+
+    /// <summary>#575: `netsh winsock reset` - behind an explicit confirm with a clear
+    /// reboot-required warning, per this item's own text.</summary>
+    private void ConfirmAndResetWinsock()
+    {
+        if (IsResettingWinsock) return;
+
+        var confirm = MessageBox.Show(
+            "Reset the Winsock catalog?\nThis removes every registered Layered Service Provider (including any flagged above) and restores Windows' default Winsock configuration.\n\nA RESTART IS REQUIRED for this to fully take effect - networking can behave oddly until you reboot.",
+            "Reset Winsock catalog", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        _ = RunWinsockResetAsync();
+    }
+
+    private async Task RunWinsockResetAsync()
+    {
+        IsResettingWinsock = true;
+        WinsockResetStatusText = "Resetting...";
+        try
+        {
+            WinsockResetStatusText = await WinsockService.ResetAsync();
+        }
+        catch (Exception ex)
+        {
+            WinsockResetStatusText = $"Reset failed: {ex.Message}";
+        }
+        finally
+        {
+            IsResettingWinsock = false;
+        }
+    }
+
+    // ---- #576 helper (reset toolkit) ---------------------------------------------------------
+
+    /// <summary>Shared confirm-then-run-then-log plumbing for every #576 toolkit action - shows
+    /// <paramref name="warningText"/> (the plain-English "what it does and what it will break"
+    /// description) behind an explicit Yes/No confirm, same MessageBox.Show pattern used throughout
+    /// this ViewModel, then runs <paramref name="action"/> and reports its result. Each action logs
+    /// itself via NetworkStackResetService's own AppendToActionLog, not duplicated here.</summary>
+    private void RunStackResetAction(string actionName, string warningText, Func<Task<StackResetActionResult>> action)
+    {
+        if (IsRunningStackReset) return;
+
+        var confirm = MessageBox.Show($"{warningText}\n\nRun this now?", actionName, MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        _ = RunStackResetActionAsync(actionName, action);
+    }
+
+    private async Task RunStackResetActionAsync(string actionName, Func<Task<StackResetActionResult>> action)
+    {
+        IsRunningStackReset = true;
+        StackResetStatusText = $"Running \"{actionName}\"...";
+        try
+        {
+            var result = await action();
+            StackResetStatusText = $"{result.ActionName}: {(result.Success ? "done" : "failed")} — {result.Output}";
+        }
+        catch (Exception ex)
+        {
+            StackResetStatusText = $"{actionName} failed: {ex.Message}";
+        }
+        finally
+        {
+            IsRunningStackReset = false;
+        }
+    }
+
+    // ---- #577 helper (VPN tunnel/DNS-leak check) -----------------------------------------------
+
+    private async Task RunVpnTunnelCheckAsync()
+    {
+        if (IsCheckingVpnTunnel) return;
+        IsCheckingVpnTunnel = true;
+        try
+        {
+            VpnTunnelCheck = await VpnTunnelCheckService.CheckAsync();
+        }
+        catch
+        {
+            VpnTunnelCheck = null; // best-effort - the view just hides the result panel
+        }
+        finally
+        {
+            IsCheckingVpnTunnel = false;
+        }
+    }
+
+    // ---- #578 helper (orphaned virtual adapters) -----------------------------------------------
+
+    private async Task ScanOrphanedAdaptersAsync()
+    {
+        if (IsScanningOrphanedAdapters) return;
+        IsScanningOrphanedAdapters = true;
+        OrphanedAdapterStatusText = "Scanning...";
+        try
+        {
+            var orphans = await OrphanedAdapterService.FindOrphansAsync();
+            OrphanedAdapters.Clear();
+            foreach (var o in orphans) OrphanedAdapters.Add(o);
+
+            OrphanedAdapterStatusText = orphans.Count == 0
+                ? "No orphaned virtual/VPN adapters found."
+                : $"{orphans.Count} adapter(s) flagged - no matching installed service or driver package found by name.";
+        }
+        catch (Exception ex)
+        {
+            OrphanedAdapterStatusText = $"Scan failed: {ex.Message}";
+        }
+        finally
+        {
+            IsScanningOrphanedAdapters = false;
+        }
     }
 
     public void Dispose()

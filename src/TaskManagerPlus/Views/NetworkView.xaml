@@ -762,9 +762,56 @@
                             </Style>
                         </TextBlock.Style>
                     </TextBlock>
-                    <TextBlock Style="{StaticResource SubStat}" Margin="0,10,0,0">
-                        <Run Text="VPN: " /><Run Text="{Binding VpnStatusText, Mode=OneWay}" />
-                    </TextBlock>
+                    <Grid Margin="0,10,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Style="{StaticResource SubStat}" Margin="0" VerticalAlignment="Center">
+                            <Run Text="VPN: " /><Run Text="{Binding VpnStatusText, Mode=OneWay}" />
+                        </TextBlock>
+                        <!-- #577: a real behavioural check (default-route ownership + a live DNS
+                             query), distinct from the name-substring VPN presence heuristic to the
+                             left - on-demand since it needs a routing-table read and a fresh nslookup. -->
+                        <Button Grid.Column="1" Padding="8,3" Command="{Binding RunVpnTunnelCheckCommand}">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                    <Setter Property="Content" Value="Check tunnel &amp; DNS" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsCheckingVpnTunnel}" Value="True">
+                                            <Setter Property="Content" Value="Checking..." />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                    </Grid>
+                    <StackPanel Margin="0,6,0,0" Visibility="{Binding VpnTunnelCheck, Converter={StaticResource NullToVisibilityConverter}}">
+                        <TextBlock Text="{Binding VpnTunnelCheck.DefaultRouteExplanation}" TextWrapping="Wrap" Margin="0,0,0,4">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                    <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding VpnTunnelCheck.VpnHoldsDefaultRoute}" Value="False">
+                                            <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                        <TextBlock Text="{Binding VpnTunnelCheck.DnsLeakExplanation}" TextWrapping="Wrap">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                    <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding VpnTunnelCheck.ResolverLooksOutsideVpn}" Value="True">
+                                            <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </StackPanel>
 
                     <!-- #511: per-adapter configured MTU, cross-referenced against the most
                          recent #510 discovered path MTU - flags an interface configured larger
@@ -1147,6 +1194,46 @@
                             </Style>
                         </TextBlock.Style>
                     </TextBlock>
+
+                    <!-- #578: orphaned virtual/VPN adapter detection - a new section on this
+                         existing card rather than a separate one, per this item's own text. The
+                         result list is naturally empty (and so invisible) on a clean machine; only
+                         the scan control and status line always show. -->
+                    <Grid Margin="0,16,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Orphaned virtual/VPN adapters" Style="{StaticResource SpecLabel}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Padding="8,3" Command="{Binding ScanOrphanedAdaptersCommand}">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                    <Setter Property="Content" Value="Scan" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsScanningOrphanedAdapters}" Value="True">
+                                            <Setter Property="Content" Value="Scanning..." />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                    </Grid>
+                    <TextBlock Text="Cross-references TAP/tunnel/VPN-looking adapters against installed services and staged driver packages by name - flags a leftover from an uninstalled client that may still hold routes or bind filters. Name-based matching only - quick flag, not a verdict."
+                               Style="{StaticResource SubStat}" Margin="0,4,0,6" TextWrapping="Wrap" Opacity="0.7" />
+                    <TextBlock Text="{Binding OrphanedAdapterStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,6" TextWrapping="Wrap" />
+                    <ItemsControl ItemsSource="{Binding OrphanedAdapters}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Margin="0,0,0,8" Padding="9" CornerRadius="6" BorderThickness="1" BorderBrush="{DynamicResource WarningBrush}">
+                                    <StackPanel>
+                                        <TextBlock Text="{Binding AdapterName}" FontWeight="SemiBold" FontSize="13" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Text="{Binding Description}" Style="{StaticResource SubStat}" Margin="0,2,0,4" TextWrapping="Wrap" Opacity="0.85" />
+                                        <TextBlock Text="{Binding Reason}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Foreground="{DynamicResource WarningBrush}" />
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
                 </StackPanel>
             </Border>
 
@@ -2545,6 +2632,650 @@
                     <TextBlock Style="{StaticResource SubStat}" Margin="0,10,0,0">
                         <Run Text="TCP retransmits: " /><Run Text="{Binding Performance.TcpRetransmitsPerSec, StringFormat={}{0:0.0}, Mode=OneWay}" /><Run Text="/s" />
                     </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- suggestions.md #572-574: Proxy - extends the existing read-only proxy readout
+                 (ProxyStatusText, shown on the Connectivity card above) into a full card: PAC
+                 fetch/health (#572), per-user-vs-machine-wide WinHTTP divergence (#573), and the
+                 bypass list plus a "does this host bypass" tester (#574). Read-only throughout -
+                 this app never writes to any proxy setting. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Proxy" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Padding="10,4" Command="{Binding RefreshProxyCardCommand}">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                    <Setter Property="Content" Value="Refresh" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsLoadingProxyCard}" Value="True">
+                                            <Setter Property="Content" Value="Loading..." />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                    </Grid>
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,-4,0,14" TextWrapping="Wrap">
+                        <Run Text="Per-user proxy: " /><Run Text="{Binding ProxyStatusText, Mode=OneWay}" />
+                    </TextBlock>
+
+                    <!-- #572: PAC fetch/health. -->
+                    <TextBlock Text="PAC / auto-config script" Style="{StaticResource SpecLabel}" Margin="0,0,0,4" />
+                    <TextBlock Text="{Binding PacStatusText}" TextWrapping="Wrap" Margin="0,0,0,6">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding PacLooksProblematic}" Value="True">
+                                        <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <Expander Background="Transparent" BorderThickness="0" Foreground="{DynamicResource TextPrimaryBrush}" IsExpanded="False"
+                              Visibility="{Binding PacBody, Converter={StaticResource NullToVisibilityConverter}}">
+                        <Expander.Header>
+                            <TextBlock Text="View PAC script body" Style="{StaticResource CardTitle}" Margin="0" FontSize="12.5" />
+                        </Expander.Header>
+                        <Border Margin="0,8,0,0" Padding="8" CornerRadius="6" BorderThickness="1" BorderBrush="{DynamicResource BorderSubtleBrush}" MaxHeight="240">
+                            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto">
+                                <TextBlock Text="{Binding PacBody}" FontFamily="Consolas" FontSize="11.5" TextWrapping="NoWrap" />
+                            </ScrollViewer>
+                        </Border>
+                    </Expander>
+
+                    <!-- #573: per-user vs. machine-wide divergence. -->
+                    <TextBlock Text="Per-user vs. machine-wide (WinHTTP)" Style="{StaticResource SpecLabel}" Margin="0,16,0,4" />
+                    <Grid Visibility="{Binding ProxyDivergence, Converter={StaticResource NullToVisibilityConverter}}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                            <TextBlock Text="Per-user (this account)" Style="{StaticResource SubStat}" Opacity="0.7" Margin="0,0,0,2" />
+                            <TextBlock Text="{Binding ProxyDivergence.PerUserSummary}" FontWeight="SemiBold" FontSize="12.5" TextWrapping="Wrap" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="1">
+                            <TextBlock Text="Machine-wide (WinHTTP)" Style="{StaticResource SubStat}" Opacity="0.7" Margin="0,0,0,2" />
+                            <TextBlock Text="{Binding ProxyDivergence.SystemWideSummary}" FontWeight="SemiBold" FontSize="12.5" TextWrapping="Wrap" />
+                        </StackPanel>
+                    </Grid>
+                    <TextBlock Text="{Binding ProxyDivergence.MismatchReason}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,8,0,0"
+                               Foreground="{DynamicResource WarningBrush}"
+                               Visibility="{Binding ProxyDivergence.Mismatch, Converter={StaticResource BoolToVisibilityConverter}}" />
+
+                    <!-- #574: bypass list + tester. -->
+                    <TextBlock Text="Bypass list (ProxyOverride)" Style="{StaticResource SpecLabel}" Margin="0,16,0,6" />
+                    <ItemsControl ItemsSource="{Binding ProxyBypassEntries}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Margin="0,0,6,6" Padding="7,3" CornerRadius="4" BorderThickness="1" BorderBrush="{DynamicResource BorderSubtleBrush}">
+                                    <TextBlock Text="{Binding}" FontFamily="Consolas" FontSize="11.5" />
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="No bypass entries configured.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Setter Property="Opacity" Value="0.7" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding ProxyBypassEntries.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
+                    <Grid Margin="0,10,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBox Grid.Column="0" Margin="0,0,8,0" VerticalContentAlignment="Center"
+                                 Text="{Binding BypassTestHostname, UpdateSourceTrigger=PropertyChanged}" />
+                        <Button Grid.Column="1" Content="Test" Padding="10,4" Command="{Binding TestBypassCommand}" />
+                    </Grid>
+                    <TextBlock Text="{Binding BypassTestResultText}" Style="{StaticResource SubStat}" Margin="0,6,0,0" TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+
+            <!-- suggestions.md #566-571: Firewall - profile status (#566), a full rule browser with
+                 a filter/executable-only mode (#567), the blocked-connection log (pfirewall.log)
+                 reader (#568), WFP drop auditing with filter attribution (#569), a read-only
+                 filter-driver/security-product stack inventory (#571), and the "This app can't
+                 reach the network" guided wizard (#570) at the bottom. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Firewall" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Windows Firewall configuration, rules, and what it's actually blocked - this app's own connectivity checks can look clean while the firewall silently drops traffic underneath them."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,14" TextWrapping="Wrap" />
+
+                    <!-- #566: profile status. -->
+                    <Grid Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Profile status" Style="{StaticResource SpecLabel}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Padding="8,3" Command="{Binding RefreshFirewallProfilesCommand}">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                    <Setter Property="Content" Value="Refresh" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsLoadingFirewallProfiles}" Value="True">
+                                            <Setter Property="Content" Value="Loading..." />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                    </Grid>
+                    <ItemsControl ItemsSource="{Binding FirewallProfiles}" Margin="0,0,0,16">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <UniformGrid Columns="3" />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Margin="0,0,8,0" Padding="8" CornerRadius="6" BorderThickness="1">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Setter Property="BorderBrush" Value="{DynamicResource BorderSubtleBrush}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsFlagged}" Value="True">
+                                                    <Setter Property="BorderBrush" Value="{DynamicResource WarningBrush}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
+                                    <StackPanel>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" Text="{Binding ProfileName}" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" />
+                                            <Border Grid.Column="1" CornerRadius="4" Padding="7,2">
+                                                <Border.Style>
+                                                    <Style TargetType="Border">
+                                                        <Setter Property="Background" Value="{DynamicResource SuccessBrush}" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding Enabled}" Value="False">
+                                                                <Setter Property="Background" Value="{DynamicResource DangerBrush}" />
+                                                            </DataTrigger>
+                                                            <DataTrigger Binding="{Binding Enabled}" Value="{x:Null}">
+                                                                <Setter Property="Background" Value="{DynamicResource TextSecondaryBrush}" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Border.Style>
+                                                <TextBlock Text="{Binding EnabledText}" FontSize="10.5" FontWeight="Bold" Foreground="White" />
+                                            </Border>
+                                        </Grid>
+                                        <TextBlock Style="{StaticResource SubStat}" Margin="0,4,0,0" TextWrapping="Wrap">
+                                            <Run Text="In: " /><Run Text="{Binding InboundPolicy}" FontWeight="SemiBold" />
+                                            <Run Text="  Out: " /><Run Text="{Binding OutboundPolicy}" FontWeight="SemiBold" />
+                                        </TextBlock>
+                                        <TextBlock Text="{Binding FlagReason}" Style="{StaticResource SubStat}" Foreground="{DynamicResource WarningBrush}"
+                                                   TextWrapping="Wrap" Margin="0,4,0,0" FontSize="11"
+                                                   Visibility="{Binding FlagReason, Converter={StaticResource NullToVisibilityConverter}}" />
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <!-- #567: full rule browser, filter box, "this executable only" mode. -->
+                    <Expander Background="Transparent" BorderThickness="0" Foreground="{DynamicResource TextPrimaryBrush}" IsExpanded="False" Margin="0,0,0,4">
+                        <Expander.Header>
+                            <TextBlock Text="Rule browser" Style="{StaticResource CardTitle}" Margin="0" FontSize="13" />
+                        </Expander.Header>
+                        <StackPanel Margin="0,8,0,0">
+                            <Grid Margin="0,0,0,6">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Every configured firewall rule (name/direction/action/protocol/ports/program/enabled state)." Style="{StaticResource SubStat}" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,8,0" />
+                                <Button Grid.Column="1" Padding="8,3" Command="{Binding RefreshFirewallRulesCommand}">
+                                    <Button.Style>
+                                        <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                            <Setter Property="Content" Value="Load rules" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsLoadingFirewallRules}" Value="True">
+                                                    <Setter Property="Content" Value="Loading..." />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Button.Style>
+                                </Button>
+                            </Grid>
+                            <TextBlock Text="{Binding FirewallRulesStatusText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,8" />
+
+                            <Grid Margin="0,0,0,8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBox Grid.Column="0" Margin="0,0,10,0" VerticalContentAlignment="Center"
+                                         Text="{Binding FirewallRuleFilterText, UpdateSourceTrigger=PropertyChanged}" />
+                                <CheckBox Grid.Column="1" Content="This executable only" VerticalAlignment="Center"
+                                          IsChecked="{Binding FirewallFilterExecutableOnly}"
+                                          ToolTip="Type an executable name (e.g. chrome.exe) or full path above, then check this to show only rules scoped to that program - the same filter a right-click &quot;jump to Firewall&quot; from the Processes tab would use." />
+                            </Grid>
+                            <DataGrid ItemsSource="{Binding FilteredFirewallRules}" AutoGenerateColumns="False" IsReadOnly="True" HeadersVisibility="Column"
+                                      CanUserSortColumns="True" MaxHeight="320">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="2*" />
+                                    <DataGridTextColumn Header="Dir" Binding="{Binding Direction}" Width="0.6*" />
+                                    <DataGridTextColumn Header="Action" Binding="{Binding Action}" Width="0.7*" />
+                                    <DataGridTextColumn Header="Protocol" Binding="{Binding Protocol}" Width="0.8*" />
+                                    <DataGridTextColumn Header="Local port" Binding="{Binding LocalPort}" Width="1*" />
+                                    <DataGridTextColumn Header="Remote port" Binding="{Binding RemotePort}" Width="1*" />
+                                    <DataGridTextColumn Header="Program" Binding="{Binding ApplicationPath}" Width="2.4*" />
+                                    <DataGridCheckBoxColumn Header="Enabled" Binding="{Binding Enabled}" Width="0.7*" />
+                                </DataGrid.Columns>
+                                <DataGrid.RowStyle>
+                                    <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding Action}" Value="Block">
+                                                <Setter Property="Opacity" Value="0.85" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </DataGrid.RowStyle>
+                            </DataGrid>
+                        </StackPanel>
+                    </Expander>
+
+                    <!-- #568: blocked-connection (pfirewall.log) log reader. -->
+                    <Expander Background="Transparent" BorderThickness="0" Foreground="{DynamicResource TextPrimaryBrush}" IsExpanded="False" Margin="0,0,0,4">
+                        <Expander.Header>
+                            <TextBlock Text="Blocked-connection log" Style="{StaticResource CardTitle}" Margin="0" FontSize="13" />
+                        </Expander.Header>
+                        <StackPanel Margin="0,8,0,0">
+                            <TextBlock Text="The only first-party record of what the firewall actually blocked, from %SystemRoot%\System32\LogFiles\Firewall\pfirewall.log - disabled by default."
+                                       Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,8" Opacity="0.7" />
+                            <Grid Margin="0,0,0,6">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Button Grid.Column="0" Padding="8,3" Margin="0,0,8,0" Command="{Binding RefreshFirewallLogCommand}">
+                                    <Button.Style>
+                                        <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                            <Setter Property="Content" Value="Load log" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsLoadingFirewallLog}" Value="True">
+                                                    <Setter Property="Content" Value="Loading..." />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Button.Style>
+                                </Button>
+                                <Button Grid.Column="1" Content="Enable dropped-packet logging" Padding="8,3" Command="{Binding EnableDroppedLoggingCommand}" />
+                            </Grid>
+                            <TextBlock Text="{Binding FirewallLogStatusText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,8" />
+                            <DataGrid ItemsSource="{Binding FirewallLogEntries}" AutoGenerateColumns="False" IsReadOnly="True" HeadersVisibility="Column"
+                                      CanUserSortColumns="True" MaxHeight="260">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Time" Binding="{Binding Time, StringFormat={}{0:g}}" Width="1.3*" />
+                                    <DataGridTextColumn Header="Direction" Binding="{Binding Direction}" Width="0.9*" />
+                                    <DataGridTextColumn Header="Protocol" Binding="{Binding Protocol}" Width="0.8*" />
+                                    <DataGridTextColumn Header="Source" Binding="{Binding SourceIp}" Width="1.1*" />
+                                    <DataGridTextColumn Header="Src port" Binding="{Binding SourcePort}" Width="0.7*" />
+                                    <DataGridTextColumn Header="Destination" Binding="{Binding DestIp}" Width="1.1*" />
+                                    <DataGridTextColumn Header="Dst port" Binding="{Binding DestPort}" Width="0.7*" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </StackPanel>
+                    </Expander>
+
+                    <!-- #569: WFP drop auditing with filter attribution. -->
+                    <Expander Background="Transparent" BorderThickness="0" Foreground="{DynamicResource TextPrimaryBrush}" IsExpanded="False" Margin="0,0,0,4">
+                        <Expander.Header>
+                            <TextBlock Text="WFP drop auditing (which rule blocked it)" Style="{StaticResource CardTitle}" Margin="0" FontSize="13" />
+                        </Expander.Header>
+                        <StackPanel Margin="0,8,0,0">
+                            <TextBlock Text="Answers &quot;which rule blocked it&quot;, which the plain blocked-connection log above can't - resolves each drop's Filter Run-Time ID to a rule name via `netsh wfp show filters`."
+                                       Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,8" Opacity="0.7" />
+                            <Button Content="Enable auditing" Padding="8,3" HorizontalAlignment="Left" Margin="0,0,0,6" Command="{Binding EnableWfpAuditingCommand}" />
+                            <TextBlock Text="{Binding WfpAuditStatusText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,10" />
+
+                            <Grid Margin="0,0,0,6">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Scan Security log for drops" Style="{StaticResource SpecLabel}" Margin="0" VerticalAlignment="Center" />
+                                <TextBlock Grid.Column="1" Text="Window (h)" VerticalAlignment="Center" Margin="0,0,6,0" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                <TextBox Grid.Column="2" Width="50" Margin="0,0,8,0" VerticalContentAlignment="Center"
+                                         Text="{Binding WfpScanWindowHours, UpdateSourceTrigger=LostFocus, StringFormat={}{0:0.#}}" />
+                                <Button Grid.Column="3" Padding="8,3" Command="{Binding ScanWfpDropsCommand}">
+                                    <Button.Style>
+                                        <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                            <Setter Property="Content" Value="Scan" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsScanningWfpDrops}" Value="True">
+                                                    <Setter Property="Content" Value="Scanning..." />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Button.Style>
+                                </Button>
+                            </Grid>
+                            <TextBlock Text="{Binding WfpScanStatusText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,8" />
+                            <DataGrid ItemsSource="{Binding WfpDropEvents}" AutoGenerateColumns="False" IsReadOnly="True" HeadersVisibility="Column"
+                                      CanUserSortColumns="True" MaxHeight="260">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Time" Binding="{Binding TimeUtc, StringFormat={}{0:g}}" Width="1.2*" />
+                                    <DataGridTextColumn Header="Event" Binding="{Binding EventLabel}" Width="1.1*" />
+                                    <DataGridTextColumn Header="Dir" Binding="{Binding Direction}" Width="0.6*" />
+                                    <DataGridTextColumn Header="Source" Binding="{Binding SourceAddress}" Width="1*" />
+                                    <DataGridTextColumn Header="Dest" Binding="{Binding DestAddress}" Width="1*" />
+                                    <DataGridTextColumn Header="Dst port" Binding="{Binding DestPort}" Width="0.7*" />
+                                    <DataGridTextColumn Header="Protocol" Binding="{Binding Protocol}" Width="0.7*" />
+                                    <DataGridTextColumn Header="App" Binding="{Binding ApplicationPath}" Width="1.6*" />
+                                    <DataGridTextColumn Header="Matched rule" Binding="{Binding MatchedRuleName, TargetNullValue='(unresolved)'}" Width="1.6*" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </StackPanel>
+                    </Expander>
+
+                    <!-- #571: read-only filter-driver/security-product stack inventory. -->
+                    <Expander Background="Transparent" BorderThickness="0" Foreground="{DynamicResource TextPrimaryBrush}" IsExpanded="False" Margin="0,0,0,4">
+                        <Expander.Header>
+                            <TextBlock Text="Filter-driver / security-product stack" Style="{StaticResource CardTitle}" Margin="0" FontSize="13" />
+                        </Expander.Header>
+                        <StackPanel Margin="0,8,0,0">
+                            <Grid Margin="0,0,0,6">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="What's actually stacked on top of the network stack - a common, hard-to-see cause of unexplained latency/drops. Informational only." Style="{StaticResource SubStat}" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,8,0" Opacity="0.7" />
+                                <Button Grid.Column="1" Padding="8,3" Command="{Binding RefreshStackInventoryCommand}">
+                                    <Button.Style>
+                                        <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                            <Setter Property="Content" Value="Load" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsLoadingStackInventory}" Value="True">
+                                                    <Setter Property="Content" Value="Loading..." />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Button.Style>
+                                </Button>
+                            </Grid>
+                            <TextBlock Text="{Binding StackInventoryStatusText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,10" />
+
+                            <TextBlock Text="Bound filter drivers (per adapter)" Style="{StaticResource SpecLabel}" Margin="0,0,0,4" />
+                            <DataGrid ItemsSource="{Binding BoundFilterDrivers}" AutoGenerateColumns="False" IsReadOnly="True" HeadersVisibility="Column" MaxHeight="180" Margin="0,0,0,10">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Adapter" Binding="{Binding AdapterName}" Width="1.2*" />
+                                    <DataGridTextColumn Header="Driver" Binding="{Binding DisplayName}" Width="1.6*" />
+                                    <DataGridTextColumn Header="Service" Binding="{Binding ServiceName}" Width="1*" />
+                                    <DataGridCheckBoxColumn Header="Non-MS" Binding="{Binding LooksNonMicrosoft}" Width="0.7*" />
+                                </DataGrid.Columns>
+                                <DataGrid.RowStyle>
+                                    <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding LooksNonMicrosoft}" Value="True">
+                                                <Setter Property="Background" Value="{DynamicResource WarningBrush}" />
+                                                <Setter Property="Opacity" Value="0.85" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </DataGrid.RowStyle>
+                            </DataGrid>
+
+                            <TextBlock Text="WFP providers" Style="{StaticResource SpecLabel}" Margin="0,0,0,4" />
+                            <ItemsControl ItemsSource="{Binding WfpProviders}" Margin="0,0,0,10">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock FontSize="11.5" Margin="0,0,0,2" TextWrapping="Wrap">
+                                            <Run Text="{Binding Name}" FontWeight="SemiBold" />
+                                            <Run Text=" — " /><Run Text="{Binding Description}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+
+                            <TextBlock Text="WFP callouts" Style="{StaticResource SpecLabel}" Margin="0,0,0,4" />
+                            <ItemsControl ItemsSource="{Binding WfpCallouts}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock FontSize="11.5" Margin="0,0,0,2" TextWrapping="Wrap">
+                                            <Run Text="{Binding Name}" FontWeight="SemiBold" />
+                                            <Run Text=" — " /><Run Text="{Binding Description}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </Expander>
+
+                    <!-- #570: "This app can't reach the network" guided wizard. -->
+                    <Expander Background="Transparent" BorderThickness="0" Foreground="{DynamicResource TextPrimaryBrush}" IsExpanded="False" Margin="0,4,0,0">
+                        <Expander.Header>
+                            <TextBlock Text="Wizard: &quot;This app can't reach the network&quot;" Style="{StaticResource CardTitle}" Margin="0" FontSize="13" />
+                        </Expander.Header>
+                        <StackPanel Margin="0,8,0,0">
+                            <TextBlock Text="Pick a process (name or full executable path) and get one panel combining its firewall rules, any WFP drops naming it, whether a proxy applies, whether a VPN holds the default route, and its current connections - signals this tab otherwise scatters across several cards."
+                                       Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,8" Opacity="0.7" />
+                            <Grid Margin="0,0,0,6">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBox Grid.Column="0" Margin="0,0,8,0" VerticalContentAlignment="Center"
+                                         Text="{Binding WizardQuery, UpdateSourceTrigger=PropertyChanged}" />
+                                <Button Grid.Column="1" Padding="10,4" Command="{Binding RunWizardCommand}">
+                                    <Button.Style>
+                                        <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                            <Setter Property="Content" Value="Diagnose" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsRunningWizard}" Value="True">
+                                                    <Setter Property="Content" Value="Diagnosing..." />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Button.Style>
+                                </Button>
+                            </Grid>
+                            <TextBlock Text="{Binding WizardStatusText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,10" />
+
+                            <StackPanel Visibility="{Binding WizardReport, Converter={StaticResource NullToVisibilityConverter}}">
+                                <TextBlock Text="Matching firewall rules" Style="{StaticResource SpecLabel}" Margin="0,0,0,4" />
+                                <ItemsControl ItemsSource="{Binding WizardReport.MatchingFirewallRules}" Margin="0,0,0,10">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <TextBlock FontSize="11.5" Margin="0,0,0,2" TextWrapping="Wrap">
+                                                <Run Text="{Binding Name}" FontWeight="SemiBold" />
+                                                <Run Text=" — " /><Run Text="{Binding Direction}" /><Run Text="/" /><Run Text="{Binding Action}" />
+                                                <Run Text=", " /><Run Text="{Binding Protocol}" />
+                                            </TextBlock>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <TextBlock Text="No matching firewall rules found." Opacity="0.7" Margin="0,0,0,10">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding WizardReport.MatchingFirewallRules.Count}" Value="0">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+
+                                <TextBlock Text="Matching WFP drops (last 24h)" Style="{StaticResource SpecLabel}" Margin="0,0,0,4" />
+                                <ItemsControl ItemsSource="{Binding WizardReport.MatchingWfpDrops}" Margin="0,0,0,4">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <TextBlock FontSize="11.5" Margin="0,0,0,2" TextWrapping="Wrap" Foreground="{DynamicResource WarningBrush}">
+                                                <Run Text="{Binding TimeUtc, StringFormat={}{0:g}}" />
+                                                <Run Text=" — " /><Run Text="{Binding DestAddress}" /><Run Text=":" /><Run Text="{Binding DestPort}" />
+                                                <Run Text=" (" /><Run Text="{Binding MatchedRuleName, TargetNullValue='unresolved rule'}" /><Run Text=")" />
+                                            </TextBlock>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <TextBlock Text="No matching WFP drops in the last 24h (or auditing isn't enabled yet - see the WFP drop auditing section above)." Opacity="0.7" TextWrapping="Wrap" Margin="0,0,0,10">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding WizardReport.MatchingWfpDrops.Count}" Value="0">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+
+                                <TextBlock Text="Proxy" Style="{StaticResource SpecLabel}" Margin="0,0,0,4" />
+                                <TextBlock Text="{Binding WizardReport.ProxyApplicability}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,10" />
+
+                                <TextBlock Text="VPN / routing" Style="{StaticResource SpecLabel}" Margin="0,0,0,4" />
+                                <TextBlock Text="{Binding WizardReport.VpnRouteSummary}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,10" />
+
+                                <TextBlock Text="Current connections" Style="{StaticResource SpecLabel}" Margin="0,0,0,4" />
+                                <ItemsControl ItemsSource="{Binding WizardReport.MatchingConnections}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <TextBlock FontSize="11.5" Margin="0,0,0,2" TextWrapping="Wrap">
+                                                <Run Text="{Binding ProcessName}" FontWeight="SemiBold" />
+                                                <Run Text=" — " /><Run Text="{Binding RemoteAddress}" /><Run Text=":" /><Run Text="{Binding RemotePort}" />
+                                                <Run Text=" (" /><Run Text="{Binding State}" /><Run Text=")" />
+                                            </TextBlock>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <TextBlock Text="No current connections for this process.">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                            <Setter Property="Opacity" Value="0.7" />
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding WizardReport.MatchingConnections.Count}" Value="0">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </StackPanel>
+                        </StackPanel>
+                    </Expander>
+                </StackPanel>
+            </Border>
+
+            <!-- suggestions.md #575/#576: Stack - Winsock LSP catalog inspection with a
+                 non-Microsoft-provider flag and a `netsh winsock reset` action (#575), plus the
+                 network stack reset toolkit grouping five classic "reset everything" commands, each
+                 individually confirmed and logged (#576). -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Stack" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Winsock, and the classic &quot;just reset everything&quot; toolkit for when nothing above pinpoints the problem."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,14" TextWrapping="Wrap" />
+
+                    <!-- #575: Winsock LSP catalog. -->
+                    <Grid Margin="0,0,0,6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Winsock LSP catalog" Style="{StaticResource SpecLabel}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Padding="8,3" Command="{Binding RefreshWinsockCatalogCommand}">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                    <Setter Property="Content" Value="Refresh" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsLoadingWinsockCatalog}" Value="True">
+                                            <Setter Property="Content" Value="Loading..." />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                    </Grid>
+                    <TextBlock Text="Non-Microsoft layered service providers left behind by an uninstalled proxy/&quot;internet accelerator&quot; are the classic Winsock-corruption signature - flagged below by provider DLL location, not a verdict."
+                               Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,6" Opacity="0.7" />
+                    <TextBlock Text="{Binding WinsockStatusText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,8" />
+                    <DataGrid ItemsSource="{Binding WinsockProviders}" AutoGenerateColumns="False" IsReadOnly="True" HeadersVisibility="Column"
+                              CanUserSortColumns="True" MaxHeight="240" Margin="0,0,0,10">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Type" Binding="{Binding EntryType}" Width="1.3*" />
+                            <DataGridTextColumn Header="Description" Binding="{Binding Description}" Width="1.8*" />
+                            <DataGridTextColumn Header="Provider path" Binding="{Binding ProviderPath}" Width="2.4*" />
+                            <DataGridCheckBoxColumn Header="Non-MS" Binding="{Binding LooksNonMicrosoft}" Width="0.7*" />
+                        </DataGrid.Columns>
+                        <DataGrid.RowStyle>
+                            <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding LooksNonMicrosoft}" Value="True">
+                                        <Setter Property="Background" Value="{DynamicResource WarningBrush}" />
+                                        <Setter Property="Opacity" Value="0.85" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </DataGrid.RowStyle>
+                    </DataGrid>
+                    <Grid Margin="0,0,0,16">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Removes every registered LSP and restores Windows' defaults. A restart is required for this to fully take effect." Style="{StaticResource SubStat}" TextWrapping="Wrap" Opacity="0.7" VerticalAlignment="Center" Margin="0,0,8,0" />
+                        <Button Grid.Column="1" Padding="10,4" Command="{Binding ResetWinsockCommand}">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                    <Setter Property="Content" Value="Reset Winsock catalog" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsResettingWinsock}" Value="True">
+                                            <Setter Property="Content" Value="Resetting..." />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                    </Grid>
+                    <TextBlock Text="{Binding WinsockResetStatusText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,-10,0,14" />
+
+                    <!-- #576: reset toolkit - one row per action, each individually confirmed. -->
+                    <TextBlock Text="Network stack reset toolkit" Style="{StaticResource SpecLabel}" Margin="0,0,0,4" />
+                    <TextBlock Text="Each action below is confirmed individually and appended to a small log (Logs\network-stack-actions.log next to this app's other logs) so you have a record of what was run and when."
+                               Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,10" Opacity="0.7" />
+
+                    <UniformGrid Columns="2" Margin="0,0,0,4">
+                        <Button Content="Reset TCP/IP stack" Margin="0,0,8,8" Padding="8,5" Command="{Binding ResetIpStackCommand}" />
+                        <Button Content="Flush DNS resolver cache" Margin="0,0,0,8" Padding="8,5" Command="{Binding FlushDnsResolverCacheCommand}" />
+                        <Button Content="Clear ARP cache" Margin="0,0,8,0" Padding="8,5" Command="{Binding ClearArpCacheCommand}" />
+                        <Button Content="Reset NetBIOS name cache" Padding="8,5" Command="{Binding ResetNetBiosCacheCommand}" />
+                    </UniformGrid>
+                    <TextBlock Text="{Binding StackResetStatusText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,10,0,0" />
                 </StackPanel>
             </Border>
 

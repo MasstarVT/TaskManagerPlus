@@ -29,8 +29,10 @@ public sealed record AdapterLinkInfo(
     string? ConfiguredSpeedDuplex, bool ConfiguredLooksForcedOrHalfDuplex);
 
 /// <summary>Read-only WinHTTP/IE proxy configuration (round 9, #47) - display only, this app never
-/// writes to these keys.</summary>
-public sealed record ProxyConfigInfo(bool Enabled, string ProxyServer, string AutoConfigUrl);
+/// writes to these keys. <see cref="ProxyOverride"/> (#574) is the raw semicolon-separated bypass
+/// list string, added alongside the original three fields rather than as a separate registry read -
+/// same key, same call, no extra I/O.</summary>
+public sealed record ProxyConfigInfo(bool Enabled, string ProxyServer, string AutoConfigUrl, string ProxyOverride);
 
 /// <summary>One network adapter's driver version/date (round 9, #48). <see cref="Manufacturer"/> and
 /// <see cref="InfName"/> (#556) are the join keys AdapterDriverStoreService.MatchToAdapter uses to
@@ -147,11 +149,12 @@ public sealed class NetworkDiagnosticsService
             bool enabled = key?.GetValue("ProxyEnable") is int e && e != 0;
             string server = (key?.GetValue("ProxyServer") as string ?? string.Empty).Trim();
             string autoConfigUrl = (key?.GetValue("AutoConfigURL") as string ?? string.Empty).Trim();
-            return new ProxyConfigInfo(enabled, server, autoConfigUrl);
+            string proxyOverride = (key?.GetValue("ProxyOverride") as string ?? string.Empty).Trim();
+            return new ProxyConfigInfo(enabled, server, autoConfigUrl, proxyOverride);
         }
         catch
         {
-            return new ProxyConfigInfo(false, string.Empty, string.Empty);
+            return new ProxyConfigInfo(false, string.Empty, string.Empty, string.Empty);
         }
     }
 
