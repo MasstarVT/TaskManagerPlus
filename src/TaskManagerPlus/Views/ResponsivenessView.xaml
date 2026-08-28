@@ -511,6 +511,213 @@
                 </StackPanel>
             </Border>
 
+            <!-- #235/#236/#242/#243/#244: live hung-window detector - per-window (not per-process),
+                 with a graded message-pump round-trip time (#236). Right-click a row to write a
+                 full dump (#242); select a row to expand its wait-reason hint (#243) and
+                 cross-process chain guess (#244), both explicitly quick flags, not verdicts. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Hung windows" FontWeight="SemiBold" Margin="0,0,0,6" />
+                    <TextBlock Text="Every top-level window, probed the same way Explorer/Task Manager detect &quot;(Not Responding)&quot; - per window, so a multi-window app with one stuck dialog isn't hidden behind its other, responsive windows."
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8" />
+                    <DataGrid ItemsSource="{Binding HungWindowRows}" SelectedItem="{Binding SelectedHungWindow}"
+                              MaxHeight="260" IsReadOnly="True" AutoGenerateColumns="False"
+                              RowDetailsVisibilityMode="VisibleWhenSelected">
+                        <DataGrid.ContextMenu>
+                            <ContextMenu>
+                                <MenuItem Header="Create dump (.dmp)..." Command="{Binding CreateDumpCommand}" />
+                            </ContextMenu>
+                        </DataGrid.ContextMenu>
+                        <DataGrid.RowStyle>
+                            <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsHung}" Value="True">
+                                        <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </DataGrid.RowStyle>
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Process" Binding="{Binding ProcessName}" Width="1.2*" />
+                            <DataGridTextColumn Header="Window title" Binding="{Binding WindowTitle}" Width="2.4*" />
+                            <DataGridTextColumn Header="Hung?" Binding="{Binding IsHung}" Width="60" />
+                            <DataGridTextColumn Header="Response (ms)" Binding="{Binding ResponseMsText}" Width="100" />
+                            <DataGridTextColumn Header="Hung for" Binding="{Binding HungForText}" Width="80" />
+                        </DataGrid.Columns>
+                        <!-- #243/#244: inline expander under the selected row - wait-reason hint and
+                             cross-process chain guess, only populated for a currently-hung window. -->
+                        <DataGrid.RowDetailsTemplate>
+                            <DataTemplate>
+                                <StackPanel Margin="24,2,4,6">
+                                    <TextBlock Text="{Binding WaitHintText}" FontSize="11.5" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding WaitHintText, Converter={StaticResource StringNotEmptyConverter}}" Value="True">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                    <TextBlock Text="{Binding ChainText}" FontSize="11.5" TextWrapping="Wrap" Foreground="{DynamicResource WarningBrush}" Margin="0,2,0,0">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding ChainText, Converter={StaticResource StringNotEmptyConverter}}" Value="True">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                    <TextBlock Text="Not currently hung, or no detail resolved yet." FontSize="11" FontStyle="Italic" Foreground="{DynamicResource TextSecondaryBrush}">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <MultiDataTrigger>
+                                                        <MultiDataTrigger.Conditions>
+                                                            <Condition Binding="{Binding WaitHintText, Converter={StaticResource StringNotEmptyConverter}}" Value="False" />
+                                                            <Condition Binding="{Binding ChainText, Converter={StaticResource StringNotEmptyConverter}}" Value="False" />
+                                                        </MultiDataTrigger.Conditions>
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </MultiDataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </StackPanel>
+                            </DataTemplate>
+                        </DataGrid.RowDetailsTemplate>
+                    </DataGrid>
+                    <TextBlock Text="{Binding DumpStatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5" Margin="0,6,0,0" TextWrapping="Wrap">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding DumpStatusText, Converter={StaticResource StringNotEmptyConverter}}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- #238: foreground-window stall recorder - per-app ranked stall table, "what was I
+                 using when it froze". -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Foreground stalls by app" FontWeight="SemiBold" Margin="0,0,0,6" />
+                    <WrapPanel Margin="0,0,0,8">
+                        <TextBlock Text="Stall threshold (ms):" VerticalAlignment="Center" Margin="0,0,6,0" FontSize="12" />
+                        <TextBox Text="{Binding ForegroundStallThresholdMs, StringFormat={}{0:0}}" Width="70" VerticalAlignment="Center" />
+                    </WrapPanel>
+                    <TextBlock Text="Only counts a stall while its app was the one in focus - a correlation, not proof that app caused it (quick flag, not a verdict)."
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" FontStyle="Italic" TextWrapping="Wrap" Margin="0,0,0,8" />
+                    <DataGrid ItemsSource="{Binding ForegroundStalls}" MaxHeight="200" IsReadOnly="True">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="App" Binding="{Binding ProcessName}" Width="1.4*" />
+                            <DataGridTextColumn Header="Stalls" Binding="{Binding StallCount}" Width="70" />
+                            <DataGridTextColumn Header="Max (ms)" Binding="{Binding MaxStallMs, StringFormat={}{0:0}}" Width="90" />
+                            <DataGridTextColumn Header="Avg (ms)" Binding="{Binding AvgStallMs, StringFormat={}{0:0}}" Width="90" />
+                            <DataGridTextColumn Header="Last stall" Binding="{Binding LastStall, StringFormat={}{0:T}}" Width="100" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- #237: rolling hang log with durations, persisted to hang-log.json so it survives a
+                 restart - lower section of the tab per the task's own framing. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Hang log" FontWeight="SemiBold" Margin="0,0,0,6" />
+                    <UniformGrid Columns="2" Margin="0,0,0,10">
+                        <views:VfdMeter Title="Hangs today" Glow="False" Margin="0,0,8,0"
+                                        ValueText="{Binding HangsToday}" AccentBrush="{DynamicResource WarningBrush}" />
+                        <views:VfdMeter Title="Longest hang" Glow="False" Margin="8,0,0,0"
+                                        ValueText="{Binding LongestHangText}" AccentBrush="{DynamicResource TextSecondaryBrush}" />
+                    </UniformGrid>
+                    <DataGrid ItemsSource="{Binding HangLog}" MaxHeight="220" IsReadOnly="True">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="App" Binding="{Binding AppName}" Width="1.2*" />
+                            <DataGridTextColumn Header="Window title" Binding="{Binding WindowTitle}" Width="2*" />
+                            <DataGridTextColumn Header="Started" Binding="{Binding StartTime, StringFormat={}{0:g}}" Width="140" />
+                            <DataGridTextColumn Header="Duration (s)" Binding="{Binding DurationSeconds, StringFormat={}{0:0.#}}" Width="90" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <TextBlock Text="No hangs recorded yet this session (or ever, on this machine).">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding HangLog.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- #245: desktop heap size (SharedSection) + session-wide USER/GDI handle totals vs.
+                 the documented 10,000/65,536 session limits - desktop-heap exhaustion presents as
+                 "windows stop drawing / nothing opens" rather than high CPU. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding DesktopHeap.IsNearLimit}" Value="True">
+                                <Setter Property="BorderBrush" Value="{DynamicResource DangerBrush}" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Desktop heap &amp; USER/GDI handles" FontWeight="SemiBold" Margin="0,0,0,6" />
+                    <TextBlock Text="{Binding DesktopHeap.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,10" />
+
+                    <TextBlock FontSize="12" Margin="0,0,0,2">
+                        <Run Text="USER handles: " /><Run Text="{Binding DesktopHeap.TotalUserHandles, StringFormat={}{0:N0}, Mode=OneWay}" /><Run Text=" / 10,000" />
+                    </TextBlock>
+                    <Border Height="8" CornerRadius="4" Background="{DynamicResource BgSubtleBrush}" Margin="0,0,0,8">
+                        <Border HorizontalAlignment="Left" Height="8" CornerRadius="4" Background="{DynamicResource AccentBrush}"
+                                Width="{Binding DesktopHeap.UserHandlePercent, Converter={StaticResource PercentToWidthConverter}, ConverterParameter=300}" />
+                    </Border>
+
+                    <TextBlock FontSize="12" Margin="0,0,0,2">
+                        <Run Text="GDI handles: " /><Run Text="{Binding DesktopHeap.TotalGdiHandles, StringFormat={}{0:N0}, Mode=OneWay}" /><Run Text=" / 65,536" />
+                    </TextBlock>
+                    <Border Height="8" CornerRadius="4" Background="{DynamicResource BgSubtleBrush}">
+                        <Border HorizontalAlignment="Left" Height="8" CornerRadius="4" Background="{DynamicResource AccentBrush}"
+                                Width="{Binding DesktopHeap.GdiHandlePercent, Converter={StaticResource PercentToWidthConverter}, ConverterParameter=300}" />
+                    </Border>
+                    <TextBlock Text="Quick flag, not a verdict: Windows exposes no live desktop-heap-usage counter, only the configured size - a near-limit handle total is worth investigating, not a confirmed exhaustion."
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" FontStyle="Italic" TextWrapping="Wrap" Margin="0,8,0,0" />
+                </StackPanel>
+            </Border>
+
+            <!-- #246: shell responsiveness monitor - taskbar/desktop/Explorer-frame message-pump
+                 round-trip times, plus a plain-text pointer to the existing shell-extension count
+                 (#20), a common cause of shell lag this probe doesn't otherwise measure. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Shell responsiveness" FontWeight="SemiBold" Margin="0,0,0,6" />
+                    <TextBlock Text="{Binding ShellExtensionNoteText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8" />
+                    <DataGrid ItemsSource="{Binding ShellResponsivenessRows}" MaxHeight="180" IsReadOnly="True">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Window" Binding="{Binding WindowName}" Width="2.4*" />
+                            <DataGridTextColumn Header="Response" Binding="{Binding ResponseMsText}" Width="100" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
             <!-- #210: offline wpr.exe capture, for a user who'd rather not run a live session. -->
             <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
                 <StackPanel>

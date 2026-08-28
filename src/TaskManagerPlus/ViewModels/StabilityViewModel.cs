@@ -27,6 +27,15 @@ public sealed class StabilityViewModel : ObservableObject
     // FaultingModuleSummary's remarks. Pure derived aggregation over RecentEvents, no new query.
     public ObservableCollection<FaultingModuleSummary> CrashesByModule { get; } = new();
 
+    // #239: Windows Error Reporting AppHang reports (Report.wer under ReportArchive/ReportQueue) -
+    // see AppHangReportService. Same on-demand refresh as everything else on this tab.
+    public ObservableCollection<AppHangReportEntry> AppHangs { get; } = new();
+
+    // #240: "top hanging apps in the last 30 days" from the Application-log "Application Hang"
+    // (event 1002) source - see EventLogService.ReadApplicationHangEvents. Complements #239's
+    // richer per-report detail, which Windows prunes sooner than the event log itself.
+    public ObservableCollection<AppHangEventSummary> HangEventHistory { get; } = new();
+
     private bool _isLoading;
     public bool IsLoading { get => _isLoading; private set => SetProperty(ref _isLoading, value); }
 
@@ -133,8 +142,22 @@ public sealed class StabilityViewModel : ObservableObject
         IsLoading = true;
         try
         {
-            var snapshot = await Task.Run(() => _service.Query());
-            Apply(snapshot);
+            var snapshotTask = Task.Run(() => _service.Query());
+            // #239/#240: same on-demand refresh, run alongside the main event-log query rather than
+            // after it - a WER folder walk and a second targeted event-log query are each
+            // independent I/O, no reason to serialize them.
+            var appHangsTask = Task.Run(AppHangReportService.Read);
+            var hangEventsTask = Task.Run(() => _service.ReadApplicationHangEvents(TimeSpan.FromDays(30)));
+            await Task.WhenAll(snapshotTask, appHangsTask, hangEventsTask);
+
+            Apply(snapshotTask.Result);
+
+            AppHangs.Clear();
+            foreach (var h in appHangsTask.Result) AppHangs.Add(h);
+
+            HangEventHistory.Clear();
+            foreach (var h in hangEventsTask.Result) HangEventHistory.Add(h);
+
             RefreshErrorText = null;
         }
         catch (Exception ex)

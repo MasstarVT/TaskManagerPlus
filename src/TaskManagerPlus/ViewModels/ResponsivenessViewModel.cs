@@ -1,7 +1,9 @@
 using System.Collections.ObjectModel;
+using System.IO;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Threading;
+using Microsoft.Win32;
 using LiveChartsCore;
 using LiveChartsCore.Defaults;
 using LiveChartsCore.SkiaSharpView;
@@ -41,6 +43,19 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
     private readonly PerCoreDpcService _perCore = new();
     private readonly EventLogService _eventLog = new();
     private readonly DispatcherTimer _lightTimer;
+
+    // #235/#236/#237/#238/#243/#244: hung-window detection/probing/foreground-stall recording -
+    // see HungWindowService's remarks. _processes backs #245's session-wide USER/GDI handle sum
+    // (ProcessRow.GdiHandleCount/UserHandleCount, already polled by ProcessesViewModel - no new
+    // per-process syscall needed here).
+    private readonly HungWindowService _hungWindows = new();
+    private readonly ProcessesViewModel _processes;
+
+    // #236/#238/#246: the slower, background-only probe cadence - SendMessageTimeout is genuinely
+    // blocking-ish (up to 250ms per window), so this rides its own timer/Task.Run loop rather than
+    // the cheap _lightTimer above. Every 4s per CLAUDE's "every few seconds" guidance for this item.
+    private readonly DispatcherTimer _probeTimer;
+    private bool _isProbing;
     private Dictionary<string, DriverIdentityInfo> _driverIdentities = new(StringComparer.OrdinalIgnoreCase);
 
     // #216: bare driver filename -> best-effort device friendly name(s), loaded once alongside
@@ -262,8 +277,56 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
     public AsyncRelayCommand RunSleepStudyCommand { get; }
     public RelayCommand OpenSleepStudyReportCommand { get; }
 
-    public ResponsivenessViewModel()
+    // #235/#236: the always-on hung-window grid - rides _lightTimer for enumeration/IsHungAppWindow
+    // (#235, cheap), merged each tick with whatever ResponseMs the slower _probeTimer last measured
+    // (#236). #243's WaitHintText and #244's ChainText ride along on the same rows for currently-
+    // hung windows only - see HungWindowService's remarks for the cost tiering behind that split.
+    public ObservableCollection<HungWindowRow> HungWindowRows { get; } = new();
+
+    private HungWindowRow? _selectedHungWindow;
+    public HungWindowRow? SelectedHungWindow { get => _selectedHungWindow; set => SetProperty(ref _selectedHungWindow, value); }
+
+    // #242: one-click dump for whatever hung window is selected in the grid above.
+    public AsyncRelayCommand CreateDumpCommand { get; }
+
+    private string _dumpStatusText = string.Empty;
+    public string DumpStatusText { get => _dumpStatusText; private set => SetProperty(ref _dumpStatusText, value); }
+
+    // #237: rolling hang log, persisted to hang-log.json (HangLogService) so it survives a restart -
+    // loaded once at start-up, appended to whenever SampleWindows reports a window that just
+    // recovered. HangsToday/LongestHangText are derived from this list, not stored separately.
+    public ObservableCollection<HangLogEntry> HangLog { get; } = new();
+    public int HangsToday => HangLog.Count(e => e.StartTime.Date == DateTime.Now.Date);
+    public double LongestHangSeconds => HangLog.Count == 0 ? 0 : HangLog.Max(e => e.DurationSeconds);
+    public string LongestHangText => LongestHangSeconds > 0 ? $"{LongestHangSeconds:0.#}s" : "None recorded yet";
+
+    // #238: per-app ranked foreground-stall history - see HungWindowService.GetRankedStalls.
+    public ObservableCollection<ForegroundStallRow> ForegroundStalls { get; } = new();
+
+    /// <summary>#238: stall threshold in ms, default 500 per the task spec - bindable so a user on
+    /// a slower machine can raise it past their normal baseline response time.</summary>
+    public double ForegroundStallThresholdMs
     {
+        get => _hungWindows.StallThresholdMs;
+        set { _hungWindows.StallThresholdMs = Math.Max(50, value); OnPropertyChanged(); }
+    }
+
+    // #245: desktop heap size (SharedSection) + session-wide USER/GDI handle totals summed from the
+    // process list ProcessesViewModel already polls - see DesktopHeapService/DesktopHeapInfo.
+    private DesktopHeapInfo _desktopHeap = new() { StatusText = "Loading..." };
+    public DesktopHeapInfo DesktopHeap { get => _desktopHeap; private set => SetProperty(ref _desktopHeap, value); }
+    private (int? Interactive, int? Noninteractive, string Status) _desktopHeapSizes;
+
+    // #246: shell (taskbar/desktop/Explorer-frame) responsiveness probe - rides the same _probeTimer
+    // cadence as #236/#238 above.
+    public ObservableCollection<ShellResponsivenessRow> ShellResponsivenessRows { get; } = new();
+
+    private string _shellExtensionNoteText = string.Empty;
+    public string ShellExtensionNoteText { get => _shellExtensionNoteText; private set => SetProperty(ref _shellExtensionNoteText, value); }
+
+    public ResponsivenessViewModel(ProcessesViewModel processes)
+    {
+        _processes = processes;
         HiddenXAxes = new[]
         {
             new Axis { IsVisible = false, MinLimit = 0, MaxLimit = HistoryLength - 1, ShowSeparatorLines = false },
@@ -327,16 +390,41 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
         RunSleepStudyCommand = new AsyncRelayCommand(RunSleepStudyAsync, () => !IsRunningSleepStudy && ModernStandbySupported);
         OpenSleepStudyReportCommand = new RelayCommand(() => { if (_sleepStudyReportPath is not null) WprCaptureService.OpenInDefaultApp(_sleepStudyReportPath); }, () => _sleepStudyReportPath is not null);
 
+        CreateDumpCommand = new AsyncRelayCommand(CreateDumpAsync, () => SelectedHungWindow is not null);
+
+        // #237: load the persisted hang log before the first sample so HangsToday/LongestHang read
+        // correctly even before this session has produced a single new hang.
+        foreach (var e in HangLogService.Load()) HangLog.Add(e);
+
         _lightTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(2) };
         _lightTimer.Tick += (_, _) => SampleLight();
         _lightTimer.Start();
         SampleLight();
+
+        // #236/#238/#246: the slower probe cadence - SendMessageTimeout is blocking-ish, so this
+        // always runs inside Task.Run (see RunProbeCycleAsync), never directly on this tick.
+        _probeTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(4) };
+        _probeTimer.Tick += async (_, _) => await RunProbeCycleAsync();
+        _probeTimer.Start();
+
+        // #238: the foreground hook - kept alive via HungWindowService's own field, see its remarks.
+        _hungWindows.StartForegroundHook();
 
         Watchdog = DpcWatchdogService.Read();
         _ = LoadDriverIdentitiesAsync();
         _ = LoadDeviceTopologyAsync();
         _ = LoadPowerRequestsAsync(); // #230: fast shell-out, load at start-up like the device-topology block.
         _ = CheckModernStandbySupportAsync(); // #231: gates RunSleepStudyCommand/the card's own visibility.
+
+        // #245: SharedSection barely ever changes (it needs a reboot to take effect), so it's read
+        // once here rather than every light tick - only the handle-count sum below is recomputed
+        // per tick.
+        var (interactiveKb, noninteractiveKb, heapStatus) = DesktopHeapService.ReadHeapSizes();
+        _desktopHeapSizes = (interactiveKb, noninteractiveKb, heapStatus);
+
+        // #246: the shell-extension count is a registry-tree walk, not a per-tick cost - loaded
+        // once at start-up like the driver-identity/device-topology blocks above.
+        _ = LoadShellExtensionNoteAsync();
     }
 
     /// <summary>#211/#216: driver metadata join plus the best-effort driver-file -> device-name
@@ -394,6 +482,9 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
             foreach (var r in platformSettingsTask.Result) PlatformLatencySettings.Add(r);
             foreach (var r in bootConfigTask.Result) PlatformLatencySettings.Add(r);
             foreach (var r in latencySettingsTask.Result) PlatformLatencySettings.Add(r);
+            // #241: hang-timeout registry audit - plain registry reads (no shell-out), fast enough
+            // to just call inline here rather than adding a fourth Task.WhenAll entry.
+            foreach (var r in HangTimeoutRegistryService.ReadAudit()) PlatformLatencySettings.Add(r);
 
             DeviceTopologyStatusText = $"Loaded — {IrqShareRows.Count} IRQ lines, {DeviceInterruptRows.Count} devices with interrupt policy, {ProblemDeviceRows.Count} problem device(s).";
         }
@@ -638,6 +729,47 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
                 ? "No core is showing a suspiciously high interrupt rate relative to the others."
                 : $"Core {string.Join(", ", storming.Select(s => s.CoreIndex))} showing a sustained interrupt rate far above the rest — possible interrupt storm (quick flag, not a verdict).";
         }
+
+        // #235/#236/#237/#243/#244: hung-window enumeration - IsHungAppWindow doesn't block, so
+        // this runs directly on this tick, same as everything else in SampleLight. Merged in place
+        // (like ProcessesViewModel.MergeInto) rather than cleared and rebuilt, so #242's grid
+        // selection survives from one tick to the next.
+        var (hungRows, recovered) = _hungWindows.SampleWindows();
+        MergeHungWindows(hungRows);
+
+        if (recovered.Count > 0)
+        {
+            foreach (var e in recovered) HangLog.Add(e);
+            while (HangLog.Count > 200) HangLog.RemoveAt(0);
+            HangLogService.Save(HangLog.ToList());
+            OnPropertyChanged(nameof(HangsToday));
+            OnPropertyChanged(nameof(LongestHangSeconds));
+            OnPropertyChanged(nameof(LongestHangText));
+        }
+
+        // #238: per-app ranked stall history, refreshed from whatever the probe loop has
+        // accumulated so far - cheap (just reading an already-built dictionary under a lock).
+        var stalls = _hungWindows.GetRankedStalls();
+        ForegroundStalls.Clear();
+        foreach (var s in stalls) ForegroundStalls.Add(s);
+
+        // #245: session-wide USER/GDI handle totals, summed from the process list
+        // ProcessesViewModel already polls (ProcessRow.GdiHandleCount/UserHandleCount) - no new
+        // per-process syscall needed here, just a cheap in-memory sum every light tick.
+        int totalUser = 0, totalGdi = 0;
+        foreach (var p in _processes.Processes)
+        {
+            totalUser += p.UserHandleCount;
+            totalGdi += p.GdiHandleCount;
+        }
+        DesktopHeap = new DesktopHeapInfo
+        {
+            InteractiveHeapKb = _desktopHeapSizes.Interactive,
+            NoninteractiveHeapKb = _desktopHeapSizes.Noninteractive,
+            StatusText = _desktopHeapSizes.Status,
+            TotalUserHandles = totalUser,
+            TotalGdiHandles = totalGdi,
+        };
     }
 
     /// <summary>#213: Start button - resets the session, arms IsMeasuring, and kicks off a
@@ -743,6 +875,102 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
         }
     }
 
+    /// <summary>#235/#236/#237/#243/#244: merges the latest hung-window scan into HungWindowRows
+    /// in place, keyed by Hwnd - the same "update existing/remove stale/add new" pattern
+    /// ProcessesViewModel.MergeInto uses, so #242's grid selection (and the DataGrid's scroll
+    /// position) survives from one ~2s tick to the next.</summary>
+    private void MergeHungWindows(List<HungWindowRow> latest)
+    {
+        var latestByHwnd = latest.ToDictionary(r => r.Hwnd);
+
+        for (int i = HungWindowRows.Count - 1; i >= 0; i--)
+        {
+            var existing = HungWindowRows[i];
+            if (latestByHwnd.TryGetValue(existing.Hwnd, out var fresh))
+            {
+                existing.IsHung = fresh.IsHung;
+                existing.ResponseMs = fresh.ResponseMs;
+                existing.HungFor = fresh.HungFor;
+                existing.WaitHintText = fresh.WaitHintText;
+                existing.ChainText = fresh.ChainText;
+                // Pid/ThreadId/ProcessName/WindowTitle/Hwnd don't change for the lifetime of a
+                // window - no need to reassign them every tick.
+                latestByHwnd.Remove(existing.Hwnd);
+            }
+            else
+            {
+                HungWindowRows.RemoveAt(i);
+            }
+        }
+
+        foreach (var fresh in latestByHwnd.Values) HungWindowRows.Add(fresh);
+    }
+
+    /// <summary>#236/#238/#246: the background-only probe cycle - #236's hung-window round-trip
+    /// probe and #246's shell-specific probe both ride this same cadence/re-entrancy guard, since
+    /// both are the same "genuinely blocking-ish SendMessageTimeout call" shape.</summary>
+    private async Task RunProbeCycleAsync()
+    {
+        if (_isProbing) return;
+        _isProbing = true;
+        try
+        {
+            var shellTask = Task.Run(ShellResponsivenessService.Probe);
+            await _hungWindows.RunProbeCycleAsync(CancellationToken.None);
+            var shellRows = await shellTask;
+
+            ShellResponsivenessRows.Clear();
+            foreach (var r in shellRows) ShellResponsivenessRows.Add(r);
+        }
+        catch
+        {
+            // Best-effort - a failed probe cycle just leaves ResponseMs/ShellResponsivenessRows at
+            // their last known values until the next tick.
+        }
+        finally
+        {
+            _isProbing = false;
+        }
+    }
+
+    /// <summary>#242: writes a full user-mode dump of SelectedHungWindow's owning process via
+    /// ProcessDumpService (rundll32/comsvcs.dll's MiniDump export), to a location the user picks.</summary>
+    private async Task CreateDumpAsync()
+    {
+        if (SelectedHungWindow is not { } row) return;
+
+        var snapshotsDir = AppPaths.GetPath("Snapshots");
+        try { Directory.CreateDirectory(snapshotsDir); } catch { /* SaveFileDialog still works without a pre-created folder */ }
+
+        var dialog = new SaveFileDialog
+        {
+            Title = $"Save process dump for {row.ProcessName} (pid {row.Pid})",
+            Filter = "Dump files (*.dmp)|*.dmp|All files (*.*)|*.*",
+            DefaultExt = ".dmp",
+            FileName = $"{row.ProcessName}-{row.Pid}-{DateTime.Now:yyyy-MM-dd_HH-mm-ss}.dmp",
+            InitialDirectory = snapshotsDir,
+        };
+        if (dialog.ShowDialog() != true) return;
+
+        DumpStatusText = "Writing dump...";
+        var (_, message) = await ProcessDumpService.CreateDumpAsync(row.Pid, dialog.FileName);
+        DumpStatusText = message;
+    }
+
+    /// <summary>#246: a registry-tree walk (ShellExtensionService.List), not a per-tick cost -
+    /// loaded once at start-up, same tier as the driver-identity/device-topology blocks.</summary>
+    private async Task LoadShellExtensionNoteAsync()
+    {
+        try
+        {
+            ShellExtensionNoteText = await Task.Run(ShellResponsivenessService.ShellExtensionNote);
+        }
+        catch (Exception ex)
+        {
+            ShellExtensionNoteText = $"Couldn't list shell extensions: {ex.Message}";
+        }
+    }
+
     private void RebuildDriverRows()
     {
         DriverDpcRows.Clear();
@@ -799,7 +1027,9 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
     public void Dispose()
     {
         _lightTimer.Stop();
+        _probeTimer.Stop();
         _measureCts?.Cancel();
         _perCore.Dispose();
+        _hungWindows.Dispose();
     }
 }

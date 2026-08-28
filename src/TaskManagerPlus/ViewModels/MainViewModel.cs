@@ -40,7 +40,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     // lightweight always-on timer (per-core DPC/interrupt + DPC watchdog headroom) plus its own
     // Start/Stop-gated measurement session (kernel-trace sampling) - see ResponsivenessViewModel's
     // remarks for why this doesn't fit PerformanceViewModel's shared-sampler model either.
-    public ResponsivenessViewModel Responsiveness { get; } = new();
+    // #245 (items 235-246): takes Processes so it can sum ProcessRow.GdiHandleCount/UserHandleCount
+    // for the desktop-heap card without a second per-process syscall pass - built in the
+    // constructor body (below), not a field initializer, since it needs Processes (itself a field
+    // initializer declared above, so already a real instance by the time the body runs) rather than
+    // the parameterless constructor every other field-initialized ViewModel above uses.
+    public ResponsivenessViewModel Responsiveness { get; }
 
     public LoggingViewModel Logging { get; }
 
@@ -199,10 +204,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         // EnergyThermals now needs to be constructed before Cpu/Storage (both take a reference
         // to it - Cpu for its thermal-throttle flag, Storage for its per-drive temperature list -
         // see each view-model's remarks) and before Summary as before (#64's Health Check card).
-        // #233: Cpu also takes Responsiveness (for its deep-idle-exit-latency flag) - Responsiveness
-        // is a field initializer (see its own declaration above), so it's already a real instance
-        // by the time this constructor body runs, the same "reach a sibling ViewModel via
-        // constructor reference" pattern #221's Network/Responsiveness wiring already established.
+        // #233: Cpu also takes Responsiveness (for its deep-idle-exit-latency flag). Responsiveness
+        // itself is built here first (needing Processes, itself a field initializer already
+        // constructed above) rather than as a field initializer, so it's a real instance by the
+        // time Cpu/Network construct - the same "reach a sibling ViewModel via constructor
+        // reference" pattern #221's Network/Responsiveness wiring already established.
+        Responsiveness = new ResponsivenessViewModel(Processes);
         EnergyThermals = new EnergyThermalsViewModel(Performance);
         Cpu = new CpuViewModel(Performance, EnergyThermals, Processes, Responsiveness);
         Memory = new MemoryViewModel(Performance, Processes);

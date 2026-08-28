@@ -397,4 +397,80 @@ public sealed class EventLogService
             .OrderByDescending(r => r.EventCount)
             .ToList();
     }
+
+    // #240: "Application Hang" (event ID 1002) - the Application-log counterpart to the crash scan
+    // above (#1/#8's "Application Error"/event 1000), same generic provider-name convention Windows
+    // uses for both. The event's own formatted message layout ("The program X version Y stopped
+    // interacting with Windows...") is a stable, user-facing sentence rather than a documented,
+    // versioned insertion-string contract, so this regexes the formatted text the same way
+    // ExtractFaultingModule already does for crash entries, rather than indexing record.Properties
+    // by position (which does vary by Windows version for this event).
+    private static readonly Regex AppHangNameRegex = new(
+        @"The program\s+(.+?)\s+version\s+(.+?)\s+stopped interacting", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex HangTypeRegex = new(@"Hang [Tt]ype:\s*([^\r\n]+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private const string ApplicationHangProvider = "Application Hang";
+    private const int ApplicationHangEventId = 1002;
+
+    /// <summary>#240: ranks "top hanging apps in the last 30 days" with a best-effort hang type -
+    /// complements #239's richer per-report Report.wer detail, which Windows prunes from
+    /// ReportQueue/ReportArchive sooner than the event log itself keeps this event around.</summary>
+    public List<AppHangEventSummary> ReadApplicationHangEvents(TimeSpan lookback)
+    {
+        var byApp = new Dictionary<string, (int Count, DateTime Last, string HangType)>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            long maxAgeMs = (long)lookback.TotalMilliseconds;
+            var query = new EventLogQuery("Application", PathType.LogName,
+                $"*[System[Provider[@Name='{ApplicationHangProvider}'] and (EventID={ApplicationHangEventId}) and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]")
+            {
+                ReverseDirection = true,
+            };
+
+            using var reader = new EventLogReader(query);
+            int count = 0;
+            const int maxEvents = 2000;
+            while (count < maxEvents && reader.ReadEvent() is { } record)
+            {
+                using (record)
+                {
+                    count++;
+                    string message;
+                    try { message = record.FormatDescription() ?? string.Empty; }
+                    catch { message = string.Empty; } // provider's message file isn't registered - a known, common gap
+
+                    var nameMatch = AppHangNameRegex.Match(message);
+                    string appName = nameMatch.Success ? nameMatch.Groups[1].Value.Trim() : "(unknown)";
+                    string hangType = HangTypeRegex.Match(message) is { Success: true } htm ? htm.Groups[1].Value.Trim() : string.Empty;
+                    var time = record.TimeCreated ?? DateTime.MinValue;
+
+                    if (byApp.TryGetValue(appName, out var existing))
+                    {
+                        byApp[appName] = (
+                            existing.Count + 1,
+                            time > existing.Last ? time : existing.Last,
+                            existing.HangType.Length > 0 ? existing.HangType : hangType);
+                    }
+                    else
+                    {
+                        byApp[appName] = (1, time, hangType);
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // Log/provider unavailable/access denied - degrade to "no hang events found".
+        }
+
+        return byApp
+            .Select(kv => new AppHangEventSummary
+            {
+                AppName = kv.Key,
+                Count = kv.Value.Count,
+                LastSeen = kv.Value.Last,
+                HangType = string.IsNullOrEmpty(kv.Value.HangType) ? "Unknown" : kv.Value.HangType,
+            })
+            .OrderByDescending(r => r.Count)
+            .ToList();
+    }
 }

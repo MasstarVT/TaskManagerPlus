@@ -161,6 +161,75 @@
                 </StackPanel>
             </Border>
 
+            <!-- #239: Windows Error Reporting AppHang reports (Report.wer under ReportArchive/
+                 ReportQueue) - richer per-report detail than #240 below, but pruned sooner. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding AppHangs.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="AppHang reports (Windows Error Reporting)" Style="{StaticResource CardTitle}" />
+                    <DataGrid ItemsSource="{Binding AppHangs}" MaxHeight="220" Margin="0,8,0,0" IsReadOnly="True">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Time" Binding="{Binding Timestamp, StringFormat={}{0:g}}" Width="140" />
+                            <DataGridTextColumn Header="App" Binding="{Binding AppPath}" Width="1.8*" />
+                            <DataGridTextColumn Header="Version" Binding="{Binding AppVersion}" Width="100" />
+                            <DataGridTextColumn Header="Type" Binding="{Binding EventType}" Width="120" />
+                            <DataGridTextColumn Header="Hang signature" Binding="{Binding HangSignature}" Width="1.2*" />
+                            <DataGridTextColumn Header="Faulting module" Binding="{Binding FaultingModule}" Width="1.2*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- #240: "top hanging apps in the last 30 days" from the Application-log "Application
+                 Hang" (event 1002) source - complements #239's richer per-report detail above. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding HangEventHistory.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Top hanging apps (last 30 days)" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="From the Application log's &quot;Application Hang&quot; (event 1002) source." Style="{StaticResource SubStat}" Margin="0,-4,0,10" />
+                    <ItemsControl ItemsSource="{Binding HangEventHistory}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock Text="{Binding AppName}" FontSize="12.5" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Style="{StaticResource SubStat}">
+                                            <Run Text="Last seen " /><Run Text="{Binding LastSeen, StringFormat={}{0:g}, Mode=OneWay}" />
+                                            <Run Text=" · " /><Run Text="{Binding HangType, Mode=OneWay}" />
+                                        </TextBlock>
+                                    </StackPanel>
+                                    <Border Grid.Column="1" Background="{DynamicResource DangerMutedBrush}" CornerRadius="10" Padding="8,2" VerticalAlignment="Center">
+                                        <TextBlock Foreground="{DynamicResource DangerBrush}" FontSize="11.5" FontWeight="SemiBold">
+                                            <Run Text="{Binding Count, Mode=OneWay}" /><Run Text="×" />
+                                        </TextBlock>
+                                    </Border>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
             <!-- #1/#8: recent Critical/Error entries from the System and Application logs, last
                  30 days - a faulting-module tooltip is shown when the message matched that shape
                  (typically an Application-log app crash entry). -->

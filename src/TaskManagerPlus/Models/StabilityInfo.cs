@@ -101,3 +101,29 @@ public sealed class ServiceStartDuration
     public double AvgStartDurationMs { get; init; }
     public int SampleCount { get; init; }
 }
+
+/// <summary>#239: one Windows Error Reporting AppHang report, parsed from a Report.wer file under
+/// ReportArchive/ReportQueue - see AppHangReportService.Read's remarks for why the key names are
+/// searched leniently rather than matched exactly. AppPath/AppVersion default to "(unknown)"
+/// rather than blank so a parse that found the report but not every key still reads clearly.</summary>
+public sealed class AppHangReportEntry
+{
+    public string AppPath { get; init; } = "(unknown)";
+    public string AppVersion { get; init; } = string.Empty;
+    public string EventType { get; init; } = string.Empty; // AppHangB1 / AppHangXProcB1 / AppHangTransient
+    public string HangSignature { get; init; } = string.Empty;
+    public string FaultingModule { get; init; } = string.Empty;
+    public DateTime Timestamp { get; init; }
+    public string ReportFolder { get; init; } = string.Empty;
+}
+
+/// <summary>#240: one app's ranked "Application Hang" (event ID 1002) history over the lookback
+/// window - see EventLogService.ReadApplicationHangEvents. Complements #239's richer per-report
+/// detail, which Windows prunes from ReportQueue/ReportArchive sooner than the event log itself.</summary>
+public sealed class AppHangEventSummary
+{
+    public string AppName { get; init; } = string.Empty;
+    public int Count { get; init; }
+    public DateTime LastSeen { get; init; }
+    public string HangType { get; init; } = string.Empty;
+}

@@ -333,3 +333,113 @@ public sealed class SleepStudyActivatorRow
     public string Name { get; init; } = string.Empty;
     public string Detail { get; init; } = string.Empty;
 }
+
+/// <summary>#235/#236/#243/#244: one top-level window from the always-on hung-window scan, with
+/// its message-pump round-trip time (#236, refreshed on its own slower cadence - see
+/// HungWindowService.RunProbeCycleAsync) and, for a currently-hung window only, a best-effort
+/// wait-reason hint (#243) and cross-process chain guess (#244). Genuinely per-window, not
+/// per-process (unlike ProcessRow.NotRespondingSeconds) - a multi-window app can have one hung
+/// window and several fine ones. "Quick flag, not a verdict" for WaitHintText/ChainText: a wait
+/// reason isn't a full stack trace, and the chain guess is a best-effort kernel-object-sharing
+/// match, not a confirmed deadlock analysis.
+///
+/// Mutable/INotifyPropertyChanged (like ProcessRow), keyed by Hwnd, and merged in place each light
+/// tick (ResponsivenessViewModel.MergeHungWindows) rather than cleared and rebuilt - the same
+/// "preserve DataGrid selection/scroll position" reasoning CLAUDE.md documents for ProcessRow,
+/// which matters here specifically so #242's right-click "Create dump" selection survives the ~2s
+/// gap until the next tick.</summary>
+public sealed class HungWindowRow : TaskManagerPlus.Common.ObservableObject
+{
+    public IntPtr Hwnd { get; init; }
+    public int Pid { get; init; }
+    public int ThreadId { get; init; }
+    public string ProcessName { get; init; } = string.Empty;
+    public string WindowTitle { get; init; } = string.Empty;
+
+    private bool _isHung;
+    public bool IsHung { get => _isHung; set => SetProperty(ref _isHung, value); }
+
+    /// <summary>#236: last known SendMessageTimeout round-trip, in milliseconds - null until the
+    /// probe cycle has measured this window at least once. 250 (the capped timeout) means either a
+    /// genuinely slow response or a hung window that never returned inside the cap.</summary>
+    private double? _responseMs;
+    public double? ResponseMs
+    {
+        get => _responseMs;
+        set { if (SetProperty(ref _responseMs, value)) OnPropertyChanged(nameof(ResponseMsText)); }
+    }
+    public string ResponseMsText => ResponseMs.HasValue ? $"{ResponseMs.Value:0}" : "—";
+
+    /// <summary>#237: how long this window has been continuously hung so far, for the live grid -
+    /// distinct from the persisted HangLogEntry.DurationSeconds, which is only written once the
+    /// window recovers.</summary>
+    private TimeSpan? _hungFor;
+    public TimeSpan? HungFor
+    {
+        get => _hungFor;
+        set { if (SetProperty(ref _hungFor, value)) OnPropertyChanged(nameof(HungForText)); }
+    }
+    public string HungForText => HungFor is { } h ? $"{h.TotalSeconds:0}s" : string.Empty;
+
+    /// <summary>#243: plain-English decode of the window's owning thread's ThreadState/WaitReason/
+    /// StartAddress - see HungWindowService.DescribeWaitState. Null for a window that isn't
+    /// currently hung, or when the thread couldn't be found/read.</summary>
+    private string? _waitHintText;
+    public string? WaitHintText { get => _waitHintText; set => SetProperty(ref _waitHintText, value); }
+
+    /// <summary>#244: best-effort "X is waiting on Y" guess, resolved off-thread and cached per
+    /// window (not recomputed every probe cycle) - see HungWindowService.ResolveHangChain. Null
+    /// until resolved, or when nothing could be determined.</summary>
+    private string? _chainText;
+    public string? ChainText { get => _chainText; set => SetProperty(ref _chainText, value); }
+}
+
+/// <summary>#238: one app's ranked foreground-stall history - how many times, and how badly, a
+/// window belonging to this process stalled past the configured threshold while it was the
+/// foreground app. Fed by the same #236 probe loop, gated to "was this app in the foreground at
+/// the moment of the probe" via the #238 SetWinEventHook. "Quick flag, not a verdict."</summary>
+public sealed class ForegroundStallRow
+{
+    public string ProcessName { get; init; } = string.Empty;
+    public int StallCount { get; set; }
+    public double MaxStallMs { get; set; }
+    public double TotalStallMs { get; set; }
+    public DateTime LastStall { get; set; }
+    public double AvgStallMs => StallCount > 0 ? TotalStallMs / StallCount : 0;
+}
+
+/// <summary>#241: hang-timeout registry audit - reused via the existing PlatformLatencySettingRow
+/// shape (see HangTimeoutRegistryService), appended to ResponsivenessViewModel.PlatformLatencySettings
+/// alongside the #220/#227/#232 rows already there.</summary>
+
+/// <summary>#245: desktop heap sizes (from SharedSection) plus session-wide USER/GDI handle totals
+/// summed across the process list ProcessesViewModel already polls (ProcessRow.GdiHandleCount/
+/// UserHandleCount, Round 7 #7) - no new per-process syscall needed. Desktop-heap exhaustion
+/// presents as "windows stop drawing / nothing opens" rather than high CPU, so this is a quick
+/// flag worth surfacing even though Windows exposes no direct "heap usage" counter to compare
+/// against - only the configured size and the session's own handle totals against the documented
+/// 10,000/65,536 USER/GDI session limits.</summary>
+public sealed class DesktopHeapInfo
+{
+    public int? InteractiveHeapKb { get; init; }
+    public int? NoninteractiveHeapKb { get; init; }
+    public string StatusText { get; init; } = string.Empty;
+
+    public int TotalUserHandles { get; init; }
+    public int TotalGdiHandles { get; init; }
+    public const int UserHandleSessionLimit = 10_000;
+    public const int GdiHandleSessionLimit = 65_536;
+    public double UserHandlePercent => Math.Clamp(TotalUserHandles / (double)UserHandleSessionLimit * 100.0, 0, 100);
+    public double GdiHandlePercent => Math.Clamp(TotalGdiHandles / (double)GdiHandleSessionLimit * 100.0, 0, 100);
+    public bool IsNearLimit => UserHandlePercent > 75 || GdiHandlePercent > 75;
+}
+
+/// <summary>#246: one shell-related window's message-pump round-trip time (reusing #236's probe
+/// logic against just Shell_TrayWnd/Progman/explorer.exe's own top-level frames) - see
+/// ShellResponsivenessService.</summary>
+public sealed class ShellResponsivenessRow
+{
+    public string WindowName { get; init; } = string.Empty;
+    public double? ResponseMs { get; init; }
+    public string ResponseMsText => ResponseMs.HasValue ? $"{ResponseMs.Value:0} ms" : "—";
+}

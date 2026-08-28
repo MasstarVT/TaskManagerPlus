@@ -1,5 +1,7 @@
 using System.Diagnostics;
+using System.IO;
 using System.Runtime.InteropServices;
+using System.Text;
 
 namespace TaskManagerPlus.Services;
 
@@ -27,6 +29,178 @@ public static class HandleInspectionService
     private const int MaxHandlesToResolve = 400;
     private static readonly TimeSpan PerHandleTimeout = TimeSpan.FromMilliseconds(120);
     private static readonly TimeSpan OverallTimeout = TimeSpan.FromSeconds(6);
+
+    // #244: object types worth walking for a cross-process hang chain - the common cross-process
+    // blocking primitives (an ALPC port under an RPC/COM call, a named mutex, a shared-memory
+    // section, or a shared file handle). Deliberately not every type NtQueryObject can return -
+    // walking Event/Semaphore/Thread/Key handles too would multiply the cost of an already
+    // expensive scan for little extra signal, since those are rarely what's actually blocking a
+    // hung UI thread.
+    private static readonly string[] HangChainTypesOfInterest = { "ALPC Port", "Mutant", "Section", "File" };
+
+    /// <summary>One other process found to be holding a handle to the same kernel object as the
+    /// target process (#244) - the same "compare the native OBJECT pointer across processes'
+    /// handle-table entries" technique Process Explorer/Handle.exe use to answer "who else has this
+    /// open", built entirely on the system handle walk this file already does for
+    /// ReadHandleTypeCounts. A real, if best-effort, cross-process pointer, not a guess: two
+    /// processes' SYSTEM_HANDLE_TABLE_ENTRY_INFO.Object values only match when they reference the
+    /// literal same kernel object.</summary>
+    public sealed record HandleShareMatch(int Pid, string ObjectType, string? ObjectName);
+
+    /// <summary>
+    /// #244: finds other processes sharing an ALPC port/mutex/section/file handle with <paramref
+    /// name="pid"/> - the "cross-process hang chain" signal HungWindowService.ResolveHangChain
+    /// builds its "X is waiting on Y" guess from. Reuses ReadSystemHandles/ResolveHandleType's exact
+    /// pattern (including the abandoned-worker-thread timeout on every NtQueryObject call - see the
+    /// class remarks) rather than re-deriving the handle-walk. Capped and best-effort like
+    /// ReadHandleTypeCounts: a handle whose type can't be resolved in time is skipped, not treated
+    /// as a match.
+    /// </summary>
+    public static List<HandleShareMatch> FindHandleSharers(int pid, int maxHandlesToCheck = 100)
+    {
+        var results = new List<HandleShareMatch>();
+        IntPtr sourceProcess = IntPtr.Zero;
+        try
+        {
+            var all = ReadSystemHandles();
+            if (all.Count == 0) return results;
+
+            var mine = all.Where(h => h.UniqueProcessId == pid).Take(maxHandlesToCheck * 3).ToList();
+            if (mine.Count == 0) return results;
+
+            sourceProcess = OpenProcess(ProcessDupHandle, false, pid);
+            if (sourceProcess == IntPtr.Zero) return results;
+
+            var overallDeadline = DateTime.UtcNow + OverallTimeout;
+            int checkedCount = 0;
+            var seen = new HashSet<(int Pid, string Type)>();
+
+            foreach (var entry in mine)
+            {
+                if (checkedCount >= maxHandlesToCheck || DateTime.UtcNow > overallDeadline) break;
+                checkedCount++;
+
+                string typeName = ResolveHandleType(sourceProcess, entry.HandleValue);
+                if (!HangChainTypesOfInterest.Contains(typeName, StringComparer.OrdinalIgnoreCase)) continue;
+
+                // Same native OBJECT pointer, different owning process - a real cross-process share
+                // of this exact kernel object, not a coincidence of type alone.
+                foreach (var other in all)
+                {
+                    if (other.UniqueProcessId == pid || other.Object != entry.Object) continue;
+                    if (!seen.Add((other.UniqueProcessId, typeName))) continue;
+
+                    string? name = typeName == "File"
+                        ? TryResolveObjectName(sourceProcess, entry.HandleValue)
+                        : null;
+                    results.Add(new HandleShareMatch(other.UniqueProcessId, typeName, name));
+                }
+            }
+        }
+        catch
+        {
+            // Best-effort - an empty result just means "no shared-object chain found", the same
+            // degrade-gracefully shape as ReadHandleTypeCounts above.
+        }
+        finally
+        {
+            if (sourceProcess != IntPtr.Zero) CloseHandle(sourceProcess);
+        }
+        return results;
+    }
+
+    /// <summary>Best-effort file-path resolution for a single File-type handle (ObjectNameInformation,
+    /// class 1), used only to hand a real path to FileLockLookupService.FindProcessesWithFileOpen
+    /// for a second, independently-sourced confirmation of #244's chain guess - same abandoned-
+    /// worker-thread-with-timeout pattern as ResolveHandleType, since NtQueryObject's hang risk
+    /// applies here too (a named pipe with no listener is the classic case for ObjectNameInformation
+    /// as much as ObjectTypeInformation).</summary>
+    private static string? TryResolveObjectName(IntPtr sourceProcess, ushort handleValue)
+    {
+        IntPtr dup = IntPtr.Zero;
+        try
+        {
+            int dupStatus = NtDuplicateObject(sourceProcess, (IntPtr)handleValue, GetCurrentProcess(),
+                out dup, 0, 0, DuplicateSameAccess);
+            if (dupStatus != 0 || dup == IntPtr.Zero) return null;
+        }
+        catch
+        {
+            return null;
+        }
+
+        // NtQueryObject normally returns an NT device path here ("\Device\HarddiskVolumeN\...."),
+        // not a drive-letter path - only the raw NT-namespace read happens inside the timed worker
+        // below (QueryDosDevice itself isn't hang-prone, so the drive-letter conversion happens
+        // afterwards, outside the timing-sensitive section).
+        string? rawPath = null;
+        var worker = new Thread(() =>
+        {
+            try
+            {
+                int size = 0x1000;
+                IntPtr buffer = Marshal.AllocHGlobal(size);
+                try
+                {
+                    int status = NtQueryObject(dup, ObjectNameInformation, buffer, size, out _);
+                    if (status == 0)
+                    {
+                        ushort length = (ushort)Marshal.ReadInt16(buffer, 0);
+                        IntPtr strPtr = Marshal.ReadIntPtr(buffer, 8);
+                        rawPath = length > 0 && strPtr != IntPtr.Zero
+                            ? Marshal.PtrToStringUni(strPtr, length / 2)
+                            : null;
+                    }
+                }
+                finally
+                {
+                    Marshal.FreeHGlobal(buffer);
+                }
+            }
+            catch { /* leave rawPath null */ }
+        })
+        { IsBackground = true };
+
+        worker.Start();
+        bool finished = worker.Join(PerHandleTimeout);
+        if (!finished) return null;
+
+        try { CloseHandle(dup); } catch { /* ignore */ }
+        if (string.IsNullOrWhiteSpace(rawPath)) return null;
+
+        return rawPath.StartsWith(@"\Device\", StringComparison.OrdinalIgnoreCase)
+            ? ConvertDeviceToDrivePath(rawPath)
+            : rawPath;
+    }
+
+    /// <summary>Converts an NT device path ("\Device\HarddiskVolumeN\...") to a drive-letter path
+    /// via QueryDosDevice - the standard technique (comparing each drive letter's own device-path
+    /// prefix, since there's no direct "reverse" API) - so FileLockLookupService.FindProcessesWithFileOpen
+    /// (which needs File.Exists to succeed) can actually use the result. QueryDosDevice/
+    /// DriveInfo.GetDrives aren't the hang-prone part of this (NtQueryObject already is, handled by
+    /// the timed worker above), so this runs unguarded.</summary>
+    private static string? ConvertDeviceToDrivePath(string devicePath)
+    {
+        try
+        {
+            foreach (var drive in DriveInfo.GetDrives())
+            {
+                string driveLetter = drive.Name.TrimEnd('\\');
+                var target = new StringBuilder(260);
+                if (QueryDosDevice(driveLetter, target, target.Capacity) == 0) continue;
+
+                string prefix = target.ToString();
+                if (devicePath.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                    return driveLetter + devicePath[prefix.Length..];
+            }
+        }
+        catch
+        {
+            // Best-effort - a failed conversion just means #244's File cross-check falls back to
+            // the primary shared-object-pointer match alone.
+        }
+        return null;
+    }
 
     public static List<(string TypeName, int Count)> ReadHandleTypeCounts(int pid)
     {
@@ -160,6 +334,7 @@ public static class HandleInspectionService
     }
 
     private const int SystemHandleInformation = 16;
+    private const int ObjectNameInformation = 1;
     private const int ObjectTypeInformation = 2;
     private const int StatusInfoLengthMismatch = unchecked((int)0xC0000004);
     private const uint ProcessDupHandle = 0x0040;
@@ -196,4 +371,7 @@ public static class HandleInspectionService
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool CloseHandle(IntPtr handle);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern uint QueryDosDevice(string? lpDeviceName, StringBuilder lpTargetPath, int ucchMax);
 }
