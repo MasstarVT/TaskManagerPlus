@@ -32,6 +32,11 @@ public sealed class StabilityViewModel : ObservableObject
     // on the same on-demand Refresh rather than a second button.
     public ObservableCollection<PowerTimelineEntry> PowerTimeline { get; } = new();
 
+    // #741: resume-from-hibernate entries that look like they failed - correlated from the same
+    // timeline above (Kernel-Boot 27 boot type 2 followed by a 41/6008 failure signal), see
+    // PowerTimelineService.ReadFailedResumes. Cross-links back to the Startup tab's hiberfile card.
+    public ObservableCollection<FailedResumeEntry> FailedResumes { get; } = new();
+
     private bool _isLoading;
     public bool IsLoading { get => _isLoading; private set => SetProperty(ref _isLoading, value); }
 
@@ -140,7 +145,9 @@ public sealed class StabilityViewModel : ObservableObject
         {
             var snapshot = await Task.Run(() => _service.Query());
             var timeline = await Task.Run(PowerTimelineService.Read);
-            Apply(snapshot, timeline);
+            // #741: reuses the timeline just read above rather than re-querying the System log.
+            var failedResumes = await Task.Run(() => PowerTimelineService.ReadFailedResumes(timeline));
+            Apply(snapshot, timeline, failedResumes);
             RefreshErrorText = null;
         }
         catch (Exception ex)
@@ -153,10 +160,13 @@ public sealed class StabilityViewModel : ObservableObject
         }
     }
 
-    private void Apply(StabilitySnapshot snapshot, List<PowerTimelineEntry> timeline)
+    private void Apply(StabilitySnapshot snapshot, List<PowerTimelineEntry> timeline, List<FailedResumeEntry> failedResumes)
     {
         PowerTimeline.Clear();
         foreach (var e in timeline) PowerTimeline.Add(e);
+
+        FailedResumes.Clear();
+        foreach (var f in failedResumes) FailedResumes.Add(f);
 
         RecentEvents.Clear();
         foreach (var e in snapshot.RecentEvents) RecentEvents.Add(e);

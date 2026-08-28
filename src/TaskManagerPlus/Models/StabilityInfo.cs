@@ -135,3 +135,19 @@ public sealed class PowerTimelineEntry
     /// heuristics, just surfaced as color instead of prose.</summary>
     public bool IsWarning => Kind is "UnexpectedShutdown" or "NoCleanShutdown";
 }
+
+/// <summary>#741: one resume-from-hibernate that looks like it failed - a Kernel-Boot event 27
+/// boot type 2 (resume from hibernate, see BootType) followed, before the next recorded boot, by
+/// a Kernel-Power 41 ("no clean shutdown recorded") or System-log 6008 ("previous shutdown was
+/// unexpected") entry from the same Power &amp; boot timeline this correlates against - see
+/// PowerTimelineService.ReadFailedResumes. A flag, not a verdict (CLAUDE.md's cross-cutting
+/// conventions): a resume that failed for an unrelated reason (a hard power-button hold during a
+/// legitimately slow resume) looks identical to this heuristic as a genuine resume bug.</summary>
+public sealed class FailedResumeEntry
+{
+    public DateTime ResumeTime { get; init; }
+    public DateTime FailureTime { get; init; }
+    public string FailureKind { get; init; } = string.Empty;
+
+    public string SummaryText => $"Resumed from hibernate at {ResumeTime:g}, then {FailureKind} at {FailureTime:g}.";
+}

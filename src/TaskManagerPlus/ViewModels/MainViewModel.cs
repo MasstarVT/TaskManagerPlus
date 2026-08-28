@@ -103,6 +103,17 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     /// tab (see MainWindow.xaml) rather than something scoped to the Startup tab alone.</summary>
     public SafeModeInfo SafeMode { get; } = SafeModeDetectionService.Detect();
 
+    /// <summary>#734: the footer status bar's uptime text - "Uptime 3h" normally, or "Uptime 3h —
+    /// but 41 days since your last full restart" once Startup.FastStartupInfo says Fast Startup is
+    /// on and the two figures meaningfully disagree (see FastStartupInfo.UptimeReconciliationText).
+    /// Composed here (not on StartupViewModel) since it replaces the same footer text that used to
+    /// bind directly to Performance.Uptime - see the PropertyChanged wiring in the constructor for
+    /// why this keeps ticking live even though FastStartupInfo itself is only read once per Startup
+    /// tab load/refresh.</summary>
+    public string FooterUptimeText => Startup.FastStartupInfo is { } fastStartup
+        ? fastStartup.UptimeReconciliationText(TimeSpan.FromMilliseconds(Environment.TickCount64))
+        : $"Uptime {Performance.Uptime}";
+
     /// <summary>Round 12, #87: read-only "where is this app currently storing settings" status
     /// line for the Settings drawer - portable mode is a launch-time decision (AppPaths.Initialize,
     /// from App.xaml.cs), not something this drawer can toggle live.</summary>
@@ -239,6 +250,13 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         ApplyAxisThemeToLogging();
         Theme.ThemeModeChanged += ApplyAxisThemeToLogging;
+
+        // #734: keep the footer's uptime text live - Performance.Uptime ticks every second, and
+        // Startup.FastStartupInfo changes once per Startup tab load/refresh, either of which
+        // should refresh FooterUptimeText's bound text (same "re-raise a composed property when
+        // one of its inputs changes" pattern MainWindow.xaml.cs's tray tooltip update uses).
+        Performance.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(PerformanceViewModel.Uptime)) OnPropertyChanged(nameof(FooterUptimeText)); };
+        Startup.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(StartupViewModel.FastStartupInfo)) OnPropertyChanged(nameof(FooterUptimeText)); };
     }
 
     private void ApplyThemeToPerformance()

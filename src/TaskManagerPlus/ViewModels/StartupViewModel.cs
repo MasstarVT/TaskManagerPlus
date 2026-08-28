@@ -212,6 +212,71 @@ public sealed class StartupViewModel : ObservableObject
 
     #endregion
 
+    #region #734-737 - Fast Startup, hibernation, and the recovery path
+
+    // #734: uptime-clock reconciliation - see FastStartupService.ReadUptimeInfo/FastStartupInfo's
+    // remarks. MainViewModel also reads this (via Startup.FastStartupInfo) to compose the footer
+    // status bar's uptime text.
+    private FastStartupInfo? _fastStartupInfo;
+    public FastStartupInfo? FastStartupInfo { get => _fastStartupInfo; private set => SetProperty(ref _fastStartupInfo, value); }
+
+    // #735: "you haven't fully restarted in N days" actionable card - shown once FastStartupInfo
+    // says Fast Startup is on and the gap is large enough to matter, dismissible for 7 days via
+    // FastStartupPromptSettingsService. IsPromptDismissed is read fresh each Refresh (never
+    // cached across the dismiss action) so a dismiss taken in this session immediately hides it.
+    private bool _isFullRestartPromptDismissed;
+    public bool ShowFullRestartPrompt => FastStartupInfo?.DaysSinceFullRestart is { } days && days >= 3 && !_isFullRestartPromptDismissed;
+    public AsyncRelayCommand FullRestartCommand { get; }
+    public RelayCommand DismissFullRestartPromptCommand { get; }
+
+    // #736: hibernation / sleep-state inventory.
+    public ObservableCollection<SleepStateInfo> SleepStates { get; } = new();
+    private HiberFileInfo? _hiberFileInfo;
+    public HiberFileInfo? HiberFileInfo { get => _hiberFileInfo; private set => SetProperty(ref _hiberFileInfo, value); }
+    public AsyncRelayCommand DisableHibernationCommand { get; }
+    public AsyncRelayCommand EnableHibernationCommand { get; }
+    public AsyncRelayCommand ReduceHiberFileTypeCommand { get; }
+
+    private string _hiberFileSizePercentInput = string.Empty;
+    public string HiberFileSizePercentInput { get => _hiberFileSizePercentInput; set => SetProperty(ref _hiberFileSizePercentInput, value); }
+    public AsyncRelayCommand SetHiberFileSizeCommand { get; }
+
+    // #737: Fast Startup side-effect flags - populated whenever FastStartupInfo says Fast Startup
+    // is on (see FastStartupService.SideEffects), plus its own confirmed "turn it off" action.
+    public ObservableCollection<FastStartupSideEffect> FastStartupSideEffects { get; } = new();
+    public AsyncRelayCommand DisableFastStartupCommand { get; }
+
+    #endregion
+
+    #region #738-740 - System partitions (ESP, WinRE, recovery layout)
+
+    // #738/#740: one shared SystemPartitionService.ReadLayout() snapshot behind the ESP health
+    // card, the recovery-partition layout map, and (indirectly, via its Recovery partition) the
+    // recovery-too-small flag - see SystemPartitionService's remarks for why the disk/partition
+    // WMI query runs once, not once per feature.
+    private SystemPartitionLayout? _partitionLayout;
+    public SystemPartitionLayout? PartitionLayout { get => _partitionLayout; private set => SetProperty(ref _partitionLayout, value); }
+
+    // #738: EFI System Partition health - free space is measured on demand (mounting is a more
+    // invasive action than this tab's other auto-loaded reads, same "gate the invasive step
+    // behind an explicit button" tradeoff #720's MeasureProfileSizeCommand already takes).
+    private EspHealthInfo? _espHealth;
+    public EspHealthInfo? EspHealth { get => _espHealth; private set => SetProperty(ref _espHealth, value); }
+    public AsyncRelayCommand MeasureEspFreeSpaceCommand { get; }
+
+    // #739: WinRE status via reagentc /info.
+    private WinReStatusInfo? _winReStatus;
+    public WinReStatusInfo? WinReStatus { get => _winReStatus; private set => SetProperty(ref _winReStatus, value); }
+    public AsyncRelayCommand EnableWinReCommand { get; }
+
+    // #740: recovery-partition-too-small flag - also gated behind its own "Measure free space"
+    // button, same reasoning as the ESP above.
+    private RecoveryPartitionFlag? _recoveryPartitionFlag;
+    public RecoveryPartitionFlag? RecoveryPartitionFlag { get => _recoveryPartitionFlag; private set => SetProperty(ref _recoveryPartitionFlag, value); }
+    public AsyncRelayCommand MeasureRecoveryFreeSpaceCommand { get; }
+
+    #endregion
+
     #region #715-723 - Sign-in section (logon breakdown, Group Policy, profile health)
 
     // #715: Winlogon notification-subscriber timing (GPClient/Profiles/TermSrv/Sens, whichever
@@ -348,10 +413,26 @@ public sealed class StartupViewModel : ObservableObject
         CopyFirmwareDisplayOrderFixCommand = new RelayCommand(_ => CopyFirmwareDisplayOrderFix(), _ => FirmwareBootOrder?.SuggestedFixCommand is not null);
         ExportBcdBackupCommand = new AsyncRelayCommand(ExportBcdBackupAsync);
 
+        // #734-737: Fast Startup, hibernation, and the recovery path.
+        FullRestartCommand = new AsyncRelayCommand(FullRestartAsync);
+        DismissFullRestartPromptCommand = new RelayCommand(_ => DismissFullRestartPrompt());
+        DisableHibernationCommand = new AsyncRelayCommand(DisableHibernationAsync);
+        EnableHibernationCommand = new AsyncRelayCommand(EnableHibernationAsync);
+        ReduceHiberFileTypeCommand = new AsyncRelayCommand(ReduceHiberFileTypeAsync);
+        SetHiberFileSizeCommand = new AsyncRelayCommand(SetHiberFileSizeAsync);
+        DisableFastStartupCommand = new AsyncRelayCommand(DisableFastStartupAsync, () => FastStartupInfo?.IsFastStartupEnabled == true);
+
+        // #738-740: System partitions (ESP, WinRE, recovery layout).
+        MeasureEspFreeSpaceCommand = new AsyncRelayCommand(MeasureEspFreeSpaceAsync, () => PartitionLayout?.Esp is not null);
+        EnableWinReCommand = new AsyncRelayCommand(EnableWinReAsync, () => WinReStatus?.Enabled == false);
+        MeasureRecoveryFreeSpaceCommand = new AsyncRelayCommand(MeasureRecoveryFreeSpaceAsync, () => PartitionLayout?.Recovery is not null);
+
         Refresh();
         LoadBootPerformance();
         LoadSignInDiagnostics();
         LoadBcdInspector();
+        LoadFastStartupAndHibernation();
+        LoadSystemPartitions();
         _ = CheckPendingCaptureWorkflowsAsync();
     }
 
@@ -580,6 +661,207 @@ public sealed class StartupViewModel : ObservableObject
                 foreach (var b in backups) BcdBackups.Add(b);
             });
         });
+    }
+
+    /// <summary>#734-737: Fast Startup uptime reconciliation, hibernation/sleep-state inventory,
+    /// and side-effect flags - one Task.Run off the UI thread, like every other on-demand read
+    /// this tab does at load/refresh time (registry + WMI + a couple of powercfg shell-outs, none
+    /// expensive enough on their own to need separate buttons).</summary>
+    private void LoadFastStartupAndHibernation()
+    {
+        _ = Task.Run(async () =>
+        {
+            var info = FastStartupService.ReadUptimeInfo();
+            var sleepStates = await FastStartupService.ReadSleepStatesAsync();
+            var hiberFile = FastStartupService.ReadHiberFileInfo();
+
+            Application.Current?.Dispatcher.Invoke(() =>
+            {
+                FastStartupInfo = info;
+                DisableFastStartupCommand.RaiseCanExecuteChanged();
+
+                SleepStates.Clear();
+                foreach (var s in sleepStates) SleepStates.Add(s);
+
+                HiberFileInfo = hiberFile;
+
+                FastStartupSideEffects.Clear();
+                if (info.IsFastStartupEnabled)
+                    foreach (var s in FastStartupService.SideEffects) FastStartupSideEffects.Add(s);
+
+                var prompt = FastStartupPromptSettingsService.Load();
+                _isFullRestartPromptDismissed = FastStartupPromptSettingsService.IsCurrentlyDismissed(prompt);
+                OnPropertyChanged(nameof(ShowFullRestartPrompt));
+            });
+        });
+    }
+
+    /// <summary>#735: `shutdown /g /f /t 0` - confirms the exact command and its effect first,
+    /// matching CLAUDE.md's "mutating actions require explicit confirmation" rule.</summary>
+    private async Task FullRestartAsync()
+    {
+        var confirm = MessageBox.Show(
+            "This will run:\n\nshutdown /g /f /t 0\n\nThis force-closes open apps and immediately restarts the PC into a full boot (not a Fast Startup hybrid resume) - unsaved work will be lost. Continue?",
+            "Full restart", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        var (success, error) = await Task.Run(FastStartupService.TriggerFullRestart);
+        if (!success) StatusMessage = $"Couldn't start a full restart: {error}";
+        // No success message - a successful call tears this process down along with everything else.
+    }
+
+    /// <summary>#735: dismiss the "you haven't fully restarted" card for 7 days.</summary>
+    private void DismissFullRestartPrompt()
+    {
+        FastStartupPromptSettingsService.DismissForSevenDays();
+        _isFullRestartPromptDismissed = true;
+        OnPropertyChanged(nameof(ShowFullRestartPrompt));
+    }
+
+    /// <summary>#736: `powercfg /hibernate off` - confirmed first.</summary>
+    private async Task DisableHibernationAsync()
+    {
+        var confirm = MessageBox.Show(
+            "This will run:\n\npowercfg /hibernate off\n\nThis also removes hiberfil.sys and disables Fast Startup (Fast Startup depends on hibernation). Continue?",
+            "Turn off hibernation", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        var (success, error) = await FastStartupService.SetHibernateEnabledAsync(false);
+        StatusMessage = success ? "Hibernation turned off." : $"Couldn't turn off hibernation: {error}";
+        if (success) LoadFastStartupAndHibernation();
+    }
+
+    /// <summary>#736: `powercfg /hibernate on` - confirmed first (the counterpart to the disable
+    /// action above, offered once hibernation is off so it can be turned back on from here too).</summary>
+    private async Task EnableHibernationAsync()
+    {
+        var confirm = MessageBox.Show(
+            "This will run:\n\npowercfg /hibernate on\n\nTurn hibernation back on now?",
+            "Turn on hibernation", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        var (success, error) = await FastStartupService.SetHibernateEnabledAsync(true);
+        StatusMessage = success ? "Hibernation turned on." : $"Couldn't turn on hibernation: {error}";
+        if (success) LoadFastStartupAndHibernation();
+    }
+
+    /// <summary>#736: `powercfg /hibernate /type reduced` - confirmed first.</summary>
+    private async Task ReduceHiberFileTypeAsync()
+    {
+        var confirm = MessageBox.Show(
+            "This will run:\n\npowercfg /hibernate /type reduced\n\nShrinks hiberfil.sys to the smaller \"reduced\" type (still supports Fast Startup, but not full hibernate-to-disk). Continue?",
+            "Reduce hiberfile type", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        var (success, error) = await FastStartupService.SetHiberFileTypeReducedAsync();
+        StatusMessage = success ? "Hiberfile type set to reduced." : $"Couldn't change the hiberfile type: {error}";
+        if (success) LoadFastStartupAndHibernation();
+    }
+
+    /// <summary>#736: `powercfg /hibernate /size &lt;n&gt;` from the HiberFileSizePercentInput text
+    /// box - confirmed first.</summary>
+    private async Task SetHiberFileSizeAsync()
+    {
+        if (!int.TryParse(HiberFileSizePercentInput, out int percent) || percent < 0 || percent > 100)
+        {
+            StatusMessage = "Enter a hiberfile size between 0 and 100 (percent of installed RAM).";
+            return;
+        }
+
+        var confirm = MessageBox.Show(
+            $"This will run:\n\npowercfg /hibernate /size {percent}\n\nSet the hiberfile size to {percent}% of installed RAM now?",
+            "Set hiberfile size", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        var (success, error) = await FastStartupService.SetHiberFileSizeAsync(percent);
+        StatusMessage = success ? $"Hiberfile size set to {percent}% of RAM." : $"Couldn't set the hiberfile size: {error}";
+        if (success) LoadFastStartupAndHibernation();
+    }
+
+    /// <summary>#737: sets HiberbootEnabled to 0 - confirmed first.</summary>
+    private async Task DisableFastStartupAsync()
+    {
+        var confirm = MessageBox.Show(
+            "This turns off the \"Turn on fast startup\" option (the same registry value Control Panel's Power Options checkbox writes) - HiberbootEnabled will be set to 0. Every full shutdown will then be a real full shutdown. Continue?",
+            "Turn off Fast Startup", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        var (success, error) = await Task.Run(FastStartupService.DisableFastStartup);
+        StatusMessage = success ? "Fast Startup turned off." : $"Couldn't turn off Fast Startup: {error}";
+        if (success) LoadFastStartupAndHibernation();
+    }
+
+    /// <summary>#738-740: System partitions - one SystemPartitionService.ReadLayout() snapshot
+    /// (WMI partition enumeration) plus the WinRE status read (reagentc /info), off the UI thread.
+    /// The actual mount-based free-space measurements for the ESP/recovery partition are NOT run
+    /// here - see MeasureEspFreeSpaceAsync/MeasureRecoveryFreeSpaceAsync, gated behind their own
+    /// buttons since briefly mounting a partition is more invasive than a plain read.</summary>
+    private void LoadSystemPartitions()
+    {
+        _ = Task.Run(async () =>
+        {
+            var layout = SystemPartitionService.ReadLayout();
+            var winRe = await SystemPartitionService.ReadWinReStatusAsync();
+
+            Application.Current?.Dispatcher.Invoke(() =>
+            {
+                PartitionLayout = layout;
+                MeasureEspFreeSpaceCommand.RaiseCanExecuteChanged();
+                MeasureRecoveryFreeSpaceCommand.RaiseCanExecuteChanged();
+
+                EspHealth = layout.Esp is { } esp ? new EspHealthInfo { Partition = esp } : null;
+                RecoveryPartitionFlag = SystemPartitionService.EvaluateRecoveryPartition(layout.Recovery, null, null);
+
+                WinReStatus = winRe;
+                EnableWinReCommand.RaiseCanExecuteChanged();
+            });
+        });
+    }
+
+    /// <summary>#738: on-demand ESP free-space measurement (temporary mountvol mount) - gated
+    /// behind its own button, same "invasive step needs an explicit click" reasoning
+    /// MeasureProfileSizeAsync (#720) already takes.</summary>
+    private async Task MeasureEspFreeSpaceAsync()
+    {
+        var esp = PartitionLayout?.Esp;
+        if (esp is null) return;
+
+        var (freeBytes, error) = await SystemPartitionService.MeasureEspFreeSpaceAsync();
+        EspHealth = new EspHealthInfo { Partition = esp, FreeBytes = freeBytes, MeasureError = error };
+        if (error is not null) StatusMessage = $"Couldn't measure ESP free space: {error}";
+    }
+
+    /// <summary>#740: on-demand recovery-partition free-space measurement, feeding the
+    /// too-small-for-servicing flag - same on-demand gating as the ESP above.</summary>
+    private async Task MeasureRecoveryFreeSpaceAsync()
+    {
+        var recovery = PartitionLayout?.Recovery;
+        if (recovery is null) return;
+
+        var (freeBytes, error) = await SystemPartitionService.MeasurePartitionFreeSpaceAsync(recovery);
+        RecoveryPartitionFlag = SystemPartitionService.EvaluateRecoveryPartition(recovery, freeBytes, error);
+        if (error is not null) StatusMessage = $"Couldn't measure recovery partition free space: {error}";
+    }
+
+    /// <summary>#739: `reagentc /enable` - confirmed first.</summary>
+    private async Task EnableWinReAsync()
+    {
+        var confirm = MessageBox.Show(
+            "This will run:\n\nreagentc /enable\n\nEnable the Windows Recovery Environment now?",
+            "Enable Windows RE", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        var (success, error) = await SystemPartitionService.EnableWinReAsync();
+        if (success)
+        {
+            StatusMessage = "Windows RE enabled.";
+            WinReStatus = await SystemPartitionService.ReadWinReStatusAsync();
+            EnableWinReCommand.RaiseCanExecuteChanged();
+        }
+        else
+        {
+            StatusMessage = $"Couldn't enable Windows RE: {error}";
+        }
     }
 
     /// <summary>#731: always takes a fresh BCD export immediately before any mutating BCD action -

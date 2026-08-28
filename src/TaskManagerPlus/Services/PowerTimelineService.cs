@@ -99,4 +99,52 @@ public static class PowerTimelineService
     }
 
     private static string Truncate(string s, int maxLen) => s.Length <= maxLen ? s : s[..maxLen] + "…";
+
+    /// <summary>#741: correlates Kernel-Boot event 27 boot type 2 (resume from hibernate - see
+    /// BootPerformanceService.ReadRecentBootTypeEvents, reused rather than re-querying the
+    /// Kernel-Boot channel here) with a following Kernel-Power 41 or 6008 unexpected-shutdown
+    /// entry from this same Power &amp; boot timeline to flag a resume that looks like it failed.
+    /// <paramref name="timeline"/> lets a caller that already has a fresh Read() result (as
+    /// StabilityViewModel.RefreshAsync does) pass it straight in rather than this running a second
+    /// System-log query for the same events; omit it to have this call Read() itself.</summary>
+    public static List<FailedResumeEntry> ReadFailedResumes(List<PowerTimelineEntry>? timeline = null)
+    {
+        var results = new List<FailedResumeEntry>();
+        try
+        {
+            var bootEvents = BootPerformanceService.ReadRecentBootTypeEvents();
+            var resumeEvents = bootEvents.Where(e => e.Type == BootType.ResumeFromHibernate).OrderBy(e => e.Time).ToList();
+            if (resumeEvents.Count == 0) return results;
+
+            var events = timeline ?? Read();
+            var failureSignals = events.Where(e => e.Kind is "UnexpectedShutdown" or "NoCleanShutdown")
+                .OrderBy(e => e.TimeCreated).ToList();
+            if (failureSignals.Count == 0) return results;
+
+            var bootTimesAsc = bootEvents.Select(e => e.Time).OrderBy(t => t).ToList();
+
+            foreach (var resume in resumeEvents)
+            {
+                DateTime? nextBoot = bootTimesAsc.FirstOrDefault(t => t > resume.Time);
+                if (nextBoot == default(DateTime)) nextBoot = null;
+
+                var failure = failureSignals.FirstOrDefault(f =>
+                    f.TimeCreated > resume.Time && (nextBoot is null || f.TimeCreated < nextBoot.Value));
+                if (failure is not null)
+                {
+                    results.Add(new FailedResumeEntry
+                    {
+                        ResumeTime = resume.Time,
+                        FailureTime = failure.TimeCreated,
+                        FailureKind = failure.KindLabel,
+                    });
+                }
+            }
+        }
+        catch
+        {
+            // Degrade to empty - same pattern every other event-log correlation in this app uses.
+        }
+        return results.OrderByDescending(f => f.ResumeTime).ToList();
+    }
 }

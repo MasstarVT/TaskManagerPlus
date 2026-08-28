@@ -1416,6 +1416,333 @@
                 </StackPanel>
             </Border>
 
+            <!-- #734-737: Fast Startup, hibernation, and the recovery path - see
+                 StartupViewModel's #734-737 region and FastStartupService's remarks. -->
+            <Border Margin="0,20,0,0" BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,1,0,0" Padding="0,16,0,0">
+                <StackPanel>
+                    <TextBlock Text="Fast Startup &amp; hibernation" Style="{StaticResource CardTitle}" Margin="0,0,0,4" />
+                    <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,10"
+                               Text="Fast Startup hibernates the kernel session instead of doing a full shutdown, which can leave Environment.TickCount64/WMI's uptime and your last genuine full restart telling two very different stories." />
+
+                    <!-- #735: "you haven't fully restarted in N days" actionable card - dismissible
+                         for 7 days. -->
+                    <Border Background="{DynamicResource BgElevatedBrush}" BorderBrush="{DynamicResource WarningBrush}"
+                            BorderThickness="1" CornerRadius="8" Padding="14,10" Margin="0,0,0,14">
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding ShowFullRestartPrompt}" Value="False">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                        <StackPanel>
+                            <TextBlock Foreground="{DynamicResource WarningBrush}" FontSize="12.5" FontWeight="SemiBold" TextWrapping="Wrap">
+                                <Run Text="You haven't fully restarted in " /><Run Text="{Binding FastStartupInfo.DaysSinceFullRestart}" /><Run Text=" days." />
+                            </TextBlock>
+                            <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0"
+                                       Text="Under Fast Startup, the regular Shut Down/Restart path doesn't do a full boot - drivers, firmware updates, and a queued chkdsk can all silently not apply. A full restart clears that." />
+                            <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                                <Button Content="Full restart now" Style="{StaticResource PrimaryButton}" Margin="0,0,8,0" Command="{Binding FullRestartCommand}" />
+                                <Button Content="Remind me in 7 days" Command="{Binding DismissFullRestartPromptCommand}" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- #734: uptime-clock reconciliation. -->
+                    <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="8" Padding="12,10" Margin="0,0,0,14">
+                        <StackPanel>
+                            <TextBlock FontSize="11.5" TextWrapping="Wrap">
+                                <Run Text="Fast Startup: " FontWeight="SemiBold" /><Run Text="{Binding FastStartupInfo.HiberbootEnabledText}" />
+                                <Run Text="   ·   Last full restart: " FontWeight="SemiBold" /><Run Text="{Binding FastStartupInfo.LastFullBootText}" />
+                            </TextBlock>
+                            <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,4,0,0">
+                                <Run Text="Tick-count uptime (this session): " /><Run Text="{Binding Performance.Uptime}" />
+                                <Run Text="   ·   WMI LastBootUpTime: " /><Run Text="{Binding FastStartupInfo.LastBootUpTimeWmiText}" />
+                            </TextBlock>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- #737: Fast Startup side-effect flags - collapsed when Fast Startup is off. -->
+                    <StackPanel Margin="0,0,0,14">
+                        <StackPanel.Style>
+                            <Style TargetType="StackPanel">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding FastStartupSideEffects.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </StackPanel.Style>
+                        <Grid Margin="0,0,0,6">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="Fast Startup side effects" Style="{StaticResource SubStat}" VerticalAlignment="Center" />
+                            <Button Grid.Column="1" Content="Turn off Fast Startup" Padding="8,4" FontSize="11" Command="{Binding DisableFastStartupCommand}" />
+                        </Grid>
+                        <ItemsControl ItemsSource="{Binding FastStartupSideEffects}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,8" Margin="0,0,0,6">
+                                        <StackPanel>
+                                            <TextBlock FontSize="12" FontWeight="SemiBold" Text="{Binding Title}" TextWrapping="Wrap" />
+                                            <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Text="{Binding Detail}" Margin="0,2,0,0" />
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+
+                    <!-- #736: hibernation / sleep-state inventory. -->
+                    <StackPanel>
+                        <TextBlock Text="Sleep states &amp; hibernation" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                        <ItemsControl ItemsSource="{Binding SleepStates}" Margin="0,0,0,10">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Margin="0,0,0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <Border Grid.Column="0" Width="8" Height="8" CornerRadius="4" Margin="0,3,8,0" VerticalAlignment="Top">
+                                            <Border.Style>
+                                                <Style TargetType="Border">
+                                                    <Setter Property="Background" Value="{DynamicResource TextTertiaryBrush}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding Available}" Value="True">
+                                                            <Setter Property="Background" Value="{DynamicResource SuccessBrush}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Border.Style>
+                                        </Border>
+                                        <StackPanel Grid.Column="1">
+                                            <TextBlock FontSize="12" FontWeight="SemiBold" Text="{Binding Name}" />
+                                            <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Text="{Binding UnavailableReason}">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding UnavailableReason}" Value="{x:Null}">
+                                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                        </StackPanel>
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+
+                        <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="8" Padding="12,10">
+                            <StackPanel>
+                                <TextBlock FontSize="12" Text="{Binding HiberFileInfo.SizeText}" TextWrapping="Wrap" />
+                                <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,2,0,10" Text="C:\hiberfil.sys" />
+                                <WrapPanel>
+                                    <Button Content="Turn off hibernation" Margin="0,0,8,8" Command="{Binding DisableHibernationCommand}" />
+                                    <Button Content="Turn on hibernation" Margin="0,0,8,8" Command="{Binding EnableHibernationCommand}" />
+                                    <Button Content="Reduce hiberfile type" Margin="0,0,8,8" Command="{Binding ReduceHiberFileTypeCommand}" />
+                                    <TextBox Width="60" Margin="0,0,6,8" ToolTip="Hiberfile size, percent of RAM"
+                                             Text="{Binding HiberFileSizePercentInput, UpdateSourceTrigger=PropertyChanged}" />
+                                    <Button Content="Set hiberfile size %" Margin="0,0,0,8" Command="{Binding SetHiberFileSizeCommand}" />
+                                </WrapPanel>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- #738-740: System partitions - ESP health, WinRE status, and the recovery-partition
+                 layout map. See StartupViewModel's #738-740 region and SystemPartitionService's
+                 remarks. Cross-linked from Energy &amp; Thermals' "Power plan &amp; sleep support" card. -->
+            <Border Margin="0,20,0,0" BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,1,0,0" Padding="0,16,0,0">
+                <StackPanel>
+                    <TextBlock Text="System partitions" Style="{StaticResource CardTitle}" Margin="0,0,0,4" />
+                    <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,10">
+                        <Run Text="The system disk's boot-relevant partitions" /><Run Text=" ("/><Run Text="{Binding PartitionLayout.DiskFriendlyName}" /><Run Text=")." />
+                    </TextBlock>
+
+                    <TextBlock TextWrapping="Wrap" Margin="0,0,0,10">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding PartitionLayout.Available}" Value="False">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                        <Run Text="System partition data isn't available: " /><Run Text="{Binding PartitionLayout.Error}" />
+                    </TextBlock>
+
+                    <StackPanel>
+                        <StackPanel.Style>
+                            <Style TargetType="StackPanel">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding PartitionLayout.Available}" Value="False">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </StackPanel.Style>
+
+                        <!-- #740: partition layout map. -->
+                        <ItemsControl ItemsSource="{Binding PartitionLayout.Partitions}" Margin="0,0,0,14">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,8" Margin="0,0,0,6">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel Grid.Column="0">
+                                                <TextBlock FontSize="12" FontWeight="SemiBold" Text="{Binding RoleLabel}" />
+                                                <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}">
+                                                    <Run Text="Partition " /><Run Text="{Binding PartitionNumber}" />
+                                                    <Run Text="   ·   " /><Run Text="{Binding GptType}" />
+                                                </TextBlock>
+                                            </StackPanel>
+                                            <TextBlock Grid.Column="1" FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center" Text="{Binding SizeText}" />
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+
+                        <!-- #738: EFI System Partition health. -->
+                        <StackPanel Margin="0,0,0,14">
+                            <StackPanel.Style>
+                                <Style TargetType="StackPanel">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding EspHealth}" Value="{x:Null}">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </StackPanel.Style>
+                            <Grid Margin="0,0,0,6">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="EFI System Partition health" Style="{StaticResource SubStat}" VerticalAlignment="Center" />
+                                <Button Grid.Column="1" Content="Measure free space" Padding="8,4" FontSize="11" Command="{Binding MeasureEspFreeSpaceCommand}" />
+                            </Grid>
+                            <TextBlock FontSize="11.5" TextWrapping="Wrap" Margin="0,0,0,6">
+                                <Run Text="Size: " FontWeight="SemiBold" /><Run Text="{Binding EspHealth.Partition.SizeText}" />
+                                <Run Text="   ·   Free: " FontWeight="SemiBold" /><Run Text="{Binding EspHealth.FreeText}" />
+                            </TextBlock>
+                            <Border Background="{DynamicResource DangerMutedBrush}" BorderBrush="{DynamicResource DangerBrush}"
+                                    BorderThickness="1" CornerRadius="8" Padding="10,8">
+                                <Border.Style>
+                                    <Style TargetType="Border">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding EspHealth.NearFullWarning}" Value="{x:Null}">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Border.Style>
+                                <TextBlock Foreground="{DynamicResource DangerBrush}" FontSize="11.5" TextWrapping="Wrap" Text="{Binding EspHealth.NearFullWarning}" />
+                            </Border>
+                        </StackPanel>
+
+                        <!-- #739: WinRE status. -->
+                        <StackPanel Margin="0,0,0,14">
+                            <StackPanel.Style>
+                                <Style TargetType="StackPanel">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding WinReStatus}" Value="{x:Null}">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </StackPanel.Style>
+                            <Grid Margin="0,0,0,6">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Windows Recovery Environment (WinRE)" Style="{StaticResource SubStat}" VerticalAlignment="Center" />
+                                <Button Grid.Column="1" Content="Enable WinRE" Padding="8,4" FontSize="11" Command="{Binding EnableWinReCommand}" />
+                            </Grid>
+                            <TextBlock FontSize="11.5" TextWrapping="Wrap" Margin="0,0,0,4">
+                                <Run Text="Status: " FontWeight="SemiBold" /><Run Text="{Binding WinReStatus.StatusText}" />
+                            </TextBlock>
+                            <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap">
+                                <Run Text="Location: " /><Run Text="{Binding WinReStatus.Location}" />
+                            </TextBlock>
+                            <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap">
+                                <Run Text="BCD identifier: " /><Run Text="{Binding WinReStatus.BcdIdentifier}" />
+                            </TextBlock>
+                            <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap">
+                                <Run Text="Recovery image: " /><Run Text="{Binding WinReStatus.RecoveryImageLocation}" />
+                            </TextBlock>
+                            <TextBlock FontSize="11" Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" Margin="0,4,0,0">
+                                <Run Text="{Binding WinReStatus.Error}" />
+                            </TextBlock>
+                        </StackPanel>
+
+                        <!-- #740: recovery-partition-too-small-for-servicing flag - guidance text
+                             only, this app never repartitions. -->
+                        <StackPanel>
+                            <StackPanel.Style>
+                                <Style TargetType="StackPanel">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding RecoveryPartitionFlag}" Value="{x:Null}">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </StackPanel.Style>
+                            <Grid Margin="0,0,0,6">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Recovery partition" Style="{StaticResource SubStat}" VerticalAlignment="Center" />
+                                <Button Grid.Column="1" Content="Measure free space" Padding="8,4" FontSize="11" Command="{Binding MeasureRecoveryFreeSpaceCommand}" />
+                            </Grid>
+                            <Border CornerRadius="8" Padding="10,8">
+                                <Border.Style>
+                                    <Style TargetType="Border">
+                                        <Setter Property="Background" Value="{DynamicResource BgElevatedBrush}" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding RecoveryPartitionFlag.TooSmallForServicing}" Value="True">
+                                                <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Border.Style>
+                                <TextBlock FontSize="11.5" TextWrapping="Wrap">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding RecoveryPartitionFlag.TooSmallForServicing}" Value="True">
+                                                    <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                    <Run Text="{Binding RecoveryPartitionFlag.Message}" />
+                                </TextBlock>
+                            </Border>
+                        </StackPanel>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
             <!-- #79/#80: Scheduled Tasks - a huge, often-overlooked source of background
                  slowdowns and unwanted auto-launches the registry-Run/Startup-folder scan above
                  doesn't cover at all. Loaded on demand (a couple of seconds on a system with

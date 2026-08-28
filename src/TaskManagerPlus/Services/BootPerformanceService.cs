@@ -321,18 +321,60 @@ public static class BootPerformanceService
     /// a guess.</summary>
     public static BootType? ReadLatestBootType()
     {
+        var events = ReadRecentBootTypeEventsRaw(maxEvents: 1);
+        return events.Count > 0 ? events[0].Type : null;
+    }
+
+    /// <summary>#734/#741: every Kernel-Boot event 27 the channel still retains, each tagged with
+    /// its parsed boot type where that parsed cleanly (out-of-range/unparseable entries are
+    /// dropped here, unlike ReadLatestBootType's raw single-event read above, which reports
+    /// "Unknown" for the single latest event rather than silently falling back to an older one).
+    /// Backs FastStartupService's "last full restart" reconciliation (#734) and the
+    /// resume-from-hibernate failure correlation (#741) - one shared, adaptive read of the
+    /// channel rather than three separate queries.</summary>
+    public static List<(DateTime Time, BootType Type)> ReadRecentBootTypeEvents(int maxEvents = 200)
+        => ReadRecentBootTypeEventsRaw(maxEvents)
+            .Where(e => e.Type is not null)
+            .Select(e => (e.Time, e.Type!.Value))
+            .ToList();
+
+    /// <summary>#734: the last time this machine had a genuine full/cold boot - the one clock
+    /// (unlike Environment.TickCount64/Win32_OperatingSystem.LastBootUpTime) that can lag behind
+    /// by days or weeks under repeated Fast Startup hybrid shutdowns. Null when no full-boot event
+    /// is found in the events the channel still retains.</summary>
+    public static DateTime? ReadLastFullBootTime()
+        => ReadRecentBootTypeEvents()
+            .Where(e => e.Type == BootType.Full)
+            .OrderByDescending(e => e.Time)
+            .Select(e => (DateTime?)e.Time)
+            .FirstOrDefault();
+
+    private static List<(DateTime Time, BootType? Type)> ReadRecentBootTypeEventsRaw(int maxEvents)
+    {
+        var results = new List<(DateTime, BootType?)>();
         try
         {
             var query = new EventLogQuery(KernelBootLogName, PathType.LogName,
                 $"*[System[(EventID={BootTypeEventId})]]") { ReverseDirection = true };
             using var reader = new EventLogReader(query);
-            using var record = reader.ReadEvent();
-            return record is null ? null : ExtractBootType(record);
+
+            int count = 0;
+            while (count < maxEvents && reader.ReadEvent() is { } record)
+            {
+                using (record)
+                {
+                    count++;
+                    if (record.TimeCreated is { } t)
+                        results.Add((t, ExtractBootType(record)));
+                }
+            }
         }
         catch
         {
-            return null;
+            // Channel unavailable/access denied - an empty list, same degrade-to-nothing pattern
+            // every other event-log read in this app already uses.
         }
+        return results;
     }
 
     private static BootType? ExtractBootType(EventRecord record)

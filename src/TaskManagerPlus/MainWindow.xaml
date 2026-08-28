@@ -463,7 +463,10 @@
                     </TextBlock>
                 </Button>
 
-                <TextBlock Grid.Column="5" Text="{Binding Performance.Uptime, StringFormat=Uptime {0}}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5" VerticalAlignment="Center" />
+                <!-- #734: "Uptime 3h" normally, or "Uptime 3h — but 41 days since your last full
+                     restart" once Fast Startup is on and the two figures meaningfully disagree -
+                     see MainViewModel.FooterUptimeText. -->
+                <TextBlock Grid.Column="5" Text="{Binding FooterUptimeText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5" VerticalAlignment="Center" />
             </Grid>
         </Border>
     </Grid>
