@@ -1,4 +1,4 @@
-using System.Linq;
+﻿using System.Linq;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
@@ -153,12 +153,25 @@ public partial class MainWindow : Window
     {
         foreach (var item in MainTabControl.Items)
         {
-            if (item is TabItem tab && string.Equals(tab.Header as string, name, StringComparison.OrdinalIgnoreCase))
+            if (item is TabItem tab && string.Equals(HeaderNameOf(tab), name, StringComparison.OrdinalIgnoreCase))
             {
                 MainTabControl.SelectedItem = tab;
                 return;
             }
         }
+    }
+
+    /// <summary>The name a tab is addressed by. Header is a plain string for every tab but
+    /// Stability, whose Header is a StackPanel so it can carry the new-dump alert badge - for that
+    /// one `Header as string` is null, so matching on it alone silently failed to find the tab and
+    /// --tab Stability / the Ctrl+K command palette's Stability results / any cross-tab jump to it
+    /// just did nothing. AutomationProperties.Name is the fallback because it is the same value a
+    /// screen reader announces, so the two can't drift apart.</summary>
+    private static string? HeaderNameOf(TabItem tab)
+    {
+        if (tab.Header is string header && header.Length > 0) return header;
+        string automationName = System.Windows.Automation.AutomationProperties.GetName(tab);
+        return string.IsNullOrEmpty(automationName) ? null : automationName;
     }
 
     /// <summary>Round 12, #85: builds the tray icon (extracted from this app's own exe, so no
