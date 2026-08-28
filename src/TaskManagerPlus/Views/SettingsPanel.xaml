@@ -341,8 +341,242 @@
                         Value="{Binding DataContext.Services.PollIntervalSeconds, RelativeSource={RelativeSource AncestorType=Window}}" />
 
                 <TextBlock Text="{Binding DataContext.EnergyThermals.PollIntervalSeconds, RelativeSource={RelativeSource AncestorType=Window}, StringFormat=Energy &amp; Thermals — {0:0.0}s}" Style="{StaticResource ColorRowLabel}" Margin="0,0,0,4" />
-                <Slider Minimum="0.5" Maximum="5" TickFrequency="0.5" IsSnapToTickEnabled="True" Margin="0,0,0,4"
+                <Slider Minimum="0.5" Maximum="5" TickFrequency="0.5" IsSnapToTickEnabled="True" Margin="0,0,0,22"
                         Value="{Binding DataContext.EnergyThermals.PollIntervalSeconds, RelativeSource={RelativeSource AncestorType=Window}}" />
+
+                <!-- #916-927: the Health Check card's rules engine - pack validation (#921), the
+                     rule list with inline enable/disable + severity override and a live would-fire
+                     indicator (#922/#923), an edit form that only ever writes to the user's own
+                     pack (#922), and import/export with a review step plus a metric-bag test
+                     fixture flow (#925/#926). Suppression (#924) lives on the Health Check card
+                     itself, where findings actually render. -->
+                <TextBlock Text="RULES ENGINE" FontSize="10.5" FontWeight="Bold" Foreground="{DynamicResource TextTertiaryBrush}"
+                           Margin="0,0,0,14" />
+                <TextBlock Text="Health Check findings come from JSON rule definitions under %AppData%\TaskManagerPlus\Rules\, hot-reloaded whenever a pack file changes. Edits here never touch the built-in pack - they write to your own user-overrides.json."
+                           Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,14" />
+
+                <TextBlock Text="Rule packs" Style="{StaticResource ColorRowLabel}" Margin="0,0,0,6" />
+                <ItemsControl ItemsSource="{Binding DataContext.RulesEditor.PackValidation, RelativeSource={RelativeSource AncestorType=Window}}" Margin="0,0,0,14">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel Margin="0,0,0,6">
+                                <StackPanel Orientation="Horizontal">
+                                    <Border Width="8" Height="8" CornerRadius="4" Margin="0,0,6,0" VerticalAlignment="Center">
+                                        <Border.Style>
+                                            <Style TargetType="Border">
+                                                <Setter Property="Background" Value="{DynamicResource SuccessBrush}" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsValid}" Value="False">
+                                                        <Setter Property="Background" Value="{DynamicResource DangerBrush}" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Border.Style>
+                                    </Border>
+                                    <TextBlock FontSize="12">
+                                        <Run Text="{Binding FileName, Mode=OneWay}" FontWeight="SemiBold" />
+                                        <Run Text=" — " /><Run Text="{Binding RuleCount, Mode=OneWay}" /><Run Text=" rule(s)" />
+                                    </TextBlock>
+                                </StackPanel>
+                                <ItemsControl ItemsSource="{Binding Warnings}" Margin="14,2,0,0">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{Binding}" FontSize="11" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" Margin="0,0,0,2" />
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+
+                <TextBlock Text="Rules" Style="{StaticResource ColorRowLabel}" Margin="0,0,0,6" />
+                <Button Content="+ New rule" HorizontalAlignment="Left" Margin="0,0,0,8"
+                        Command="{Binding DataContext.RulesEditor.NewRuleCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+                <ListBox ItemsSource="{Binding DataContext.RulesEditor.Rows, RelativeSource={RelativeSource AncestorType=Window}}"
+                         SelectedItem="{Binding DataContext.RulesEditor.SelectedRow, RelativeSource={RelativeSource AncestorType=Window}}"
+                         MaxHeight="340" Margin="0,0,0,10" BorderThickness="1" BorderBrush="{DynamicResource BorderBrush2}">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <Grid Margin="2,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <CheckBox Grid.Column="0" IsChecked="{Binding Enabled}" VerticalAlignment="Top" Margin="0,3,8,0" ToolTip="Enable/disable this rule (#923)" />
+                                <StackPanel Grid.Column="1">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="12.5" />
+                                        <TextBlock Text="BUILT-IN" FontSize="9" Foreground="{DynamicResource TextTertiaryBrush}" Margin="6,2,0,0"
+                                                   Visibility="{Binding IsBuiltIn, Converter={StaticResource BoolToVisibilityConverter}}" />
+                                        <TextBlock FontSize="9" Foreground="{DynamicResource WarningBrush}" Margin="6,2,0,0"
+                                                   Visibility="{Binding IsImported, Converter={StaticResource BoolToVisibilityConverter}}">
+                                            <Run Text="IMPORTED FROM " /><Run Text="{Binding ImportSourceFileName, Mode=OneWay}" />
+                                            <Run Text=" - NOT VERIFIED" />
+                                        </TextBlock>
+                                    </StackPanel>
+                                    <TextBlock Text="{Binding ConditionSummary}" FontSize="11" FontFamily="Consolas"
+                                               Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" />
+                                    <TextBlock FontSize="10.5" Foreground="{DynamicResource TextTertiaryBrush}" Margin="0,2,0,0">
+                                        <Run Text="{Binding Category, Mode=OneWay}" /><Run Text=" · confidence " /><Run Text="{Binding Confidence, Mode=OneWay}" /><Run Text="%" />
+                                    </TextBlock>
+                                </StackPanel>
+                                <ComboBox Grid.Column="2" ItemsSource="{Binding Source={x:Static vm:RulesEditorViewModel.SeverityValues}}"
+                                          SelectedItem="{Binding EffectiveSeverity}" Width="86" FontSize="11" VerticalAlignment="Top" Margin="8,0,8,0" />
+                                <Border Grid.Column="3" Width="10" Height="10" CornerRadius="5" VerticalAlignment="Top" Margin="0,4,0,0">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Setter Property="Background" Value="{DynamicResource BorderBrush2}" />
+                                            <Setter Property="ToolTip" Value="Would not currently fire" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding WouldFire}" Value="True">
+                                                    <Setter Property="Background" Value="{DynamicResource SuccessBrush}" />
+                                                    <Setter Property="ToolTip" Value="Would currently fire (#922 live preview)" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
+                                </Border>
+                            </Grid>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+
+                <!-- #922: inline edit form for the selected rule - writes only to user-overrides.json. -->
+                <StackPanel Visibility="{Binding DataContext.RulesEditor.SelectedRow, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource NullToVisibilityConverter}}"
+                            Margin="0,4,0,14">
+                    <TextBlock Text="Edit selected rule" Style="{StaticResource ColorRowLabel}" />
+                    <TextBlock Text="Title" Style="{StaticResource SubStat}" />
+                    <TextBox Text="{Binding DataContext.RulesEditor.EditTitle, RelativeSource={RelativeSource AncestorType=Window}, UpdateSourceTrigger=PropertyChanged}" Margin="0,2,0,8" />
+                    <TextBlock Text="Body (may reference {metric.key} placeholders)" Style="{StaticResource SubStat}" />
+                    <TextBox Text="{Binding DataContext.RulesEditor.EditBody, RelativeSource={RelativeSource AncestorType=Window}, UpdateSourceTrigger=PropertyChanged}"
+                             TextWrapping="Wrap" AcceptsReturn="True" Margin="0,2,0,8" />
+                    <Grid Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="10" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="Category" Style="{StaticResource SubStat}" />
+                            <TextBox Text="{Binding DataContext.RulesEditor.EditCategory, RelativeSource={RelativeSource AncestorType=Window}, UpdateSourceTrigger=PropertyChanged}" Margin="0,2,0,0" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="2">
+                            <TextBlock Text="Severity" Style="{StaticResource SubStat}" />
+                            <ComboBox ItemsSource="{Binding Source={x:Static vm:RulesEditorViewModel.SeverityValues}}"
+                                      SelectedItem="{Binding DataContext.RulesEditor.EditSeverity, RelativeSource={RelativeSource AncestorType=Window}}" Margin="0,2,0,0" />
+                        </StackPanel>
+                    </Grid>
+                    <Grid Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="10" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="Confidence (0-100)" Style="{StaticResource SubStat}" />
+                            <TextBox Text="{Binding DataContext.RulesEditor.EditConfidence, RelativeSource={RelativeSource AncestorType=Window}, UpdateSourceTrigger=PropertyChanged}" Margin="0,2,0,0" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="2">
+                            <TextBlock Text="Sustained for (seconds, optional - #920)" Style="{StaticResource SubStat}" />
+                            <TextBox Text="{Binding DataContext.RulesEditor.EditSustainedText, RelativeSource={RelativeSource AncestorType=Window}, UpdateSourceTrigger=PropertyChanged}" Margin="0,2,0,0" />
+                        </StackPanel>
+                    </Grid>
+                    <TextBlock Text="Docs URL (optional)" Style="{StaticResource SubStat}" />
+                    <TextBox Text="{Binding DataContext.RulesEditor.EditDocsUrl, RelativeSource={RelativeSource AncestorType=Window}, UpdateSourceTrigger=PropertyChanged}" Margin="0,2,0,8" />
+                    <TextBlock Text="Condition JSON - {&quot;metric&quot;,&quot;op&quot;,&quot;value&quot;} or all/any/not (#918)" Style="{StaticResource SubStat}" />
+                    <TextBox Text="{Binding DataContext.RulesEditor.EditConditionJson, RelativeSource={RelativeSource AncestorType=Window}, UpdateSourceTrigger=PropertyChanged}"
+                             FontFamily="Consolas" FontSize="11" TextWrapping="Wrap" AcceptsReturn="True" MinLines="3" MaxLines="8"
+                             VerticalScrollBarVisibility="Auto" Margin="0,2,0,4" />
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                        <Button Content="Preview condition" Margin="0,0,8,0"
+                                Command="{Binding DataContext.RulesEditor.PreviewConditionCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+                        <TextBlock Text="{Binding DataContext.RulesEditor.EditConditionPreview, RelativeSource={RelativeSource AncestorType=Window}}"
+                                   FontFamily="Consolas" FontSize="11" VerticalAlignment="Center" TextWrapping="Wrap" />
+                    </StackPanel>
+                    <Button Content="Save rule" HorizontalAlignment="Left"
+                            Command="{Binding DataContext.RulesEditor.SaveEditCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+                </StackPanel>
+
+                <TextBlock Text="Import / export your rules" Style="{StaticResource ColorRowLabel}" Margin="0,0,0,6" />
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                    <Button Content="Export my rules..." Margin="0,0,8,0"
+                            Command="{Binding DataContext.RulesEditor.ExportUserPackCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+                    <Button Content="Import rules..."
+                            Command="{Binding DataContext.RulesEditor.ImportPackCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+                </StackPanel>
+
+                <!-- #926: review every incoming rule before committing the import. -->
+                <StackPanel Visibility="{Binding DataContext.RulesEditor.IsImportReviewOpen, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVisibilityConverter}}"
+                            Margin="0,0,0,10">
+                    <TextBlock TextWrapping="Wrap" Margin="0,0,0,4">
+                        <Run Text="Reviewing import from " />
+                        <Run Text="{Binding DataContext.RulesEditor.ImportSourceFileName, RelativeSource={RelativeSource AncestorType=Window}, Mode=OneWay}" FontWeight="SemiBold" />
+                        <Run Text=" - not verified by this app:" />
+                    </TextBlock>
+                    <ItemsControl ItemsSource="{Binding DataContext.RulesEditor.PendingImportRules, RelativeSource={RelativeSource AncestorType=Window}}" MaxHeight="160" Margin="0,0,0,8">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock FontSize="11.5" TextWrapping="Wrap" Margin="0,0,0,2">
+                                    <Run Text="{Binding Title, Mode=OneWay}" FontWeight="SemiBold" />
+                                    <Run Text=" (" /><Run Text="{Binding Id, Mode=OneWay}" /><Run Text=")" />
+                                </TextBlock>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <StackPanel Orientation="Horizontal">
+                        <Button Content="Confirm import" Margin="0,0,8,0"
+                                Command="{Binding DataContext.RulesEditor.ConfirmImportCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+                        <Button Content="Cancel"
+                                Command="{Binding DataContext.RulesEditor.CancelImportCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+                    </StackPanel>
+                </StackPanel>
+
+                <!-- #925: capture-current-metrics / test-pack-against-a-saved-snapshot. -->
+                <TextBlock Text="Test a rule pack against a saved snapshot" Style="{StaticResource ColorRowLabel}" Margin="0,0,0,6" />
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                    <Button Content="Capture current metrics..." Margin="0,0,8,0"
+                            Command="{Binding DataContext.RulesEditor.CaptureBagCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+                    <Button Content="Test pack against snapshot..."
+                            Command="{Binding DataContext.RulesEditor.TestPackCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+                </StackPanel>
+                <ItemsControl ItemsSource="{Binding DataContext.RulesEditor.TestResults, RelativeSource={RelativeSource AncestorType=Window}}" Margin="0,0,0,8">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,3">
+                                <Border Width="8" Height="8" CornerRadius="4" Margin="0,0,6,0" VerticalAlignment="Center">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Setter Property="Background" Value="{DynamicResource BorderBrush2}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding WouldFire}" Value="True">
+                                                    <Setter Property="Background" Value="{DynamicResource SuccessBrush}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
+                                </Border>
+                                <TextBlock Text="{Binding Title}" FontSize="11.5" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+
+                <TextBlock Text="{Binding DataContext.RulesEditor.StatusText, RelativeSource={RelativeSource AncestorType=Window}}"
+                           TextWrapping="Wrap" Margin="0,0,0,22">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                            <Setter Property="Visibility" Value="Visible" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding DataContext.RulesEditor.StatusText, RelativeSource={RelativeSource AncestorType=Window}}" Value="">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
 
             </StackPanel>
         </ScrollViewer>

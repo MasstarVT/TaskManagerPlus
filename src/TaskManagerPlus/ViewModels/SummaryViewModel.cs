@@ -27,6 +27,7 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
     private readonly SystemSpecsViewModel _systemSpecs;
     private readonly NetworkViewModel _network;
     private readonly StabilityViewModel _stability;
+    private readonly RulesEngineService _rulesEngine;
     private readonly DispatcherTimer _healthTimer;
 
     /// <summary>Round 10, #67: exposed publicly (the field above stays for this class's own
@@ -47,6 +48,26 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
     public ICollectionView TopProcesses10sAvg { get; }
 
     public ObservableCollection<HealthIssue> HealthIssues { get; } = new();
+
+    // #924: findings whose rule is currently suppressed (snoozed and not yet expired, or
+    // permanently ignored) - kept in their own collection, revealed via IsSuppressedListExpanded,
+    // rather than just dropped, so a suppression is easy to find and undo later.
+    public ObservableCollection<HealthIssue> SuppressedFindings { get; } = new();
+
+    private bool _isSuppressedListExpanded;
+    public bool IsSuppressedListExpanded { get => _isSuppressedListExpanded; set => SetProperty(ref _isSuppressedListExpanded, value); }
+    public RelayCommand ToggleSuppressedListCommand { get; }
+
+    /// <summary>#924: "Snooze for 7 days" - the duration is fixed rather than user-configurable
+    /// per click, matching the simple "one clear action, not a picker" style of this card's other
+    /// buttons (Markdown/HTML report, Copy summary).</summary>
+    public RelayCommand SnoozeFindingCommand { get; }
+
+    /// <summary>#924: "Ignore on this machine" - permanent (ExpiresUtc = null) until explicitly
+    /// un-suppressed from the SuppressedFindings panel.</summary>
+    public RelayCommand IgnoreFindingCommand { get; }
+
+    public RelayCommand UnsuppressFindingCommand { get; }
 
     // Round 11, #69: hideable/reorderable dashboard tiles - see DashboardTileConfig's remarks for
     // why this is up/down reordering within a fixed two-column layout rather than freeform
@@ -168,7 +189,8 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
 
     public SummaryViewModel(PerformanceViewModel performance, ProcessesViewModel processes,
         ServicesViewModel services, EnergyThermalsViewModel energyThermals,
-        SystemSpecsViewModel systemSpecs, NetworkViewModel network, StabilityViewModel stability)
+        SystemSpecsViewModel systemSpecs, NetworkViewModel network, StabilityViewModel stability,
+        RulesEngineService rulesEngine)
     {
         Performance = performance;
         Processes = processes;
@@ -177,6 +199,24 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         _systemSpecs = systemSpecs;
         _network = network;
         _stability = stability;
+        _rulesEngine = rulesEngine;
+
+        ToggleSuppressedListCommand = new RelayCommand(_ => IsSuppressedListExpanded = !IsSuppressedListExpanded);
+        SnoozeFindingCommand = new RelayCommand(p => SuppressFinding(p, TimeSpan.FromDays(7), "Snoozed for 7 days"));
+        IgnoreFindingCommand = new RelayCommand(p => SuppressFinding(p, null, "Ignored on this machine"));
+        UnsuppressFindingCommand = new RelayCommand(p =>
+        {
+            if (p is HealthIssue { RuleId: { Length: > 0 } ruleId })
+            {
+                _rulesEngine.ClearSuppression(ruleId);
+                RefreshHealthIssues();
+            }
+        });
+
+        // #921: a rule-pack hot reload (or a rule-editor edit/override/suppression elsewhere)
+        // should be reflected on the live Health Check card without waiting for the next 2s tick -
+        // may arrive on a FileSystemWatcher thread, so marshal back to the UI thread.
+        _rulesEngine.Reloaded += OnRulesEngineReloaded;
 
         GenerateReportCommand = new RelayCommand(_ => GenerateReport());
         GenerateHtmlReportCommand = new RelayCommand(_ => GenerateHtmlReport());
@@ -694,72 +734,31 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         }
     }
 
-    /// <summary>CPU package temperature past this point reads as "running hot" for the Health
-    /// Check card - a rough, conservative threshold (most desktop/laptop CPUs throttle well
-    /// above this), not a precise per-model limit.</summary>
-    private const double HotCpuTempC = 90.0;
-
     private void RefreshHealthIssues()
     {
-        var issues = new List<HealthIssue>();
+        // #916-919: the bulk of what used to be a hardcoded if-chain here now lives as JSON rule
+        // definitions evaluated by RulesEngineService against a fresh metric bag (#917) - volume-
+        // full, dirty-bit, drive-health, CPU-hot, dead-fan, page-file-full, thrashing, network-
+        // errors, failed-services, outdated-drivers, multi-AV, and reboot-pending are all now rule
+        // packs (see RulesEngineService.BuiltInPackJson) rather than C# checks. #924's suppressions
+        // are already filtered out of ruleResult.Findings (into ruleResult.Suppressed) by the
+        // engine itself.
+        var bag = RulesEngineService.BuildMetricBag(Performance, _energyThermals, _systemSpecs, _services, Processes);
+        var ruleResult = _rulesEngine.Evaluate(bag);
+        var issues = new List<HealthIssue>(ruleResult.Findings);
 
-        // #72 (Round 11): "volume nearly full" was already a Health Check rule from an earlier
-        // round - this is just confirming/documenting it here rather than adding a duplicate.
-        // The System tab's Volumes card itself tints its progress bar red starting at 85%
-        // (PercentToBrushConverter); this rule intentionally stays a little more conservative
-        // (90%/97%) since a Health Check entry is a standing item on the dashboard, not just a
-        // color hint on a progress bar the user has to be looking at.
-        foreach (var volume in _systemSpecs.Volumes)
+        if (!ruleResult.Suppressed.Select(i => i.RuleId).SequenceEqual(SuppressedFindings.Select(i => i.RuleId)))
         {
-            if (volume.PercentUsed >= 90)
-                issues.Add(new HealthIssue { Message = $"{volume.Primary} is {volume.PercentUsed:0}% full", IsCritical = volume.PercentUsed >= 97 });
-            if (volume.IsDirty)
-                issues.Add(new HealthIssue { Message = $"{volume.Primary} needs a chkdsk pass (dirty bit set)", IsCritical = true });
+            SuppressedFindings.Clear();
+            foreach (var s in ruleResult.Suppressed) SuppressedFindings.Add(s);
         }
 
-        foreach (var disk in _systemSpecs.Disks)
-        {
-            if (disk.IsHealthWarning)
-                issues.Add(new HealthIssue { Message = $"Drive health warning: {disk.Primary} ({disk.HealthText})", IsCritical = true });
-        }
-
-        if (_energyThermals.CpuPackageTempC is { } cpuTemp && cpuTemp >= HotCpuTempC)
-            issues.Add(new HealthIssue { Message = $"CPU running hot ({cpuTemp:0}°C)", IsCritical = cpuTemp >= 100 });
-
-        if (_energyThermals.DeadFanDetected)
-            issues.Add(new HealthIssue { Message = $"Possible stopped fan: {_energyThermals.DeadFanName}", IsCritical = true });
-
-        if (Performance.PageFilePercent >= 90)
-            issues.Add(new HealthIssue { Message = $"Page file is {Performance.PageFilePercent:0}% full", IsCritical = false });
-
-        // Round 8 #41: swap-thrash - sustained heavy paging (hard faults) together with very
-        // little free RAM is a much stronger "the system is thrashing" signal than either figure
-        // alone; either one by itself happens routinely under ordinary load (a hard-fault burst
-        // during a big file load, or briefly low available RAM after opening several apps).
-        if (Performance.HardFaultsPerSec >= 500 && Performance.RamAvailablePercent < 10)
-            issues.Add(new HealthIssue
-            {
-                Message = $"Possible memory thrashing: {Performance.HardFaultsPerSec:0} hard faults/sec with only {Performance.RamAvailablePercent:0}% RAM available",
-                IsCritical = true,
-            });
-
-        if (Performance.HasNetworkErrors)
-            issues.Add(new HealthIssue { Message = "Network adapter errors detected", IsCritical = false });
-
-        int failedServices = _services.Services.Count(s => s.HasFailedToStart);
-        if (failedServices > 0)
-            issues.Add(new HealthIssue { Message = $"{failedServices} service{(failedServices == 1 ? "" : "s")} failed to start", IsCritical = false });
-
-        if (_systemSpecs.OutdatedDrivers.Count > 0)
-            issues.Add(new HealthIssue { Message = $"{_systemSpecs.OutdatedDrivers.Count} driver{(_systemSpecs.OutdatedDrivers.Count == 1 ? "" : "s")} may need updating", IsCritical = false });
-
-        if (_systemSpecs.MultipleActiveAvWarning)
-            issues.Add(new HealthIssue { Message = "Multiple antivirus products look active", IsCritical = false });
-
-        // Round 11, #73: Windows Update/servicing reboot pending - see
-        // SystemSpecsService.ReadRebootPending for which registry keys are checked.
-        if (_systemSpecs.RebootPending)
-            issues.Add(new HealthIssue { Message = "A restart is pending to finish installing updates", IsCritical = false });
+        // A few checks stay hand-rolled here rather than becoming rule-pack JSON, because they
+        // don't cleanly fit the metric-bag/condition shape (#916): the reboot-pending correlation
+        // below reads UI/session-only state (SnapshotDiff, only populated after a manual "Compare"
+        // click) that has no business being an ambient metric-bag key, and the Defender/anomaly
+        // checks further down need arbitrary statistical computation a static JSON condition can't
+        // express.
 
         // Round 12, #98: "which of my changes since the baseline are still pending that reboot" -
         // a derived rollup, no new registry reads: just correlates SnapshotDiff (already computed
@@ -831,5 +830,30 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         }
     }
 
-    public void Dispose() => _healthTimer.Stop();
+    /// <summary>#924: suppresses the rule behind `parameter` (a HealthIssue from HealthIssues, via
+    /// the Health Check card's Snooze/Ignore buttons) for `duration` (null = permanent), then
+    /// re-evaluates immediately so the card reflects the change without waiting for the next tick.
+    /// A no-op for the hand-rolled findings that carry no RuleId (the Defender/anomaly/reboot-
+    /// correlation checks) - those don't have a rule to suppress by id.</summary>
+    private void SuppressFinding(object? parameter, TimeSpan? duration, string reason)
+    {
+        if (parameter is not HealthIssue { RuleId: { Length: > 0 } ruleId }) return;
+        _rulesEngine.Suppress(ruleId, reason, duration is null ? null : DateTime.UtcNow.Add(duration.Value));
+        RefreshHealthIssues();
+    }
+
+    private void OnRulesEngineReloaded()
+    {
+        // Always post through the dispatcher (see RulesEditorViewModel.OnEngineReloaded's remarks
+        // on why this avoids a reentrant collection update when Reloaded was raised synchronously
+        // from an override/suppression edit).
+        var app = System.Windows.Application.Current;
+        app?.Dispatcher.BeginInvoke(RefreshHealthIssues);
+    }
+
+    public void Dispose()
+    {
+        _healthTimer.Stop();
+        _rulesEngine.Reloaded -= OnRulesEngineReloaded;
+    }
 }

@@ -16,7 +16,15 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public StartupViewModel Startup { get; } = new();
     public SystemSpecsViewModel SystemSpecs { get; } = new();
     public StabilityViewModel Stability { get; } = new();
+
+    // #916-927: the Health Check card's rules engine - one shared instance (one FileSystemWatcher,
+    // one loaded rule set) between the live Health Check feed (SummaryViewModel) and the Settings
+    // drawer's rule editor/test/import-export panel (RulesEditorViewModel). Constructed in the
+    // constructor body (needs the already-initialized Performance instance for #920's sustained-
+    // condition history lookups), not as a field initializer.
+    public RulesEngineService RulesEngine { get; }
     public SummaryViewModel Summary { get; }
+    public RulesEditorViewModel RulesEditor { get; }
 
     // #901: symptom-picker diagnostics tab - takes the shared Performance/Processes instances so
     // the "My PC is slow" branch reuses already-polled live data instead of re-sampling from
@@ -205,7 +213,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Network = new NetworkViewModel(Performance);
         Gpu = new GpuViewModel(Processes);
         Logging = new LoggingViewModel(Performance, EnergyThermals);
-        Summary = new SummaryViewModel(Performance, Processes, Services, EnergyThermals, SystemSpecs, Network, Stability);
+        RulesEngine = new RulesEngineService(Performance);
+        Summary = new SummaryViewModel(Performance, Processes, Services, EnergyThermals, SystemSpecs, Network, Stability, RulesEngine);
+        RulesEditor = new RulesEditorViewModel(RulesEngine, Performance, EnergyThermals, SystemSpecs, Services, Processes);
         Search = new GlobalSearchViewModel(Processes, Services, Startup, SystemSpecs);
         Troubleshoot = new TroubleshootViewModel(Performance, Processes);
 
@@ -373,6 +383,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Gpu.Dispose();
         Logging.Dispose();
         Summary.Dispose();
+        RulesEditor.Dispose();
+        RulesEngine.Dispose();
         _miniDashboard?.Close();
         RemoteMonitor.Dispose();
         Hotkey.Dispose();

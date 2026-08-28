@@ -276,10 +276,50 @@
                                         </Border.Style>
                                     </Border>
                                     <TextBlock Text="{Binding Message}" FontSize="12.5" VerticalAlignment="Center" />
+                                    <!-- #924: snooze/ignore - only rule-engine findings (RuleId set) carry a
+                                         rule id to suppress by; the couple of remaining hand-rolled checks
+                                         (Defender scan heuristic, anomaly highlighting, reboot-vs-baseline
+                                         correlation) have nothing to suppress and hide these buttons. -->
+                                    <StackPanel Orientation="Horizontal" Margin="10,0,0,0"
+                                                Visibility="{Binding RuleId, Converter={StaticResource NullToVisibilityConverter}}">
+                                        <Button Content="Snooze 7d" FontSize="10.5" Padding="6,1"
+                                                Command="{Binding DataContext.SnoozeFindingCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                CommandParameter="{Binding}" Margin="0,0,4,0" />
+                                        <Button Content="Ignore" FontSize="10.5" Padding="6,1"
+                                                Command="{Binding DataContext.IgnoreFindingCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                CommandParameter="{Binding}" />
+                                    </StackPanel>
                                 </StackPanel>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
+
+                    <!-- #924: suppressed findings stay listable/reversible rather than just vanishing. -->
+                    <Expander Header="{Binding SuppressedFindings.Count, StringFormat={}{0} finding(s) suppressed}"
+                              IsExpanded="{Binding IsSuppressedListExpanded}" Margin="0,10,0,0" FontSize="12">
+                        <Expander.Style>
+                            <Style TargetType="Expander">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding SuppressedFindings.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Expander.Style>
+                        <ItemsControl ItemsSource="{Binding SuppressedFindings}" Margin="0,6,0,0">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                                        <TextBlock Text="{Binding Message}" FontSize="12" Opacity="0.65" VerticalAlignment="Center" />
+                                        <Button Content="Unsuppress" FontSize="10.5" Padding="6,1" Margin="10,0,0,0"
+                                                Command="{Binding DataContext.UnsuppressFindingCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                CommandParameter="{Binding}" />
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </Expander>
                 </StackPanel>
             </Border>
 
