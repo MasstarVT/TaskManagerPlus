@@ -11,6 +11,77 @@
     <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16">
         <StackPanel>
 
+            <!-- Round 18, item 80: "will this PC capture the next BSOD" - a single pass/fail/
+                 uncertain verdict summarising items 71-79's crash dump configuration card below,
+                 placed first (ahead of even the unexpected-shutdown banner) since every other
+                 crash-forensics feature on this tab is worthless on a machine that isn't
+                 configured to capture dumps at all - see CrashDumpConfigService.BuildChecklist. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding CrashCaptureVerdict}" Value="Fail">
+                                <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
+                                <Setter Property="BorderBrush" Value="{DynamicResource DangerBrush}" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Will this PC capture the next BSOD?" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="{Binding CrashCaptureVerdictText}" TextWrapping="Wrap" FontSize="13" FontWeight="SemiBold" Margin="0,2,0,10">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding CrashCaptureVerdict}" Value="Pass">
+                                        <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding CrashCaptureVerdict}" Value="Fail">
+                                        <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding CrashCaptureVerdict}" Value="Uncertain">
+                                        <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
+                    <ItemsControl ItemsSource="{Binding CrashCaptureChecklistItems}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Border Grid.Column="0" Width="16" Height="16" CornerRadius="8" VerticalAlignment="Top" Margin="0,2,10,0">
+                                        <Border.Style>
+                                            <Style TargetType="Border">
+                                                <Setter Property="Background" Value="{DynamicResource TextTertiaryBrush}" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding Passed}" Value="True">
+                                                        <Setter Property="Background" Value="{DynamicResource SuccessBrush}" />
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding Passed}" Value="False">
+                                                        <Setter Property="Background" Value="{DynamicResource DangerBrush}" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Border.Style>
+                                    </Border>
+                                    <StackPanel Grid.Column="1">
+                                        <TextBlock Text="{Binding Label}" FontSize="12.5" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                        <TextBlock Text="{Binding Detail}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,1,0,0" />
+                                    </StackPanel>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
             <!-- #4: the shutdown immediately preceding this boot looks unexpected (Kernel-Power 41
                  / EventLog 6008 within a few minutes of the last boot time) - see
                  EventLogService.Query. -->
@@ -1023,6 +1094,175 @@
                         <Button Content="Refresh status" Command="{Binding RefreshForcedCrashStatusCommand}" Padding="10,4" />
                     </StackPanel>
                     <TextBlock Text="{Binding ForcedCrashStatusText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+
+            <!-- Round 18, items 71-79: "Crash dump configuration" - a sibling card to "Capture
+                 settings" above; that card configures LocalDumps/SilentProcessExit (per-app
+                 user-mode dumps), this one covers the system-wide CrashControl configuration that
+                 decides whether a kernel bugcheck (BSOD) itself leaves a readable dump at all -
+                 see CrashDumpConfigService's own remarks. Item 80's pass/fail summary of
+                 everything on this card lives at the top of the tab. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Crash dump configuration" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="HKLM\...\CrashControl decides whether the next BSOD leaves a dump behind at all, and what kind - read out here in plain English, cross-checked against the page file that has to be large enough to actually hold it."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+
+                    <!-- Item 71: plain-English CrashDumpEnabled/DumpFile/MinidumpDir/Overwrite/
+                         AutoReboot/LogEvent/AlwaysKeepMemoryDump/DedicatedDumpFile read-out. -->
+                    <ItemsControl ItemsSource="{Binding CrashDumpConfig.Fields}" Margin="0,0,0,10">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="270" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="{Binding Label}" Style="{StaticResource SubStat}" TextWrapping="Wrap" />
+                                    <TextBlock Grid.Column="1" Text="{Binding Value}" FontSize="12.5" TextWrapping="Wrap" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <!-- Items 72/73: dump type vs. page file. -->
+                    <Border BorderBrush="{DynamicResource BorderBrush2}" BorderThickness="0,1,0,0" Margin="0,0,0,10" Padding="0,10,0,0">
+                        <StackPanel>
+                            <TextBlock Text="Page file vs. dump type" Style="{StaticResource ColorRowLabel}" Margin="0,0,0,6" FontWeight="SemiBold" />
+
+                            <!-- Item 73: page file disabled entirely - the "I have 64 GB of RAM so
+                                 I turned it off" case, which silently disables crash dumps. -->
+                            <Border Background="{DynamicResource DangerMutedBrush}" BorderBrush="{DynamicResource DangerBrush}"
+                                    BorderThickness="1" CornerRadius="6" Padding="10,8" Margin="0,0,0,8">
+                                <Border.Style>
+                                    <Style TargetType="Border">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding CrashDumpConfig.PageFileDisabled}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Border.Style>
+                                <TextBlock Foreground="{DynamicResource DangerBrush}" FontSize="12" FontWeight="SemiBold" TextWrapping="Wrap">
+                                    <Run Text="No page file is configured at all - crash dumps are silently disabled. The configured dump type needs roughly " />
+                                    <Run Text="{Binding CrashDumpConfig.RequiredSizeForConfiguredTypeBytes, Converter={StaticResource BytesToReadableConverter}, Mode=OneWay}" />
+                                    <Run Text=" of page file (or a dedicated dump file below, on a volume with room)." />
+                                </TextBlock>
+                            </Border>
+
+                            <TextBlock TextWrapping="Wrap" Style="{StaticResource SubStat}" Margin="0,0,0,6">
+                                <Run Text="Total RAM: " /><Run Text="{Binding CrashDumpConfig.TotalRamBytes, Converter={StaticResource BytesToReadableConverter}, Mode=OneWay}" />
+                                <Run Text=" · Complete dump needs ~" /><Run Text="{Binding CrashDumpConfig.RequiredSizeForCompleteBytes, Converter={StaticResource BytesToReadableConverter}, Mode=OneWay}" />
+                                <Run Text=" · Kernel/Automatic dump needs ~" /><Run Text="{Binding CrashDumpConfig.RequiredSizeForKernelBytes, Converter={StaticResource BytesToReadableConverter}, Mode=OneWay}" />
+                                <Run Text=" (both approximate - Microsoft doesn't publish an exact formula)." />
+                            </TextBlock>
+
+                            <ItemsControl ItemsSource="{Binding CrashDumpConfig.PageFiles}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding DisplayText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,2" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Items 74/75: dedicated dump file setup + free-space health on whichever
+                         volume the next crash would actually try to write to. -->
+                    <Border BorderBrush="{DynamicResource BorderBrush2}" BorderThickness="0,0,0,1" Margin="0,0,0,10" Padding="0,0,0,10">
+                        <StackPanel>
+                            <TextBlock Text="Dedicated dump file &amp; target free space" Style="{StaticResource ColorRowLabel}" Margin="0,0,0,6" FontWeight="SemiBold" />
+                            <TextBlock Text="DedicatedDumpFile/DumpFileSize point the dump at a different (larger) volume instead of enlarging the system page file - useful when the system volume genuinely doesn't have room."
+                                       Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" />
+
+                            <!-- Item 75: red/amber/green free-space line. -->
+                            <TextBlock TextWrapping="Wrap" FontSize="12.5" Margin="0,0,0,8">
+                                <Run Text="Dump target: " /><Run Text="{Binding CrashDumpConfig.DumpTargetPath, TargetNullValue='Unknown'}" FontFamily="Consolas" />
+                                <LineBreak />
+                                <Run Text="{Binding CrashDumpConfig.DumpTargetHealthText}" FontWeight="SemiBold">
+                                    <Run.Style>
+                                        <Style TargetType="Run">
+                                            <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding CrashDumpConfig.DumpTargetHealthLevel}" Value="Green">
+                                                    <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding CrashDumpConfig.DumpTargetHealthLevel}" Value="Amber">
+                                                    <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding CrashDumpConfig.DumpTargetHealthLevel}" Value="Red">
+                                                    <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Run.Style>
+                                </Run>
+                            </TextBlock>
+
+                            <TextBlock Text="New dedicated dump file path (e.g. D:\MEMORY.DMP, on a volume with room)" Style="{StaticResource ColorRowLabel}" Margin="0,0,0,4" />
+                            <TextBox Width="340" HorizontalAlignment="Left" Margin="0,0,0,8"
+                                     Text="{Binding DedicatedDumpFilePath, UpdateSourceTrigger=PropertyChanged}" />
+
+                            <Grid Margin="0,0,0,8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Max size (MB, 0 = let Windows decide)" VerticalAlignment="Center" Style="{StaticResource SubStat}" Margin="0,0,6,0" />
+                                <TextBox Grid.Column="1" Width="80" Text="{Binding DedicatedDumpFileSizeMb, UpdateSourceTrigger=PropertyChanged}" />
+                            </Grid>
+
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                <Button Content="Set dedicated dump file" Command="{Binding SetDedicatedDumpFileCommand}" Padding="10,4" Margin="0,0,8,0" />
+                                <Button Content="Clear" Command="{Binding ClearDedicatedDumpFileCommand}" Padding="10,4" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Item 76: auto-reboot toggle. -->
+                    <Border BorderBrush="{DynamicResource BorderBrush2}" BorderThickness="0,0,0,1" Margin="0,0,0,10" Padding="0,0,0,10">
+                        <StackPanel>
+                            <TextBlock Text="Auto-reboot after a crash" Style="{StaticResource ColorRowLabel}" Margin="0,0,0,4" FontWeight="SemiBold" />
+                            <TextBlock Text="When on, the machine restarts immediately after a bugcheck, before the stop code (or QR code) can be read. Turning it off is temporary diagnostic practice, not a permanent setting."
+                                       Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" />
+                            <StackPanel Orientation="Horizontal">
+                                <Button Content="Enable" Command="{Binding EnableAutoRebootCommand}" Padding="10,4" Margin="0,0,8,0" />
+                                <Button Content="Disable" Command="{Binding DisableAutoRebootCommand}" Style="{StaticResource DangerButton}" Padding="10,4" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Item 78: Fast Startup / HiberbootEnabled. -->
+                    <Border BorderBrush="{DynamicResource BorderBrush2}" BorderThickness="0,0,0,1" Margin="0,0,0,10" Padding="0,0,0,10">
+                        <StackPanel>
+                            <TextBlock Text="Fast Startup" Style="{StaticResource ColorRowLabel}" Margin="0,0,0,4" FontWeight="SemiBold" />
+                            <TextBlock Text="When on (HiberbootEnabled), a normal &quot;shut down&quot; is really a hibernate - driver state persists across the reboot, so a driver fault can survive a restart that &quot;should&quot; have cleared it, and invalidates most &quot;did rebooting fix it&quot; reasoning."
+                                       Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" />
+                            <StackPanel Orientation="Horizontal">
+                                <Button Content="Enable" Command="{Binding EnableFastStartupCommand}" Padding="10,4" Margin="0,0,8,0" />
+                                <Button Content="Disable" Command="{Binding DisableFastStartupCommand}" Style="{StaticResource DangerButton}" Padding="10,4" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Item 79: hibernation + BitLocker interactions - informational only. -->
+                    <Border BorderBrush="{DynamicResource BorderBrush2}" BorderThickness="0,0,0,1" Margin="0,0,0,10" Padding="0,0,0,10">
+                        <StackPanel>
+                            <TextBlock Text="Hibernation &amp; encryption interactions" Style="{StaticResource ColorRowLabel}" Margin="0,0,0,4" FontWeight="SemiBold" />
+                            <TextBlock Text="{Binding CrashDumpConfig.HibernationStatusText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,4" />
+                            <TextBlock Text="{Binding CrashDumpConfig.DumpVolumeBitLockerStatusText}" Style="{StaticResource SubStat}" TextWrapping="Wrap"
+                                       Visibility="{Binding CrashDumpConfig.DumpVolumeBitLockerStatusText, Converter={StaticResource NullToVisibilityConverter}}" />
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Item 77: one-click "make this PC capture crashes properly". -->
+                    <TextBlock Text="Recommended fix" Style="{StaticResource ColorRowLabel}" Margin="0,0,0,4" FontWeight="SemiBold" />
+                    <TextBlock Text="Sets the dump type to Automatic memory dump, sets MinidumpsCount to a sane 10, and switches the page file to system-managed so Windows sizes it itself - the same three things a manual walkthrough would ask for."
+                               Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" />
+                    <Button Content="Make this PC capture crashes properly" Command="{Binding ApplyRecommendedCrashDumpConfigCommand}" Padding="10,4" HorizontalAlignment="Left" Margin="0,0,0,8" />
+                    <TextBlock Text="{Binding CrashDumpConfigStatusText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" />
                 </StackPanel>
             </Border>
 

@@ -299,6 +299,43 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
     public RelayCommand EnableNmiCrashDumpCommand { get; }
     public RelayCommand DisableNmiCrashDumpCommand { get; }
 
+    // ---------------------------------------------------------------------------------------
+    // Round 18, items 71-80: "dump configuration and capture health" - a sibling "Crash dump
+    // configuration" card to the "Capture settings" card above, plus a headline pass/fail
+    // checklist (item 80) at the top of the whole tab - see CrashDumpConfigService and
+    // CrashDumpConfiguration's own remarks for the full field list this reads.
+    // ---------------------------------------------------------------------------------------
+
+    private CrashDumpConfiguration? _crashDumpConfig;
+    public CrashDumpConfiguration? CrashDumpConfig { get => _crashDumpConfig; private set => SetProperty(ref _crashDumpConfig, value); }
+
+    // Item 80: headline checklist - placed at the top of the tab (see StabilityView.xaml).
+    public ObservableCollection<CrashCaptureChecklistItem> CrashCaptureChecklistItems { get; } = new();
+
+    private CrashCaptureVerdict _crashCaptureVerdict = CrashCaptureVerdict.Uncertain;
+    public CrashCaptureVerdict CrashCaptureVerdict { get => _crashCaptureVerdict; private set => SetProperty(ref _crashCaptureVerdict, value); }
+
+    private string _crashCaptureVerdictText = string.Empty;
+    public string CrashCaptureVerdictText { get => _crashCaptureVerdictText; private set => SetProperty(ref _crashCaptureVerdictText, value); }
+
+    // Item 74: dedicated dump file setup inputs.
+    private string _dedicatedDumpFilePath = string.Empty;
+    public string DedicatedDumpFilePath { get => _dedicatedDumpFilePath; set => SetProperty(ref _dedicatedDumpFilePath, value); }
+
+    private int _dedicatedDumpFileSizeMb;
+    public int DedicatedDumpFileSizeMb { get => _dedicatedDumpFileSizeMb; set => SetProperty(ref _dedicatedDumpFileSizeMb, value); }
+
+    private string _crashDumpConfigStatusText = string.Empty;
+    public string CrashDumpConfigStatusText { get => _crashDumpConfigStatusText; private set => SetProperty(ref _crashDumpConfigStatusText, value); }
+
+    public RelayCommand SetDedicatedDumpFileCommand { get; }
+    public RelayCommand ClearDedicatedDumpFileCommand { get; }
+    public RelayCommand EnableAutoRebootCommand { get; }
+    public RelayCommand DisableAutoRebootCommand { get; }
+    public RelayCommand EnableFastStartupCommand { get; }
+    public RelayCommand DisableFastStartupCommand { get; }
+    public RelayCommand ApplyRecommendedCrashDumpConfigCommand { get; }
+
     // Round 17 chunk 64-70, item 66: persisted per-executable hang history - see
     // HangHistoryService. Shown on this same "Application hangs" card (item 53's own card) rather
     // than a new one, per this chunk's own instruction.
@@ -630,6 +667,95 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
             OnPropertyChanged(nameof(ForcedCrashConfigText));
         });
 
+        // Round 18, items 74/76/77/78: crash-dump-configuration write actions - each one is a
+        // real, consequential registry/page-file change, so every Enable/Apply/Set below is
+        // gated behind an explicit MessageBox confirmation first, the same pattern
+        // EnableCrashOnCtrlScrollCommand/PurgeWerReportsCommand already use above for a similarly
+        // consequential action; Disable needs no confirmation since it only ever turns a toggle
+        // back to a safer state.
+        SetDedicatedDumpFileCommand = new RelayCommand(() =>
+        {
+            if (string.IsNullOrWhiteSpace(DedicatedDumpFilePath))
+            {
+                CrashDumpConfigStatusText = "Enter a target path first (e.g. D:\\MEMORY.DMP, on a volume with room).";
+                return;
+            }
+            var confirm = System.Windows.MessageBox.Show(
+                $"Point crash dumps at {DedicatedDumpFilePath.Trim()} instead of the system page file's own volume?\n\nWrites HKLM\\...\\CrashControl\\DedicatedDumpFile (and DumpFileSize, if set). Continue?",
+                "Set dedicated dump file",
+                System.Windows.MessageBoxButton.YesNo,
+                System.Windows.MessageBoxImage.Warning);
+            if (confirm != System.Windows.MessageBoxResult.Yes) return;
+
+            bool ok = CrashDumpConfigService.WriteDedicatedDumpFile(DedicatedDumpFilePath.Trim(), DedicatedDumpFileSizeMb);
+            CrashDumpConfigStatusText = ok ? "Saved. Takes effect on the next crash." : "Couldn't write the registry value(s).";
+            if (ok) _ = RefreshAsync();
+        });
+
+        ClearDedicatedDumpFileCommand = new RelayCommand(() =>
+        {
+            bool ok = CrashDumpConfigService.ClearDedicatedDumpFile();
+            CrashDumpConfigStatusText = ok ? "Dedicated dump file removed - dumps go back to the system page file's volume." : "Couldn't remove the registry value(s).";
+            if (ok) _ = RefreshAsync();
+        });
+
+        EnableAutoRebootCommand = new RelayCommand(() =>
+        {
+            bool ok = CrashDumpConfigService.SetAutoReboot(true);
+            CrashDumpConfigStatusText = ok ? "AutoReboot enabled." : "Couldn't write the registry value.";
+            if (ok) _ = RefreshAsync();
+        });
+
+        DisableAutoRebootCommand = new RelayCommand(() =>
+        {
+            var confirm = System.Windows.MessageBox.Show(
+                "Turns off automatic restart after a crash, so the blue-screen/stop-code screen stays up until manually restarted.\n\nThis is meant as temporary diagnostic practice, not a permanent setting - continue?",
+                "Disable auto-reboot on crash",
+                System.Windows.MessageBoxButton.YesNo,
+                System.Windows.MessageBoxImage.Warning);
+            if (confirm != System.Windows.MessageBoxResult.Yes) return;
+
+            bool ok = CrashDumpConfigService.SetAutoReboot(false);
+            CrashDumpConfigStatusText = ok ? "AutoReboot disabled." : "Couldn't write the registry value.";
+            if (ok) _ = RefreshAsync();
+        });
+
+        EnableFastStartupCommand = new RelayCommand(() =>
+        {
+            bool ok = CrashDumpConfigService.SetHiberbootEnabled(true);
+            CrashDumpConfigStatusText = ok ? "Fast Startup enabled." : "Couldn't write the registry value.";
+            if (ok) _ = RefreshAsync();
+        });
+
+        DisableFastStartupCommand = new RelayCommand(() =>
+        {
+            var confirm = System.Windows.MessageBox.Show(
+                "Turns off Fast Startup (HiberbootEnabled), so a normal shutdown fully clears driver state instead of hibernating it - makes \"did rebooting fix it\" testing meaningful again.\n\nContinue?",
+                "Disable Fast Startup",
+                System.Windows.MessageBoxButton.YesNo,
+                System.Windows.MessageBoxImage.Warning);
+            if (confirm != System.Windows.MessageBoxResult.Yes) return;
+
+            bool ok = CrashDumpConfigService.SetHiberbootEnabled(false);
+            CrashDumpConfigStatusText = ok ? "Fast Startup disabled." : "Couldn't write the registry value.";
+            if (ok) _ = RefreshAsync();
+        });
+
+        ApplyRecommendedCrashDumpConfigCommand = new RelayCommand(() =>
+        {
+            var confirm = System.Windows.MessageBox.Show(
+                "Sets the dump type to Automatic memory dump, sets MinidumpsCount to 10, and switches the page file to system-managed so Windows sizes it itself.\n\n" +
+                "This changes system-wide page file and crash-dump behavior. Continue?",
+                "Apply recommended crash-capture configuration",
+                System.Windows.MessageBoxButton.YesNo,
+                System.Windows.MessageBoxImage.Warning);
+            if (confirm != System.Windows.MessageBoxResult.Yes) return;
+
+            var (ok, notes) = CrashDumpConfigService.ApplyRecommendedConfiguration();
+            CrashDumpConfigStatusText = (ok ? "Applied. " : "Some settings couldn't be applied. ") + string.Join(" ", notes);
+            _ = RefreshAsync();
+        });
+
         // Round 17, item 59: jump from a restart-loop warning row to the matching Services-tab
         // entry - see JumpToServiceRequested's own remarks.
         JumpToServiceCommand = new RelayCommand(param =>
@@ -799,6 +925,12 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
             // against without a second WER scan.
             var crashBundle = await Task.Run(() => BuildCrashForensicsBundle(werBundle.HangReports));
             ApplyCrashForensicsBundle(crashBundle);
+
+            // Round 18, items 71-80: dump configuration and capture-health checklist -
+            // independent of everything above (its own registry/WMI/page-file/powercfg/
+            // manage-bde reads), applied separately, same shape as the bundles above.
+            var crashDumpConfig = await CrashDumpConfigService.ReadConfigurationAsync();
+            ApplyCrashDumpConfig(crashDumpConfig);
 
             RefreshErrorText = null;
         }
@@ -1119,6 +1251,27 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
 
         HangHistory.Clear();
         foreach (var h in bundle.HangHistory) HangHistory.Add(h);
+    }
+
+    /// <summary>Round 18, items 71-80: applies the freshly-read CrashDumpConfiguration plus its
+    /// derived checklist (item 80) - see CrashDumpConfigService.BuildChecklist's remarks on how
+    /// the verdict is computed from the individual rows.</summary>
+    private void ApplyCrashDumpConfig(CrashDumpConfiguration cfg)
+    {
+        CrashDumpConfig = cfg;
+
+        var checklist = CrashDumpConfigService.BuildChecklist(cfg);
+        CrashCaptureChecklistItems.Clear();
+        foreach (var item in checklist.Items) CrashCaptureChecklistItems.Add(item);
+        CrashCaptureVerdict = checklist.Verdict;
+        CrashCaptureVerdictText = checklist.VerdictText;
+
+        // Item 74: prefill the dedicated-dump-file inputs from whatever's currently configured,
+        // without clobbering a value the user is actively typing into an as-yet-unsaved field.
+        if (string.IsNullOrWhiteSpace(DedicatedDumpFilePath) && !string.IsNullOrWhiteSpace(cfg.DedicatedDumpFile))
+            DedicatedDumpFilePath = cfg.DedicatedDumpFile;
+        if (DedicatedDumpFileSizeMb == 0 && cfg.DumpFileSizeMb is { } mb)
+            DedicatedDumpFileSizeMb = mb;
     }
 
     /// <summary>Item 55: clusters the already-parsed managed-exception list by (ExceptionType, top
