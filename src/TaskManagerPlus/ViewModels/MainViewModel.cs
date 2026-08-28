@@ -18,6 +18,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public StabilityViewModel Stability { get; } = new();
     public SummaryViewModel Summary { get; }
 
+    // #901: symptom-picker diagnostics tab - takes the shared Performance/Processes instances so
+    // the "My PC is slow" branch reuses already-polled live data instead of re-sampling from
+    // scratch (see TroubleshootViewModel's remarks).
+    public TroubleshootViewModel Troubleshoot { get; }
+
     // Thin wrappers over the shared Performance sampler (see CpuViewModel's remarks) - the
     // CPU/Memory/Storage/Network tabs are split views of one underlying data source, not four
     // independent pollers.
@@ -176,7 +181,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     /// app's first nine tabs (in their normal strip order) when the user hasn't customized
     /// ui-preferences.json's TabShortcuts list.</summary>
     public static readonly string[] DefaultTabShortcutOrder =
-        { "Summary", "CPU", "Memory", "Storage", "Network", "GPU", "Energy & Thermals", "Processes", "Services" };
+        { "Summary", "CPU", "Memory", "Storage", "Network", "GPU", "Energy & Thermals", "Processes", "Services", "Troubleshoot" };
 
     public IReadOnlyList<string> TabShortcutOrder =>
         _uiPreferences.TabShortcuts.Count > 0 ? _uiPreferences.TabShortcuts : DefaultTabShortcutOrder;
@@ -202,6 +207,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Logging = new LoggingViewModel(Performance, EnergyThermals);
         Summary = new SummaryViewModel(Performance, Processes, Services, EnergyThermals, SystemSpecs, Network, Stability);
         Search = new GlobalSearchViewModel(Processes, Services, Startup, SystemSpecs);
+        Troubleshoot = new TroubleshootViewModel(Performance, Processes);
 
         RemoteMonitor = new RemoteMonitorService(BuildRemoteMetricsSnapshot) { RequiredToken = _remoteMonitorSettings.Token };
         ToggleRemoteMonitorCommand = new RelayCommand(_ => IsRemoteMonitorEnabled = !IsRemoteMonitorEnabled);

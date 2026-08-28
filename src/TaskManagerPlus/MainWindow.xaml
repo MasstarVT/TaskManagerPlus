@@ -338,6 +338,19 @@
                     </TabItem.Tag>
                     <views:StabilityView DataContext="{Binding Stability}" />
                 </TabItem>
+
+                <TabItem Header="Troubleshoot">
+                    <TabItem.Tag>
+                        <Viewbox Width="16" Height="16">
+                            <Canvas Width="16" Height="16">
+                                <Ellipse Style="{StaticResource NavIconStroke}" Canvas.Left="1" Canvas.Top="1" Width="14" Height="14" />
+                                <Line Style="{StaticResource NavIconStroke}" StrokeThickness="1.8" X1="8" Y1="4.5" X2="8" Y2="9" />
+                                <Ellipse Style="{StaticResource NavIconFill}" Canvas.Left="7.25" Canvas.Top="10.5" Width="1.5" Height="1.5" />
+                            </Canvas>
+                        </Viewbox>
+                    </TabItem.Tag>
+                    <views:TroubleshootView DataContext="{Binding Troubleshoot}" />
+                </TabItem>
             </TabControl>
 
             <views:SettingsPanel Grid.Column="1" DataContext="{Binding Theme}">

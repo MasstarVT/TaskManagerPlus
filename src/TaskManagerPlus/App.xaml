@@ -29,6 +29,8 @@
             <conv:IntEqualsConverter x:Key="IntEqualsConverter" />
             <conv:BoolToVisibilityConverter x:Key="BoolToVisibilityConverter" />
             <conv:ActivePlanSuffixConverter x:Key="ActivePlanSuffixConverter" />
+            <conv:DiagnosticStepStatusToBrushConverter x:Key="DiagnosticStepStatusToBrushConverter" />
+            <conv:DiagnosticStepStatusToLabelConverter x:Key="DiagnosticStepStatusToLabelConverter" />
         </ResourceDictionary>
     </Application.Resources>
 </Application>
