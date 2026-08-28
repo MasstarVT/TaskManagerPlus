@@ -67,10 +67,18 @@ public static class GlossaryService
                 loaded = JsonSerializer.Deserialize<List<GlossaryTerm>>(SeedJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new();
             }
 
-            _terms = loaded.OrderBy(t => t.Term, StringComparer.OrdinalIgnoreCase).ToList();
-            _byTerm = new Dictionary<string, GlossaryTerm>(StringComparer.OrdinalIgnoreCase);
-            foreach (var t in _terms)
-                _byTerm.TryAdd(t.Term, t);
+            // Both are built fully as locals and only then published, with _terms - the field
+            // EnsureLoaded's unlocked fast path above tests - assigned LAST. Assigning _terms
+            // first would let another thread pass that fast path and reach Find's `_byTerm!`
+            // while _byTerm was still null or only partly filled. Every caller today happens to
+            // be on the UI thread, so this ordering is what keeps that from being load-bearing.
+            var orderedTerms = loaded.OrderBy(t => t.Term, StringComparer.OrdinalIgnoreCase).ToList();
+            var byTerm = new Dictionary<string, GlossaryTerm>(StringComparer.OrdinalIgnoreCase);
+            foreach (var t in orderedTerms)
+                byTerm.TryAdd(t.Term, t);
+
+            _byTerm = byTerm;
+            _terms = orderedTerms;
         }
     }
 

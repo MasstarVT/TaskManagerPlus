@@ -198,7 +198,7 @@ public sealed class BaselineViewModel : ObservableObject, IDisposable
     private string _referenceStatusText = "No reference profile imported yet. Import an exported baseline (Baselines panel \"Capture a baseline\" on a known-good machine, then bring that file here) to compare it against this machine.";
     public string ReferenceStatusText { get => _referenceStatusText; private set => SetProperty(ref _referenceStatusText, value); }
 
-    public RelayCommand ImportReferenceProfileCommand { get; }
+    public AsyncRelayCommand ImportReferenceProfileCommand { get; }
 
     /// <summary>suggestions.md #1000: Ctrl+Shift+C on the Baselines panel - copies a Markdown
     /// summary of the currently captured baselines and the oldest-vs-newest regression comparison
@@ -261,7 +261,7 @@ public sealed class BaselineViewModel : ObservableObject, IDisposable
         StartChangeCommand = new AsyncRelayCommand(StartChangeAsync, () => !IsChangeWindowOpen && !IsCapturing);
         FinishChangeCommand = new AsyncRelayCommand(FinishChangeAsync, () => IsChangeWindowOpen && !IsCapturing);
         GenerateChangeReportCommand = new RelayCommand(_ => GenerateChangeReport(), _ => _changeAfterBaseline is not null);
-        ImportReferenceProfileCommand = new RelayCommand(_ => ImportReferenceProfile());
+        ImportReferenceProfileCommand = new AsyncRelayCommand(ImportReferenceProfileAsync);
         CopyMarkdownCommand = new RelayCommand(_ =>
         {
             try { System.Windows.Clipboard.SetText(BuildBaselinesMarkdown()); }
@@ -764,7 +764,7 @@ public sealed class BaselineViewModel : ObservableObject, IDisposable
     /// compare against (BaselineService.CompareMetrics, same reuse), and both machines' hardware
     /// fingerprints side by side. Every difference is framed as "different, not necessarily wrong"
     /// in the UI (BaselineView.xaml's copy), never a pass/fail check.</summary>
-    private void ImportReferenceProfile()
+    private async Task ImportReferenceProfileAsync()
     {
         var dialog = new OpenFileDialog
         {
@@ -784,11 +784,17 @@ public sealed class BaselineViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(HasReferenceProfile));
 
         // Current machine's software/services/startup, captured fresh (not from a saved baseline -
-        // #994 asks to compare against the CURRENT machine, not a stale local capture). Run inline
-        // (GetAwaiter().GetResult(), not a real await) - same "quick enough to accept synchronously"
-        // call SummaryViewModel.SaveSnapshot already makes, and ImportReferenceProfileCommand is a
-        // plain RelayCommand, not async.
-        var currentSnapshot = SnapshotService.CaptureAsync().GetAwaiter().GetResult();
+        // #994 asks to compare against the CURRENT machine, not a stale local capture).
+        //
+        // Genuinely awaited, on an AsyncRelayCommand - the same shape SummaryViewModel's
+        // SaveSnapshotCommand/CompareSnapshotCommand already use for this exact call, and for the
+        // same reason CaptureAsync was made async in the first place (its driver-inventory and
+        // driver-store reads take seconds). This previously blocked the UI thread on
+        // GetAwaiter().GetResult(): CaptureAsync awaits Task.Run-backed work that can never
+        // complete synchronously, so it always suspended capturing WPF's dispatcher context, then
+        // its continuation was posted back to the very thread already blocked waiting for it -
+        // a guaranteed, permanent hang of the whole app on Import.
+        var currentSnapshot = await SnapshotService.CaptureAsync();
         ReferenceDiff = SnapshotService.Diff(imported.Snapshot, currentSnapshot);
 
         CurrentFingerprint = BaselineService.BuildCurrentFingerprint(_systemSpecs, _performance.RamTotalGb);

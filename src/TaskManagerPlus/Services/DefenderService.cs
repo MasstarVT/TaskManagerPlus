@@ -567,7 +567,7 @@ public static class DefenderService
         ReadExclusionsFromPreference(raw);
 
         return raw
-            .GroupBy(e => $"{e.Category} {e.Value.Trim().ToLowerInvariant()}")
+            .GroupBy(e => $"{e.Category}\0{e.Value.Trim().ToLowerInvariant()}")
             .Select(g =>
             {
                 var items = g.ToList();

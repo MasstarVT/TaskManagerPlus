@@ -52,7 +52,7 @@
                 <StackPanel>
                     <TextBlock Text="DPC watchdog headroom" FontWeight="SemiBold" Margin="0,0,0,6" />
                     <TextBlock Text="{Binding Watchdog.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8" />
-                    <Border Height="10" CornerRadius="5" Background="{DynamicResource BgSubtleBrush}">
+                    <Border Height="10" CornerRadius="5" Background="{DynamicResource BgElevatedBrush}">
                         <Border HorizontalAlignment="Left" Height="10" CornerRadius="5" Background="{DynamicResource DangerBrush}"
                                 Width="{Binding WatchdogHeadroomPercent, Converter={StaticResource PercentToWidthConverter}, ConverterParameter=300}" />
                     </Border>
@@ -713,7 +713,7 @@
                     <TextBlock FontSize="12" Margin="0,0,0,2">
                         <Run Text="USER handles: " /><Run Text="{Binding DesktopHeap.TotalUserHandles, StringFormat={}{0:N0}, Mode=OneWay}" /><Run Text=" / 10,000" />
                     </TextBlock>
-                    <Border Height="8" CornerRadius="4" Background="{DynamicResource BgSubtleBrush}" Margin="0,0,0,8">
+                    <Border Height="8" CornerRadius="4" Background="{DynamicResource BgElevatedBrush}" Margin="0,0,0,8">
                         <Border HorizontalAlignment="Left" Height="8" CornerRadius="4" Background="{DynamicResource AccentBrush}"
                                 Width="{Binding DesktopHeap.UserHandlePercent, Converter={StaticResource PercentToWidthConverter}, ConverterParameter=300}" />
                     </Border>
@@ -721,7 +721,7 @@
                     <TextBlock FontSize="12" Margin="0,0,0,2">
                         <Run Text="GDI handles: " /><Run Text="{Binding DesktopHeap.TotalGdiHandles, StringFormat={}{0:N0}, Mode=OneWay}" /><Run Text=" / 65,536" />
                     </TextBlock>
-                    <Border Height="8" CornerRadius="4" Background="{DynamicResource BgSubtleBrush}">
+                    <Border Height="8" CornerRadius="4" Background="{DynamicResource BgElevatedBrush}">
                         <Border HorizontalAlignment="Left" Height="8" CornerRadius="4" Background="{DynamicResource AccentBrush}"
                                 Width="{Binding DesktopHeap.GdiHandlePercent, Converter={StaticResource PercentToWidthConverter}, ConverterParameter=300}" />
                     </Border>

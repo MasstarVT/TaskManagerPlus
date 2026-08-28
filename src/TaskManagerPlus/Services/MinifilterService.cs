@@ -44,7 +44,8 @@ public static class MinifilterService
             if (name.Length == 0) continue;
 
             string altitudeText = row.GetValueOrDefault("Altitude")?.Trim() ?? string.Empty;
-            double? altitude = double.TryParse(altitudeText, out var a) ? a : null;
+            double? altitude = double.TryParse(altitudeText, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var a) ? a : null;
             int instanceCount = int.TryParse(row.GetValueOrDefault("Num Instances")?.Trim(), out var n) ? n : 0;
             string frame = row.GetValueOrDefault("Frame")?.Trim() ?? string.Empty;
 

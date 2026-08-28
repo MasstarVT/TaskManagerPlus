@@ -106,14 +106,16 @@ public static class RemediationActionCatalog
     private static double? ParseDismProgressPercent(string line)
     {
         var m = Regex.Match(line, @"\[\s*=*\s*(\d+(?:\.\d+)?)%\s*=*\s*\]");
-        return m.Success && double.TryParse(m.Groups[1].Value, out var pct) ? pct : null;
+        return m.Success && double.TryParse(m.Groups[1].Value, System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out var pct) ? pct : null;
     }
 
     /// <summary>#977: chkdsk's "NN percent complete" progress lines.</summary>
     private static double? ParseChkdskProgressPercent(string line)
     {
         var m = Regex.Match(line, @"(\d{1,3})\s*percent complete", RegexOptions.IgnoreCase);
-        return m.Success && double.TryParse(m.Groups[1].Value, out var pct) ? pct : null;
+        return m.Success && double.TryParse(m.Groups[1].Value, System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out var pct) ? pct : null;
     }
 
     /// <summary>Ties directly to the built-in pack's CPU-hot rules: a power plan stuck with a high

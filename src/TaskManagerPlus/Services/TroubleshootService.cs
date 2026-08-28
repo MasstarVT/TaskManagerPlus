@@ -983,7 +983,8 @@ public static class TroubleshootService
         {
             var m = CulpritPattern.Match(ev.Message);
             if (!m.Success) continue;
-            if (!double.TryParse(m.Groups["ms"].Value.Replace(",", ""), out var ms)) continue;
+            if (!double.TryParse(m.Groups["ms"].Value.Replace(",", ""), System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out var ms)) continue;
             culprits.Add(new BootCulprit(m.Groups["name"].Value.Trim(), ms, ev.TimeCreated));
         }
         return culprits;
@@ -1658,8 +1659,10 @@ public static class TroubleshootService
 
             var evidence = new List<string> { $"Full report: {reportPath}" };
             if (!designMatch.Success || !fullMatch.Success ||
-                !double.TryParse(designMatch.Groups[1].Value.Replace(",", ""), out var design) ||
-                !double.TryParse(fullMatch.Groups[1].Value.Replace(",", ""), out var full) || design <= 0)
+                !double.TryParse(designMatch.Groups[1].Value.Replace(",", ""), System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out var design) ||
+                !double.TryParse(fullMatch.Groups[1].Value.Replace(",", ""), System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out var full) || design <= 0)
             {
                 return DiagnosticStepResult.Warn("Battery report generated, but design/full-charge capacity couldn't be confidently extracted - open the report directly for the full detail.", evidence);
             }
@@ -1694,7 +1697,8 @@ public static class TroubleshootService
 
             string xml = await File.ReadAllTextAsync(xmlPath);
             var apps = Regex.Matches(xml, @"(?:ApplicationName|APPID|Name)=""([^""]+\.exe)""[^>]*?(?:EnergyEstimate|Energy)=""(\d+(?:\.\d+)?)""", RegexOptions.IgnoreCase)
-                .Select(m => (Name: m.Groups[1].Value, Energy: double.Parse(m.Groups[2].Value)))
+                .Select(m => (Name: m.Groups[1].Value, Energy: double.Parse(m.Groups[2].Value,
+                    System.Globalization.CultureInfo.InvariantCulture)))
                 .Where(a => a.Energy > 0)
                 .GroupBy(a => a.Name).Select(g => (g.Key, Energy: g.Sum(a => a.Energy)))
                 .OrderByDescending(a => a.Energy)
