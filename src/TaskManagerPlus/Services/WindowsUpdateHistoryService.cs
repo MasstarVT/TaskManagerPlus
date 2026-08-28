@@ -191,6 +191,55 @@ public static class WindowsUpdateHistoryService
 
     #endregion
 
+    #region #781 - "Did an update break this?" correlation with the Stability tab
+
+    /// <summary>
+    /// #781: flags an installed KB that landed within 48 hours before a faulting module (see
+    /// StabilityEvent.FaultingModule) started recurring (2+ occurrences) in the Stability tab's own
+    /// crash timeline - the same window used elsewhere in this app for "close enough to plausibly be
+    /// related" correlation (see #771's own 15-minute Setup-channel pairing, just wider here since
+    /// an update-induced crash pattern can take a day or two of use to first surface, not seconds).
+    /// Pure post-processing over two already-read lists (StabilityViewModel.RefreshAsync supplies
+    /// both) - no new query. A quick flag, not a verdict: plenty of recurring crashes have nothing to
+    /// do with whatever update happened to land beforehand.
+    /// </summary>
+    public static List<UpdateBreakageFlag> CorrelateWithStabilityFailures(
+        IReadOnlyList<WindowsUpdateEvent> wuEvents, IReadOnlyList<StabilityEvent> stabilityEvents)
+    {
+        var result = new List<UpdateBreakageFlag>();
+
+        var installs = wuEvents.Where(e => e.EventId == 19).ToList(); // "Install succeeded"
+        if (installs.Count == 0) return result;
+
+        var recurringModules = stabilityEvents
+            .Where(e => !string.IsNullOrWhiteSpace(e.FaultingModule))
+            .GroupBy(e => e.FaultingModule!, StringComparer.OrdinalIgnoreCase)
+            .Where(g => g.Count() >= 2)
+            .Select(g => new { Module = g.Key, FirstSeen = g.Min(e => e.TimeCreated), Count = g.Count() });
+
+        foreach (var recurring in recurringModules)
+        {
+            var nearestInstall = installs
+                .Where(i => i.TimeCreated <= recurring.FirstSeen && (recurring.FirstSeen - i.TimeCreated).TotalHours <= 48)
+                .OrderByDescending(i => i.TimeCreated) // closest install before the first failure
+                .FirstOrDefault();
+            if (nearestInstall is null) continue;
+
+            result.Add(new UpdateBreakageFlag
+            {
+                InstallTime = nearestInstall.TimeCreated,
+                UpdateTitle = nearestInstall.Title,
+                FaultingModule = recurring.Module,
+                FirstFailureTime = recurring.FirstSeen,
+                FailureCount = recurring.Count,
+            });
+        }
+
+        return result.OrderByDescending(f => f.FirstFailureTime).ToList();
+    }
+
+    #endregion
+
     private static string? ExtractErrorCode(string message)
     {
         var m = ErrorCodeRegex.Match(message);

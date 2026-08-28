@@ -90,6 +90,82 @@ public sealed class WindowsHealthViewModel : ObservableObject
 
     #endregion
 
+    #region #776 - WSUS/WUfB reachability check
+
+    private WuServerReachabilityResult? _wuServerReachability;
+    public WuServerReachabilityResult? WuServerReachability { get => _wuServerReachability; private set => SetProperty(ref _wuServerReachability, value); }
+
+    private bool _isCheckingWuServerReachability;
+    public bool IsCheckingWuServerReachability { get => _isCheckingWuServerReachability; private set => SetProperty(ref _isCheckingWuServerReachability, value); }
+
+    public AsyncRelayCommand CheckWuServerReachabilityCommand { get; }
+
+    #endregion
+
+    #region #777 - Update service-stack health check
+
+    public ObservableCollection<UpdateServiceHealthEntry> UpdateServiceStackHealth { get; } = new();
+
+    private bool _isLoadingUpdateServiceStackHealth;
+    public bool IsLoadingUpdateServiceStackHealth { get => _isLoadingUpdateServiceStackHealth; private set => SetProperty(ref _isLoadingUpdateServiceStackHealth, value); }
+
+    private bool _hasLoadedUpdateServiceStackHealth;
+    public bool HasLoadedUpdateServiceStackHealth { get => _hasLoadedUpdateServiceStackHealth; private set => SetProperty(ref _hasLoadedUpdateServiceStackHealth, value); }
+
+    public bool HasFlaggedUpdateServices => UpdateServiceStackHealth.Any(s => s.IsFlagged);
+
+    public AsyncRelayCommand LoadUpdateServiceStackHealthCommand { get; }
+    public AsyncRelayCommand RestoreUpdateServiceStackDefaultsCommand { get; }
+
+    #endregion
+
+    #region #778 - Guided "reset Windows Update components"
+
+    public ObservableCollection<string> ResetWuComponentsLog { get; } = new();
+
+    private bool _isResettingWuComponents;
+    public bool IsResettingWuComponents { get => _isResettingWuComponents; private set => SetProperty(ref _isResettingWuComponents, value); }
+
+    public AsyncRelayCommand ResetWindowsUpdateComponentsCommand { get; }
+
+    #endregion
+
+    #region #779 - Update cache reclaim
+
+    private UpdateCacheInfo? _updateCacheInfo;
+    public UpdateCacheInfo? UpdateCacheInfo { get => _updateCacheInfo; private set => SetProperty(ref _updateCacheInfo, value); }
+
+    private bool _isLoadingUpdateCacheInfo;
+    public bool IsLoadingUpdateCacheInfo { get => _isLoadingUpdateCacheInfo; private set => SetProperty(ref _isLoadingUpdateCacheInfo, value); }
+
+    public ObservableCollection<string> ClearUpdateCacheLog { get; } = new();
+
+    private bool _isClearingUpdateCache;
+    public bool IsClearingUpdateCache { get => _isClearingUpdateCache; private set => SetProperty(ref _isClearingUpdateCache, value); }
+
+    public AsyncRelayCommand CheckUpdateCacheSizeCommand { get; }
+    public AsyncRelayCommand ClearUpdateCacheCommand { get; }
+
+    #endregion
+
+    #region #780 - Uninstall a specific update
+
+    public ObservableCollection<RemovableUpdateInfo> RemovableUpdates { get; } = new();
+
+    private bool _isLoadingRemovableUpdates;
+    public bool IsLoadingRemovableUpdates { get => _isLoadingRemovableUpdates; private set => SetProperty(ref _isLoadingRemovableUpdates, value); }
+
+    private bool _hasLoadedRemovableUpdates;
+    public bool HasLoadedRemovableUpdates { get => _hasLoadedRemovableUpdates; private set => SetProperty(ref _hasLoadedRemovableUpdates, value); }
+
+    private bool _isUninstallingUpdate;
+    public bool IsUninstallingUpdate { get => _isUninstallingUpdate; private set => SetProperty(ref _isUninstallingUpdate, value); }
+
+    public AsyncRelayCommand LoadRemovableUpdatesCommand { get; }
+    public AsyncRelayCommand UninstallUpdateCommand { get; }
+
+    #endregion
+
     public WindowsHealthViewModel()
     {
         RefreshCommand = new AsyncRelayCommand(RefreshAsync);
@@ -97,6 +173,14 @@ public sealed class WindowsHealthViewModel : ObservableObject
         LoadServicingPackagesCommand = new AsyncRelayCommand(LoadServicingPackagesAsync);
         CheckFeatureUpdateFailureCommand = new AsyncRelayCommand(CheckFeatureUpdateFailureAsync);
         RunSetupDiagCommand = new AsyncRelayCommand(RunSetupDiagAsync, () => FeatureUpdateFailure?.SetupDiagAvailable ?? false);
+        CheckWuServerReachabilityCommand = new AsyncRelayCommand(CheckWuServerReachabilityAsync, () => !string.IsNullOrEmpty(UpdatePolicy.WuServer));
+        LoadUpdateServiceStackHealthCommand = new AsyncRelayCommand(LoadUpdateServiceStackHealthAsync);
+        RestoreUpdateServiceStackDefaultsCommand = new AsyncRelayCommand(RestoreUpdateServiceStackDefaultsAsync, () => HasFlaggedUpdateServices);
+        ResetWindowsUpdateComponentsCommand = new AsyncRelayCommand(ResetWindowsUpdateComponentsAsync);
+        CheckUpdateCacheSizeCommand = new AsyncRelayCommand(CheckUpdateCacheSizeAsync);
+        ClearUpdateCacheCommand = new AsyncRelayCommand(ClearUpdateCacheAsync, () => UpdateCacheInfo is { } c && (c.DownloadCacheSizeBytes > 0 || c.DeliveryOptimizationCacheSizeBytes > 0));
+        LoadRemovableUpdatesCommand = new AsyncRelayCommand(LoadRemovableUpdatesAsync);
+        UninstallUpdateCommand = new AsyncRelayCommand(UninstallUpdateAsync);
 
         _ = RefreshAsync();
     }
@@ -157,6 +241,11 @@ public sealed class WindowsHealthViewModel : ObservableObject
 
         UpdatePolicy = policy;
         ResumeUpdatesCommand.RaiseCanExecuteChanged();
+        // #776: a fresh refresh means any earlier reachability check is against a possibly-stale
+        // WUServer value - clear it rather than leave a check result on screen that no longer
+        // matches UpdatePolicy.WuServer.
+        WuServerReachability = null;
+        CheckWuServerReachabilityCommand.RaiseCanExecuteChanged();
     }
 
     /// <summary>#775: clears the pause-updates registry values - confirmed first, matching
@@ -248,6 +337,205 @@ public sealed class WindowsHealthViewModel : ObservableObject
         finally
         {
             IsRunningSetupDiag = false;
+        }
+    }
+
+    /// <summary>#776: on-demand HTTP reachability check against the WUServer policy URL - only
+    /// offered when one is actually configured (see UpdatePolicy.WuServer / the command's
+    /// CanExecute). A network call, so it's a button, never something Refresh runs automatically.</summary>
+    private async Task CheckWuServerReachabilityAsync()
+    {
+        if (string.IsNullOrEmpty(UpdatePolicy.WuServer)) return;
+        IsCheckingWuServerReachability = true;
+        try
+        {
+            WuServerReachability = await WindowsUpdatePolicyService.CheckWuServerReachabilityAsync(UpdatePolicy.WuServer);
+        }
+        finally
+        {
+            IsCheckingWuServerReachability = false;
+        }
+    }
+
+    /// <summary>#777: start type/state for every service Windows Update itself depends on - eight
+    /// targeted per-name reads, cheap enough to run alongside the rest of the tab, but still gated
+    /// behind its own button (not folded into RefreshAsync) so a first paint of the tab isn't
+    /// blocked on it.</summary>
+    private async Task LoadUpdateServiceStackHealthAsync()
+    {
+        IsLoadingUpdateServiceStackHealth = true;
+        try
+        {
+            var entries = await Task.Run(ServiceControlService.ReadUpdateServiceStackHealth);
+            UpdateServiceStackHealth.Clear();
+            foreach (var e in entries) UpdateServiceStackHealth.Add(e);
+            HasLoadedUpdateServiceStackHealth = true;
+            OnPropertyChanged(nameof(HasFlaggedUpdateServices));
+            RestoreUpdateServiceStackDefaultsCommand.RaiseCanExecuteChanged();
+        }
+        finally
+        {
+            IsLoadingUpdateServiceStackHealth = false;
+        }
+    }
+
+    /// <summary>#777: confirmed, with the exact effect (every service name + the `sc config`
+    /// mechanism) shown before it runs, matching CLAUDE.md's mutating-action convention. Re-reads
+    /// the card afterward so the flagged rows reflect the actual result rather than an assumed one.</summary>
+    private async Task RestoreUpdateServiceStackDefaultsAsync()
+    {
+        var flagged = UpdateServiceStackHealth.Where(s => s.IsFlagged).Select(s => s.DisplayName).ToList();
+        string flaggedText = flagged.Count > 0 ? string.Join(", ", flagged) : "(none currently flagged)";
+
+        var confirm = MessageBox.Show(
+            "This runs `sc config <name> start= <type>` for wuauserv, BITS, CryptSvc, msiserver, TrustedInstaller, UsoSvc, WaaSMedicSvc and DoSvc, restoring each to Windows' own documented default start type.\n\n" +
+            $"Currently flagged as Disabled: {flaggedText}\n\nRestore defaults now?",
+            "Restore update service defaults", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        var (success, error) = await ServiceControlService.RestoreUpdateServiceStackDefaultsAsync();
+        StatusMessage = success
+            ? "Update service start types restored to Windows defaults."
+            : $"Couldn't restore some update services: {error}";
+
+        await LoadUpdateServiceStackHealthAsync();
+    }
+
+    /// <summary>#778: guided, confirmed, step-logged - never automatic (CLAUDE.md's "guided, never
+    /// automatic" rule names this exact feature). The confirmation dialog states the exact sequence
+    /// before anything runs; ResetWuComponentsLog then carries exactly what happened, including the
+    /// undo step for each rename.</summary>
+    private async Task ResetWindowsUpdateComponentsAsync()
+    {
+        var confirm = MessageBox.Show(
+            "This runs the documented Windows Update component-reset repair sequence:\n\n" +
+            "1. Stop wuauserv, CryptSvc, BITS, msiserver\n" +
+            "2. Rename C:\\Windows\\SoftwareDistribution to SoftwareDistribution.bak\n" +
+            "3. Rename C:\\Windows\\System32\\catroot2 to catroot2.bak\n" +
+            "4. Restart wuauserv, CryptSvc, BITS, msiserver\n\n" +
+            "Windows recreates both folders automatically the next time it checks for updates. Each rename can be undone afterwards by renaming the .bak folder back over the original. Run this now?",
+            "Reset Windows Update components", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        IsResettingWuComponents = true;
+        try
+        {
+            var log = await Task.Run(WindowsServicingService.ResetWindowsUpdateComponents);
+            ResetWuComponentsLog.Clear();
+            foreach (var line in log) ResetWuComponentsLog.Add(line);
+            StatusMessage = "Windows Update component reset finished - see the log below.";
+        }
+        finally
+        {
+            IsResettingWuComponents = false;
+        }
+    }
+
+    /// <summary>#779: measures both cache folders on demand (a recursive directory walk).</summary>
+    private async Task CheckUpdateCacheSizeAsync()
+    {
+        IsLoadingUpdateCacheInfo = true;
+        try
+        {
+            UpdateCacheInfo = await Task.Run(WindowsServicingService.ReadUpdateCacheSizes);
+            ClearUpdateCacheCommand.RaiseCanExecuteChanged();
+        }
+        finally
+        {
+            IsLoadingUpdateCacheInfo = false;
+        }
+    }
+
+    /// <summary>#779: confirmed, with the exact folders and the services that get stopped/restarted
+    /// shown before it runs. Re-measures afterward so the reported sizes reflect the actual result.</summary>
+    private async Task ClearUpdateCacheAsync()
+    {
+        if (UpdateCacheInfo is not { } info) return;
+
+        bool clearDownload = info.DownloadCacheSizeBytes > 0;
+        bool clearDo = info.DeliveryOptimizationCacheSizeBytes > 0;
+        var lines = new List<string>();
+        if (clearDownload) lines.Add($"- Download cache ({Formatting.FormatBytes(info.DownloadCacheSizeBytes)}) at \"{info.DownloadCachePath}\" - stops/restarts wuauserv");
+        if (clearDo) lines.Add($"- Delivery Optimization cache ({Formatting.FormatBytes(info.DeliveryOptimizationCacheSizeBytes)}) at \"{info.DeliveryOptimizationCachePath}\" - stops/restarts DoSvc");
+
+        var confirm = MessageBox.Show(
+            "This stops the owning service, deletes everything inside, then restarts it:\n\n" +
+            string.Join("\n", lines) +
+            "\n\nBoth will simply be rebuilt over time as updates are downloaded again. Clear now?",
+            "Clear update caches", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        IsClearingUpdateCache = true;
+        try
+        {
+            var log = await WindowsServicingService.ClearUpdateCacheAsync(clearDownload, clearDo);
+            ClearUpdateCacheLog.Clear();
+            foreach (var line in log) ClearUpdateCacheLog.Add(line);
+            StatusMessage = "Update cache clear finished - see the log below.";
+
+            UpdateCacheInfo = await Task.Run(WindowsServicingService.ReadUpdateCacheSizes);
+            ClearUpdateCacheCommand.RaiseCanExecuteChanged();
+        }
+        finally
+        {
+            IsClearingUpdateCache = false;
+        }
+    }
+
+    /// <summary>#780: combines QFE hotfixes and DISM "Installed" packages into one removable-updates
+    /// list - a full `dism /online /get-packages` sweep (no /format:table, so Install Time survives)
+    /// can take a while, so this is gated behind its own button like #770's package table.</summary>
+    private async Task LoadRemovableUpdatesAsync()
+    {
+        IsLoadingRemovableUpdates = true;
+        try
+        {
+            var updates = await WindowsUpdateUninstallService.ListRemovableUpdatesAsync();
+            RemovableUpdates.Clear();
+            foreach (var u in updates) RemovableUpdates.Add(u);
+            HasLoadedRemovableUpdates = true;
+        }
+        finally
+        {
+            IsLoadingRemovableUpdates = false;
+        }
+    }
+
+    /// <summary>#780: confirmed with the exact command shown before it runs; reports a reboot-
+    /// required result clearly rather than as a failure (wusa/dism both use exit code 3010 for
+    /// "succeeded, needs a reboot").</summary>
+    private async Task UninstallUpdateAsync(object? parameter)
+    {
+        if (parameter is not RemovableUpdateInfo update) return;
+
+        string command = update.IsDismPackage
+            ? $"dism /online /remove-package /packagename:{update.Identifier} /norestart"
+            : $"wusa /uninstall /kb:{update.Identifier} /quiet /norestart";
+
+        var confirm = MessageBox.Show(
+            $"This removes \"{update.DisplayName}\" by running:\n\n{command}\n\n" +
+            "A restart may be required afterwards to finish removing it. Uninstall now?",
+            "Uninstall update", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        IsUninstallingUpdate = true;
+        try
+        {
+            var (success, rebootRequired, output) = await WindowsUpdateUninstallService.UninstallAsync(update);
+            StatusMessage = success
+                ? rebootRequired
+                    ? $"\"{update.DisplayName}\" was removed - a restart is required to finish removing it."
+                    : $"\"{update.DisplayName}\" was removed."
+                : $"Couldn't uninstall \"{update.DisplayName}\": {output}";
+
+            if (success)
+            {
+                await LoadRemovableUpdatesAsync();
+            }
+        }
+        finally
+        {
+            IsUninstallingUpdate = false;
         }
     }
 }

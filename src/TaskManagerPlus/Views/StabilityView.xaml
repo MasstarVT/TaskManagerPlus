@@ -186,6 +186,43 @@
                 </StackPanel>
             </Border>
 
+            <!-- #781: "did an update break this?" - a KB installed within 48 hours before a
+                 faulting module started recurring in the crash timeline below. Collapsed entirely
+                 when nothing correlates (the common case). Quick flag, not a verdict - jumps into
+                 the Windows Health tab's own update-uninstall list (#780). -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding UpdateBreakageFlags.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Did an update break this?" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Uninstall an update (Windows Health tab)" Padding="8,4" FontSize="11" Click="ViewUpdateUninstallInWindowsHealth_Click" />
+                    </Grid>
+                    <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,8"
+                               Text="Quick flag, not a verdict - a Windows Update installed within 48 hours before a faulting module below started crashing repeatedly. Worth testing by uninstalling that update, not a confirmed cause." />
+                    <ItemsControl ItemsSource="{Binding UpdateBreakageFlags}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Background="{DynamicResource DangerMutedBrush}" CornerRadius="6" Padding="10,8" Margin="0,0,0,6">
+                                    <TextBlock Foreground="{DynamicResource DangerBrush}" FontSize="11.5" TextWrapping="Wrap" Text="{Binding SummaryText}" />
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
             <!-- #3: minidump files, timestamp + best-effort bugcheck code correlated from a
                  nearby Kernel-Power 41 event - see EventLogService.ReadMinidumps. -->
             <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">

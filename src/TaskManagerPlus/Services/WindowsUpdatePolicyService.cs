@@ -1,3 +1,4 @@
+using System.Net.Http;
 using System.Runtime.InteropServices;
 using Microsoft.Win32;
 using Microsoft.Win32.SafeHandles;
@@ -383,6 +384,69 @@ public static class WindowsUpdatePolicyService
         }
         catch { /* ignore */ }
         return null;
+    }
+
+    #endregion
+
+    #region #776 - WSUS / WUfB reachability check
+
+    // Short timeout, and no protocol validation - this only ever answers "did something respond
+    // at all", the exact same "just checking for a response vs. a connection failure/timeout"
+    // scope PublicIpLookupService's own HttpClient already takes for an unrelated lookup. A single
+    // static instance, reused across calls, is the documented way to use HttpClient (a new instance
+    // per call risks socket exhaustion under repeated use).
+    private static readonly HttpClient ReachabilityHttp = new() { Timeout = TimeSpan.FromSeconds(5) };
+
+    /// <summary>#776: on-demand plain HTTP reachability check against a WUServer policy URL - a
+    /// machine that once belonged to a domain (or that a "block Windows Update" script pointed at a
+    /// dead/decommissioned address) silently fails every update with an 0x8024xxxx error, and this
+    /// is the one-click way to confirm that's actually what's happening. Tries HEAD first (cheaper,
+    /// and WSUS's IIS front end answers it); falls back to GET since some reverse proxies/firewalls
+    /// don't implement HEAD. Any response at all - even a 404/500 - counts as "reachable": this is
+    /// checking network/host reachability, not validating the WSUS protocol itself.</summary>
+    public static async Task<WuServerReachabilityResult> CheckWuServerReachabilityAsync(string wuServerUrl)
+    {
+        var now = DateTime.Now;
+        if (string.IsNullOrWhiteSpace(wuServerUrl) || !Uri.TryCreate(wuServerUrl, UriKind.Absolute, out var uri))
+        {
+            return new WuServerReachabilityResult { IsReachable = false, StatusText = $"\"{wuServerUrl}\" isn't a valid URL.", CheckedAt = now };
+        }
+
+        try
+        {
+            using var headResponse = await ReachabilityHttp.SendAsync(new HttpRequestMessage(HttpMethod.Head, uri));
+            return new WuServerReachabilityResult
+            {
+                IsReachable = true,
+                StatusText = $"Reachable - HTTP {(int)headResponse.StatusCode} {headResponse.ReasonPhrase} from {uri.Host}.",
+                CheckedAt = now,
+            };
+        }
+        catch
+        {
+            // HEAD failed - could be a genuinely unreachable host, or a server that just doesn't
+            // implement HEAD. Try GET before giving up.
+        }
+
+        try
+        {
+            using var getResponse = await ReachabilityHttp.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead);
+            return new WuServerReachabilityResult
+            {
+                IsReachable = true,
+                StatusText = $"Reachable - HTTP {(int)getResponse.StatusCode} {getResponse.ReasonPhrase} from {uri.Host}.",
+                CheckedAt = now,
+            };
+        }
+        catch (Exception ex)
+        {
+            return new WuServerReachabilityResult
+            {
+                IsReachable = false,
+                StatusText = $"Unreachable - {ex.Message}. This silently blocks every update with an 0x8024xxxx error while UseWUServer is on.",
+                CheckedAt = now,
+            };
+        }
     }
 
     #endregion

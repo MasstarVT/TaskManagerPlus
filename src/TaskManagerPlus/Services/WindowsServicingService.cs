@@ -194,6 +194,189 @@ public static class WindowsServicingService
 
     #endregion
 
+    #region #778 - Guided "reset Windows Update components"
+
+    private static readonly string[] ResetComponentsServices = { "wuauserv", "CryptSvc", "BITS", "msiserver" };
+
+    /// <summary>
+    /// #778: the documented Windows Update component-reset repair sequence - stop the four core
+    /// services, rename SoftwareDistribution and catroot2 out of the way so Windows recreates them
+    /// from scratch, then restart the services. Run only as one explicit, confirmed action (the
+    /// confirmation dialog with the exact steps lives in WindowsHealthViewModel, per CLAUDE.md's
+    /// "guided, never automatic" rule for this exact feature) - never on a schedule, never silent.
+    /// Returns a step-by-step log (including the undo instructions for each rename) rather than a
+    /// bare success bool, so the user can see exactly what happened and how to reverse it. Blocking
+    /// (ServiceControlService.Stop/Start each wait synchronously for the service to settle) - the
+    /// caller runs this via Task.Run, the same "synchronous service, backgrounded by the ViewModel"
+    /// shape WindowsUpdatePolicyService.ReadRebootPendingDetail already uses.
+    /// </summary>
+    public static List<string> ResetWindowsUpdateComponents()
+    {
+        var log = new List<string>();
+        string windowsDir = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+        string softwareDistribution = Path.Combine(windowsDir, "SoftwareDistribution");
+        string catroot2 = Path.Combine(windowsDir, "System32", "catroot2");
+
+        log.Add($"[{DateTime.Now:T}] Starting guided Windows Update component reset.");
+
+        foreach (var svc in ResetComponentsServices)
+        {
+            var (success, error) = ServiceControlService.Stop(svc);
+            log.Add(success
+                ? $"[{DateTime.Now:T}] Stopped {svc}."
+                : $"[{DateTime.Now:T}] Couldn't stop {svc}: {error} (continuing anyway).");
+        }
+
+        log.Add(RenameToBak(softwareDistribution));
+        log.Add(RenameToBak(catroot2));
+
+        foreach (var svc in ResetComponentsServices)
+        {
+            var (success, error) = ServiceControlService.Start(svc);
+            log.Add(success
+                ? $"[{DateTime.Now:T}] Started {svc}."
+                : $"[{DateTime.Now:T}] Couldn't start {svc}: {error}.");
+        }
+
+        log.Add($"[{DateTime.Now:T}] Done. Windows recreates SoftwareDistribution and catroot2 automatically the next time it checks for updates.");
+        return log;
+    }
+
+    /// <summary>Renames `path` to `path.bak` (or `path.bak.<timestamp>` if a `.bak` from a previous
+    /// reset already exists, so a second reset never clobbers the first one's undo point), logging
+    /// the exact undo step alongside the result - the log line itself carries "how to undo this",
+    /// not a separate lookup the user has to remember.</summary>
+    private static string RenameToBak(string path)
+    {
+        try
+        {
+            if (!Directory.Exists(path))
+                return $"[{DateTime.Now:T}] {path} doesn't exist - nothing to rename, skipping.";
+
+            string bakPath = path + ".bak";
+            if (Directory.Exists(bakPath))
+                bakPath = $"{path}.bak.{DateTime.Now:yyyyMMddHHmmss}";
+
+            Directory.Move(path, bakPath);
+            return $"[{DateTime.Now:T}] Renamed \"{path}\" to \"{bakPath}\". To undo: stop the services above, then rename \"{bakPath}\" back to \"{path}\".";
+        }
+        catch (Exception ex)
+        {
+            return $"[{DateTime.Now:T}] Couldn't rename \"{path}\": {ex.Message}";
+        }
+    }
+
+    #endregion
+
+    #region #779 - Update cache reclaim
+
+    private static readonly string WindowsDirectory = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+
+    /// <summary>#779: measures the two update-related cache folders on demand (a recursive
+    /// directory walk, per CLAUDE.md's "gated behind an explicit button" rule for anything heavier
+    /// than a trivial read) - the WU download cache (wuauserv) and the Delivery Optimization cache
+    /// (DoSvc), both under SoftwareDistribution and both routinely the largest single reclaimable
+    /// chunk of space on a machine that's been running Windows Update for a while.</summary>
+    public static UpdateCacheInfo ReadUpdateCacheSizes()
+    {
+        string downloadPath = Path.Combine(WindowsDirectory, "SoftwareDistribution", "Download");
+        string doPath = Path.Combine(WindowsDirectory, "SoftwareDistribution", "DeliveryOptimization");
+        return new UpdateCacheInfo
+        {
+            DownloadCachePath = downloadPath,
+            DownloadCacheSizeBytes = ComputeDirectorySize(downloadPath),
+            DeliveryOptimizationCachePath = doPath,
+            DeliveryOptimizationCacheSizeBytes = ComputeDirectorySize(doPath),
+        };
+    }
+
+    private static long ComputeDirectorySize(string path)
+    {
+        try
+        {
+            if (!Directory.Exists(path)) return 0;
+            long total = 0;
+            foreach (var file in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories))
+            {
+                try { total += new FileInfo(file).Length; }
+                catch { /* file removed/locked mid-walk - skip it, same as every other best-effort file read in this app */ }
+            }
+            return total;
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    /// <summary>#779: stops the owning service, clears every item directly under the cache folder,
+    /// then restarts the service - for both caches when both are requested. Confirmed by the caller
+    /// before this runs (WindowsHealthViewModel). Returns a step-by-step log, same shape as #778's
+    /// reset action, rather than a bare success bool.</summary>
+    public static async Task<List<string>> ClearUpdateCacheAsync(bool clearDownloadCache, bool clearDeliveryOptimizationCache)
+    {
+        return await Task.Run(() =>
+        {
+            var log = new List<string>();
+            if (clearDownloadCache)
+                log.AddRange(ClearCacheFolder("wuauserv", Path.Combine(WindowsDirectory, "SoftwareDistribution", "Download")));
+            if (clearDeliveryOptimizationCache)
+                log.AddRange(ClearCacheFolder("DoSvc", Path.Combine(WindowsDirectory, "SoftwareDistribution", "DeliveryOptimization")));
+            return log;
+        });
+    }
+
+    private static List<string> ClearCacheFolder(string serviceName, string folderPath)
+    {
+        var log = new List<string>();
+
+        var (stopSuccess, stopError) = ServiceControlService.Stop(serviceName);
+        log.Add(stopSuccess
+            ? $"[{DateTime.Now:T}] Stopped {serviceName}."
+            : $"[{DateTime.Now:T}] Couldn't stop {serviceName}: {stopError} (continuing anyway).");
+
+        try
+        {
+            if (Directory.Exists(folderPath))
+            {
+                int cleared = 0, failed = 0;
+                foreach (var entry in Directory.EnumerateFileSystemEntries(folderPath))
+                {
+                    try
+                    {
+                        if (Directory.Exists(entry)) Directory.Delete(entry, recursive: true);
+                        else File.Delete(entry);
+                        cleared++;
+                    }
+                    catch
+                    {
+                        failed++; // in use by another process, or a race with the service - skip it, don't abort the rest
+                    }
+                }
+                log.Add(failed == 0
+                    ? $"[{DateTime.Now:T}] Cleared {cleared} item(s) from \"{folderPath}\"."
+                    : $"[{DateTime.Now:T}] Cleared {cleared} item(s) from \"{folderPath}\"; {failed} item(s) couldn't be removed (still in use).");
+            }
+            else
+            {
+                log.Add($"[{DateTime.Now:T}] \"{folderPath}\" doesn't exist - nothing to clear.");
+            }
+        }
+        catch (Exception ex)
+        {
+            log.Add($"[{DateTime.Now:T}] Couldn't clear \"{folderPath}\": {ex.Message}");
+        }
+
+        var (startSuccess, startError) = ServiceControlService.Start(serviceName);
+        log.Add(startSuccess
+            ? $"[{DateTime.Now:T}] Started {serviceName}."
+            : $"[{DateTime.Now:T}] Couldn't start {serviceName}: {startError}.");
+
+        return log;
+    }
+
+    #endregion
+
     private static async Task<(string Output, int ExitCode)> RunCapturedAsync(string exe, string args, int timeoutMs)
     {
         var psi = new ProcessStartInfo(exe, args)

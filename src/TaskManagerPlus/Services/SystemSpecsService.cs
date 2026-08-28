@@ -1176,7 +1176,9 @@ public sealed class SystemSpecsService
     /// builds even though updates were installed (Windows doesn't guarantee every update is
     /// recorded here), so an empty list means "nothing to show", not "no updates installed".
     /// </summary>
-    private static List<UpdateInfo> ReadRecentHotfixes()
+    /// <summary>#780: internal (not private) so WindowsUpdateUninstallService can reuse this exact
+    /// same QFE read for its removable-updates list, rather than a second near-identical WMI query.</summary>
+    internal static List<UpdateInfo> ReadRecentHotfixes()
     {
         var updates = new List<UpdateInfo>();
         try

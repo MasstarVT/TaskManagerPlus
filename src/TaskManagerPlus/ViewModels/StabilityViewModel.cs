@@ -37,6 +37,13 @@ public sealed class StabilityViewModel : ObservableObject
     // PowerTimelineService.ReadFailedResumes. Cross-links back to the Startup tab's hiberfile card.
     public ObservableCollection<FailedResumeEntry> FailedResumes { get; } = new();
 
+    // #781: "did an update break this?" - Windows Update install events (read fresh here, off the
+    // same Microsoft-Windows-WindowsUpdateClient/Operational log the Windows Health tab's own #769
+    // card reads) correlated against RecentEvents' own recurring-faulting-module groups below. Pure
+    // post-processing, see WindowsUpdateHistoryService.CorrelateWithStabilityFailures. Cross-links
+    // forward into the Windows Health tab's #780 update-uninstall list.
+    public ObservableCollection<UpdateBreakageFlag> UpdateBreakageFlags { get; } = new();
+
     private bool _isLoading;
     public bool IsLoading { get => _isLoading; private set => SetProperty(ref _isLoading, value); }
 
@@ -147,7 +154,12 @@ public sealed class StabilityViewModel : ObservableObject
             var timeline = await Task.Run(PowerTimelineService.Read);
             // #741: reuses the timeline just read above rather than re-querying the System log.
             var failedResumes = await Task.Run(() => PowerTimelineService.ReadFailedResumes(timeline));
-            Apply(snapshot, timeline, failedResumes);
+            // #781: a second, independent event-log read (the WU client log, not the System/
+            // Application logs _service.Query() above already covers) - correlated against
+            // snapshot.RecentEvents' own faulting-module data, no new query beyond this one read.
+            var wuEvents = await Task.Run(WindowsUpdateHistoryService.ReadUpdateClientHistory);
+            var breakageFlags = WindowsUpdateHistoryService.CorrelateWithStabilityFailures(wuEvents, snapshot.RecentEvents);
+            Apply(snapshot, timeline, failedResumes, breakageFlags);
             RefreshErrorText = null;
         }
         catch (Exception ex)
@@ -160,13 +172,16 @@ public sealed class StabilityViewModel : ObservableObject
         }
     }
 
-    private void Apply(StabilitySnapshot snapshot, List<PowerTimelineEntry> timeline, List<FailedResumeEntry> failedResumes)
+    private void Apply(StabilitySnapshot snapshot, List<PowerTimelineEntry> timeline, List<FailedResumeEntry> failedResumes, List<UpdateBreakageFlag> breakageFlags)
     {
         PowerTimeline.Clear();
         foreach (var e in timeline) PowerTimeline.Add(e);
 
         FailedResumes.Clear();
         foreach (var f in failedResumes) FailedResumes.Add(f);
+
+        UpdateBreakageFlags.Clear();
+        foreach (var f in breakageFlags) UpdateBreakageFlags.Add(f);
 
         RecentEvents.Clear();
         foreach (var e in snapshot.RecentEvents) RecentEvents.Add(e);

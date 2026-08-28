@@ -241,6 +241,58 @@
                             <TextBlock Style="{StaticResource SpecValue}" Text="{Binding UpdatePolicy.WuServer, TargetNullValue=Not set}" TextTrimming="CharacterEllipsis" />
                         </StackPanel>
                     </UniformGrid>
+
+                    <!-- #776: WSUS/WUfB reachability check - only offered when a WUServer policy
+                         value is actually set. A plain HTTP GET/HEAD, on demand only (network call). -->
+                    <StackPanel Margin="0,12,0,0" Visibility="{Binding UpdatePolicy.WuServer, Converter={StaticResource NullToVisibilityConverter}}">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="Is the WSUS server reachable?" FontSize="12" VerticalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}" />
+                            <Button Grid.Column="1" Command="{Binding CheckWuServerReachabilityCommand}" Padding="10,4" FontSize="11.5">
+                                <TextBlock>
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Text" Value="Check reachability" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsCheckingWuServerReachability}" Value="True">
+                                                    <Setter Property="Text" Value="Checking…" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </Button>
+                        </Grid>
+                        <Border CornerRadius="6" Padding="10,6" Margin="0,8,0,0"
+                                Visibility="{Binding WuServerReachability, Converter={StaticResource NullToVisibilityConverter}}">
+                            <Border.Style>
+                                <Style TargetType="Border">
+                                    <Setter Property="Background" Value="{DynamicResource AccentMutedBrush}" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding WuServerReachability.IsReachable}" Value="False">
+                                            <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Border.Style>
+                            <TextBlock TextWrapping="Wrap" FontSize="11.5">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding WuServerReachability.IsReachable}" Value="False">
+                                                <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                                <Run Text="{Binding WuServerReachability.StatusText, Mode=OneWay}" />
+                            </TextBlock>
+                        </Border>
+                    </StackPanel>
                 </StackPanel>
             </Border>
 
@@ -406,6 +458,252 @@
                             </StackPanel>
                         </StackPanel>
                     </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- #777: update service-stack health check - start type/state for every service
+                 Windows Update itself depends on, with a one-click restore-to-defaults and a
+                 cross-link over to the Services tab. -->
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Update service-stack health" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Command="{Binding LoadUpdateServiceStackHealthCommand}" Padding="10,4" FontSize="11.5" Margin="0,0,8,0">
+                            <TextBlock>
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="Check services" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsLoadingUpdateServiceStackHealth}" Value="True">
+                                                <Setter Property="Text" Value="Checking…" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Button>
+                        <Button Grid.Column="2" Content="Restore defaults" Command="{Binding RestoreUpdateServiceStackDefaultsCommand}" Padding="10,4" FontSize="11.5"
+                                Visibility="{Binding HasFlaggedUpdateServices, Converter={StaticResource BoolToVisibilityConverter}}" />
+                    </Grid>
+                    <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,10"
+                               Text="Start type and current state for wuauserv, BITS, CryptSvc, msiserver, TrustedInstaller, UsoSvc, WaaSMedicSvc and DoSvc - a Disabled entry silently breaks updates, the same way an unreachable WSUS server above does." />
+                    <ItemsControl ItemsSource="{Binding UpdateServiceStackHealth}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <Ellipse Grid.Column="0" Width="9" Height="9" Margin="0,0,10,0" VerticalAlignment="Center">
+                                        <Ellipse.Style>
+                                            <Style TargetType="Ellipse">
+                                                <Setter Property="Fill" Value="{DynamicResource TextTertiaryBrush}" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsFlagged}" Value="True">
+                                                        <Setter Property="Fill" Value="{DynamicResource DangerBrush}" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Ellipse.Style>
+                                    </Ellipse>
+                                    <TextBlock Grid.Column="1" FontSize="12.5" Text="{Binding DisplayName}" VerticalAlignment="Center" />
+                                    <TextBlock Grid.Column="2" FontSize="11.5" Margin="0,0,14,0" VerticalAlignment="Center"
+                                               Foreground="{DynamicResource TextSecondaryBrush}" Text="{Binding StartTypeText}" />
+                                    <TextBlock Grid.Column="3" FontSize="11.5" VerticalAlignment="Center"
+                                               Foreground="{DynamicResource TextSecondaryBrush}" Text="{Binding StatusText}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="Not checked yet." Margin="0,4,0,0">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding HasLoadedUpdateServiceStackHealth}" Value="False">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <Button Content="View services tab" HorizontalAlignment="Left" Padding="10,4" FontSize="11.5" Margin="0,10,0,0"
+                            Click="ViewUpdateServicesInServices_Click"
+                            Visibility="{Binding HasFlaggedUpdateServices, Converter={StaticResource BoolToVisibilityConverter}}" />
+                </StackPanel>
+            </Border>
+
+            <!-- #778: guided "reset Windows Update components" - the documented repair sequence,
+                 run as one explicit, confirmed, step-logged action. Never automatic. -->
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Reset Windows Update components" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Command="{Binding ResetWindowsUpdateComponentsCommand}" Padding="10,4" FontSize="11.5">
+                            <TextBlock>
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="Run reset" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsResettingWuComponents}" Value="True">
+                                                <Setter Property="Text" Value="Running…" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Button>
+                    </Grid>
+                    <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,10"
+                               Text="Stops wuauserv/CryptSvc/BITS/msiserver, renames SoftwareDistribution and catroot2 to .bak, then restarts the services - the standard repair for updates that fail to install no matter what. Guided and confirmed: nothing here runs on a schedule or without the exact steps shown first." />
+                    <ItemsControl ItemsSource="{Binding ResetWuComponentsLog}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock FontSize="11" FontFamily="Consolas" TextWrapping="Wrap" Text="{Binding}" Margin="0,0,0,3" />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #779: update cache reclaim - reports the two SoftwareDistribution cache folder
+                 sizes, with a confirmed clear action. Cross-linked to the Storage tab. -->
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Update cache reclaim" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Command="{Binding CheckUpdateCacheSizeCommand}" Padding="10,4" FontSize="11.5" Margin="0,0,8,0">
+                            <TextBlock>
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="Check cache size" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsLoadingUpdateCacheInfo}" Value="True">
+                                                <Setter Property="Text" Value="Checking…" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Button>
+                        <Button Grid.Column="2" Command="{Binding ClearUpdateCacheCommand}" Padding="10,4" FontSize="11.5">
+                            <TextBlock>
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="Clear caches" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsClearingUpdateCache}" Value="True">
+                                                <Setter Property="Text" Value="Clearing…" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Button>
+                    </Grid>
+                    <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,10"
+                               Text="Sizes of the WU download cache and the Delivery Optimization cache under SoftwareDistribution - routinely the largest reclaimable chunk of space on a machine that's run Windows Update for a while." />
+
+                    <StackPanel Visibility="{Binding UpdateCacheInfo, Converter={StaticResource NullToVisibilityConverter}}">
+                        <UniformGrid Columns="2">
+                            <StackPanel Margin="0,0,10,10">
+                                <TextBlock Text="DOWNLOAD CACHE" Style="{StaticResource SpecLabel}" />
+                                <TextBlock Style="{StaticResource SpecValue}" Text="{Binding UpdateCacheInfo.DownloadCacheSizeBytes, Converter={StaticResource BytesToReadableConverter}}" />
+                                <TextBlock FontSize="10.5" Foreground="{DynamicResource TextTertiaryBrush}" TextWrapping="Wrap" Text="{Binding UpdateCacheInfo.DownloadCachePath}" />
+                            </StackPanel>
+                            <StackPanel Margin="0,0,0,10">
+                                <TextBlock Text="DELIVERY OPTIMIZATION CACHE" Style="{StaticResource SpecLabel}" />
+                                <TextBlock Style="{StaticResource SpecValue}" Text="{Binding UpdateCacheInfo.DeliveryOptimizationCacheSizeBytes, Converter={StaticResource BytesToReadableConverter}}" />
+                                <TextBlock FontSize="10.5" Foreground="{DynamicResource TextTertiaryBrush}" TextWrapping="Wrap" Text="{Binding UpdateCacheInfo.DeliveryOptimizationCachePath}" />
+                            </StackPanel>
+                        </UniformGrid>
+                        <Button Content="View in Storage" HorizontalAlignment="Left" Padding="10,4" FontSize="11.5" Margin="0,0,0,10"
+                                Click="ViewCacheInStorage_Click" />
+                    </StackPanel>
+
+                    <ItemsControl ItemsSource="{Binding ClearUpdateCacheLog}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock FontSize="11" FontFamily="Consolas" TextWrapping="Wrap" Text="{Binding}" Margin="0,0,0,3" />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #780: uninstall a specific update - combines QFE hotfixes and DISM "Installed"
+                 packages into one removable-updates list, each row offering a confirmed uninstall. -->
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Uninstall a specific update" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Command="{Binding LoadRemovableUpdatesCommand}" Padding="10,4" FontSize="11.5">
+                            <TextBlock>
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="List removable updates" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsLoadingRemovableUpdates}" Value="True">
+                                                <Setter Property="Text" Value="Loading…" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Button>
+                    </Grid>
+                    <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,10"
+                               Text="Every removable update - KB-numbered hotfixes (Win32_QuickFixEngineering, removable via wusa) and DISM servicing packages in the Installed state (removable via dism /remove-package). Uninstall is confirmed and shows the exact command; a reboot may be required afterwards." />
+                    <DataGrid ItemsSource="{Binding RemovableUpdates}" Height="260" IsReadOnly="True"
+                              Visibility="{Binding HasLoadedRemovableUpdates, Converter={StaticResource BoolToVisibilityConverter}}">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Update" Binding="{Binding DisplayName}" Width="3*" />
+                            <DataGridTextColumn Header="Installed" Binding="{Binding InstalledOn, StringFormat={}{0:d}, TargetNullValue=Unknown}" Width="110" />
+                            <DataGridTextColumn Header="Source" Binding="{Binding Source}" Width="150" />
+                            <DataGridTemplateColumn Header="" Width="100">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <Button Content="Uninstall" Padding="8,2" FontSize="11"
+                                                Command="{Binding DataContext.UninstallUpdateCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                CommandParameter="{Binding}" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <TextBlock Text="No removable updates loaded yet." Margin="0,4,0,0">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding HasLoadedRemovableUpdates}" Value="False">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
                 </StackPanel>
             </Border>
 

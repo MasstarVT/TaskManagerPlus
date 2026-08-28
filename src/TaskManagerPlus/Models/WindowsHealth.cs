@@ -135,3 +135,58 @@ public sealed class UpdatePolicySnapshot
 
     public string SummaryText { get; init; } = "No update pause, deferral, or WSUS policy found - nothing here is blocking updates.";
 }
+
+/// <summary>#776: on-demand plain-HTTP reachability result for a WSUS/WUfB server named by the
+/// WUServer policy value - a GET/HEAD against the URL and nothing more (not a WSUS protocol
+/// handshake), so this only ever tells "something answered" vs. "connection failed/timed out",
+/// which is exactly what silently produces an 0x8024xxxx error on every client pointed at a dead
+/// WUServer. See WindowsUpdatePolicyService.CheckWuServerReachabilityAsync.</summary>
+public sealed class WuServerReachabilityResult
+{
+    public bool IsReachable { get; init; }
+    public string StatusText { get; init; } = string.Empty;
+    public DateTime CheckedAt { get; init; }
+}
+
+/// <summary>#777: one entry of the update service-stack health check - start type/state for one of
+/// the services Windows Update itself depends on (wuauserv, BITS, CryptSvc, msiserver,
+/// TrustedInstaller, UsoSvc, WaaSMedicSvc, DoSvc). IsFlagged marks a service set to Disabled, which
+/// silently breaks updates the same way a dead WSUS pointer does. See
+/// ServiceControlService.ReadUpdateServiceStackHealth.</summary>
+public sealed class UpdateServiceHealthEntry
+{
+    public string ServiceName { get; init; } = string.Empty;
+    public string DisplayName { get; init; } = string.Empty;
+    public string StartTypeText { get; init; } = "Unknown";
+    public string StatusText { get; init; } = "Unknown";
+    public bool IsDisabled { get; init; }
+    public bool IsMissing { get; init; }
+
+    public bool IsFlagged => IsDisabled || IsMissing;
+}
+
+/// <summary>#779: measured sizes of the two update-related cache folders under SoftwareDistribution -
+/// the download cache (wuauserv) and the Delivery Optimization cache (DoSvc). See
+/// WindowsServicingService.ReadUpdateCacheSizes.</summary>
+public sealed class UpdateCacheInfo
+{
+    public string DownloadCachePath { get; init; } = string.Empty;
+    public long DownloadCacheSizeBytes { get; init; }
+    public string DeliveryOptimizationCachePath { get; init; } = string.Empty;
+    public long DeliveryOptimizationCacheSizeBytes { get; init; }
+}
+
+/// <summary>#780: one candidate for "uninstall a specific update" - either a KB-numbered hotfix from
+/// Win32_QuickFixEngineering (removable via `wusa /uninstall /kb:&lt;n&gt;`) or a DISM servicing
+/// package in the "Installed" state (removable via `dism /remove-package /packagename:&lt;name&gt;`).
+/// See WindowsUpdateUninstallService.</summary>
+public sealed class RemovableUpdateInfo
+{
+    /// <summary>The bare KB number (e.g. "5005565") for a QFE hotfix, or the full DISM package
+    /// identity for a servicing package - whichever UninstallAsync needs to build its command line.</summary>
+    public string Identifier { get; init; } = string.Empty;
+    public string DisplayName { get; init; } = string.Empty;
+    public DateTime? InstalledOn { get; init; }
+    public string Source { get; init; } = string.Empty;
+    public bool IsDismPackage { get; init; }
+}

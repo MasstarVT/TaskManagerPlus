@@ -151,3 +151,24 @@ public sealed class FailedResumeEntry
 
     public string SummaryText => $"Resumed from hibernate at {ResumeTime:g}, then {FailureKind} at {FailureTime:g}.";
 }
+
+/// <summary>#781: "did an update break this?" - a KB/update installed (per
+/// WindowsUpdateHistoryService.ReadUpdateClientHistory, event 19) within 48 hours before a faulting
+/// module (see StabilityEvent.FaultingModule) started recurring (2+ occurrences) in this tab's own
+/// crash timeline. Pure post-processing over two already-read lists - no new query. A quick flag,
+/// not a verdict (CLAUDE.md's cross-cutting conventions): plenty of recurring crashes have nothing
+/// to do with the update that happened to land beforehand - this is "worth testing by uninstalling",
+/// not a confirmed cause. See WindowsUpdateHistoryService.CorrelateWithStabilityFailures.</summary>
+public sealed class UpdateBreakageFlag
+{
+    public DateTime InstallTime { get; init; }
+    public string UpdateTitle { get; init; } = string.Empty;
+    public string FaultingModule { get; init; } = string.Empty;
+    public DateTime FirstFailureTime { get; init; }
+    public int FailureCount { get; init; }
+
+    public string SummaryText =>
+        $"{(UpdateTitle.Length > 0 ? UpdateTitle : "An update")} installed {InstallTime:g}, then {FaultingModule} " +
+        $"started crashing repeatedly ({FailureCount} times since {FirstFailureTime:g}) " +
+        $"{(FirstFailureTime - InstallTime).TotalHours:0.#}h later. Worth testing by uninstalling it - not a confirmed cause.";
+}

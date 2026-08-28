@@ -1187,4 +1187,101 @@ public sealed class ServiceControlService
     }
 
     #endregion
+
+    #region #777 - Update service-stack health check
+
+    /// <summary>#777: the services Windows Update itself depends on to function at all - a Disabled
+    /// start type on any one of these silently breaks updates the same way a dead WSUS pointer
+    /// does (#776), and is the kind of thing a "block Windows Update" script or an over-eager
+    /// service-trimming guide leaves behind.</summary>
+    private static readonly string[] UpdateStackServiceNames =
+    {
+        "wuauserv", "BITS", "CryptSvc", "msiserver", "TrustedInstaller", "UsoSvc", "WaaSMedicSvc", "DoSvc",
+    };
+
+    /// <summary>#777: targeted per-name ServiceController reads (not a full Sample() enumeration -
+    /// eight named lookups are far cheaper than building every service's full ServiceRow) for start
+    /// type and current state. A name that doesn't resolve at all (uninstalled/renamed component) is
+    /// reported as IsMissing rather than silently dropped, since a missing update-stack service is
+    /// itself worth flagging.</summary>
+    public static List<UpdateServiceHealthEntry> ReadUpdateServiceStackHealth()
+    {
+        var result = new List<UpdateServiceHealthEntry>();
+        foreach (var name in UpdateStackServiceNames)
+        {
+            try
+            {
+                using var sc = new ServiceController(name);
+                string startTypeText;
+                bool isDisabled;
+                try
+                {
+                    var startType = sc.StartType;
+                    startTypeText = startType.ToString();
+                    isDisabled = startType == ServiceStartMode.Disabled;
+                }
+                catch
+                {
+                    startTypeText = "Unknown";
+                    isDisabled = false;
+                }
+
+                string statusText;
+                try { statusText = sc.Status.ToString(); }
+                catch { statusText = "Unknown"; }
+
+                result.Add(new UpdateServiceHealthEntry
+                {
+                    ServiceName = name,
+                    DisplayName = TryGetDisplayName(sc, name),
+                    StartTypeText = startTypeText,
+                    StatusText = statusText,
+                    IsDisabled = isDisabled,
+                });
+            }
+            catch
+            {
+                // ServiceController construction itself throws when the service name doesn't
+                // resolve at all (not merely inaccessible) - report it as missing rather than
+                // silently dropping it, since that's itself a worthwhile flag for this card.
+                result.Add(new UpdateServiceHealthEntry { ServiceName = name, DisplayName = name, IsMissing = true });
+            }
+        }
+        return result;
+    }
+
+    private static string TryGetDisplayName(ServiceController sc, string fallback)
+    {
+        try { return sc.DisplayName; }
+        catch { return fallback; }
+    }
+
+    /// <summary>#777: Windows' own documented default start type for each update-stack service -
+    /// restores every one of them in one confirmed action rather than making the user hunt down and
+    /// fix each Disabled entry individually. `sc config &lt;name&gt; start= &lt;type&gt;` is the same
+    /// documented way SetFailureActionsAsync (#758) already writes service config, since
+    /// ServiceController itself exposes no start-type setter.</summary>
+    private static readonly (string ServiceName, string ScStartArg)[] UpdateStackDefaultStartTypes =
+    {
+        ("wuauserv", "demand"), ("BITS", "demand"), ("CryptSvc", "auto"), ("msiserver", "demand"),
+        ("TrustedInstaller", "demand"), ("UsoSvc", "auto"), ("WaaSMedicSvc", "demand"), ("DoSvc", "auto"),
+    };
+
+    /// <summary>#777: runs `sc config` for every update-stack service in turn, continuing past an
+    /// individual failure (one missing/protected service shouldn't block restoring the rest) and
+    /// reporting every failure's own message. Confirmed by the caller (WindowsHealthViewModel)
+    /// before this runs, matching CLAUDE.md's "mutating actions require confirmation with the exact
+    /// effect shown" rule.</summary>
+    public static async Task<(bool Success, string? Error)> RestoreUpdateServiceStackDefaultsAsync()
+    {
+        var errors = new List<string>();
+        foreach (var (name, startArg) in UpdateStackDefaultStartTypes)
+        {
+            var (success, output, _) = await RunScAsync($"config \"{name}\" start= {startArg}");
+            if (!success) errors.Add($"{name}: {(output.Trim().Length > 0 ? output.Trim() : "sc.exe reported an error")}");
+        }
+        return errors.Count == 0 ? (true, null) : (false, string.Join("; ", errors));
+    }
+
+    #endregion
 }
