@@ -41,6 +41,32 @@
                 </StackPanel>
             </Border>
 
+            <!-- Round 14, item 27: new-dump watcher alert - a crash dump was written while the
+                 app was running (also mirrored as a tray balloon and a tab-header badge - see
+                 MainWindow.xaml.cs / MainWindow.xaml). -->
+            <Border Background="{DynamicResource DangerMutedBrush}" BorderBrush="{DynamicResource DangerBrush}"
+                    BorderThickness="1" CornerRadius="8" Padding="14,10" Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding HasNewDumpAlert}" Value="True">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="{Binding NewDumpAlertText}" Foreground="{DynamicResource DangerBrush}"
+                               TextWrapping="Wrap" FontSize="12.5" VerticalAlignment="Center" />
+                    <Button Grid.Column="1" Content="Dismiss" Command="{Binding DismissNewDumpAlertCommand}" Padding="10,4" Margin="10,0,0,0" />
+                </Grid>
+            </Border>
+
             <Grid Margin="0,0,0,4">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
@@ -186,6 +212,297 @@
                             </Style>
                         </TextBlock.Style>
                     </TextBlock>
+
+                    <!-- Round 14, item 26: Minidump folder housekeeping footer strip - total
+                         size, oldest/newest, delete-older-than, and the live registry
+                         MinidumpsCount value. -->
+                    <Border BorderBrush="{DynamicResource BorderBrush2}" BorderThickness="0,1,0,0" Margin="0,12,0,0" Padding="0,10,0,0">
+                        <StackPanel>
+                            <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap">
+                                <Run Text="Folder: " /><Run Text="{Binding Housekeeping.FileCount, Mode=OneWay}" /><Run Text=" file(s), " />
+                                <Run Text="{Binding Housekeeping.TotalSizeBytes, Converter={StaticResource BytesToReadableConverter}, Mode=OneWay}" />
+                                <Run Text=" total. Oldest: " /><Run Text="{Binding Housekeeping.OldestFile, StringFormat={}{0:g}, TargetNullValue='—', Mode=OneWay}" />
+                                <Run Text=" · Newest: " /><Run Text="{Binding Housekeeping.NewestFile, StringFormat={}{0:g}, TargetNullValue='—', Mode=OneWay}" />
+                            </TextBlock>
+                            <Grid Margin="0,8,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Delete older than" VerticalAlignment="Center" Style="{StaticResource SubStat}" Margin="0,0,6,0" />
+                                <TextBox Grid.Column="1" Width="48" Text="{Binding DeleteOlderThanDays, UpdateSourceTrigger=PropertyChanged}" />
+                                <TextBlock Grid.Column="2" Text="days" VerticalAlignment="Center" Style="{StaticResource SubStat}" Margin="6,0,10,0" />
+                                <Button Grid.Column="4" Content="Delete" Command="{Binding DeleteOldDumpsCommand}" Padding="10,4" Margin="0,0,16,0" />
+                                <TextBlock Grid.Column="5" Text="MinidumpsCount" VerticalAlignment="Center" Style="{StaticResource SubStat}" Margin="0,0,6,0" />
+                                <TextBox Grid.Column="6" Width="48" Text="{Binding MinidumpsCountInput, UpdateSourceTrigger=PropertyChanged}" />
+                            </Grid>
+                            <Button Content="Save MinidumpsCount" Command="{Binding SaveMinidumpsCountCommand}" Padding="10,4" HorizontalAlignment="Left" Margin="0,8,0,0" />
+                            <TextBlock Text="{Binding HousekeepingStatusText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,6,0,0" />
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </Border>
+
+            <!-- Round 14, items 13-19: binary-parsed dump rows - richer, event-log-independent
+                 data straight from each dump's own DUMP_HEADER64/MINIDUMP header, per
+                 MinidumpParserService. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Dump analysis (binary parse)" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Read directly from each dump file's own header/streams, independent of the event log above. Blame is address-range matching against the loaded-module list - a quick flag, not a verdict, not a symbolised stack."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,8" TextWrapping="Wrap" />
+
+                    <ItemsControl ItemsSource="{Binding DumpRows}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Expander Margin="0,0,0,8" IsExpanded="False">
+                                    <Expander.Header>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" Text="{Binding Parsed.FileName}" FontSize="12.5" TextTrimming="CharacterEllipsis" />
+                                            <Border Grid.Column="1" Background="{DynamicResource DangerBrush}" CornerRadius="10" Padding="8,2" VerticalAlignment="Center">
+                                                <Border.Style>
+                                                    <Style TargetType="Border">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding Parsed.IsIncomplete}" Value="True">
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Border.Style>
+                                                <TextBlock Text="Incomplete — not analysable" Foreground="White" FontSize="11" FontWeight="SemiBold" />
+                                            </Border>
+                                        </Grid>
+                                    </Expander.Header>
+                                    <StackPanel Margin="0,6,0,0">
+                                        <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap">
+                                            <Run Text="Format: " /><Run Text="{Binding Parsed.Format}" />
+                                            <Run Text=" · Type: " /><Run Text="{Binding Parsed.DumpTypeText}" />
+                                            <Run Text=" · Size: " /><Run Text="{Binding Parsed.SizeBytes, Converter={StaticResource BytesToReadableConverter}}" />
+                                        </TextBlock>
+                                        <TextBlock Style="{StaticResource SubStat}" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" Margin="0,2,0,0">
+                                            <Run Text="{Binding IssueText}" />
+                                        </TextBlock>
+                                        <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,2,0,0">
+                                            <Run Text="OS: " /><Run Text="{Binding Parsed.OsVersion, TargetNullValue='Unknown'}" />
+                                            <Run Text=" · Machine: " /><Run Text="{Binding Parsed.MachineType, TargetNullValue='Unknown'}" />
+                                        </TextBlock>
+                                        <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,2,0,0">
+                                            <Run Text="Bugcheck (from binary parse): " /><Run Text="{Binding Parsed.BugcheckCode, Converter={StaticResource BugcheckCodeToDescriptionConverter}, TargetNullValue='not found'}" />
+                                        </TextBlock>
+                                        <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,2,0,0">
+                                            <Run Text="Parameters: " /><Run Text="{Binding ParametersText}" />
+                                        </TextBlock>
+                                        <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,2,0,0">
+                                            <Run Text="Contents: " /><Run Text="{Binding ContentsText}" />
+                                            <Run Text=" (" /><Run Text="{Binding ModuleCountText}" /><Run Text=")" />
+                                        </TextBlock>
+
+                                        <!-- Item 17/18: blame + dossier. -->
+                                        <StackPanel Margin="0,6,0,0">
+                                            <StackPanel.Style>
+                                                <Style TargetType="StackPanel">
+                                                    <Setter Property="Visibility" Value="{Binding Parsed.BlamedModule, Converter={StaticResource NullToVisibilityConverter}}" />
+                                                </Style>
+                                            </StackPanel.Style>
+                                            <TextBlock FontSize="12.5" FontWeight="SemiBold">
+                                                <Run Text="Probably blamed: " /><Run Text="{Binding Parsed.BlamedModule}" />
+                                            </TextBlock>
+                                            <TextBlock Text="Quick flag, not a verdict — this is address-range matching, not a symbolised stack."
+                                                       Style="{StaticResource SubStat}" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" Margin="0,2,0,4" />
+                                            <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap">
+                                                <Run Text="Company: " /><Run Text="{Binding Parsed.BlamedModuleDossier.CompanyName, TargetNullValue='Unknown'}" />
+                                                <Run Text=" · Product: " /><Run Text="{Binding Parsed.BlamedModuleDossier.ProductName, TargetNullValue='Unknown'}" />
+                                            </TextBlock>
+                                            <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap">
+                                                <Run Text="Version: " /><Run Text="{Binding Parsed.BlamedModuleDossier.FileVersion, TargetNullValue='Unknown'}" />
+                                                <Run Text=" · Date: " /><Run Text="{Binding Parsed.BlamedModuleDossier.FileDate, StringFormat={}{0:d}, TargetNullValue='Unknown'}" />
+                                                <Run Text=" · Signature: " /><Run Text="{Binding Parsed.BlamedModuleDossier.SignatureStatus}" />
+                                            </TextBlock>
+                                        </StackPanel>
+
+                                        <!-- Item 23/24: debugger actions + cached !analyze -v result. -->
+                                        <StackPanel Margin="0,10,0,0">
+                                            <StackPanel Orientation="Horizontal">
+                                                <Button Content="Analyse (!analyze -v)" Command="{Binding AnalyzeCommand}" Padding="10,4" Margin="0,0,8,0"
+                                                        Visibility="{Binding CanUseDebugger, Converter={StaticResource BoolToVisibilityConverter}}" />
+                                                <Button Content="Open in WinDbg" Command="{Binding OpenInWinDbgCommand}" Padding="10,4"
+                                                        Visibility="{Binding CanUseDebugger, Converter={StaticResource BoolToVisibilityConverter}}" />
+                                                <TextBlock Text="Analysing..." VerticalAlignment="Center" Margin="8,0,0,0" Style="{StaticResource SubStat}"
+                                                           Visibility="{Binding IsAnalyzing, Converter={StaticResource BoolToVisibilityConverter}}" />
+                                            </StackPanel>
+                                            <TextBlock Text="{Binding DebuggerHintText}" TextWrapping="Wrap" Margin="0,4,0,0">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding CanUseDebugger}" Value="False">
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                            <TextBlock Text="{Binding AnalyzeError}" Foreground="{DynamicResource DangerBrush}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,4,0,0" />
+
+                                            <StackPanel Margin="0,6,0,0">
+                                                <StackPanel.Style>
+                                                    <Style TargetType="StackPanel">
+                                                        <Setter Property="Visibility" Value="{Binding Analysis, Converter={StaticResource NullToVisibilityConverter}}" />
+                                                    </Style>
+                                                </StackPanel.Style>
+                                                <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap">
+                                                    <Run Text="MODULE_NAME: " /><Run Text="{Binding Analysis.ModuleName, TargetNullValue='(not found)'}" />
+                                                </TextBlock>
+                                                <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap">
+                                                    <Run Text="IMAGE_NAME: " /><Run Text="{Binding Analysis.ImageName, TargetNullValue='(not found)'}" />
+                                                </TextBlock>
+                                                <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap">
+                                                    <Run Text="FAILURE_BUCKET_ID: " /><Run Text="{Binding Analysis.FailureBucketId, TargetNullValue='(not found)'}" />
+                                                </TextBlock>
+                                                <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap">
+                                                    <Run Text="PROCESS_NAME: " /><Run Text="{Binding Analysis.ProcessName, TargetNullValue='(not found)'}" />
+                                                </TextBlock>
+                                                <Expander Header="STACK_TEXT" IsExpanded="False" Margin="0,4,0,0">
+                                                    <TextBlock Text="{Binding Analysis.StackText}" FontFamily="Consolas" FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0" />
+                                                </Expander>
+                                            </StackPanel>
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Expander>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="No minidump files to parse.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding DumpRows.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- Round 14, item 19: third-party drivers present in every parseable dump's module
+                 list - the strongest cheap cross-dump signal available without a real debugger. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding CommonDrivers.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Drivers present in every crash" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Non-Microsoft drivers found in the module list of every dump this app could parse. A cheap, strong lead - not proof."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,8" TextWrapping="Wrap" />
+                    <ItemsControl ItemsSource="{Binding CommonDrivers}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="{Binding Name}" FontSize="12.5" FontWeight="SemiBold" />
+                                    <TextBlock Grid.Column="1" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}">
+                                        <Run Text="in " /><Run Text="{Binding DumpCount}" /><Run Text=" dump(s)" />
+                                    </TextBlock>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- Round 14, item 20: MEMORY.DMP - the kernel/complete dump, never shown before now. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="MEMORY.DMP" Style="{StaticResource CardTitle}" />
+                    <StackPanel>
+                        <StackPanel.Style>
+                            <Style TargetType="StackPanel">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding MemoryDump.Exists}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </StackPanel.Style>
+                        <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,4,0,0">
+                            <Run Text="{Binding MemoryDump.FilePath}" />
+                        </TextBlock>
+                        <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,2,0,8">
+                            <Run Text="{Binding MemoryDump.SizeBytes, Converter={StaticResource BytesToReadableConverter}, Mode=OneWay}" />
+                            <Run Text=" · " /><Run Text="{Binding MemoryDump.Timestamp, StringFormat={}{0:g}, Mode=OneWay}" />
+                            <Run Text=" · Bugcheck: " /><Run Text="{Binding MemoryDump.Parsed.BugcheckCode, Converter={StaticResource BugcheckCodeToDescriptionConverter}, TargetNullValue='not found'}" />
+                        </TextBlock>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                            <Button Content="Open folder" Command="{Binding OpenMemoryDumpFolderCommand}" Padding="10,4" Margin="0,0,8,0" />
+                            <Button Content="Copy to..." Command="{Binding CopyMemoryDumpCommand}" Padding="10,4" Margin="0,0,8,0" />
+                            <Button Content="Delete" Command="{Binding DeleteMemoryDumpCommand}" Padding="10,4" />
+                        </StackPanel>
+                        <TextBlock Text="{Binding MemoryDumpStatusText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,4,0,0" />
+                    </StackPanel>
+                    <TextBlock Text="No MEMORY.DMP found - this machine isn't configured for a Complete/Kernel dump (see CrashDumpEnabled in the Minidump folder's housekeeping above, or the crash-analysis settings).">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Setter Property="Margin" Value="0,4,0,0" />
+                                <Setter Property="TextWrapping" Value="Wrap" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding MemoryDump.Exists}" Value="False">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- Round 14, items 21/22: live kernel events (watchdog dumps with no bluescreen). -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding LiveKernelReports.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Live kernel events (no BSOD)" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Watchdog-triggered live kernel dumps (DPCWATCHDOG, USBHUB3, NDIS, video-engine timeouts, ...) that never caused a bluescreen or reboot."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,8" TextWrapping="Wrap" />
+                    <DataGrid ItemsSource="{Binding LiveKernelReports}" Height="180" IsReadOnly="True">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Time" Binding="{Binding Timestamp, StringFormat={}{0:g}}" Width="150" />
+                            <DataGridTextColumn Header="Category" Binding="{Binding Category}" Width="1.5*" />
+                            <DataGridTextColumn Header="File" Binding="{Binding FileName}" Width="2*" />
+                            <DataGridTextColumn Header="Size" Binding="{Binding SizeBytes, Converter={StaticResource BytesToReadableConverter}}" Width="90" />
+                            <DataGridTextColumn Header="WER code" Binding="{Binding WerDescription}" Width="2.5*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
                 </StackPanel>
             </Border>
 

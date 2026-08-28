@@ -341,8 +341,31 @@
                         Value="{Binding DataContext.Services.PollIntervalSeconds, RelativeSource={RelativeSource AncestorType=Window}}" />
 
                 <TextBlock Text="{Binding DataContext.EnergyThermals.PollIntervalSeconds, RelativeSource={RelativeSource AncestorType=Window}, StringFormat=Energy &amp; Thermals — {0:0.0}s}" Style="{StaticResource ColorRowLabel}" Margin="0,0,0,4" />
-                <Slider Minimum="0.5" Maximum="5" TickFrequency="0.5" IsSnapToTickEnabled="True" Margin="0,0,0,4"
+                <Slider Minimum="0.5" Maximum="5" TickFrequency="0.5" IsSnapToTickEnabled="True" Margin="0,0,0,16"
                         Value="{Binding DataContext.EnergyThermals.PollIntervalSeconds, RelativeSource={RelativeSource AncestorType=Window}}" />
+
+                <!-- Round 14, item 25: crash-analysis settings - symbol cache folder/path, used by
+                     the Stability tab's "Analyse (!analyze -v)" button (DebuggerToolsService). -->
+                <TextBlock Text="CRASH ANALYSIS" FontSize="10.5" FontWeight="Bold" Foreground="{DynamicResource TextTertiaryBrush}"
+                           Margin="0,0,0,14" />
+                <TextBlock Text="Used by the Stability tab's dump analysis (cdb.exe/!analyze -v). A bad or unreachable symbol path is a common reason analysis stalls."
+                           Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,10" />
+
+                <TextBlock Text="Current _NT_SYMBOL_PATH" Style="{StaticResource ColorRowLabel}" Margin="0,0,0,4" />
+                <TextBlock Text="{Binding DataContext.Stability.CurrentSymbolPathText, RelativeSource={RelativeSource AncestorType=Window}}"
+                           Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,10" />
+
+                <TextBlock Text="Symbol cache folder" Style="{StaticResource ColorRowLabel}" Margin="0,0,0,4" />
+                <TextBox Width="200" HorizontalAlignment="Left" Margin="0,0,0,8"
+                         Text="{Binding DataContext.Stability.SymbolCacheFolder, RelativeSource={RelativeSource AncestorType=Window}, UpdateSourceTrigger=LostFocus}" />
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                    <Button Content="Apply suggested symbol path" Margin="0,0,8,0"
+                            Command="{Binding DataContext.Stability.ApplySymbolPathCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+                    <Button Content="Test symbol server"
+                            Command="{Binding DataContext.Stability.TestSymbolServerCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+                </StackPanel>
+                <TextBlock Text="{Binding DataContext.Stability.SymbolServerStatusText, RelativeSource={RelativeSource AncestorType=Window}}"
+                           Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,4" />
 
             </StackPanel>
         </ScrollViewer>

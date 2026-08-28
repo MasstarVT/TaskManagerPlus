@@ -16,12 +16,102 @@ namespace TaskManagerPlus.ViewModels;
 /// every other tab's sampler does, the same "genuinely expensive, on-demand" tradeoff
 /// SystemSpecsViewModel already makes for its WMI queries.
 /// </summary>
-public sealed class StabilityViewModel : ObservableObject
+public sealed class StabilityViewModel : ObservableObject, IDisposable
 {
     private readonly EventLogService _service = new();
 
     public ObservableCollection<StabilityEvent> RecentEvents { get; } = new();
     public ObservableCollection<MinidumpInfo> Minidumps { get; } = new();
+
+    // Round 14, items 13-19: binary-parsed dump rows (DUMP_HEADER64 / MINIDUMP format), one per
+    // file under %SystemRoot%\Minidump - independent of, and a richer cross-check against, the
+    // event-log-correlated Minidumps collection above. See MinidumpParserService.
+    public ObservableCollection<DumpRowViewModel> DumpRows { get; } = new();
+
+    // Round 14, item 19: third-party drivers present in every parseable dump's module list.
+    public ObservableCollection<CommonDriverRow> CommonDrivers { get; } = new();
+
+    // Round 14, items 21/22: live kernel events (watchdog dumps with no bluescreen).
+    public ObservableCollection<LiveKernelReportInfo> LiveKernelReports { get; } = new();
+
+    // Round 14, item 20: %SystemRoot%\MEMORY.DMP card.
+    private MemoryDumpInfo? _memoryDump;
+    public MemoryDumpInfo? MemoryDump { get => _memoryDump; private set => SetProperty(ref _memoryDump, value); }
+
+    private DumpRowViewModel? _memoryDumpRow;
+    public DumpRowViewModel? MemoryDumpRow { get => _memoryDumpRow; private set => SetProperty(ref _memoryDumpRow, value); }
+
+    private string _memoryDumpStatusText = string.Empty;
+    public string MemoryDumpStatusText { get => _memoryDumpStatusText; private set => SetProperty(ref _memoryDumpStatusText, value); }
+
+    public RelayCommand OpenMemoryDumpFolderCommand { get; }
+    public RelayCommand CopyMemoryDumpCommand { get; }
+    public RelayCommand DeleteMemoryDumpCommand { get; }
+
+    // Round 14, item 23: cdb.exe/windbg.exe availability, shared by every DumpRowViewModel.
+    private DebuggerAvailability _debugger = new();
+    public DebuggerAvailability Debugger { get => _debugger; private set => SetProperty(ref _debugger, value); }
+
+    // Round 14, item 26: Minidump folder housekeeping.
+    private MinidumpHousekeepingInfo? _housekeeping;
+    public MinidumpHousekeepingInfo? Housekeeping { get => _housekeeping; private set => SetProperty(ref _housekeeping, value); }
+
+    private int _deleteOlderThanDays = 30;
+    public int DeleteOlderThanDays { get => _deleteOlderThanDays; set => SetProperty(ref _deleteOlderThanDays, value); }
+
+    private int _minidumpsCountInput = 50;
+    public int MinidumpsCountInput { get => _minidumpsCountInput; set => SetProperty(ref _minidumpsCountInput, value); }
+
+    private string _housekeepingStatusText = string.Empty;
+    public string HousekeepingStatusText { get => _housekeepingStatusText; private set => SetProperty(ref _housekeepingStatusText, value); }
+
+    public RelayCommand DeleteOldDumpsCommand { get; }
+    public RelayCommand SaveMinidumpsCountCommand { get; }
+
+    // Round 14, item 25: crash-analysis settings (symbol cache folder + symbol path apply/test) -
+    // lives on this view model since it's the natural owner of the settings-drawer's "Crash
+    // analysis settings" section, the same way LoggingViewModel already owns its own settings
+    // section reached from SettingsPanel.xaml via DataContext.Logging.
+    private readonly CrashAnalysisSettings _crashAnalysisSettings = CrashAnalysisSettingsService.Load();
+
+    public string SymbolCacheFolder
+    {
+        get => _crashAnalysisSettings.SymbolCacheFolder;
+        set
+        {
+            if (_crashAnalysisSettings.SymbolCacheFolder == value) return;
+            _crashAnalysisSettings.SymbolCacheFolder = value;
+            CrashAnalysisSettingsService.Save(_crashAnalysisSettings);
+            OnPropertyChanged();
+        }
+    }
+
+    public string CurrentSymbolPathText => SymbolServerService.ReadCurrentSymbolPath() ?? "(not set)";
+
+    private string _symbolServerStatusText = string.Empty;
+    public string SymbolServerStatusText { get => _symbolServerStatusText; private set => SetProperty(ref _symbolServerStatusText, value); }
+
+    public RelayCommand ApplySymbolPathCommand { get; }
+    public AsyncRelayCommand TestSymbolServerCommand { get; }
+
+    // Round 14, item 27: new-dump watcher - a background FileSystemWatcher, badge + tray toast
+    // on a new file, no polling.
+    private readonly NewDumpWatcherService _dumpWatcher = new();
+
+    private bool _hasNewDumpAlert;
+    public bool HasNewDumpAlert { get => _hasNewDumpAlert; private set => SetProperty(ref _hasNewDumpAlert, value); }
+
+    private string? _newDumpAlertText;
+    public string? NewDumpAlertText { get => _newDumpAlertText; private set => SetProperty(ref _newDumpAlertText, value); }
+
+    public RelayCommand DismissNewDumpAlertCommand { get; }
+
+    /// <summary>Fired (already on the UI thread) when item 27's watcher sees a new dump - the
+    /// tuple is (title, body) for whatever toast mechanism the host window uses. MainWindow
+    /// subscribes and forwards to the same NotifyIcon balloon tip #85 already set up, per this
+    /// round's instruction to reuse the existing tray/toast mechanism rather than inventing a
+    /// new one.</summary>
+    public event Action<string, string>? ShowTrayToastRequested;
 
     // Round 10, #66: repeated crashes grouped by faulting module, most frequent first - see
     // FaultingModuleSummary's remarks. Pure derived aggregation over RecentEvents, no new query.
@@ -122,6 +212,85 @@ public sealed class StabilityViewModel : ObservableObject
     {
         RefreshCommand = new AsyncRelayCommand(RefreshAsync);
 
+        // Round 14, item 20: MEMORY.DMP folder/copy/delete actions.
+        OpenMemoryDumpFolderCommand = new RelayCommand(() =>
+        {
+            try
+            {
+                var path = MemoryDump?.FilePath ?? MinidumpParserService.MemoryDmpPath;
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("explorer.exe", $"/select,\"{path}\"") { UseShellExecute = true });
+            }
+            catch (Exception ex) { MemoryDumpStatusText = $"Couldn't open folder: {ex.Message}"; }
+        }, () => MemoryDump?.Exists == true);
+
+        CopyMemoryDumpCommand = new RelayCommand(() =>
+        {
+            try
+            {
+                var dlg = new Microsoft.Win32.SaveFileDialog
+                {
+                    FileName = "MEMORY.DMP",
+                    Filter = "Dump files (*.dmp)|*.dmp|All files (*.*)|*.*",
+                };
+                if (dlg.ShowDialog() == true && MemoryDump is not null)
+                {
+                    System.IO.File.Copy(MemoryDump.FilePath, dlg.FileName, overwrite: true);
+                    MemoryDumpStatusText = $"Copied to {dlg.FileName}.";
+                }
+            }
+            catch (Exception ex) { MemoryDumpStatusText = $"Couldn't copy: {ex.Message}"; }
+        }, () => MemoryDump?.Exists == true);
+
+        DeleteMemoryDumpCommand = new RelayCommand(() =>
+        {
+            try
+            {
+                if (MemoryDump is not null) System.IO.File.Delete(MemoryDump.FilePath);
+                MemoryDumpStatusText = "MEMORY.DMP deleted.";
+                _ = RefreshAsync();
+            }
+            catch (Exception ex) { MemoryDumpStatusText = $"Couldn't delete: {ex.Message}"; }
+        }, () => MemoryDump?.Exists == true);
+
+        // Round 14, item 26: Minidump folder housekeeping.
+        DeleteOldDumpsCommand = new RelayCommand(() =>
+        {
+            int deleted = MinidumpHousekeepingService.DeleteOlderThan(DeleteOlderThanDays);
+            HousekeepingStatusText = $"Deleted {deleted} dump file(s) older than {DeleteOlderThanDays} day(s).";
+            _ = RefreshAsync();
+        });
+
+        SaveMinidumpsCountCommand = new RelayCommand(() =>
+        {
+            bool ok = MinidumpHousekeepingService.WriteMinidumpsCount(MinidumpsCountInput);
+            HousekeepingStatusText = ok
+                ? $"MinidumpsCount set to {MinidumpsCountInput}."
+                : "Couldn't write the registry value.";
+        });
+
+        // Round 14, item 25: symbol path apply/test.
+        ApplySymbolPathCommand = new RelayCommand(() =>
+        {
+            bool ok = SymbolServerService.ApplySymbolPath(SymbolCacheFolder);
+            SymbolServerStatusText = ok ? "Symbol path applied for this user." : "Couldn't set the environment variable.";
+            OnPropertyChanged(nameof(CurrentSymbolPathText));
+        });
+
+        TestSymbolServerCommand = new AsyncRelayCommand(async () =>
+        {
+            SymbolServerStatusText = "Testing...";
+            var (_, detail) = await SymbolServerService.TestSymbolServerReachabilityAsync();
+            SymbolServerStatusText = detail;
+        });
+
+        // Round 14, item 27: new-dump watcher - fires on a background thread, so hop back to the
+        // UI thread (the same "background work off the UI thread, apply on the UI thread"
+        // boundary every polled ViewModel in this app already respects) before touching any
+        // bound property.
+        DismissNewDumpAlertCommand = new RelayCommand(() => { HasNewDumpAlert = false; NewDumpAlertText = null; });
+        _dumpWatcher.NewDumpDetected += OnNewDumpDetected;
+        _dumpWatcher.Start();
+
         _dailyEventColumns = new ColumnSeries<double>
         {
             Values = DailyEventCounts,
@@ -199,6 +368,13 @@ public sealed class StabilityViewModel : ObservableObject
         {
             var snapshot = await Task.Run(() => _service.Query());
             Apply(snapshot);
+
+            // Round 14: the binary dump parse (items 13-22) is independent of the event-log
+            // query above, computed on a background thread, and applied separately - a failure
+            // here doesn't blank out anything Apply() already populated.
+            var bundle = await Task.Run(BuildDumpAnalysisBundle);
+            ApplyDumpAnalysis(bundle);
+
             RefreshErrorText = null;
         }
         catch (Exception ex)
@@ -209,6 +385,107 @@ public sealed class StabilityViewModel : ObservableObject
         {
             IsLoading = false;
         }
+    }
+
+    /// <summary>Round 14: everything computed off the UI thread for the "Dump analysis"
+    /// section - kept as one plain data bundle (rather than touching ObservableCollections
+    /// directly from the background thread) so ApplyDumpAnalysis can do the actual UI-thread
+    /// collection updates in one place, matching Apply(StabilitySnapshot)'s shape above.</summary>
+    private sealed class DumpAnalysisBundle
+    {
+        public DebuggerAvailability Debugger { get; init; } = new();
+        public List<ParsedDumpInfo> ParsedDumps { get; init; } = new();
+        public MemoryDumpInfo MemoryDump { get; init; } = new();
+        public List<LiveKernelReportInfo> LiveKernelReports { get; init; } = new();
+        public List<CommonDriverRow> CommonDrivers { get; init; } = new();
+        public MinidumpHousekeepingInfo Housekeeping { get; init; } = new();
+    }
+
+    private static DumpAnalysisBundle BuildDumpAnalysisBundle()
+    {
+        var debugger = DebuggerToolsService.DetectDebugger();
+        var parsedDumps = MinidumpParserService.ScanMinidumpFolder();
+        var memDump = MinidumpParserService.ReadMemoryDumpInfo();
+        var liveReports = MinidumpParserService.ScanLiveKernelReports();
+        var housekeeping = MinidumpHousekeepingService.ReadHousekeeping();
+
+        // Item 19: intersected across every dump this app could parse a module list from,
+        // including MEMORY.DMP when it happens to be in the (much rarer) minidump/triage format.
+        var forCommon = new List<ParsedDumpInfo>(parsedDumps);
+        if (memDump.Parsed is not null) forCommon.Add(memDump.Parsed);
+
+        return new DumpAnalysisBundle
+        {
+            Debugger = debugger,
+            ParsedDumps = parsedDumps,
+            MemoryDump = memDump,
+            LiveKernelReports = liveReports,
+            CommonDrivers = MinidumpParserService.FindCommonDrivers(forCommon),
+            Housekeeping = housekeeping,
+        };
+    }
+
+    private void ApplyDumpAnalysis(DumpAnalysisBundle bundle)
+    {
+        Debugger = bundle.Debugger;
+
+        DumpRows.Clear();
+        foreach (var p in bundle.ParsedDumps) DumpRows.Add(new DumpRowViewModel(p, bundle.Debugger));
+
+        MemoryDump = bundle.MemoryDump;
+        MemoryDumpRow = bundle.MemoryDump.Exists && bundle.MemoryDump.Parsed is not null
+            ? new DumpRowViewModel(bundle.MemoryDump.Parsed, bundle.Debugger)
+            : null;
+        OpenMemoryDumpFolderCommand.RaiseCanExecuteChanged();
+        CopyMemoryDumpCommand.RaiseCanExecuteChanged();
+        DeleteMemoryDumpCommand.RaiseCanExecuteChanged();
+
+        LiveKernelReports.Clear();
+        foreach (var r in bundle.LiveKernelReports) LiveKernelReports.Add(r);
+
+        CommonDrivers.Clear();
+        foreach (var c in bundle.CommonDrivers) CommonDrivers.Add(c);
+
+        Housekeeping = bundle.Housekeeping;
+        MinidumpsCountInput = bundle.Housekeeping.MinidumpsCountRegistryValue ?? 50;
+    }
+
+    /// <summary>Round 14, item 27: fired on the FileSystemWatcher's own background thread -
+    /// hops to the UI thread before touching any bound property, then waits briefly before
+    /// reading the file (Windows can still be mid-write right when Created fires) so the toast
+    /// text has a real bugcheck description instead of always falling back to the bare file
+    /// name.</summary>
+    private void OnNewDumpDetected(string filePath)
+    {
+        var dispatcher = System.Windows.Application.Current?.Dispatcher;
+        if (dispatcher is null) return;
+
+        dispatcher.InvokeAsync(async () =>
+        {
+            string fileName = System.IO.Path.GetFileName(filePath);
+            string description = $"A new crash dump was written: {fileName}";
+
+            await Task.Delay(2000);
+            try
+            {
+                var parsed = await Task.Run(() => MinidumpParserService.ParseDumpFile(filePath));
+                if (!string.IsNullOrEmpty(parsed.BugcheckCode))
+                    description = $"A new crash dump was written — {BugcheckCodeLookup.Describe(parsed.BugcheckCode)}";
+            }
+            catch { /* best-effort - fall back to the plain file-name message */ }
+
+            HasNewDumpAlert = true;
+            NewDumpAlertText = description;
+            ShowTrayToastRequested?.Invoke("Task Manager Plus — new crash dump", description);
+
+            _ = RefreshAsync();
+        });
+    }
+
+    public void Dispose()
+    {
+        _dumpWatcher.NewDumpDetected -= OnNewDumpDetected;
+        _dumpWatcher.Dispose();
     }
 
     private void Apply(StabilitySnapshot snapshot)

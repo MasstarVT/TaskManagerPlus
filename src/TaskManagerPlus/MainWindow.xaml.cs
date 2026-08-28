@@ -71,6 +71,14 @@ public partial class MainWindow : Window
             _trayIcon.DoubleClick += (_, _) => RestoreFromTray();
             UpdateTrayTooltip();
             _viewModel.Performance.PropertyChanged += (_, _) => UpdateTrayTooltip();
+
+            // Round 14, item 27: reuse this same NotifyIcon for the new-crash-dump toast rather
+            // than inventing a second notification mechanism.
+            _viewModel.Stability.ShowTrayToastRequested += (title, text) =>
+            {
+                try { _trayIcon?.ShowBalloonTip(8000, title, text, Forms.ToolTipIcon.Warning); }
+                catch { /* best-effort - the in-app tab badge/banner still shows either way */ }
+            };
         }
         catch
         {

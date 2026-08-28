@@ -328,7 +328,16 @@
                     <views:SystemSpecsView DataContext="{Binding SystemSpecs}" />
                 </TabItem>
 
-                <TabItem Header="Stability">
+                <TabItem>
+                    <TabItem.Header>
+                        <!-- Round 14, item 27: small red dot badge when the new-dump watcher has
+                             an unacknowledged alert - StabilityViewModel.HasNewDumpAlert. -->
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="Stability" VerticalAlignment="Center" />
+                            <Ellipse Width="7" Height="7" Fill="{DynamicResource DangerBrush}" Margin="4,0,0,0" VerticalAlignment="Top"
+                                     Visibility="{Binding DataContext.Stability.HasNewDumpAlert, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVisibilityConverter}}" />
+                        </StackPanel>
+                    </TabItem.Header>
                     <TabItem.Tag>
                         <Viewbox Width="16" Height="16">
                             <Canvas Width="16" Height="16">
