@@ -3,6 +3,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="clr-namespace:TaskManagerPlus.ViewModels"
              xmlns:views="clr-namespace:TaskManagerPlus.Views"
+             xmlns:models="clr-namespace:TaskManagerPlus.Models"
              xmlns:lvc="clr-namespace:LiveChartsCore.SkiaSharpView.WPF;assembly=LiveChartsCore.SkiaSharpView.WPF"
              d:DataContext="{d:DesignInstance Type=vm:StabilityViewModel}"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
@@ -391,7 +392,43 @@
                 </StackPanel>
             </Border>
 
-            <Grid Margin="0,0,0,4">
+            <!-- #199: a cleared log must be flagged prominently, never silently folded into "no
+                 problems found" - shown ahead of the Known-bad-IDs scorecard below, which is exactly
+                 the kind of "nothing flagged" card a cleared log could otherwise make look clean. -->
+            <Border Background="{DynamicResource DangerMutedBrush}" BorderBrush="{DynamicResource DangerBrush}"
+                    BorderThickness="1" CornerRadius="8" Padding="14,10" Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Visibility" Value="Visible" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding LogClearEvents.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Foreground="{DynamicResource DangerBrush}" FontWeight="SemiBold" FontSize="12.5">
+                        <Run Text="Log integrity - a log was cleared in the last 30 days" />
+                    </TextBlock>
+                    <TextBlock Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" FontSize="11.5" Margin="0,4,0,0">
+                        <Run Text="History before the clear is gone from that log - any &quot;no problems found&quot; card elsewhere on this tab only reflects what's still there." />
+                    </TextBlock>
+                    <ItemsControl ItemsSource="{Binding LogClearEvents}" Margin="0,6,0,0">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Foreground="{DynamicResource DangerBrush}" FontSize="11.5" TextWrapping="Wrap" Margin="0,0,0,2">
+                                    <Run Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}" FontWeight="SemiBold" />
+                                    <Run Text=" — the " /><Run Text="{Binding ClearedChannelName, Mode=OneWay}" /><Run Text=" log was cleared by " />
+                                    <Run Text="{Binding Account, Mode=OneWay}" FontWeight="SemiBold" /><Run Text="." />
+                                </TextBlock>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <Grid Margin="0,0,0,16">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
@@ -431,17 +468,87 @@
                                 AccentBrush="{Binding StabilityIndex, Converter={StaticResource StabilityIndexToBrushConverter}}" />
             </UniformGrid>
 
-            <!-- #1: Reliability History - daily Critical/Error counts over the lookback window,
-                 the same "crash/failure events over time" chart Windows' own Reliability Monitor
-                 shows, bucketed from the same event query as everything else on this tab. -->
+            <!-- #122: "Known-bad IDs present on this PC" - which KB-flagged serious event IDs
+                 (#117) actually showed up in the lookback window, with count/last-seen/next-step,
+                 worst re-ranked severity first - the "tell me what's wrong" answer the flat grid
+                 below otherwise makes the user derive by eye. Collapsed entirely when nothing
+                 flagged turned up (the common case on a healthy PC). -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding KnownBadIdScorecard.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Known-bad IDs present on this PC" Style="{StaticResource CardTitle}" />
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap">
+                        <Run Text="Quick flag, not a verdict — " FontWeight="SemiBold" />
+                        <Run Text="event IDs the local knowledge base flags as usually serious, found in the last 30 days across System/Application, worst re-ranked severity first." />
+                    </TextBlock>
+                    <ItemsControl ItemsSource="{Binding KnownBadIdScorecard}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,8" Margin="0,0,0,6">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Grid.Column="0">
+                                            <TextBlock FontSize="12.5" FontWeight="SemiBold">
+                                                <Run Text="{Binding Provider, Mode=OneWay}" /><Run Text=" " /><Run Text="{Binding EventId, Mode=OneWay}" />
+                                                <Run Text=" · " /><Run Text="{Binding SeverityLabel, Mode=OneWay}" />
+                                            </TextBlock>
+                                            <TextBlock Text="{Binding Meaning}" FontSize="11.5" TextWrapping="Wrap" Margin="0,2,0,2" />
+                                            <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap">
+                                                <Run Text="Next step: " FontWeight="SemiBold" /><Run Text="{Binding NextStep}" />
+                                            </TextBlock>
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="1" HorizontalAlignment="Right" Margin="10,0,0,0">
+                                            <Border Background="{DynamicResource DangerMutedBrush}" CornerRadius="10" Padding="8,2" HorizontalAlignment="Right">
+                                                <TextBlock Foreground="{DynamicResource DangerBrush}" FontSize="11.5" FontWeight="SemiBold">
+                                                    <Run Text="{Binding Count, Mode=OneWay}" /><Run Text="×" />
+                                                </TextBlock>
+                                            </Border>
+                                            <TextBlock FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,0" HorizontalAlignment="Right">
+                                                <Run Text="Last " /><Run Text="{Binding LastSeen, StringFormat={}{0:g}, Mode=OneWay}" />
+                                            </TextBlock>
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #1/#169: Reliability History - daily Critical/Error counts over the lookback window
+                 (this app's own bar series, left axis), the same "crash/failure events over time"
+                 chart Windows' own Reliability Monitor shows, bucketed from the same event query as
+                 everything else on this tab - overlaid with #169's line series, Windows' own 1-10
+                 SystemStabilityIndex from Win32_ReliabilityStabilityMetrics (right axis, blue) so
+                 the two independently-derived scores can be read side by side. See
+                 StabilityViewModel's constructor remarks for why this is one overlaid chart rather
+                 than two separate ones. -->
             <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
                 <StackPanel>
                     <TextBlock Text="Reliability history" Style="{StaticResource CardTitle}" />
                     <!-- Round 13, item 11: the bars are this app's own computed daily Critical/
-                         Error count (left axis); the line is Microsoft's own Reliability Monitor
-                         stability index (Win32_ReliabilityStabilityMetrics, right axis, 0-10). -->
-                    <TextBlock Text="Critical/Error events per day (bars) vs. Microsoft's own reliability index (line), last 30 days."
-                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+                         Error count (left axis); the two overlaid lines are two independently-built
+                         reads of Microsoft's own Reliability Monitor stability index
+                         (Win32_ReliabilityStabilityMetrics, right axis, 0-10) - see
+                         StabilityViewModel's constructor remarks for why both are kept. -->
+                    <TextBlock Text="Critical/Error events per day (bars) vs. Microsoft's own reliability index (lines), last 30 days."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,2" TextWrapping="Wrap" />
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,10" TextWrapping="Wrap"
+                                Visibility="{Binding IsReliabilityMonitorAvailable, Converter={StaticResource BoolToVisibilityConverter}}">
+                        <Run Text="Windows index (last 7 days, avg): " />
+                        <Run Text="{Binding WindowsStabilityIndexRecent, StringFormat={}{0:0.0}/10, TargetNullValue='no data yet'}" FontWeight="SemiBold" />
+                    </TextBlock>
                     <lvc:CartesianChart Series="{Binding DailyEventSeries}" XAxes="{Binding DailyEventXAxes}" YAxes="{Binding DailyEventYAxes}"
                                          Height="160" TooltipPosition="Top" LegendPosition="Bottom" Background="Transparent" />
                 </StackPanel>
@@ -628,6 +735,278 @@
                 </StackPanel>
             </Border>
 
+            <!-- #174: index disagreement flag - only shown when the two independently-derived
+                 scores actually diverge by more than StabilityViewModel.IndexDisagreementThreshold;
+                 explains the divergence rather than leaving two unexplained numbers on screen
+                 (CLAUDE.md's "quick flag, not a verdict"). -->
+            <Border Background="{DynamicResource BgElevatedBrush}" BorderBrush="{DynamicResource WarningBrush}"
+                    BorderThickness="1" CornerRadius="8" Padding="14,10" Margin="0,0,0,16"
+                    Visibility="{Binding IndicesDisagree, Converter={StaticResource BoolToVisibilityConverter}}">
+                <TextBlock Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" FontSize="12.5"
+                            Text="{Binding IndexDisagreementText}" />
+            </Border>
+
+            <!-- #172: Reliability Monitor's own WMI data collection status - always shown (not
+                 collapsed), warning-styled only when collection is off, mirroring the "Error
+                 reporting status" card's shape further down this tab. Offers to re-enable it (with
+                 explicit confirmation) and #171's "run the RAC task now" refresh, which is what
+                 actually re-aggregates #169/#170's data instead of waiting for it to happen on its
+                 own schedule. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding ReliabilityAnalysisStatus.IsCollectionDisabled}" Value="True">
+                                <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
+                                <Setter Property="BorderBrush" Value="{DynamicResource DangerBrush}" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Reliability Monitor collection" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="{Binding ReliabilityAnalysisStatus.SummaryText}" FontSize="12.5" TextWrapping="Wrap" Margin="0,2,0,8" />
+                    <WrapPanel>
+                        <Button Content="Refresh reliability data" FontSize="11" Padding="8,4" Margin="0,0,8,0"
+                                 Command="{Binding RefreshReliabilityCommand}" />
+                        <Button Content="Re-enable collection..." FontSize="11" Padding="8,4" Margin="0,0,8,0"
+                                 Command="{Binding EnableReliabilityAnalysisCommand}"
+                                 Visibility="{Binding ReliabilityAnalysisStatus.IsCollectionDisabled, Converter={StaticResource BoolToVisibilityConverter}}" />
+                        <Button Content="Revert to previous..." FontSize="11" Padding="8,4" Command="{Binding RevertReliabilityAnalysisCommand}"
+                                 Visibility="{Binding CanRevertReliabilityAnalysis, Converter={StaticResource BoolToVisibilityConverter}}" />
+                    </WrapPanel>
+                    <TextBlock Text="{Binding ReliabilityRefreshStatusText}" Style="{StaticResource SubStat}" Margin="0,6,0,0" TextWrapping="Wrap"
+                                Visibility="{Binding ReliabilityRefreshStatusText, Converter={StaticResource NullToVisibilityConverter}}" />
+                    <TextBlock Text="{Binding ReliabilityAnalysisStatusText}" Style="{StaticResource SubStat}" Margin="0,4,0,0" TextWrapping="Wrap"
+                                Visibility="{Binding ReliabilityAnalysisStatusText, Converter={StaticResource NullToVisibilityConverter}}" />
+                </StackPanel>
+            </Border>
+
+            <!-- #170: the full Reliability Monitor feed - application/Windows/miscellaneous
+                 failures, warnings, and informational entries (software installs/updates/
+                 uninstalls) all from one WMI class, with product name, source, and timestamp. Hidden
+                 entirely (not an empty grid) when #172 detects collection is off. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsReliabilityMonitorAvailable}" Value="False">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Reliability Monitor feed" Style="{StaticResource CardTitle}" />
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap">
+                        <Run Text="Every Win32_ReliabilityRecords entry — failures, warnings, and informational software changes — last 30 days, newest first." />
+                    </TextBlock>
+                    <DataGrid ItemsSource="{Binding ReliabilityRecords}" IsReadOnly="True" AutoGenerateColumns="False" MaxHeight="300">
+                        <DataGrid.RowStyle>
+                            <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+                                <Setter Property="ToolTip" Value="{Binding Message}" />
+                            </Style>
+                        </DataGrid.RowStyle>
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Time" Binding="{Binding TimeGenerated, StringFormat={}{0:g}}" Width="140" />
+                            <DataGridTemplateColumn Header="Category" Width="100" SortMemberPath="CategoryLabel">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding CategoryLabel}" VerticalAlignment="Center">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding Category}" Value="Failure">
+                                                            <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding Category}" Value="Warning">
+                                                            <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding Category}" Value="Informational">
+                                                            <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTextColumn Header="Source" Binding="{Binding SourceName}" Width="1.4*" />
+                            <DataGridTextColumn Header="Event ID" Binding="{Binding EventIdentifier}" Width="70" />
+                            <DataGridTextColumn Header="Product" Binding="{Binding ProductName}" Width="2*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <TextBlock Text="No reliability records found in the last 30 days.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding ReliabilityRecords.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- #173: informational reliability records (software installs/updates/uninstalls)
+                 presented as a change log, cross-highlighted against crash clusters from the unified
+                 timeline (#137) - a concrete "this appeared right before things got worse" list,
+                 correlation only. Hidden entirely when #172 detects collection is off. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsReliabilityMonitorAvailable}" Value="False">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Software change log" Style="{StaticResource CardTitle}" />
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap">
+                        <Run Text="Quick flag, not a verdict — " FontWeight="SemiBold" />
+                        <Run Text="installs, updates, and uninstalls from the feed above. A highlighted entry was followed by a crash cluster within a few days — correlation only, not proof of cause." />
+                    </TextBlock>
+                    <ItemsControl ItemsSource="{Binding SoftwareChangeLog}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate DataType="{x:Type models:ReliabilityRecordInfo}">
+                                <Border CornerRadius="6" Padding="10,8" Margin="0,0,0,6">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Setter Property="Background" Value="{DynamicResource BgElevatedBrush}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsFlaggedBeforeCrash}" Value="True">
+                                                    <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
+                                    <StackPanel>
+                                        <TextBlock FontSize="12.5" FontWeight="SemiBold" TextWrapping="Wrap">
+                                            <Run Text="{Binding ProductName, Mode=OneWay}" />
+                                        </TextBlock>
+                                        <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}">
+                                            <Run Text="{Binding TimeGenerated, StringFormat={}{0:g}, Mode=OneWay}" />
+                                            <Run Text=" · " /><Run Text="{Binding SourceName, Mode=OneWay}" />
+                                        </TextBlock>
+                                        <TextBlock Text="{Binding PrecedesCrashClusterNote}" FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0"
+                                                    Foreground="{DynamicResource DangerBrush}" FontWeight="SemiBold"
+                                                    Visibility="{Binding IsFlaggedBeforeCrash, Converter={StaticResource BoolToVisibilityConverter}}" />
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="No software installs/updates/uninstalls found in the last 30 days.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding SoftwareChangeLog.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- #130: day x hour-of-day Critical/Error density grid, sitting directly under the
+                 Reliability History chart above - patterns invisible in a daily bar total ("every
+                 night at 3 AM", "only after resume") pop out as a vertical/clustered stripe here.
+                 Custom UniformGrid/ItemsControl rendering (not LiveChartsCore's HeatSeries) - see
+                 StabilityViewModel/EventAnomalyDetectionService's remarks for why. Collapsed when
+                 nothing was found (a quiet system in the lookback window). -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding ErrorDensityHeatmap.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Error density (day x hour of day)" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Critical/Error counts bucketed by the hour they were logged, one row per day - a recurring vertical stripe means &quot;every day around this hour&quot;." Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,-4,0,10" />
+                    <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+                        <ItemsControl ItemsSource="{Binding ErrorDensityHeatmap}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <UniformGrid Columns="24" />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Width="14" Height="14" Margin="1"
+                                             Background="{Binding Count, Converter={StaticResource HeatCellCountToBrushConverter}}"
+                                             ToolTip="{Binding}" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                </StackPanel>
+            </Border>
+
+            <!-- #128: "New error types this week" - signatures present only in the last 7 days of
+                 the same 30-day snapshot above, with no older occurrence in it - the single
+                 strongest "something changed" signal an event log gives. Collapsed when nothing
+                 qualifies (the common case). -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding NewErrorTypesThisWeek.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="New error types this week" Style="{StaticResource CardTitle}" />
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap">
+                        <Run Text="Quick flag, not a verdict — " FontWeight="SemiBold" />
+                        <Run Text="event signatures seen in the last 7 days with no earlier occurrence in this snapshot's 30-day window." />
+                    </TextBlock>
+                    <ItemsControl ItemsSource="{Binding NewErrorTypesThisWeek}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,8" Margin="0,0,0,6">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Grid.Column="0">
+                                            <TextBlock FontSize="12.5" FontWeight="SemiBold">
+                                                <Run Text="{Binding Provider, Mode=OneWay}" /><Run Text=" " /><Run Text="{Binding EventId, Mode=OneWay}" />
+                                            </TextBlock>
+                                            <TextBlock Text="{Binding SampleMessage}" FontSize="11.5" TextWrapping="Wrap" Margin="0,2,0,0" MaxHeight="34" TextTrimming="CharacterEllipsis" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="1" HorizontalAlignment="Right" Margin="10,0,0,0">
+                                            <TextBlock FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" HorizontalAlignment="Right">
+                                                <Run Text="First seen " /><Run Text="{Binding FirstSeen, StringFormat={}{0:g}, Mode=OneWay}" />
+                                            </TextBlock>
+                                            <TextBlock FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" HorizontalAlignment="Right">
+                                                <Run Text="{Binding OccurrenceCount, Mode=OneWay}" /><Run Text=" occurrence(s)" />
+                                            </TextBlock>
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
             <!-- #3: minidump files, timestamp + best-effort bugcheck code correlated from a
                  nearby Kernel-Power 41 event - see EventLogService.ReadMinidumps. -->
             <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
@@ -659,15 +1038,32 @@
                                 <Expander Margin="0,0,0,6" IsExpanded="False">
                                     <Expander.Header>
                                         <Grid>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                            </Grid.RowDefinitions>
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="*" />
                                                 <ColumnDefinition Width="Auto" />
                                             </Grid.ColumnDefinitions>
-                                            <TextBlock Grid.Column="0" Text="{Binding FileName}" FontSize="12.5" TextTrimming="CharacterEllipsis" />
-                                            <TextBlock Grid.Column="1" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}">
+                                            <TextBlock Grid.Row="0" Grid.Column="0" Text="{Binding FileName}" FontSize="12.5" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Grid.Row="0" Grid.Column="1" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}">
                                                 <Run Text="{Binding Timestamp, StringFormat={}{0:g}, Mode=OneWay}" />
                                                 <!-- #65: bugcheck-code-to-plain-English lookup, instead of a bare hex code. -->
                                                 <Run Text=" · " /><Run Text="{Binding BugcheckCode, Converter={StaticResource BugcheckCodeToDescriptionConverter}, Mode=OneWay}" />
+                                            </TextBlock>
+                                            <!-- #191: all four bugcheck parameters + the authoritative dump path, when a
+                                                 Microsoft-Windows-WER-SystemErrorReporting 1001 event supplied richer detail
+                                                 than the event-41 code alone. -->
+                                            <TextBlock Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" FontSize="10.5"
+                                                        Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,2,0,0"
+                                                        Visibility="{Binding BugcheckDetail, Converter={StaticResource NullToVisibilityConverter}}">
+                                                <Run Text="Parameters: " /><Run Text="{Binding BugcheckDetail.Parameter1, Mode=OneWay}" /><Run Text=", " />
+                                                <Run Text="{Binding BugcheckDetail.Parameter2, Mode=OneWay}" /><Run Text=", " />
+                                                <Run Text="{Binding BugcheckDetail.Parameter3, Mode=OneWay}" /><Run Text=", " />
+                                                <Run Text="{Binding BugcheckDetail.Parameter4, Mode=OneWay}" />
+                                                <Run Text=" · Dump: " />
+                                                <Run Text="{Binding BugcheckDetail.DumpFilePath, TargetNullValue='(path unknown)', Mode=OneWay}" />
                                             </TextBlock>
                                         </Grid>
                                     </Expander.Header>
@@ -2994,6 +3390,494 @@
                 </StackPanel>
             </Border>
 
+            <!-- #167: error reporting configuration check - always shown (not collapsed), warning-
+                 styled only when reporting looks turned off. Informational only, per CLAUDE.md's
+                 "quick flag, not a verdict" convention - WerSvc merely sitting Stopped is normal
+                 (it's a manual/trigger-start service) and is not by itself treated as "off". -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding WerConfigStatus.IsReportingEffectivelyOff}" Value="True">
+                                <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
+                                <Setter Property="BorderBrush" Value="{DynamicResource DangerBrush}" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Error reporting status" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="{Binding WerConfigStatus.SummaryText}" FontSize="12.5" TextWrapping="Wrap" Margin="0,2,0,6" />
+                    <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap">
+                        <Run Text="Disabled (HKLM): " /><Run Text="{Binding WerConfigStatus.DisabledLabel, Mode=OneWay}" />
+                        <Run Text=" · Don't show UI: " /><Run Text="{Binding WerConfigStatus.DontShowUILabel, Mode=OneWay}" />
+                        <Run Text=" · Consent: " /><Run Text="{Binding WerConfigStatus.ConsentDescription, TargetNullValue=Unknown, Mode=OneWay}" />
+                        <Run Text=" · WerSvc: " /><Run Text="{Binding WerConfigStatus.WerSvcStatus, Mode=OneWay}" />
+                        <Run Text=" (" /><Run Text="{Binding WerConfigStatus.WerSvcStartType, TargetNullValue=Unknown, Mode=OneWay}" /><Run Text=")" />
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- #166: WER storage footprint - total size/file count of ReportQueue/ReportArchive,
+                 with a reveal-in-Explorer button next to each (reuses EtwTraceService.
+                 RevealInExplorer). This app never deletes anything from either folder. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="WER storage footprint" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="No deletion is performed by this app - use the buttons below to review the files yourself in Explorer." Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+                    <Grid Margin="0,0,0,6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0">
+                            <TextBlock FontSize="12.5" FontWeight="SemiBold" Text="ReportQueue (pending upload)" />
+                            <TextBlock FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}">
+                                <Run Text="{Binding WerFootprint.QueueSizeBytes, Converter={StaticResource BytesToReadableConverter}, Mode=OneWay}" />
+                                <Run Text=" across " /><Run Text="{Binding WerFootprint.QueueFileCount, Mode=OneWay}" /><Run Text=" file(s)" />
+                            </TextBlock>
+                        </StackPanel>
+                        <Button Grid.Column="1" Content="Reveal in Explorer" FontSize="10.5" Padding="8,4" VerticalAlignment="Center"
+                                 Command="{Binding RevealWerQueueCommand}" />
+                    </Grid>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0">
+                            <TextBlock FontSize="12.5" FontWeight="SemiBold" Text="ReportArchive (already processed)" />
+                            <TextBlock FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}">
+                                <Run Text="{Binding WerFootprint.ArchiveSizeBytes, Converter={StaticResource BytesToReadableConverter}, Mode=OneWay}" />
+                                <Run Text=" across " /><Run Text="{Binding WerFootprint.ArchiveFileCount, Mode=OneWay}" /><Run Text=" file(s)" />
+                            </TextBlock>
+                        </StackPanel>
+                        <Button Grid.Column="1" Content="Reveal in Explorer" FontSize="10.5" Padding="8,4" VerticalAlignment="Center"
+                                 Command="{Binding RevealWerArchiveCommand}" />
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+            <!-- #165: local crash dump capture toggle - explicit confirmation before any registry
+                 write (see StabilityViewModel.EnableLocalDumps), states the disk-space implication,
+                 and offers a one-click revert that survives an app restart (see
+                 WerReportService.SaveBackup/LoadBackup). -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Local crash dump capture" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="{Binding LocalDumpsSettings.StatusLabel}" FontSize="12.5" TextWrapping="Wrap" Margin="0,2,0,4" />
+                    <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,0,0,8"
+                                Visibility="{Binding LocalDumpsSettings.DumpFolder, Converter={StaticResource NullToVisibilityConverter}}">
+                        <Run Text="Folder: " /><Run Text="{Binding LocalDumpsSettings.DumpFolder, Mode=OneWay}" />
+                        <Run Text=" · Keeps " /><Run Text="{Binding LocalDumpsSettings.DumpCount, Mode=OneWay}" />
+                        <Run Text=" (" /><Run Text="{Binding LocalDumpsSettings.DumpTypeLabel, Mode=OneWay}" /><Run Text=")" />
+                    </TextBlock>
+                    <WrapPanel>
+                        <Button Content="Enable local dump capture..." FontSize="11" Padding="8,4" Margin="0,0,8,0" Command="{Binding EnableLocalDumpsCommand}" />
+                        <Button Content="Revert to previous..." FontSize="11" Padding="8,4" Command="{Binding RevertLocalDumpsCommand}" />
+                    </WrapPanel>
+                    <TextBlock Text="{Binding LocalDumpsToggleStatusText}" Style="{StaticResource SubStat}" Margin="0,6,0,0" TextWrapping="Wrap"
+                                Visibility="{Binding LocalDumpsToggleStatusText, Converter={StaticResource NullToVisibilityConverter}}" />
+                </StackPanel>
+            </Border>
+
+            <!-- #161/#162: WER crash reports, grouped by bucket signature (BucketId when the report
+                 carries one, otherwise app+module+exception-code) so repeat crashes of the same
+                 shape read as one row with a count. Collapsed when no reports were found. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding CrashReportBuckets.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Crash reports (Windows Error Reporting)" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Parsed from ReportQueue/ReportArchive's Report.wer files, clustered by bucket signature, newest first." Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+                    <ItemsControl ItemsSource="{Binding CrashReportBuckets}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate DataType="{x:Type models:WerCrashBucket}">
+                                <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,8" Margin="0,0,0,6">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Grid.Column="0">
+                                            <TextBlock Text="{Binding SignatureText}" FontSize="12.5" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                            <TextBlock Style="{StaticResource SubStat}">
+                                                <Run Text="First " /><Run Text="{Binding FirstSeen, StringFormat={}{0:g}, Mode=OneWay}" />
+                                                <Run Text=" · Last " /><Run Text="{Binding LastSeen, StringFormat={}{0:g}, Mode=OneWay}" />
+                                            </TextBlock>
+                                        </StackPanel>
+                                        <Border Grid.Column="1" Background="{DynamicResource DangerMutedBrush}" CornerRadius="10" Padding="8,2" VerticalAlignment="Center">
+                                            <TextBlock Foreground="{DynamicResource DangerBrush}" FontSize="11.5" FontWeight="SemiBold">
+                                                <Run Text="{Binding Count, Mode=OneWay}" /><Run Text="×" />
+                                            </TextBlock>
+                                        </Border>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #163: top crashing applications - WER report counts combined with Application-log
+                 "Application Error" 1000 entries, ranked by total crash count. Collapsed when empty. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding TopCrashingApplications.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Top crashing applications" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="WER reports + Application-log crash entries (event 1000), last 30 days." Style="{StaticResource SubStat}" Margin="0,-4,0,10" />
+                    <ItemsControl ItemsSource="{Binding TopCrashingApplications}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate DataType="{x:Type models:TopCrashingApplication}">
+                                <Grid Margin="0,0,0,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock Text="{Binding AppName}" FontSize="12.5" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Style="{StaticResource SubStat}">
+                                            <Run Text="Most common module: " /><Run Text="{Binding MostCommonModule, TargetNullValue=Unknown, Mode=OneWay}" />
+                                            <Run Text=" · Last " /><Run Text="{Binding LastCrashTime, StringFormat={}{0:g}, Mode=OneWay}" />
+                                        </TextBlock>
+                                    </StackPanel>
+                                    <Border Grid.Column="1" Background="{DynamicResource DangerMutedBrush}" CornerRadius="10" Padding="8,2" VerticalAlignment="Center">
+                                        <TextBlock Foreground="{DynamicResource DangerBrush}" FontSize="11.5" FontWeight="SemiBold">
+                                            <Run Text="{Binding CrashCount, Mode=OneWay}" /><Run Text="×" />
+                                        </TextBlock>
+                                    </Border>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #164: hangs - "Application Hang" 1002, kept separate from the crash cards above
+                 since "went white and unresponsive" and "disappeared" have different causes.
+                 CPU/disk-pressure correlation is not attempted - see WerHangInfo's remarks. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding Hangs.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Application hangs" Style="{StaticResource CardTitle}" />
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap">
+                        <Run Text="&quot;Application Hang&quot; event 1002, last 30 days. " />
+                        <Run Text="CPU/disk pressure at each timestamp isn't shown - this app has no historical performance log to look it up in yet." />
+                    </TextBlock>
+                    <ItemsControl ItemsSource="{Binding Hangs}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate DataType="{x:Type models:WerHangInfo}">
+                                <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,8" Margin="0,0,0,6">
+                                    <StackPanel>
+                                        <TextBlock FontSize="12.5" FontWeight="SemiBold">
+                                            <Run Text="{Binding ProcessName, TargetNullValue=Unknown, Mode=OneWay}" />
+                                            <Run Text=" (PID " /><Run Text="{Binding ProcessId, TargetNullValue=Unknown, Mode=OneWay}" /><Run Text=")" />
+                                        </TextBlock>
+                                        <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}">
+                                            <Run Text="{Binding Timestamp, StringFormat={}{0:g}, Mode=OneWay}" />
+                                            <Run Text=" · Hang type: " /><Run Text="{Binding HangType, TargetNullValue=Unknown, Mode=OneWay}" />
+                                        </TextBlock>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #137: unified incident timeline - event-log records, minidumps, boot/shutdown
+                 markers, and (#161) WER crash reports merged into one time-ordered stream,
+                 per-source colour coding, a filter chip per source. Driver/update/service-install
+                 events (items 169-183) aren't wired into the merge yet - see TimelineSource's remarks. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Unified incident timeline" Style="{StaticResource CardTitle}" />
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,-4,0,8" TextWrapping="Wrap">
+                        <Run Text="Event log, minidump, and boot/shutdown data merged into one time-ordered stream. " />
+                        <Run Text="Click a crash-flagged entry to drill into a +/-5 minute window across every channel, or see what changed in the 7 days before it." />
+                    </TextBlock>
+                    <ItemsControl ItemsSource="{Binding TimelineFilters}" Margin="0,0,0,8">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate DataType="{x:Type vm:TimelineFilterChip}">
+                                <CheckBox Content="{Binding Label}" IsChecked="{Binding IsEnabled}" Margin="0,0,14,4" FontSize="11" />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <ItemsControl ItemsSource="{Binding Timeline}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate DataType="{x:Type models:TimelineEntry}">
+                                <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,8" Margin="0,0,0,6">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <Border Grid.Column="0" Width="9" Height="9" CornerRadius="4.5" Margin="0,3,10,0" VerticalAlignment="Top"
+                                                 Background="{Binding Source, Converter={StaticResource TimelineSourceToBrushConverter}}" />
+                                        <StackPanel Grid.Column="1">
+                                            <TextBlock FontSize="11.5" FontWeight="SemiBold" TextWrapping="Wrap">
+                                                <Run Text="{Binding Timestamp, StringFormat={}{0:g}, Mode=OneWay}" />
+                                                <Run Text=" · " /><Run Text="{Binding SourceLabel, Mode=OneWay}" />
+                                                <Run Text=" · " /><Run Text="{Binding Title, Mode=OneWay}" />
+                                            </TextBlock>
+                                            <TextBlock Text="{Binding Detail}" FontSize="11" TextWrapping="Wrap" MaxHeight="34"
+                                                        TextTrimming="CharacterEllipsis" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,2,0,0" />
+                                            <WrapPanel Margin="0,4,0,0">
+                                                <WrapPanel.Style>
+                                                    <Style TargetType="WrapPanel">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsCrash}" Value="True">
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </WrapPanel.Style>
+                                                <!-- #138: crash-window drill-down -->
+                                                <Button Content="+/-5 min, all channels" FontSize="10.5" Padding="6,2" Margin="0,0,6,0"
+                                                         Command="{Binding DataContext.DrillDownCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                         CommandParameter="{Binding}" />
+                                                <!-- #139: what changed before this crash -->
+                                                <Button Content="What changed before this?" FontSize="10.5" Padding="6,2"
+                                                         Command="{Binding DataContext.FindChangesBeforeCrashCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                         CommandParameter="{Binding}" />
+                                            </WrapPanel>
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="No timeline entries yet — click Refresh above." Margin="0,4,0,0">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding Timeline.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- #138: crash-window drill-down results - only shown once a crash entry above has
+                 actually been clicked (gated on the status text, not the row count, so a
+                 genuinely-empty window still shows "0 events found" instead of vanishing). -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16"
+                     Visibility="{Binding CrashWindowStatusText, Converter={StaticResource NullToVisibilityConverter}}">
+                <StackPanel>
+                    <TextBlock Text="Crash window (+/- 5 minutes, all levels)" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="{Binding CrashWindowStatusText}" Style="{StaticResource SubStat}" Margin="0,-4,0,8" TextWrapping="Wrap" />
+                    <DataGrid ItemsSource="{Binding CrashWindowResults}" IsReadOnly="True" AutoGenerateColumns="False" MaxHeight="240">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Time" Binding="{Binding TimeCreated, StringFormat={}{0:g}}" Width="140" />
+                            <DataGridTextColumn Header="Channel" Binding="{Binding ChannelName}" Width="130" />
+                            <DataGridTextColumn Header="Level" Binding="{Binding Level}" Width="80" />
+                            <DataGridTextColumn Header="Provider" Binding="{Binding ProviderName}" Width="2*" />
+                            <DataGridTextColumn Header="Event ID" Binding="{Binding EventId}" Width="70" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- #139: attribute a crash to the change that preceded it - same "gated on status
+                 text" visibility rule as #138 above. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16"
+                     Visibility="{Binding ChangeAttributionStatusText, Converter={StaticResource NullToVisibilityConverter}}">
+                <StackPanel>
+                    <TextBlock Text="Changes shortly before this crash" Style="{StaticResource CardTitle}" />
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,-4,0,8" TextWrapping="Wrap">
+                        <Run Text="Quick flag, not a verdict — " FontWeight="SemiBold" />
+                        <Run Text="driver installs, update installs, and new services found in the 7 days before the crash. Correlation, not proof of cause." />
+                    </TextBlock>
+                    <TextBlock Text="{Binding ChangeAttributionStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" />
+                    <ItemsControl ItemsSource="{Binding ChangesBeforeCrash}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate DataType="{x:Type models:PreCrashChange}">
+                                <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,8" Margin="0,0,0,6">
+                                    <StackPanel>
+                                        <TextBlock FontSize="11.5" FontWeight="SemiBold">
+                                            <Run Text="{Binding Category, Mode=OneWay}" /><Run Text=" — " /><Run Text="{Binding Provider, Mode=OneWay}" />
+                                            <Run Text=" " /><Run Text="{Binding EventId, Mode=OneWay}" />
+                                        </TextBlock>
+                                        <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}">
+                                            <Run Text="{Binding Timestamp, StringFormat={}{0:g}, Mode=OneWay}" />
+                                            <Run Text=" (" /><Run Text="{Binding TimeBeforeCrash.Days, Mode=OneWay}" /><Run Text="d before the crash)" />
+                                        </TextBlock>
+                                        <TextBlock Text="{Binding SampleMessage}" FontSize="11" TextWrapping="Wrap" MaxHeight="34"
+                                                    TextTrimming="CharacterEllipsis" Margin="0,2,0,0" />
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #142: sleep/resume incident chain - collapsed when nothing was found (the common
+                 case on a desktop that's never slept). -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding SleepResumeCycles.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Sleep / resume chain" Style="{StaticResource CardTitle}" />
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,-4,0,8" TextWrapping="Wrap">
+                        <Run Text="Each sleep (Kernel-Power 42) paired with its resume (107/187/507) or an unclean reboot instead (41) — the &quot;wakes up to a black screen&quot; pattern. Last 30 days." />
+                    </TextBlock>
+                    <DataGrid ItemsSource="{Binding SleepResumeCycles}" IsReadOnly="True" AutoGenerateColumns="False" MaxHeight="220">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Sleep" Binding="{Binding SleepTime, StringFormat={}{0:g}}" Width="140" />
+                            <DataGridTextColumn Header="Resume" Binding="{Binding ResumeTime, StringFormat={}{0:g}}" Width="140" />
+                            <DataGridTextColumn Header="Duration" Binding="{Binding Duration}" Width="100" />
+                            <DataGridTemplateColumn Header="Outcome" Width="2*">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding Outcome}" TextWrapping="Wrap" VerticalAlignment="Center">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding ResumedCleanly}" Value="False">
+                                                            <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTextColumn Header="Boot type hint" Binding="{Binding BootTypeHint}" Width="130" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- #143: "who rebooted this PC" - collapsed when nothing was found. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding RebootAttributions.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Who rebooted this PC" Style="{StaticResource CardTitle}" />
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,-4,0,8" TextWrapping="Wrap">
+                        <Run Text="Parsed from User32 1074 (which process/user asked for it), Kernel-General 13, and EventLog 6006/6008 — last 30 days." />
+                    </TextBlock>
+                    <ItemsControl ItemsSource="{Binding RebootAttributions}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate DataType="{x:Type models:RebootAttribution}">
+                                <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,8" Margin="0,0,0,6">
+                                    <StackPanel>
+                                        <TextBlock FontSize="11.5" FontWeight="SemiBold" Text="{Binding Timestamp, StringFormat={}{0:g}}" />
+                                        <TextBlock Text="{Binding Answer}" FontSize="11" TextWrapping="Wrap" Margin="0,2,0,0">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding WasCleanShutdown}" Value="False">
+                                                            <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #144: uptime and session ledger - collapsed only when EventLog 6005 was never
+                 found in the lookback window at all (extremely rare). -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding BootLedger.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Uptime and session ledger" Style="{StaticResource CardTitle}" />
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,-4,0,8" TextWrapping="Wrap">
+                        <Run Text="One row per boot session (EventLog 6005/6006/6008/6009/6013), with a best-effort Kernel-Boot 27 boot-type read — Fast Startup means &quot;restart&quot; and &quot;shut down&quot; aren't the same reset. Last 30 days." />
+                    </TextBlock>
+                    <DataGrid ItemsSource="{Binding BootLedger}" IsReadOnly="True" AutoGenerateColumns="False" MaxHeight="260">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Start" Binding="{Binding StartTime, StringFormat={}{0:g}}" Width="140" />
+                            <DataGridTextColumn Header="End" Binding="{Binding EndTime, StringFormat={}{0:g}}" Width="140" />
+                            <DataGridTextColumn Header="Duration" Binding="{Binding Duration}" Width="100" />
+                            <DataGridTextColumn Header="Boot type" Binding="{Binding BootType}" Width="130" />
+                            <DataGridTemplateColumn Header="Ended cleanly?" Width="100">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding EndedCleanly}" VerticalAlignment="Center">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding EndedCleanly}" Value="False">
+                                                            <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTextColumn Header="End reason" Binding="{Binding EndReason}" Width="2*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
             <!-- #1/#8: recent Critical/Error entries from the System and Application logs, last
                  30 days - a faulting-module tooltip is shown when the message matched that shape
                  (typically an Application-log app crash entry). -->
@@ -3003,7 +3887,10 @@
                     <DataGrid ItemsSource="{Binding RecentEvents}" Height="320" Margin="0,8,0,0" IsReadOnly="True">
                         <DataGrid.RowStyle>
                             <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
-                                <Setter Property="ToolTip" Value="{Binding Message}" />
+                                <!-- #168: the fuller, non-truncated parse for .NET Runtime 1026 /
+                                     Application Error 1000 when one was found, otherwise the same
+                                     truncated Message as before. -->
+                                <Setter Property="ToolTip" Value="{Binding DisplayDetail}" />
                             </Style>
                         </DataGrid.RowStyle>
                         <DataGrid.Columns>
@@ -3044,6 +3931,416 @@
                             </Style>
                         </TextBlock.Style>
                     </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- #184: storage-fault event family (disk 7/11/51/153, Ntfs 55/98/137/140,
+                 storahci/stornvme/iaStorA 129, volmgr 46) grouped by the physical disk each event
+                 named - "which physical disk is throwing errors" instead of a flat count. Collapsed
+                 when nothing was found. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding StorageErrorGroups.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Storage errors by disk" Style="{StaticResource CardTitle}" />
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap">
+                        <Run Text="Disk/NTFS/controller-reset errors from the last 30 days, grouped by the physical disk each event named." />
+                    </TextBlock>
+                    <ItemsControl ItemsSource="{Binding StorageErrorGroups}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,8" Margin="0,0,0,6">
+                                    <StackPanel>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" FontSize="12.5" FontWeight="SemiBold" Text="{Binding FriendlyName}" />
+                                            <TextBlock Grid.Column="1" FontSize="11" Foreground="{DynamicResource DangerBrush}">
+                                                <Run Text="{Binding TotalCount, Mode=OneWay}" /><Run Text=" event(s)" />
+                                            </TextBlock>
+                                        </Grid>
+                                        <ItemsControl ItemsSource="{Binding Hits}" Margin="0,4,0,0">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap">
+                                                        <Run Text="{Binding Provider, Mode=OneWay}" /><Run Text=" " /><Run Text="{Binding EventId, Mode=OneWay}" />
+                                                        <Run Text=" — " /><Run Text="{Binding Description, Mode=OneWay}" />
+                                                        <Run Text=" (" /><Run Text="{Binding Count, Mode=OneWay}" /><Run Text="×, last " />
+                                                        <Run Text="{Binding LastSeen, StringFormat={}{0:g}, Mode=OneWay}" /><Run Text=")" />
+                                                    </TextBlock>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #185: shadow-copy (System Restore / File History) family - volsnap/VSS deletion/
+                 failure events plus vssadmin's own current storage-allocation snapshot. Always
+                 shown (not collapsed on empty) since the storage-allocation table itself is useful
+                 even with no recent failures. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Backup and restore points" Style="{StaticResource CardTitle}" />
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap">
+                        <Run Text="Shadow copy (System Restore / File History) storage allocation and any deletion/failure events from the last 30 days - a silently deleted shadow copy means these features quietly stopped working." />
+                    </TextBlock>
+                    <ItemsControl ItemsSource="{Binding ShadowStorageVolumes}" Margin="0,0,0,8">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,8" Margin="0,0,0,6">
+                                    <StackPanel>
+                                        <TextBlock FontSize="12.5" FontWeight="SemiBold" Text="{Binding ForVolume}" />
+                                        <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap">
+                                            <Run Text="Used " /><Run Text="{Binding UsedSpace}" /><Run Text=" of " /><Run Text="{Binding MaximumSpace}" />
+                                            <Run Text=" max (allocated " /><Run Text="{Binding AllocatedSpace}" /><Run Text=")" />
+                                        </TextBlock>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="{Binding ShadowCopyStatusText}" Style="{StaticResource SubStat}" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" Margin="0,0,0,8"
+                                Visibility="{Binding ShadowCopyStatusText, Converter={StaticResource NullToVisibilityConverter}}" />
+                    <ItemsControl ItemsSource="{Binding ShadowCopyEvents}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock FontSize="11" TextWrapping="Wrap" Margin="0,0,0,4">
+                                    <Run Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}" FontWeight="SemiBold" />
+                                    <Run Text=" · " /><Run Text="{Binding Provider, Mode=OneWay}" /><Run Text=" " /><Run Text="{Binding EventId, Mode=OneWay}" />
+                                    <Run Text=" — " /><Run Text="{Binding Description, Mode=OneWay}" />
+                                </TextBlock>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="No shadow-copy deletion/failure events found in the last 30 days.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding ShadowCopyEvents.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- #186: WHEA (Machine-Check) 17/18/19/47 rate over time - corrected errors are not
+                 fatal by themselves, flagged as worth investigating, not a verdict. Same small
+                 column-chart shape as Reliability History above. Collapsed when nothing was found. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding WheaRateSummary.TotalCount}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Hardware-error rate (WHEA)" Style="{StaticResource CardTitle}" />
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap">
+                        <Run Text="Quick flag, not a verdict — " FontWeight="SemiBold" />
+                        <Run Text="Microsoft-Windows-WHEA-Logger 17/18/19/47 per day, last 30 days. Corrected errors (17/47) aren't fatal by themselves; frequent recurrence is worth investigating." />
+                    </TextBlock>
+                    <lvc:CartesianChart Series="{Binding WheaDailySeries}" XAxes="{Binding WheaDailyXAxes}" YAxes="{Binding WheaDailyYAxes}"
+                                         Height="120" TooltipPosition="Top" LegendPosition="Hidden" Background="Transparent" />
+                    <TextBlock Margin="0,6,0,0" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}">
+                        <Run Text="{Binding WheaRateSummary.TotalCount, Mode=OneWay}" /><Run Text=" total in the last 30 days · last seen " />
+                        <Run Text="{Binding WheaRateSummary.LastSeen, StringFormat={}{0:g}, TargetNullValue='never', Mode=OneWay}" />
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- #187: driver-load failures (Kernel-PnP 219/411/442, UserPnp 20001/20003) joined
+                 against `driverquery /v /fo csv` so a failure names a real, currently-installed
+                 driver when one matches. Collapsed when nothing was found. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding DriverFailures.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Driver problems" Style="{StaticResource CardTitle}" />
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap">
+                        <Run Text="Driver load failures and install results from the last 30 days, joined against currently-installed drivers where a name matches." />
+                    </TextBlock>
+                    <ItemsControl ItemsSource="{Binding DriverFailures}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,8" Margin="0,0,0,6">
+                                    <StackPanel>
+                                        <TextBlock FontSize="12.5" FontWeight="SemiBold" TextWrapping="Wrap">
+                                            <Run Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}" />
+                                            <Run Text=" · " /><Run Text="{Binding Provider, Mode=OneWay}" /><Run Text=" " /><Run Text="{Binding EventId, Mode=OneWay}" />
+                                        </TextBlock>
+                                        <TextBlock Text="{Binding Description}" FontSize="11.5" TextWrapping="Wrap" Margin="0,2,0,2" />
+                                        <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap"
+                                                    Visibility="{Binding DriverInfo, Converter={StaticResource NullToVisibilityConverter}}">
+                                            <Run Text="Installed driver: " FontWeight="SemiBold" /><Run Text="{Binding DriverInfo.DisplayName, Mode=OneWay}" />
+                                            <Run Text=" (" /><Run Text="{Binding DriverInfo.State, Mode=OneWay}" /><Run Text=", " />
+                                            <Run Text="{Binding DriverInfo.StartMode, Mode=OneWay}" /><Run Text=" start)" />
+                                        </TextBlock>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #188: chkdsk/autochk results, parsed from Wininit 1001's full boot-time text report
+                 and Chkdsk 26212/26214 - bad sectors, whether it completed cleanly. Wider (180-day)
+                 lookback since these only run at boot when scheduled. Collapsed when nothing was
+                 found. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding ChkdskResults.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Chkdsk / autochk results" Style="{StaticResource CardTitle}" />
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap">
+                        <Run Text="Boot-time disk check runs from the last 180 days." />
+                    </TextBlock>
+                    <ItemsControl ItemsSource="{Binding ChkdskResults}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,8" Margin="0,0,0,6">
+                                    <StackPanel>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" FontSize="12.5" FontWeight="SemiBold" TextWrapping="Wrap">
+                                                <Run Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}" />
+                                                <Run Text=" · " /><Run Text="{Binding Source, Mode=OneWay}" />
+                                                <Run Text=" · " /><Run Text="{Binding Volume, TargetNullValue='(volume unknown)', Mode=OneWay}" />
+                                            </TextBlock>
+                                            <TextBlock Grid.Column="1" FontSize="11" FontWeight="SemiBold">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+                                                        <Setter Property="Text" Value="Completed cleanly" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding CompletedCleanly}" Value="False">
+                                                                <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                                <Setter Property="Text" Value="Ran (outcome unclear)" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                        </Grid>
+                                        <TextBlock FontSize="11" Foreground="{DynamicResource DangerBrush}" FontWeight="SemiBold" Margin="0,2,0,0"
+                                                    Visibility="{Binding BadSectorsFoundKb, Converter={StaticResource NullToVisibilityConverter}}">
+                                            <Run Text="{Binding BadSectorsFoundKb, Mode=OneWay}" /><Run Text=" KB in bad sectors" />
+                                        </TextBlock>
+                                        <TextBlock Text="{Binding RawSummary}" FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}"
+                                                    TextWrapping="Wrap" Margin="0,4,0,0" MaxHeight="80" TextTrimming="CharacterEllipsis" />
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #189: last Windows Memory Diagnostic run outcome, or "never run" with a pointer to
+                 mdsched.exe - pairs with the WHEA card above (WHEA 18/19 = hardware errors that
+                 might be RAM; this is "have you actually tested the RAM"). -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Windows Memory Diagnostic" Style="{StaticResource CardTitle}" />
+                    <TextBlock FontSize="12.5" TextWrapping="Wrap" Margin="0,2,0,4">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Text" Value="{Binding MemoryDiagnosticStatus.Outcome}" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding MemoryDiagnosticStatus.HasEverRun}" Value="False">
+                                        <Setter Property="Text" Value="No memory diagnostic run found. Run mdsched.exe to test RAM (schedules a check on next restart)." />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}"
+                                Visibility="{Binding MemoryDiagnosticStatus.HasEverRun, Converter={StaticResource BoolToVisibilityConverter}}">
+                        <Run Text="Last run: " /><Run Text="{Binding MemoryDiagnosticStatus.LastRunTime, StringFormat={}{0:g}, Mode=OneWay}" />
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- #190: Kernel-Power 125/126/131 (device power-transition failures) and
+                 Kernel-Processor-Power 37/55 (processor power/throttling) - a historical incident
+                 record that complements (not merges with) the live thermal-throttle/power-limit
+                 flag on the CPU/Energy & Thermals tabs. Collapsed when nothing was found. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding PowerTransitionIncidents.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Power and throttling incidents" Style="{StaticResource CardTitle}" />
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap">
+                        <Run Text="Device power-transition failures and processor power/throttling events from the last 30 days." />
+                    </TextBlock>
+                    <ItemsControl ItemsSource="{Binding PowerTransitionIncidents}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock FontSize="11" TextWrapping="Wrap" Margin="0,0,0,4">
+                                    <Run Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}" FontWeight="SemiBold" />
+                                    <Run Text=" · " /><Run Text="{Binding Provider, Mode=OneWay}" /><Run Text=" " /><Run Text="{Binding EventId, Mode=OneWay}" />
+                                    <Run Text=" — " /><Run Text="{Binding Description, Mode=OneWay}" />
+                                </TextBlock>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #195: Perflib counter-corruption card - directly relevant to this app itself, since
+                 a broken counter provider also breaks this app's own PerformanceCounter reads.
+                 Collapsed when nothing was found. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding PerflibSummary.Failures.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Performance counter provider failures (Perflib)" Style="{StaticResource CardTitle}" Margin="0" />
+                        <Button Grid.Column="1" Content="Rebuild counters (lodctr /R)" Command="{Binding RunLodctrRebuildCommand}" Padding="8,3" FontSize="11"
+                                 ToolTip="Rebuilds the Windows performance-counter registry from each provider's own .ini files - a real system change, confirmed before it runs." />
+                    </Grid>
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap">
+                        <Run Text="Perflib 1008/1010/1017/1023/2004 - a performance counter DLL failed to load or returned bad data. A broken provider here can also mean this app's own CPU/Memory/Disk/Network tabs are reading stale or missing data for that provider." />
+                    </TextBlock>
+                    <TextBlock FontWeight="SemiBold" FontSize="11.5" Margin="0,0,0,4">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding PerflibSummary.AffectedProviders.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                        <Run Text="Affected counter providers: " /><Run Text="{Binding PerflibSummary.AffectedProviders, Converter={StaticResource StringListJoinConverter}, Mode=OneWay}" />
+                    </TextBlock>
+                    <TextBlock Text="{Binding PerflibStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,6"
+                                Visibility="{Binding PerflibStatusText, Converter={StaticResource NullToVisibilityConverter}}" />
+                    <ItemsControl ItemsSource="{Binding PerflibSummary.Failures}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock FontSize="11" TextWrapping="Wrap" Margin="0,0,0,4">
+                                    <Run Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}" FontWeight="SemiBold" />
+                                    <Run Text=" · Perflib " /><Run Text="{Binding EventId, Mode=OneWay}" />
+                                    <Run Text=" — " /><Run Text="{Binding Description, Mode=OneWay}" />
+                                    <Run Text=" (" /><Run Text="{Binding CounterProviderName, TargetNullValue='provider unknown', Mode=OneWay}" /><Run Text=")" />
+                                </TextBlock>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #196: rollup of six more high-signal-but-lower-volume families (Schannel/ESENT/
+                 GroupPolicy/Time-Service/DNS Client/Tcpip), each with its own drill-down list.
+                 Collapsed when nothing was found. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding SubsystemFamilies.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Other subsystem error families" Style="{StaticResource CardTitle}" />
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap">
+                        <Run Text="TLS, database engine, Group Policy, time sync, DNS, and TCP/IP port-exhaustion failures from the last 30 days, one rolled-up count per family." />
+                    </TextBlock>
+                    <ItemsControl ItemsSource="{Binding SubsystemFamilies}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Expander Margin="0,0,0,6" FontSize="11.5">
+                                    <Expander.Header>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" FontSize="12.5" FontWeight="SemiBold" Text="{Binding FamilyName}" />
+                                            <TextBlock Grid.Column="1" FontSize="11" Foreground="{DynamicResource DangerBrush}">
+                                                <Run Text="{Binding TotalCount, Mode=OneWay}" /><Run Text="× · last " />
+                                                <Run Text="{Binding LastSeen, StringFormat={}{0:g}, Mode=OneWay}" />
+                                            </TextBlock>
+                                        </Grid>
+                                    </Expander.Header>
+                                    <StackPanel Margin="16,6,0,0">
+                                        <TextBlock Text="{Binding Summary}" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,0,0,6" />
+                                        <ItemsControl ItemsSource="{Binding Hits}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock FontSize="10.5" TextWrapping="Wrap" Margin="0,0,0,3">
+                                                        <Run Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}" FontWeight="SemiBold" />
+                                                        <Run Text=" · " /><Run Text="{Binding Provider, Mode=OneWay}" /><Run Text=" " /><Run Text="{Binding EventId, Mode=OneWay}" />
+                                                        <Run Text=" — " /><Run Text="{Binding Description, Mode=OneWay}" />
+                                                    </TextBlock>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </StackPanel>
+                                </Expander>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
                 </StackPanel>
             </Border>
 

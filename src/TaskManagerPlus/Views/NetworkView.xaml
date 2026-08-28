@@ -316,10 +316,15 @@
                         <Border Style="{StaticResource ColorDot}" Background="{Binding Performance.NetworkColor, Converter={StaticResource ColorToBrushConverter}}" />
                         <TextBlock Text="Throughput" Style="{StaticResource CardTitle}" Margin="0" />
                     </StackPanel>
-                    <!-- #597: ThroughputEventMarkers overlays #596 timeline events onto this
-                         chart's own rolling window, the same way LatencyEventMarkers does above. -->
+                    <!-- #141: crash/error markers, reusing whatever the Stability tab last read - toggleable.
+                         Note: #597's own ThroughputEventMarkers (a narrower, network-only timeline overlay)
+                         isn't wired to this chart's Sections - only one Sections binding is possible here,
+                         and Performance.EventMarkerSections is the established cross-tab convention already
+                         used identically on the CPU/Memory/Storage charts, kept for consistency. -->
+                    <CheckBox Content="Show crash/error markers" IsChecked="{Binding Performance.ShowEventMarkers}"
+                               FontSize="10.5" HorizontalAlignment="Right" Margin="0,0,0,4" />
                     <lvc:CartesianChart Series="{Binding Performance.NetworkSeries}" XAxes="{Binding Performance.HiddenXAxes}" YAxes="{Binding Performance.NetworkYAxes}"
-                                         Sections="{Binding ThroughputEventMarkers}"
+                                         Sections="{Binding Performance.EventMarkerSections}"
                                          Height="200" TooltipPosition="Top" LegendPosition="Bottom" Background="Transparent"
                                          LegendTextPaint="{Binding Performance.LegendTextPaint}" LegendBackgroundPaint="{Binding Performance.LegendBackgroundPaint}"
                                          TooltipTextPaint="{Binding Performance.TooltipTextPaint}" TooltipBackgroundPaint="{Binding Performance.TooltipBackgroundPaint}" />

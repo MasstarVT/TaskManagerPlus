@@ -16,6 +16,13 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
 {
     private readonly ServiceControlService _service = new();
     private readonly EventLogService _eventLog = new();
+
+    /// <summary>#192/#193: service crash-loop detection (SCM 7000/7009/7024/7031/7034) and the
+    /// ServicesPipeTimeout start-timeout explanation - its own Services/* instance, same
+    /// no-DI-container "each ViewModel composes its own services directly" convention as _eventLog
+    /// above.</summary>
+    private readonly ServiceHealthEventService _serviceHealth = new();
+
     private readonly DispatcherTimer _timer;
     private bool _isRefreshing;
     private bool _isBusy;
@@ -210,8 +217,14 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
 
     /// <summary>Round 7 #13: mines Service Control Manager 7036 events for approximate per-service
     /// start durations - a single on-demand pass merged onto whatever rows are already loaded,
-    /// the same on-demand shape StabilityViewModel already uses for its own event-log query.</summary>
+    /// the same on-demand shape StabilityViewModel already uses for its own event-log query. #193
+    /// extends this same pass/text with the start-timeout (7009) failure case 7036 alone can't
+    /// represent - see LoadStartDurationsAsync.</summary>
     public RelayCommand LoadStartDurationsCommand { get; }
+
+    /// <summary>#192: correlates SCM 7000/7009/7024/7031/7034 per service and badges every service
+    /// this scan flags as crash-looping, plus builds CrashLoopSummary below.</summary>
+    public AsyncRelayCommand ScanCrashLoopsCommand { get; }
 
     /// <summary>Round 7 #16: capture the current StartType/logon-account config as a baseline, or
     /// compare against a previously saved one - reuses SnapshotService/SystemSnapshot from Round 6
@@ -249,6 +262,21 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
     /// reports "an unknown duration" instead of guessing).</summary>
     private readonly Dictionary<string, DateTime> _pendingSince = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>#192: the summary card - only the services this scan actually flags as crash-
+    /// looping (ServiceCrashLoopInfo.IsCrashLooping), each enriched with its `sc qfailure` recovery
+    /// settings once flagged (see ScanCrashLoopsAsync). Empty until the scan has run.</summary>
+    public ObservableCollection<ServiceCrashLoopInfo> CrashLoopSummary { get; } = new();
+
+    private string? _crashLoopStatusText;
+    public string? CrashLoopStatusText { get => _crashLoopStatusText; set => SetProperty(ref _crashLoopStatusText, value); }
+
+    /// <summary>#193: what ServicesPipeTimeout is currently set to (or that it's unset, meaning
+    /// Windows' 30000ms default applies) plus a plain-English explanation of what it governs -
+    /// populated alongside the start-duration scan since both come from the same "why did this
+    /// service start slowly/fail to start" question.</summary>
+    private string? _servicesPipeTimeoutText;
+    public string? ServicesPipeTimeoutText { get => _servicesPipeTimeoutText; set => SetProperty(ref _servicesPipeTimeoutText, value); }
+
     public ServicesViewModel()
     {
         ServicesView = CollectionViewSource.GetDefaultView(Services);
@@ -260,6 +288,7 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
         RefreshNowCommand = new RelayCommand(_ => _ = RefreshAsync());
         ViewFailureActionsCommand = new RelayCommand(_ => _ = LoadFailureActionsAsync(), _ => SelectedService is not null);
         LoadStartDurationsCommand = new RelayCommand(_ => _ = LoadStartDurationsAsync());
+        ScanCrashLoopsCommand = new AsyncRelayCommand(ScanCrashLoopsAsync);
         CaptureConfigBaselineCommand = new RelayCommand(_ => CaptureConfigBaseline());
         CheckConfigDriftCommand = new RelayCommand(_ => CheckConfigDrift());
         LoadFailureHistoryCommand = new RelayCommand(_ => _ = LoadFailureHistoryAsync());
@@ -448,28 +477,93 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>Round 7 #13: merges approximate start-duration data onto whatever service rows are
-    /// already loaded - see EventLogService.ReadServiceStartDurations for exactly what's measured.</summary>
+    /// already loaded - see EventLogService.ReadServiceStartDurations for exactly what's measured.
+    /// #193 extends this same pass with the one failure case 7036 alone can't represent: a service
+    /// that never reached "running" at all, logged instead as SCM 7009 ("did not respond in a timely
+    /// fashion"). ServicesPipeTimeoutText is populated here too since both answer the same "why did
+    /// this service start slowly/time out" question.</summary>
     private async Task LoadStartDurationsAsync()
     {
         StartDurationStatus = "Scanning the System event log…";
         var durations = await Task.Run(() => _eventLog.ReadServiceStartDurations());
         var byName = durations.ToDictionary(d => d.ServiceName, StringComparer.OrdinalIgnoreCase);
 
+        // #193: the 7009 start-timeout counts, from the same SCM event family #192's crash-loop
+        // scan reads - a second small scan rather than folding 7009 into ReadServiceStartDurations
+        // itself, since 7036's stopped/running-pair math and 7009's plain per-service count are two
+        // genuinely different measurements over two different event IDs.
+        var crashLoopScan = await Task.Run(() => _serviceHealth.ReadServiceCrashLoops());
+        var timeouts = crashLoopScan.Where(c => c.TimeoutCount > 0).ToDictionary(c => c.ServiceName, StringComparer.OrdinalIgnoreCase);
+
+        var timeoutInfo = ServiceHealthEventService.ReadServiceStartTimeout();
+        ServicesPipeTimeoutText = timeoutInfo.IsCustomized
+            ? $"ServicesPipeTimeout is customized: {timeoutInfo.EffectiveTimeoutMs}ms. This governs how long the Service Control Manager waits for a service to report it started before giving up and logging a 7009 - it does not affect how long a service itself takes to actually finish starting."
+            : $"ServicesPipeTimeout isn't set - Windows' built-in default of {timeoutInfo.EffectiveTimeoutMs}ms applies. This governs how long the Service Control Manager waits for a service to report it started before giving up and logging a 7009 - it does not affect how long a service itself takes to actually finish starting.";
+
         int matched = 0;
         foreach (var row in Services)
         {
+            string baseText;
             if (byName.TryGetValue(row.ServiceName, out var d))
             {
-                row.StartDurationText = $"~{d.LastStartDurationMs / 1000.0:0.0}s (avg {d.AvgStartDurationMs / 1000.0:0.0}s, {d.SampleCount} samples)";
+                baseText = $"~{d.LastStartDurationMs / 1000.0:0.0}s (avg {d.AvgStartDurationMs / 1000.0:0.0}s, {d.SampleCount} samples)";
                 matched++;
             }
             else
             {
-                row.StartDurationText = "No recent data";
+                baseText = "No recent data";
+            }
+
+            // #193: append the start-timeout failure case, which 7036 (a stopped/running state
+            // transition) never logs at all for a service that timed out instead.
+            if (timeouts.TryGetValue(row.ServiceName, out var timeoutHit))
+            {
+                string timeoutNote = $"{timeoutHit.TimeoutCount} start-timeout(s) (SCM 7009) in last 30 days";
+                baseText = baseText == "No recent data" ? timeoutNote : $"{baseText} — {timeoutNote}";
+                matched++;
+            }
+
+            row.StartDurationText = baseText;
+        }
+
+        StartDurationStatus = $"Found start-duration/timeout history for {matched} of {Services.Count} services (last {30} days, approximate - see tooltip).";
+    }
+
+    /// <summary>#192: correlates SCM 7000/7009/7024/7031/7034 per service, badges every service the
+    /// scan flags as crash-looping (ServiceCrashLoopInfo.IsCrashLooping), and builds CrashLoopSummary
+    /// with each flagged service's `sc qfailure` recovery settings loaded alongside (reusing
+    /// ServiceControlService.ReadFailureActionsTextAsync - the same shell-out the "Recovery actions"
+    /// button already uses - rather than a second sc.exe-parsing path).</summary>
+    private async Task ScanCrashLoopsAsync()
+    {
+        CrashLoopStatusText = "Scanning the System event log for service crash loops…";
+        var loops = await Task.Run(() => _serviceHealth.ReadServiceCrashLoops());
+        var byName = loops.ToDictionary(l => l.ServiceName, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var row in Services)
+        {
+            if (byName.TryGetValue(row.ServiceName, out var info) && info.IsCrashLooping)
+            {
+                row.IsCrashLoopingFlagged = true;
+                row.CrashLoopSummaryText = $"{info.TerminatedCount} unexpected termination(s), {info.TimeoutCount} start-timeout(s), {info.FailedToStartCount} failed start(s) in the last 30 days.";
+            }
+            else
+            {
+                row.IsCrashLoopingFlagged = false;
+                row.CrashLoopSummaryText = string.Empty;
             }
         }
 
-        StartDurationStatus = $"Found start-duration history for {matched} of {Services.Count} services (last {30} days, approximate - see tooltip).";
+        var flagged = loops.Where(l => l.IsCrashLooping).OrderByDescending(l => l.TotalCount).ToList();
+        foreach (var info in flagged)
+            info.RecoveryActionsText = await ServiceControlService.ReadFailureActionsTextAsync(info.ServiceName);
+
+        CrashLoopSummary.Clear();
+        foreach (var info in flagged) CrashLoopSummary.Add(info);
+
+        CrashLoopStatusText = flagged.Count == 0
+            ? "No services show repeated crashes/restarts in the last 30 days."
+            : $"{flagged.Count} service(s) flagged as crash-looping in the last 30 days - quick flag, not a verdict.";
     }
 
     /// <summary>Round 7 #16: saves the current StartType/logon-account config as a JSON baseline -

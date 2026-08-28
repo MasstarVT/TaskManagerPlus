@@ -84,7 +84,11 @@
                         </StackPanel>
                         <TextBlock Grid.Column="1" Text="{Binding Performance.CpuSpecs}" Style="{StaticResource SubStat}" VerticalAlignment="Center" />
                     </Grid>
+                    <!-- #141: crash/error markers, reusing whatever the Stability tab last read - toggleable. -->
+                    <CheckBox Content="Show crash/error markers" IsChecked="{Binding Performance.ShowEventMarkers}"
+                               FontSize="10.5" HorizontalAlignment="Right" Margin="0,0,0,4" />
                     <lvc:CartesianChart Series="{Binding Performance.CpuSeries}" XAxes="{Binding Performance.HiddenXAxes}" YAxes="{Binding Performance.PercentYAxes}"
+                                         Sections="{Binding Performance.EventMarkerSections}"
                                          Height="200" TooltipPosition="Hidden" LegendPosition="Hidden" Background="Transparent" />
 
                     <TextBlock Text="Per-core usage" Style="{StaticResource SubStat}" Margin="0,16,0,10" />

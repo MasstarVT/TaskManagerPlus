@@ -17,8 +17,31 @@ public sealed class StabilityEvent
 
     /// <summary>Bugcheck code, only ever populated for a Kernel-Power event 41 - see
     /// EventLogService.ExtractBugcheckCode for why this is best-effort (the insertion-string
-    /// layout isn't a documented, versioned contract).</summary>
-    public string? BugcheckCode { get; init; }
+    /// layout isn't a documented, versioned contract). #191: mutable (not init-only), like
+    /// EventRecordRow's Kb* properties, so EventLogService.Query's second pass can overwrite this
+    /// with the richer Microsoft-Windows-WER-SystemErrorReporting 1001 code when one is found
+    /// nearby - the event-41 property-index guess stays the value here only when no richer event
+    /// was found.</summary>
+    public string? BugcheckCode { get; set; }
+
+    /// <summary>#191: the richer bugcheck detail (all four parameters + dump path) recovered from a
+    /// nearby Microsoft-Windows-WER-SystemErrorReporting 1001 event, when one was found - null
+    /// leaves BugcheckCode as the existing event-41 best-effort guess with no further detail
+    /// available, per CLAUDE.md's "degrade, never fabricate" rule.</summary>
+    public BugcheckDetail? BugcheckDetail { get; set; }
+
+    /// <summary>#168: a fuller, non-truncated parse of this event's own message - only ever populated
+    /// for ".NET Runtime" event 1026 (managed exception type + top stack frames) and "Application
+    /// Error" event 1000 (structured faulting application/module/exception-code/offset fields, since
+    /// 1000 itself never carries a managed stack trace) - see
+    /// WerReportService.ParseManagedExceptionDetail. Null for every other event, which is what
+    /// DisplayDetail below falls back to Message (still truncated to 300 characters) for.</summary>
+    public string? ExceptionDetail { get; init; }
+
+    /// <summary>#168: what the UI should actually show for this event's detail/tooltip - the fuller
+    /// ExceptionDetail parse when one was found, otherwise the existing truncated Message. Leaves
+    /// every event ID other than 1026/1000 exactly as truncated as before.</summary>
+    public string DisplayDetail => ExceptionDetail ?? Message;
 }
 
 /// <summary>One file under %SystemRoot%\Minidump. Bugcheck data comes from the authoritative
@@ -40,7 +63,7 @@ public sealed class MinidumpInfo
     /// <summary>Round 13, item 2: the WER ReportArchive record joined via the BugCheck record's
     /// Report Id GUID - null collapses the "Full crash record" expander entirely on the Stability
     /// tab (no report folder found, or no matching BugCheck record at all).</summary>
-    public WerReportInfo? WerReport { get; init; }
+    public WerReportFolderMetadata? WerReport { get; init; }
 
     /// <summary>True when BugcheckCode came from the BugCheck provider's own 1001 event (item 1)
     /// rather than the WER-SystemErrorReporting fallback (item 8, FromWerSummary) or the old
@@ -66,6 +89,14 @@ public sealed class MinidumpInfo
     /// anything. Null when the code isn't 0x124, or no WHEA-Logger record was found near the
     /// crash time.</summary>
     public string? WheaJoinText { get; init; }
+
+    /// <summary>#191: the richer bugcheck detail for this specific dump file, when a
+    /// Microsoft-Windows-WER-SystemErrorReporting 1001 event names this exact file path (an
+    /// authoritative match - Windows itself named the file) or, failing that, when one was found
+    /// within a few minutes of this dump's timestamp (the same proximity heuristic
+    /// EventLogService.ReadMinidumps already used for BugcheckCode alone). Null falls back to
+    /// BugcheckCode's existing event-41-only value with no further detail.</summary>
+    public BugcheckDetail? BugcheckDetail { get; init; }
 }
 
 /// <summary>
@@ -92,7 +123,7 @@ public sealed record BugCheckRecord
     public string? DumpPath { get; init; }
     public string? ReportId { get; init; }
     public bool FromWerSummary { get; init; }
-    public WerReportInfo? WerReport { get; init; }
+    public WerReportFolderMetadata? WerReport { get; init; }
 
     /// <summary>Round 15, items 28-37: the fully decoded bugcheck (labelled parameters, guidance,
     /// per-code sub-lines) for this record's own StopCode/Parameters - see BugcheckDecoder. Set by
@@ -119,7 +150,7 @@ public sealed record BugCheckRecord
 /// (typically including the .dmp itself), not a full WER API integration. Null/empty fields when
 /// the folder or a given key isn't present, never a guessed value.
 /// </summary>
-public sealed class WerReportInfo
+public sealed class WerReportFolderMetadata
 {
     public string ReportFolder { get; init; } = string.Empty;
     public string? OsVersion { get; init; }
@@ -279,6 +310,22 @@ public sealed class TdrRegistrySettings
     public int? TdrDdiDelaySeconds { get; init; }
     public int? TdrLevel { get; init; }
     public string TdrLevelText { get; init; } = "Unknown";
+}
+
+/// <summary>#191: the full bugcheck detail Microsoft-Windows-WER-SystemErrorReporting's own event
+/// 1001 carries in its message text - "0x00000133 (0x..., 0x..., 0x..., 0x...)" plus the dump file
+/// path Windows itself wrote. Far more reliable than Kernel-Power 41's undocumented property-index
+/// layout (EventLogService.ExtractBugcheckCode), but not logged on every Windows edition/crash, so
+/// this is preferred when found and the event-41 guess stays as fallback - see
+/// EventLogService.ReadWerBugcheckEvents.</summary>
+public sealed class BugcheckDetail
+{
+    public string Code { get; init; } = string.Empty;
+    public string Parameter1 { get; init; } = string.Empty;
+    public string Parameter2 { get; init; } = string.Empty;
+    public string Parameter3 { get; init; } = string.Empty;
+    public string Parameter4 { get; init; } = string.Empty;
+    public string? DumpFilePath { get; init; }
 }
 
 /// <summary>One day's worth of Critical/Error event counts (#1 - Reliability History) - bucketed
@@ -489,4 +536,32 @@ public sealed class UpdateBreakageFlag
         $"{(UpdateTitle.Length > 0 ? UpdateTitle : "An update")} installed {InstallTime:g}, then {FaultingModule} " +
         $"started crashing repeatedly ({FailureCount} times since {FirstFailureTime:g}) " +
         $"{(FirstFailureTime - InstallTime).TotalHours:0.#}h later. Worth testing by uninstalling it - not a confirmed cause.";
+}
+
+/// <summary>#122: one (Provider, EventId) pair from the event knowledge base's "seriously bad" set
+/// that actually turned up in the lookback window - raw count/last-seen only, before being joined
+/// with the KB entry's text; see EventLogService.ScanForKnownBadIds and
+/// StabilityViewModel.BuildKnownBadIdScorecard.</summary>
+public sealed class KnownBadIdScanHit
+{
+    public string Provider { get; init; } = string.Empty;
+    public int EventId { get; init; }
+    public int Count { get; init; }
+    public DateTime LastSeen { get; init; }
+}
+
+/// <summary>#122: one row of the Stability tab's "Known-bad IDs present on this PC" scorecard - a
+/// KnownBadIdScanHit joined with its knowledge-base entry's text, flattened to plain
+/// strings/ints for binding (rather than referencing Models.EventKbEntry directly) so this Stability-
+/// tab presentation model doesn't need to carry the Events tab's knowledge-base type shape.</summary>
+public sealed class KnownBadIdScorecardRow
+{
+    public string Provider { get; init; } = string.Empty;
+    public int EventId { get; init; }
+    public int Count { get; init; }
+    public DateTime LastSeen { get; init; }
+    public string Meaning { get; init; } = string.Empty;
+    public string NextStep { get; init; } = string.Empty;
+    public string SeverityLabel { get; init; } = string.Empty;
+    public int SeverityRank { get; init; }
 }

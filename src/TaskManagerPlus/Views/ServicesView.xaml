@@ -97,10 +97,13 @@
         </Grid>
 
         <!-- Round 7 #13/#16, #749-754: start-duration history, config-drift baseline actions,
-             SCM failure history (#749/#750/#751), and registry inventory audit (#752/#753/#754). -->
+             SCM failure history (#749/#750/#751), and registry inventory audit (#752/#753/#754).
+             #192/#193: a crash-loop/start-timeout scan alongside them - same SCM-event-mining shape. -->
         <WrapPanel Grid.Row="1" Margin="0,0,0,12">
             <Button Content="Load start-time history" Margin="0,0,8,4" Command="{Binding LoadStartDurationsCommand}"
-                    ToolTip="Mine the System event log's Service Control Manager entries for approximate per-service start durations" />
+                    ToolTip="Mine the System event log's Service Control Manager entries for approximate per-service start durations, plus SCM 7009 start-timeouts (#193)" />
+            <Button Content="Scan for crash loops" Margin="0,0,8,4" Command="{Binding ScanCrashLoopsCommand}"
+                    ToolTip="Correlate SCM 7000/7009/7024/7031/7034 per service and flag services that crashed and restarted repeatedly (#192)" />
             <Button Content="Capture config baseline" Margin="0,0,8,4" Command="{Binding CaptureConfigBaselineCommand}"
                     ToolTip="Save every service's current StartType/logon account to a JSON file" />
             <Button Content="Check config drift" Margin="0,0,8,4" Command="{Binding CheckConfigDriftCommand}"
@@ -135,8 +138,62 @@
                     ToolTip="Samples the selected service's sc queryex CHECKPOINT twice, ~3s apart, to tell a stuck START_PENDING/STOP_PENDING service from one still making progress" />
             <TextBlock Text="{Binding StartDurationStatus}" VerticalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4" />
         </WrapPanel>
+        <TextBlock Grid.Row="1" Text="{Binding ServicesPipeTimeoutText}" VerticalAlignment="Bottom" HorizontalAlignment="Right"
+                    FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" MaxWidth="420"
+                    Visibility="{Binding ServicesPipeTimeoutText, Converter={StaticResource NullToVisibilityConverter}}" />
 
-        <DataGrid Grid.Row="2"
+        <!-- #192: crash-loop summary card - only the services the scan actually flagged, each with
+             its `sc qfailure` recovery settings shown alongside. Collapsed until a scan has run /
+             found nothing. -->
+        <Border Grid.Row="2" Margin="0,0,0,12">
+            <Border.Style>
+                <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding CrashLoopSummary.Count}" Value="0">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </Border.Style>
+            <StackPanel>
+                <TextBlock Text="Services crashing and restarting repeatedly" Style="{StaticResource CardTitle}" />
+                <TextBlock Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap">
+                    <Run Text="Quick flag, not a verdict — " FontWeight="SemiBold" />
+                    <Run Text="services with 3+ unexpected terminations/start-timeouts in the last 30 days (SCM 7031/7034/7009), with the current recovery (`sc qfailure`) settings for each." />
+                </TextBlock>
+                <ItemsControl ItemsSource="{Binding CrashLoopSummary}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,8" Margin="0,0,0,6">
+                                <StackPanel>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" FontSize="12.5" FontWeight="SemiBold" Text="{Binding ServiceName}" />
+                                        <TextBlock Grid.Column="1" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}">
+                                            <Run Text="Last event " /><Run Text="{Binding LastEventTime, StringFormat={}{0:g}, Mode=OneWay}" />
+                                        </TextBlock>
+                                    </Grid>
+                                    <TextBlock FontSize="11.5" TextWrapping="Wrap" Margin="0,2,0,0">
+                                        <Run Text="{Binding TerminatedCount, Mode=OneWay}" /><Run Text=" termination(s), " />
+                                        <Run Text="{Binding TimeoutCount, Mode=OneWay}" /><Run Text=" timeout(s), " />
+                                        <Run Text="{Binding FailedToStartCount, Mode=OneWay}" /><Run Text=" failed start(s), " />
+                                        <Run Text="{Binding ServiceSpecificExitCodeCount, Mode=OneWay}" /><Run Text=" service-specific exit code(s)." />
+                                    </TextBlock>
+                                    <TextBlock FontSize="10.5" FontFamily="Consolas" Foreground="{DynamicResource TextSecondaryBrush}"
+                                                TextWrapping="Wrap" Margin="0,4,0,0" Text="{Binding RecoveryActionsText}" />
+                                </StackPanel>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+                <TextBlock Text="{Binding CrashLoopStatusText}" Style="{StaticResource SubStat}" Margin="0,4,0,0" />
+            </StackPanel>
+        </Border>
+
+        <DataGrid Grid.Row="3"
                   ItemsSource="{Binding ServicesView}"
                   SelectedItem="{Binding SelectedService}">
             <DataGrid.Style>
@@ -163,11 +220,40 @@
                             <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
                             <Setter Property="ToolTip" Value="{Binding ConfigDriftText}" />
                         </DataTrigger>
+                        <!-- #192: this service crashed and restarted repeatedly - see "Scan for
+                             crash loops" above. -->
+                        <DataTrigger Binding="{Binding IsCrashLoopingFlagged}" Value="True">
+                            <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
+                            <Setter Property="ToolTip" Value="{Binding CrashLoopSummaryText}" />
+                        </DataTrigger>
                     </Style.Triggers>
                 </Style>
             </DataGrid.RowStyle>
             <DataGrid.Columns>
-                <DataGridTextColumn Header="Name" Binding="{Binding DisplayName}" Width="2.2*" />
+                <DataGridTemplateColumn Header="Name" Width="2.2*" SortMemberPath="DisplayName">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <TextBlock Text="{Binding DisplayName}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                <!-- #192: crash-loop badge. -->
+                                <Border Background="{DynamicResource DangerBrush}" CornerRadius="8" Padding="5,1" Margin="6,0,0,0"
+                                        VerticalAlignment="Center" ToolTip="{Binding CrashLoopSummaryText}">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsCrashLoopingFlagged}" Value="True">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
+                                    <TextBlock Text="CRASH LOOP" FontSize="9" FontWeight="Bold" Foreground="White" />
+                                </Border>
+                            </StackPanel>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
                 <DataGridTextColumn Header="Service name" Binding="{Binding ServiceName}" Width="1.3*" />
                 <DataGridTemplateColumn Header="Status" Width="120" SortMemberPath="Status">
                     <DataGridTemplateColumn.CellTemplate>
@@ -300,7 +386,7 @@
         </DataGrid>
 
         <!-- Round 7 #15: driver sub-view, shown instead of the grid above while ShowDrivers is on. -->
-        <DataGrid Grid.Row="2" ItemsSource="{Binding Drivers}">
+        <DataGrid Grid.Row="3" ItemsSource="{Binding Drivers}">
             <DataGrid.Style>
                 <Style TargetType="DataGrid" BasedOn="{StaticResource {x:Type DataGrid}}">
                     <Setter Property="Visibility" Value="Collapsed" />
@@ -357,7 +443,7 @@
 
         <!-- #37: dependency graph for the selected service, so a user understands the blast
              radius before stopping something. -->
-        <Border Grid.Row="3" Margin="0,10,0,0" Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
+        <Border Grid.Row="4" Margin="0,10,0,0" Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
             <Border.Style>
                 <Style TargetType="Border">
                     <Setter Property="Visibility" Value="Visible" />

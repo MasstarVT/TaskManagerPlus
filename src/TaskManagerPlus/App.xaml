@@ -38,6 +38,8 @@
             <conv:BackgroundActivityStateToBrushConverter x:Key="BackgroundActivityStateToBrushConverter" />
             <conv:ResponsivenessScoreToBrushConverter x:Key="ResponsivenessScoreToBrushConverter" />
             <conv:StringToVisibilityConverter x:Key="StringToVisibilityConverter" />
+            <conv:HeatCellCountToBrushConverter x:Key="HeatCellCountToBrushConverter" />
+            <conv:TimelineSourceToBrushConverter x:Key="TimelineSourceToBrushConverter" />
         </ResourceDictionary>
     </Application.Resources>
 </Application>

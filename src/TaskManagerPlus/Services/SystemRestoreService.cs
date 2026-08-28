@@ -106,9 +106,9 @@ public static class SystemRestoreService
     private static readonly Regex AllocatedRegex = new(@"Allocated Shadow Copy Storage space:\s*(.+)$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex MaxRegex = new(@"Maximum Shadow Copy Storage space:\s*(.+)$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
-    private static async Task<List<ShadowStorageVolumeInfo>> ReadShadowStorageAsync()
+    private static async Task<List<RecoveryShadowStorageInfo>> ReadShadowStorageAsync()
     {
-        var result = new List<ShadowStorageVolumeInfo>();
+        var result = new List<RecoveryShadowStorageInfo>();
         try
         {
             var (output, _) = await RunCapturedAsync("vssadmin.exe", "list shadowstorage").ConfigureAwait(false);
@@ -119,7 +119,7 @@ public static class SystemRestoreService
             void Flush()
             {
                 if (currentVolume is not null)
-                    result.Add(new ShadowStorageVolumeInfo { Volume = currentVolume, UsedText = used ?? "Unknown", AllocatedText = allocated ?? "Unknown", MaxText = max ?? "Unknown" });
+                    result.Add(new RecoveryShadowStorageInfo { Volume = currentVolume, UsedText = used ?? "Unknown", AllocatedText = allocated ?? "Unknown", MaxText = max ?? "Unknown" });
                 used = allocated = max = null;
             }
 
@@ -151,7 +151,7 @@ public static class SystemRestoreService
     /// on VSS to hold its snapshots there) - a quick flag, not a verdict, same as every other
     /// inferred heuristic in this app: a volume can show "no association" simply because no restore
     /// point has been taken on it yet, not necessarily because protection itself is off.</summary>
-    private static List<VolumeProtectionStatus> BuildVolumeProtection(List<ShadowStorageVolumeInfo> shadowStorage)
+    private static List<VolumeProtectionStatus> BuildVolumeProtection(List<RecoveryShadowStorageInfo> shadowStorage)
     {
         var result = new List<VolumeProtectionStatus>();
         var withStorage = new HashSet<string>(shadowStorage.Select(s => s.Volume), StringComparer.OrdinalIgnoreCase);

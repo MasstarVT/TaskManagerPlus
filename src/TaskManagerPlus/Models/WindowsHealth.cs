@@ -327,7 +327,7 @@ public sealed class VolumeProtectionStatus
 /// kept as vssadmin's own formatted text per volume (Used/Allocated/Maximum), the same
 /// "don't re-parse a unit this app doesn't control the format of" tradeoff DismComponentStoreAnalysis
 /// takes for DISM's sizes above.</summary>
-public sealed class ShadowStorageVolumeInfo
+public sealed class RecoveryShadowStorageInfo
 {
     public string Volume { get; init; } = string.Empty;
     public string UsedText { get; init; } = string.Empty;
@@ -345,7 +345,7 @@ public sealed class SystemRestoreSnapshot
     public bool SystemRestoreAvailable { get; init; } = true;
     public List<RestorePointInfo> RestorePoints { get; init; } = new();
     public List<VolumeProtectionStatus> VolumeProtection { get; init; } = new();
-    public List<ShadowStorageVolumeInfo> ShadowStorage { get; init; } = new();
+    public List<RecoveryShadowStorageInfo> ShadowStorage { get; init; } = new();
     public int? AutomaticFrequencyMinutes { get; init; }
     public string? ErrorText { get; init; }
 

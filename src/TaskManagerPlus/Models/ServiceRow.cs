@@ -232,6 +232,18 @@ public sealed class ServiceRow : ObservableObject
     private string _hangDiagnosisText = string.Empty;
     public string HangDiagnosisText { get => _hangDiagnosisText; set => SetProperty(ref _hangDiagnosisText, value); }
 
+    /// <summary>#192: set after "Scan for crash loops & timeouts" runs - true when
+    /// ServiceHealthEventService.ReadServiceCrashLoops flagged this service as having crashed and
+    /// restarted repeatedly (SCM 7031/7034/7009 recurrence). Drives the row badge; a quick flag, not
+    /// a verdict. False/empty until the scan has run. Named distinctly from #750's read-only,
+    /// computed IsCrashLooping above (a different, threshold-based detection already wired to its
+    /// own UI) since both exist side by side.</summary>
+    private bool _isCrashLoopingFlagged;
+    public bool IsCrashLoopingFlagged { get => _isCrashLoopingFlagged; set => SetProperty(ref _isCrashLoopingFlagged, value); }
+
+    private string _crashLoopSummaryText = string.Empty;
+    public string CrashLoopSummaryText { get => _crashLoopSummaryText; set => SetProperty(ref _crashLoopSummaryText, value); }
+
     public bool CanStart => Status is ServiceControllerStatus.Stopped;
     public bool CanStop => Status is ServiceControllerStatus.Running && ServiceName is not ("RpcSs" or "RpcEptMapper" or "DcomLaunch");
 }

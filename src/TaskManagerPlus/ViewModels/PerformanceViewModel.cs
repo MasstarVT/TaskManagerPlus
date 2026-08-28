@@ -44,6 +44,24 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
 
     public ObservableCollection<CoreUsage> Cores { get; } = new();
 
+    // #141: crash/error markers on the CPU/RAM/Disk/Network history charts - a wall-clock timestamp
+    // parallel to CpuHistory/RamHistory/etc (pushed/trimmed together, same HistoryLength window) so
+    // an event's real timestamp can be mapped back to a chart-index position. _markerEvents is set
+    // from outside (MainViewModel wires StabilityViewModel.Refreshed to SetEventMarkers below) -
+    // this reuses the Stability tab's own already-queried event data, never a new poll of its own.
+    private readonly List<DateTime> _historyTimestamps = new();
+    private List<(DateTime Time, string Level, string Text)> _markerEvents = new();
+
+    private bool _showEventMarkers;
+    /// <summary>Toggleable per #141's spec - off by default so a tab nobody has visited Stability
+    /// from yet (empty _markerEvents either way) doesn't need this to do anything.</summary>
+    public bool ShowEventMarkers { get => _showEventMarkers; set { if (SetProperty(ref _showEventMarkers, value)) RecomputeEventMarkerSections(); } }
+
+    /// <summary>One shared marker set bound to all four charts' Sections property - they all share
+    /// the same HiddenXAxes index domain (0..HistoryLength-1), so one set of vertical bands is valid
+    /// on every one of them at once.</summary>
+    public ObservableCollection<RectangularSection> EventMarkerSections { get; } = new();
+
     // Each metric is drawn as a pair of series: a thick, translucent "glow" stroke behind a
     // crisp core line, so the charts read closer to the softly-glowing lines in the reference
     // design instead of a flat single stroke.
@@ -549,6 +567,69 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
             history.RemoveAt(0);
     }
 
+    private void PushHistoryTimestamp(DateTime time)
+    {
+        _historyTimestamps.Add(time);
+        if (_historyTimestamps.Count > HistoryLength)
+            _historyTimestamps.RemoveAt(0);
+    }
+
+    /// <summary>#141: called by MainViewModel whenever StabilityViewModel finishes a refresh - reuses
+    /// that tab's already-queried Critical/Error events (Level, and a short "{Provider} {EventId}"
+    /// label) rather than adding a second poll. Markers whose timestamp falls outside the currently
+    /// visible rolling window are simply never drawn (see RecomputeEventMarkerSections) - this is a
+    /// live 60-sample window, not a historical browser, so only a genuinely recent event lines up
+    /// with anything on these charts.</summary>
+    public void SetEventMarkers(IEnumerable<(DateTime Time, string Level, string Text)> markers)
+    {
+        _markerEvents = markers.ToList();
+        RecomputeEventMarkerSections();
+    }
+
+    /// <summary>#141: rebuilds the shared marker overlay from _markerEvents against the current
+    /// _historyTimestamps window - called on toggle, on SetEventMarkers, and once per tick (since
+    /// the window itself shifts every tick even when neither of those changed).</summary>
+    private void RecomputeEventMarkerSections()
+    {
+        EventMarkerSections.Clear();
+        if (!ShowEventMarkers || _markerEvents.Count == 0 || _historyTimestamps.Count == 0) return;
+
+        var oldest = _historyTimestamps[0];
+        var newest = _historyTimestamps[^1];
+
+        foreach (var marker in _markerEvents)
+        {
+            if (marker.Time < oldest || marker.Time > newest) continue;
+
+            int index = NearestHistoryIndex(marker.Time);
+            bool isCritical = string.Equals(marker.Level, "Critical", StringComparison.OrdinalIgnoreCase);
+            var color = isCritical ? SKColors.Red : SKColors.Orange;
+
+            EventMarkerSections.Add(new RectangularSection
+            {
+                Xi = index - 0.15,
+                Xj = index + 0.15,
+                Fill = new SolidColorPaint(color.WithAlpha(130)),
+                Stroke = new SolidColorPaint(color, 1.5f),
+                Label = marker.Text,
+                LabelSize = 9,
+                LabelPaint = new SolidColorPaint(color),
+            });
+        }
+    }
+
+    private int NearestHistoryIndex(DateTime time)
+    {
+        int best = 0;
+        double bestDiffMs = double.MaxValue;
+        for (int i = 0; i < _historyTimestamps.Count; i++)
+        {
+            double diff = Math.Abs((_historyTimestamps[i] - time).TotalMilliseconds);
+            if (diff < bestDiffMs) { bestDiffMs = diff; best = i; }
+        }
+        return best;
+    }
+
     private async Task RefreshAsync()
     {
         if (_isRefreshing) return;
@@ -581,6 +662,8 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
         PushHistory(NetworkReceiveHistory, snapshot.NetworkReceiveBytesPerSec);
         PushHistory(NetworkSendHistory, snapshot.NetworkSendBytesPerSec);
         PushHistory(CommittedHistory, snapshot.CommittedBytes);
+        PushHistoryTimestamp(DateTime.Now);
+        RecomputeEventMarkerSections();
 
         SyncCores(snapshot.CpuPerCorePercent, snapshot.CoreParkedFlags);
 

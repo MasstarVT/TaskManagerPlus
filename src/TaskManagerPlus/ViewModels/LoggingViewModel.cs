@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using System.Globalization;
 using System.IO;
 using System.Threading.Tasks;
@@ -30,6 +31,11 @@ public sealed class LoggingViewModel : ObservableObject, IDisposable
     private readonly PerformanceViewModel _performance;
     private readonly EnergyThermalsViewModel _energyThermals;
     private readonly DispatcherTimer _timer;
+
+    // #145: own EventLogExplorerService instance for the log-replay error-burst overlay below -
+    // same "each ViewModel composes its own Services/* instances directly" convention as every
+    // other ViewModel in this no-DI-container app.
+    private readonly EventLogExplorerService _events = new();
 
     // Column set is fixed for the lifetime of one logging session, snapshotted when Start is
     // clicked - if the sensor list or core count ever changed mid-session the CSV's columns
@@ -142,6 +148,19 @@ public sealed class LoggingViewModel : ObservableObject, IDisposable
 
     private string _replayStatusText = string.Empty;
     public string ReplayStatusText { get => _replayStatusText; private set => SetProperty(ref _replayStatusText, value); }
+
+    // #145: overlay event-log error markers on the replayed CPU/RAM/Disk trace - fetched once per
+    // loaded log file (bounded to that file's own [first, last] timestamp range), cached, and just
+    // re-filtered on toggle rather than re-queried.
+    private List<DateTime> _replayTimestamps = new();
+    private List<EventRecordRow> _replayMarkerRows = new();
+    public ObservableCollection<RectangularSection> ReplayMarkerSections { get; } = new();
+
+    private bool _showReplayEventMarkers;
+    public bool ShowReplayEventMarkers { get => _showReplayEventMarkers; set { if (SetProperty(ref _showReplayEventMarkers, value)) RecomputeReplayMarkerSections(); } }
+
+    private string? _replayMarkerStatusText;
+    public string? ReplayMarkerStatusText { get => _replayMarkerStatusText; private set => SetProperty(ref _replayMarkerStatusText, value); }
 
     public LoggingViewModel(PerformanceViewModel performance, EnergyThermalsViewModel energyThermals)
     {
@@ -259,6 +278,10 @@ public sealed class LoggingViewModel : ObservableObject, IDisposable
         {
             ReplaySeries = null;
             ReplayStatusText = error ?? "Couldn't read that file.";
+            _replayTimestamps = new List<DateTime>();
+            _replayMarkerRows = new List<EventRecordRow>();
+            ReplayMarkerSections.Clear();
+            ReplayMarkerStatusText = null;
             return;
         }
 
@@ -284,6 +307,82 @@ public sealed class LoggingViewModel : ObservableObject, IDisposable
             .ToArray();
 
         ReplayStatusText = $"{result.RowCount} rows: {result.Timestamps[0]:g} – {result.Timestamps[^1]:g} ({Path.GetFileName(dialog.FileName)})";
+
+        // #145: overlay event-log error markers on this replay - bounded to exactly the file's own
+        // [first, last] timestamp range, fetched once and cached (see ShowReplayEventMarkers).
+        _replayTimestamps = result.Timestamps;
+        _replayMarkerRows = new List<EventRecordRow>();
+        ReplayMarkerSections.Clear();
+        _ = LoadReplayEventMarkersAsync(result.Timestamps[0], result.Timestamps[^1]);
+    }
+
+    /// <summary>#145: a single bounded, on-demand multi-channel query (System+Application,
+    /// Critical/Error) for exactly the loaded log file's own time range - the same
+    /// EventLogExplorerService.ReadMultiChannel/BuildStructuredQuery pair #112/#138 already use,
+    /// here reused so a thermal event and an error burst can be lined up on this chart without
+    /// exporting both to a spreadsheet.</summary>
+    private async Task LoadReplayEventMarkersAsync(DateTime startLocal, DateTime endLocal)
+    {
+        ReplayMarkerStatusText = "Looking for Critical/Error events in this log's time range...";
+        try
+        {
+            string xpath = $"*[System[(Level=1 or Level=2) and TimeCreated[@SystemTime>='{startLocal.ToUniversalTime():o}'] and TimeCreated[@SystemTime<='{endLocal.ToUniversalTime():o}']]]";
+            string structuredXml = EventLogExplorerService.BuildStructuredQuery(new[] { "System", "Application" }, xpath);
+            var result = await Task.Run(() => _events.ReadMultiChannel(structuredXml, null, pageSize: 300));
+            if (result.ErrorText is not null)
+            {
+                ReplayMarkerStatusText = null;
+                return;
+            }
+
+            _replayMarkerRows = result.Rows;
+            ReplayMarkerStatusText = _replayMarkerRows.Count == 0
+                ? "No Critical/Error events found in this log's time range."
+                : $"{_replayMarkerRows.Count} Critical/Error event(s) found in this log's time range.";
+            RecomputeReplayMarkerSections();
+        }
+        catch (Exception ex)
+        {
+            ReplayMarkerStatusText = $"Couldn't check for events: {ex.Message}";
+        }
+    }
+
+    /// <summary>Re-filters the already-fetched marker rows against the replay's own index domain -
+    /// called on toggle and after a fresh fetch, never re-queries.</summary>
+    private void RecomputeReplayMarkerSections()
+    {
+        ReplayMarkerSections.Clear();
+        if (!ShowReplayEventMarkers || _replayMarkerRows.Count == 0 || _replayTimestamps.Count == 0) return;
+
+        foreach (var row in _replayMarkerRows)
+        {
+            int index = NearestReplayIndex(row.TimeCreated);
+            bool isCritical = string.Equals(row.Level, "Critical", StringComparison.OrdinalIgnoreCase);
+            var color = isCritical ? SKColors.Red : SKColors.Orange;
+
+            ReplayMarkerSections.Add(new RectangularSection
+            {
+                Xi = index - 0.15,
+                Xj = index + 0.15,
+                Fill = new SolidColorPaint(color.WithAlpha(130)),
+                Stroke = new SolidColorPaint(color, 1.5f),
+                Label = $"{row.ProviderName} {row.EventId}",
+                LabelSize = 9,
+                LabelPaint = new SolidColorPaint(color),
+            });
+        }
+    }
+
+    private int NearestReplayIndex(DateTime time)
+    {
+        int best = 0;
+        double bestDiffSeconds = double.MaxValue;
+        for (int i = 0; i < _replayTimestamps.Count; i++)
+        {
+            double diff = Math.Abs((_replayTimestamps[i] - time).TotalSeconds);
+            if (diff < bestDiffSeconds) { bestDiffSeconds = diff; best = i; }
+        }
+        return best;
     }
 
     private void AddMarker()

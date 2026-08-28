@@ -5,14 +5,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 Task Manager Plus — a Windows Task Manager replacement written in C# / WPF
-(.NET 8). Fifteen top-level tabs (Summary, CPU, Memory, Storage, Network,
+(.NET 8). Sixteen top-level tabs (Summary, CPU, Memory, Storage, Network,
 GPU, Energy & Thermals, Responsiveness, Processes, Services, Startup,
-System Specs, Stability, Security, Windows Health), live color-theming
-(six palette families + saturation + high-contrast + color-blind-safe
-alerts), a CSV/HTML/Markdown logging & reporting system, a system tray
-icon with a global hotkey, and an optional LAN-visible remote monitor
-endpoint. Navigation is a TMOG-style top horizontal tab strip
-(`TabStripPlacement="Top"`), matching the visual/IA style of
+System Specs, Stability, Security, Windows Health, Events), live
+color-theming (six palette families + saturation + high-contrast +
+color-blind-safe alerts), a CSV/HTML/Markdown logging & reporting system,
+a system tray icon with a global hotkey, and an optional LAN-visible
+remote monitor endpoint. Navigation is a TMOG-style top horizontal tab
+strip (`TabStripPlacement="Top"`), matching the visual/IA style of
 [tmog.org](https://tmog.org), not a left sidebar rail.
 
 The project has gone through many incremental rounds of feature additions
@@ -77,10 +77,12 @@ container — everything is `new`'d directly). Layers:
   pattern because sensor/GPU-engine enumeration is a genuinely separate,
   heavier data source than the fixed `HardwareMonitorService` counter array.
   `StartupViewModel`, `SystemSpecsViewModel`, `StabilityViewModel`,
-  `SecurityViewModel`, and `WindowsHealthViewModel` are on-demand instead
-  (an initial load plus a manual Refresh command, no timer) since their
-  underlying queries (registry/WMI inventory sweeps, event-log scans,
-  DISM/SFC runs) aren't cheap enough to repeat on a tick. `SecurityViewModel`
+  `SecurityViewModel`, `WindowsHealthViewModel`, and `EventsViewModel` are
+  on-demand instead (an initial load plus a manual Refresh command, or
+  purely selection/button-driven with no initial load at all for
+  `EventsViewModel`) since their underlying queries (registry/WMI
+  inventory sweeps, event-log scans, DISM/SFC runs) aren't cheap enough to
+  repeat on a tick. `SecurityViewModel`
   (Round 14, #801-900) is the most extreme case of
   this — a single large on-demand ViewModel piling up one
   `ObservableCollection`/`IsLoading` flag/`AsyncRelayCommand` trio per
@@ -232,6 +234,47 @@ update both series of a pair together. Fan RPM-vs-temperature uses a
 `ScatterSeries` instead (no glow/core pairing — a point cloud, not a line).
 Reliability History (Stability tab) uses `ColumnSeries` — the only bar
 chart in the app, since a discrete daily count reads better as bars.
+
+### Events tab (nested sub-ViewModels for toggleable panels)
+
+The Events tab (`EventsViewModel`/`EventsView.xaml`) is a real Event Viewer
+replacement (channel tree, paged/virtualized grid via `EventLogReader` +
+`EventLogQuery`, XPath filter builder, friendly/raw-XML detail pane, live
+tail via `EventLogWatcher`, saved filters) backed mainly by
+`EventLogExplorerService` — a separate, richer reader from the original
+`EventLogService` the Stability tab still uses for its own fixed digest;
+the two intentionally don't share one service, since the Events tab's
+paging/live-tail/multi-channel needs are a different shape from Stability's
+"read the last 60 Critical/Error rows" query. Several heavier features
+(ETW capture via `logman`/`wpr`/`tracerpt`, servicing-log parsing) are
+**toggleable side panels with their own nested sub-ViewModel** —
+`EtwCaptureViewModel`/`EtwCapturePanel.xaml` and
+`ServicingLogsViewModel`/`ServicingLogsPanel.xaml` — composed into
+`EventsViewModel` as plain properties (`public EtwCaptureViewModel Etw {
+get; }`) the same way `MainViewModel` composes top-level tab ViewModels,
+rather than flattening everything onto one giant `EventsViewModel`. Use
+this nested-sub-ViewModel-plus-toggle-panel shape for the next large,
+mostly-self-contained feature block that belongs on an existing tab instead
+of growing that tab's ViewModel further.
+
+Known-bad-event explanations use a **bundled-resource-plus-user-override**
+pattern, distinct from the plain settings-file pattern below:
+`EventKnowledgeBaseService` loads a read-only, ships-with-the-app
+`Resources/EventKnowledgeBase.json` (embedded resource) keyed by
+`provider|eventId`, then merges a user-editable `event-kb-overrides.json`
+from `AppPaths.SettingsDirectory` on top (override replaces on collision,
+otherwise adds) — the same "degrade gracefully, never fabricate" spirit as
+everything else, but reusable anywhere a curated dataset needs to ship with
+the app and still be user-extensible without a rebuild.
+
+A registry or `wevtutil`-style write that isn't purely additive (examples:
+WER `LocalDumps`, the `Reliability Analysis\WMI\WMIEnable` key,
+`wevtutil sl` retention changes) follows a **confirm-backup-revert** pattern:
+an explicit `MessageBox.Show` Yes/No confirmation stating the exact change
+and its cost, the pre-change value(s) backed up to a small JSON file under
+`AppPaths.SettingsDirectory` before writing, and a one-click revert command
+that restores from that backup — see `WerReportService`'s LocalDumps toggle
+for the reference implementation.
 
 ## Cross-cutting conventions
 

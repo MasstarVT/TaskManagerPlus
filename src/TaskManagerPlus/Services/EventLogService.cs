@@ -33,7 +33,23 @@ public sealed class EventLogService
     // Windows Error Reporting's own "a Blue Screen just happened" summary entry (Application log).
     private const int BlueScreenEventId = 1001;
 
+    // #191: a *different* provider/channel from BlueScreenEventId above despite sharing the same
+    // event ID number (1001) - this one is System-log, and its message text carries the full
+    // bugcheck line ("0x00000133 (0x..., 0x..., 0x..., 0x...)") plus the actual dump file path,
+    // which Kernel-Power 41's insertion strings never do. See ReadWerBugcheckEvents.
+    private const string WerSystemErrorReportingProvider = "Microsoft-Windows-WER-SystemErrorReporting";
+    private const int WerBugcheckEventId = 1001;
+
     private static readonly Regex FaultingModuleRegex = new(@"Faulting module name:\s*([^,\r\n]+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    // #191: the bugcheck code plus its four parameters, as WER-SystemErrorReporting 1001 renders
+    // them in its message text - not a documented, versioned contract either, but a far more
+    // reliable one than Kernel-Power 41's raw property-index guess (this is the same text format
+    // WhoCrashed/BlueScreenView parse from the equivalent minidump header).
+    private static readonly Regex WerBugcheckLineRegex = new(
+        @"(0x[0-9A-Fa-f]{8})\s*\(\s*(0x[0-9A-Fa-f]+)\s*,\s*(0x[0-9A-Fa-f]+)\s*,\s*(0x[0-9A-Fa-f]+)\s*,\s*(0x[0-9A-Fa-f]+)\s*\)",
+        RegexOptions.Compiled);
+    private static readonly Regex WerDumpPathRegex = new(@"([A-Za-z]:\\[^\r\n]*?\.dmp)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     public StabilitySnapshot Query()
     {
@@ -81,6 +97,25 @@ public sealed class EventLogService
         // same classified Kernel-Power 41 records instead of re-querying the provider itself.
         var unexpectedShutdowns = ReadUnexpectedShutdowns();
 
+        // #191: prefer the richer WER-SystemErrorReporting 1001 bugcheck detail (all four
+        // parameters + dump path) over the event-41 property-index guess ReadLog already filled in
+        // above, when a WER 1001 was logged within 10 minutes of the Kernel-Power 41 - the existing
+        // guess stays untouched (fallback) for any 41 with no matching WER 1001 nearby. Independent
+        // of the authoritative BugCheckRecord path above (round 13, items 1/2/8), which matches off
+        // the BugCheck-provider's own 1001 event rather than the WER-summary one - both are kept,
+        // this one enriching the flat RecentEvents list directly for immediate display.
+        var werBugchecks = ReadWerBugcheckEvents();
+        foreach (var kp41 in events.Where(e => e.EventId == KernelPowerEventId))
+        {
+            var nearest = werBugchecks
+                .Where(w => Math.Abs((w.Timestamp - kp41.TimeCreated).TotalMinutes) < 10)
+                .OrderBy(w => Math.Abs((w.Timestamp - kp41.TimeCreated).TotalMinutes))
+                .FirstOrDefault();
+            if (nearest is null) continue;
+            kp41.BugcheckDetail = nearest.Detail;
+            kp41.BugcheckCode = nearest.Detail.Code; // authoritative - overrides the property-index guess
+        }
+
         return new StabilitySnapshot
         {
             RecentEvents = events.Take(MaxEventsPerLog).ToList(),
@@ -89,7 +124,7 @@ public sealed class EventLogService
             TdrEventCount = tdrEvents.Count,
             LastTdrEvent = tdrEvents.FirstOrDefault()?.TimeCreated,
             LastCrashTime = lastCrash?.TimeCreated,
-            Minidumps = ReadMinidumps(shutdownEvents, bugChecks),
+            Minidumps = ReadMinidumps(shutdownEvents, bugChecks, werBugchecks),
             DailyCounts = BuildDailyCounts(events),
             LowMemoryEventCount = lowMemCount,
             LastLowMemoryEvent = lowMemLast,
@@ -304,6 +339,74 @@ public sealed class EventLogService
         };
     }
 
+    private sealed class WerBugcheckHit
+    {
+        public DateTime Timestamp { get; init; }
+        public BugcheckDetail Detail { get; init; } = new();
+    }
+
+    /// <summary>#191: reads Microsoft-Windows-WER-SystemErrorReporting 1001 (System log - a
+    /// different provider/channel from WerReportService's Application-log WER 1001, despite the
+    /// same event ID number) and regex-parses each one's message text for the bugcheck line and
+    /// dump file path. An event whose text doesn't match the expected "0x... (0x...,0x...,0x...,
+    /// 0x...)" shape is skipped (older Windows editions, or a non-bugcheck WER-SystemErrorReporting
+    /// entry) rather than producing a half-filled BugcheckDetail - degrades to "no richer detail",
+    /// leaving the event-41 guess as the only source, same as every other event-log read in this
+    /// service.</summary>
+    private static List<WerBugcheckHit> ReadWerBugcheckEvents()
+    {
+        var hits = new List<WerBugcheckHit>();
+        try
+        {
+            long maxAgeMs = LookbackDays * 24L * 60 * 60 * 1000;
+            var query = new EventLogQuery("System", PathType.LogName,
+                $"*[System[Provider[@Name='{WerSystemErrorReportingProvider}'] and (EventID={WerBugcheckEventId}) and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]")
+            {
+                ReverseDirection = true,
+            };
+
+            using var reader = new EventLogReader(query);
+            int count = 0;
+            const int maxEvents = 200; // generous - a well-behaved PC has few to none of these in 30 days
+            while (count < maxEvents && reader.ReadEvent() is { } record)
+            {
+                using (record)
+                {
+                    count++;
+                    if (record.TimeCreated is null) continue;
+
+                    string message;
+                    try { message = record.FormatDescription() ?? string.Empty; }
+                    catch { message = string.Empty; } // provider's message file isn't registered - skip this one
+
+                    var lineMatch = WerBugcheckLineRegex.Match(message);
+                    if (!lineMatch.Success) continue; // text doesn't carry the expected bugcheck line - nothing usable
+
+                    var dumpMatch = WerDumpPathRegex.Match(message);
+                    hits.Add(new WerBugcheckHit
+                    {
+                        Timestamp = record.TimeCreated.Value,
+                        Detail = new BugcheckDetail
+                        {
+                            Code = lineMatch.Groups[1].Value,
+                            Parameter1 = lineMatch.Groups[2].Value,
+                            Parameter2 = lineMatch.Groups[3].Value,
+                            Parameter3 = lineMatch.Groups[4].Value,
+                            Parameter4 = lineMatch.Groups[5].Value,
+                            DumpFilePath = dumpMatch.Success ? dumpMatch.Groups[1].Value.Trim() : null,
+                        },
+                    });
+                }
+            }
+        }
+        catch
+        {
+            // Provider/log unavailable, or this Windows edition doesn't log this event at all -
+            // degrade to "no richer detail" (the event-41 guess remains the only source).
+        }
+        return hits;
+    }
+
     // Round 8 #40: low-memory resource-exhaustion events are logged by a dedicated Windows
     // component at Warning level, not Critical/Error - outside the Level=1|2 filter the main scan
     // above uses - so this is a second, separately targeted query for just this one provider,
@@ -396,6 +499,10 @@ public sealed class EventLogService
                         Message = Truncate(message, 300),
                         FaultingModule = ExtractFaultingModule(message),
                         BugcheckCode = record.Id == KernelPowerEventId ? ExtractBugcheckCode(record) : null,
+                        // #168: a fuller, non-truncated parse for .NET Runtime 1026 / Application
+                        // Error 1000 specifically - every other event ID keeps the same truncated
+                        // Message as before (see StabilityEvent.DisplayDetail).
+                        ExceptionDetail = record.Id is 1026 or 1000 ? WerReportService.ParseManagedExceptionDetail(record.Id, message) : null,
                     });
                 }
             }
@@ -442,8 +549,13 @@ public sealed class EventLogService
     /// version without the BugCheck provider, or a log that's already rolled the event off) -
     /// parsing the bugcheck code directly out of the .dmp binary format would need a full
     /// MINIDUMP-stream reader, a much larger and more fragile undertaking than either of these.
+    /// #191: independently, an exact dump-file-path match from a WER-SystemErrorReporting 1001
+    /// event (<paramref name="werBugchecks"/>) - when Windows itself named this dump file in that
+    /// summary event - additionally supplies the richer BugcheckDetail (all four parameters + dump
+    /// path in one place), layered on top of whichever match above found the base record, since the
+    /// two sources come from different providers and aren't mutually exclusive.
     /// </summary>
-    private static List<MinidumpInfo> ReadMinidumps(List<StabilityEvent> shutdownEvents, List<BugCheckRecord> bugChecks)
+    private static List<MinidumpInfo> ReadMinidumps(List<StabilityEvent> shutdownEvents, List<BugCheckRecord> bugChecks, List<WerBugcheckHit> werBugchecks)
     {
         var dumps = new List<MinidumpInfo>();
         try
@@ -459,6 +571,11 @@ public sealed class EventLogService
 
                 var matched = bugChecks.FirstOrDefault(b =>
                     b.DumpPath is not null && string.Equals(Path.GetFileName(b.DumpPath), info.Name, StringComparison.OrdinalIgnoreCase));
+
+                // #191: an exact dump-file-path match from a WER 1001 event, when one exists, adds
+                // the richer BugcheckDetail on top of whichever match below found the base record.
+                var werMatch = werBugchecks.FirstOrDefault(w =>
+                    w.Detail.DumpFilePath is { } p && string.Equals(Path.GetFileName(p), info.Name, StringComparison.OrdinalIgnoreCase));
 
                 if (matched is not null)
                 {
@@ -476,6 +593,7 @@ public sealed class EventLogService
                         Decoded = matched.Decoded,
                         HappenedDuringSleepResume = matched.HappenedDuringSleepResume,
                         WheaJoinText = matched.WheaJoinText,
+                        BugcheckDetail = werMatch?.Detail,
                     });
                     continue;
                 }
@@ -489,11 +607,12 @@ public sealed class EventLogService
                 {
                     FileName = info.Name,
                     Timestamp = info.LastWriteTime,
-                    BugcheckCode = nearest?.BugcheckCode,
+                    BugcheckCode = werMatch?.Detail.Code ?? nearest?.BugcheckCode,
                     // The old nearby-timestamp fallback never recovered parameters (see
                     // MinidumpInfo.BugcheckParameters' own remarks), so there's nothing for
                     // BugcheckDecoder to decode beyond the bare code itself.
                     Decoded = nearest?.BugcheckCode is not null ? BugcheckDecoder.Decode(nearest.BugcheckCode, Array.Empty<string>()) : null,
+                    BugcheckDetail = werMatch?.Detail,
                 });
             }
         }
@@ -678,7 +797,7 @@ public sealed class EventLogService
     /// a directory listing of the matched folder, which is normally the most reliable way to see
     /// what WER actually archived (typically including the .dmp itself alongside Report.wer).
     /// </summary>
-    private static WerReportInfo? ResolveWerReport(string reportId)
+    private static WerReportFolderMetadata? ResolveWerReport(string reportId)
     {
         try
         {
@@ -711,7 +830,7 @@ public sealed class EventLogService
                 }
                 catch { /* leave whatever was gathered, or empty */ }
 
-                return new WerReportInfo
+                return new WerReportFolderMetadata
                 {
                     ReportFolder = dir,
                     OsVersion = osVersion,
@@ -2651,4 +2770,67 @@ public sealed class EventLogService
     }
 
     #endregion
+
+    // Round 13, #122: the event knowledge base's "seriously bad" set can include Warning-level IDs
+    // (disk 153, Ntfs 98 - exactly the "Windows' own levels lie" cases #120 is about), which the
+    // fixed Level=1|2 sweep ReadLog/Query use above never reads at all - so the Stability tab's
+    // "Known-bad IDs present on this PC" scorecard needs its own light, explicitly-scoped query
+    // instead of reusing RecentEvents. "Light" here means an XPath that names the exact
+    // provider+eventId pairs to look for (built from whatever the caller's knowledge base flags as
+    // serious), not a second full Level-based sweep - still on-demand only, folded into
+    // StabilityViewModel's existing RefreshCommand, not a new timer.
+    public List<KnownBadIdScanHit> ScanForKnownBadIds(IReadOnlyCollection<(string Provider, int EventId)> flaggedIds, int lookbackDays = LookbackDays)
+    {
+        var hits = new Dictionary<(string Provider, int EventId), (int Count, DateTime LastSeen)>();
+        if (flaggedIds.Count == 0) return new List<KnownBadIdScanHit>();
+
+        string idsClause = string.Join(" or ", flaggedIds
+            .GroupBy(f => f.Provider, StringComparer.OrdinalIgnoreCase)
+            .Select(g => $"(Provider[@Name='{EscapeXPathLiteral(g.Key)}'] and ({string.Join(" or ", g.Select(f => $"EventID={f.EventId}"))}))"));
+
+        long maxAgeMs = lookbackDays * 24L * 60 * 60 * 1000;
+        string xpath = $"*[System[({idsClause}) and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]";
+
+        foreach (var logName in new[] { "System", "Application" })
+        {
+            try
+            {
+                var query = new EventLogQuery(logName, PathType.LogName, xpath) { ReverseDirection = true };
+                using var reader = new EventLogReader(query);
+                int count = 0;
+                const int maxEvents = 2000; // generous cap - this is a narrow, ID-scoped query, not a full-log sweep
+                while (count < maxEvents && reader.ReadEvent() is { } record)
+                {
+                    using (record)
+                    {
+                        count++;
+                        var key = (record.ProviderName ?? string.Empty, record.Id);
+                        var time = record.TimeCreated ?? DateTime.MinValue;
+                        if (hits.TryGetValue(key, out var existing))
+                            hits[key] = (existing.Count + 1, time > existing.LastSeen ? time : existing.LastSeen);
+                        else
+                            hits[key] = (1, time);
+                    }
+                }
+            }
+            catch
+            {
+                // This log unavailable/access denied - contribute nothing from it, keep scanning the other.
+            }
+        }
+
+        return hits.Select(kv => new KnownBadIdScanHit
+        {
+            Provider = kv.Key.Provider,
+            EventId = kv.Key.EventId,
+            Count = kv.Value.Count,
+            LastSeen = kv.Value.LastSeen,
+        }).ToList();
+    }
+
+    /// <summary>A provider name containing a literal single quote would break the XPath string
+    /// literal it's wrapped in - none of the bundled knowledge-base provider names do, but this
+    /// strips one defensively rather than producing an unparseable query for a user-added override
+    /// entry with an unusual provider name.</summary>
+    private static string EscapeXPathLiteral(string value) => value.Replace("'", "");
 }

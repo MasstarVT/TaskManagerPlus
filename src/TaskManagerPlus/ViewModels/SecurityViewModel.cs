@@ -2020,7 +2020,7 @@ public sealed class SecurityViewModel : ObservableObject
         EvidenceBundleStatus = null;
         try
         {
-            var sections = new List<EvidenceBundleService.Section>
+            var sections = new List<SecurityEvidenceBundleService.Section>
             {
                 new("security-report.md", "Redacted security posture report (#805)",
                     AutorunEntries.Count > 0 || Findings.Count > 0 ? SecurityReportService.BuildMarkdownReport(AutorunEntries, Findings, RedactReport) : null),
@@ -2035,7 +2035,7 @@ public sealed class SecurityViewModel : ObservableObject
                 new("sign-in-timeline.txt", "Sign-in and account-change timeline (#894)", SignInTimeline.Count > 0 ? BuildSignInTimelineText() : null),
             };
 
-            var (success, folderPath, error) = await Task.Run(() => EvidenceBundleService.BuildBundle(sections));
+            var (success, folderPath, error) = await Task.Run(() => SecurityEvidenceBundleService.BuildBundle(sections));
             EvidenceBundleStatus = success ? $"Evidence bundle built at {folderPath} (opened in Explorer)." : $"Couldn't build evidence bundle: {error}";
         }
         finally

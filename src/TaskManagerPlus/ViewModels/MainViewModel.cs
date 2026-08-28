@@ -28,6 +28,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     // above. Not part of TabShortcutOrder below (Ctrl+1..9 only covers the first nine tabs today).
     public SecurityViewModel Security { get; } = new();
 
+    // #101-108: full Event Viewer replacement tab - see EventsViewModel's remarks. Constructed in
+    // the body (not a field initializer) since it needs Processes' already-live collection for
+    // #106's PID -> process-name lookup.
+    public EventsViewModel Events { get; }
+
     // Thin wrappers over the shared Performance sampler (see CpuViewModel's remarks) - the
     // CPU/Memory/Storage/Network tabs are split views of one underlying data source, not four
     // independent pollers.
@@ -267,6 +272,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         // duplicating the composite-score math. #storage: likewise for the DriveHealthVerdict tile.
         Summary = new SummaryViewModel(Performance, Processes, Services, EnergyThermals, SystemSpecs, Network, Stability, Responsiveness, Storage);
         Search = new GlobalSearchViewModel(Processes, Services, Startup, SystemSpecs);
+        Events = new EventsViewModel(Processes, Services);
 
         RemoteMonitor = new RemoteMonitorService(BuildRemoteMetricsSnapshot) { RequiredToken = _remoteMonitorSettings.Token };
         ToggleRemoteMonitorCommand = new RelayCommand(_ => IsRemoteMonitorEnabled = !IsRemoteMonitorEnabled);
@@ -298,6 +304,13 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         // shape as Stability's Reliability History chart above.
         ApplyAxisThemeToStorage();
         Theme.ThemeModeChanged += ApplyAxisThemeToStorage;
+
+        // #141: crash/error markers on the CPU/RAM/Disk/Network charts - reuses whatever
+        // StabilityViewModel's own on-demand refresh already read, no new poll of its own. Applied
+        // once now (in case Stability already finished its own initial fire-and-forget refresh
+        // before this wiring ran) and again every time Stability refreshes after that.
+        ApplyStabilityMarkersToPerformance();
+        Stability.Refreshed += ApplyStabilityMarkersToPerformance;
 
         ApplyAxisThemeToStartup();
         Theme.ThemeModeChanged += ApplyAxisThemeToStartup;
@@ -357,6 +370,13 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         Storage.ApplyAxisTheme(TextOf("TextSecondaryBrush"), TextOf("BorderBrush2"));
     }
+
+    /// <summary>#141: RecentEvents is already the Stability tab's own Critical/Error digest (see
+    /// EventLogService.Query) - just reshaped into the (Time, Level, Text) tuple
+    /// PerformanceViewModel.SetEventMarkers wants.</summary>
+    private void ApplyStabilityMarkersToPerformance()
+        => Performance.SetEventMarkers(Stability.RecentEvents.Select(e =>
+            (e.TimeCreated, e.Level, $"{e.ProviderName} {e.EventId}")));
 
     private void ApplyAxisThemeToStartup()
     {
@@ -455,6 +475,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Theme.ThemeModeChanged -= ApplyAxisThemeToEnergyThermals;
         Theme.ThemeModeChanged -= ApplyAxisThemeToStability;
         Theme.ThemeModeChanged -= ApplyAxisThemeToStorage;
+        Stability.Refreshed -= ApplyStabilityMarkersToPerformance;
         Theme.ThemeModeChanged -= ApplyAxisThemeToStartup;
         Theme.ThemeModeChanged -= ApplyAxisThemeToLogging;
         Theme.ThemeModeChanged -= ApplyAxisThemeToResponsiveness;
@@ -469,6 +490,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Logging.Dispose();
         Summary.Dispose();
         Stability.Dispose();
+        Events.Dispose();
         _miniDashboard?.Close();
         RemoteMonitor.Dispose();
         Hotkey.Dispose();

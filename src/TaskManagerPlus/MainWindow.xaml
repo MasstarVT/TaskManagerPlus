@@ -142,7 +142,8 @@
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
 
-            <TabControl x:Name="MainTabControl" Grid.Column="0" TabStripPlacement="Top" SelectedIndex="0">
+            <TabControl x:Name="MainTabControl" Grid.Column="0" TabStripPlacement="Top" SelectedIndex="0"
+                        SelectionChanged="MainTabControl_SelectionChanged">
                 <!-- Round 11, #79: independent UI scale, separate from Windows' own display
                      scaling - see ThemeViewModel.FontScale's remarks for why a uniform
                      LayoutTransform (rather than threading a font-size resource through every
@@ -397,6 +398,20 @@
                         </Viewbox>
                     </TabItem.Tag>
                     <views:WindowsHealthView DataContext="{Binding WindowsHealth}" />
+                </TabItem>
+
+                <TabItem Header="Events">
+                    <TabItem.Tag>
+                        <Viewbox Width="16" Height="16">
+                            <Canvas Width="16" Height="16">
+                                <Rectangle Style="{StaticResource NavIconStroke}" Canvas.Left="1.5" Canvas.Top="1.5" Width="13" Height="13" RadiusX="1.5" RadiusY="1.5" />
+                                <Line Style="{StaticResource NavIconStroke}" StrokeThickness="1.2" X1="4" Y1="5.5" X2="12" Y2="5.5" />
+                                <Line Style="{StaticResource NavIconStroke}" StrokeThickness="1.2" X1="4" Y1="8" X2="12" Y2="8" />
+                                <Line Style="{StaticResource NavIconStroke}" StrokeThickness="1.2" X1="4" Y1="10.5" X2="9" Y2="10.5" />
+                            </Canvas>
+                        </Viewbox>
+                    </TabItem.Tag>
+                    <views:EventsView DataContext="{Binding Events}" />
                 </TabItem>
             </TabControl>
 

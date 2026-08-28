@@ -1,0 +1,414 @@
+<UserControl x:Class="TaskManagerPlus.Views.ServicingLogsPanel"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:TaskManagerPlus.ViewModels"
+             xmlns:models="clr-namespace:TaskManagerPlus.Models"
+             d:DataContext="{d:DesignInstance Type=vm:ServicingLogsViewModel}"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d">
+    <!--
+        #175-183: the "Servicing logs" overlay panel, toggled from the Events tab's filter bar (see
+        EventsView.xaml's "Servicing logs" ToggleButton bound to Servicing.IsPanelOpen) - the same
+        overlay-panel pattern #113's Provider Catalog and #146-153's ETW trace capture panel already
+        established, pulled into its own UserControl for the same reason EtwCapturePanel was: this
+        covers nine distinct servicing/setup/update log sources. Grouped into Expanders, one per
+        item, matching EtwCapturePanel's own shape.
+    -->
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0" Margin="0,0,0,10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Grid.Column="0">
+                <TextBlock Text="Servicing logs" Style="{StaticResource CardTitle}" FontSize="14" Margin="0" />
+                <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,2,0,0"
+                            Text="CBS.log/DISM.log/setup log parsing, WindowsUpdate.log decoding, a combined update-failure history, pending-reboot/pending-servicing signals, the AppX/AppReadiness failure channels, and a CBS log-folder health stat - every read here is on-demand (button-gated), never a background poll." />
+            </StackPanel>
+            <ToggleButton Grid.Column="1" Content="Close" IsChecked="{Binding IsPanelOpen}" Padding="10,4" VerticalAlignment="Top" />
+        </Grid>
+
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+            <StackPanel Margin="0,0,8,0">
+
+                <!-- #181: stuck-servicing detector - loads automatically when the panel opens (cheap,
+                     registry-only reads), per ServicingLogsViewModel.IsPanelOpen's own remarks. -->
+                <Expander Header="Pending reboot / stuck-servicing check" IsExpanded="True" FontSize="11.5" Margin="0,0,0,10">
+                    <StackPanel Margin="0,10,0,0">
+                        <TextBlock TextWrapping="Wrap" FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8"
+                                    Text="Each signal below is an independent registry read that degrades to &quot;not present&quot; (never an error) when its key doesn't exist on this Windows build. This is a quick flag, not a verdict - Windows has no single authoritative &quot;you are stuck mid-update&quot; signal." />
+                        <WrapPanel Margin="0,0,0,8">
+                            <Button Content="Refresh" Command="{Binding RefreshPendingStatusCommand}" Padding="8,3" Margin="0,0,8,0" />
+                            <ProgressBar Width="90" Height="6" IsIndeterminate="{Binding IsPendingCheckLoading}" VerticalAlignment="Center" />
+                        </WrapPanel>
+                        <StackPanel Visibility="{Binding PendingStatus, Converter={StaticResource NullToVisibilityConverter}}">
+                            <Border Background="{DynamicResource WarningBrush}" Opacity="0.85" CornerRadius="6" Padding="8,4" Margin="0,0,0,8"
+                                     Visibility="{Binding PendingStatus.LooksStuck, Converter={StaticResource BoolToVisibilityConverter}}">
+                                <TextBlock Text="{Binding PendingStatus.CbsPackagesPendingCount, StringFormat='CBS has {0} package(s) queued under PackagesPending - this specifically means servicing has work queued for the next boot (worth a manual check, not a confirmed problem).'}"
+                                            TextWrapping="Wrap" FontSize="11" Foreground="White" />
+                            </Border>
+                            <WrapPanel>
+                                <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="8,4" Margin="0,0,8,4">
+                                    <StackPanel>
+                                        <TextBlock Text="CBS RebootPending" FontSize="10" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        <TextBlock Text="{Binding PendingStatus.CbsRebootPending}" FontSize="13" FontWeight="SemiBold" />
+                                    </StackPanel>
+                                </Border>
+                                <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="8,4" Margin="0,0,8,4">
+                                    <StackPanel>
+                                        <TextBlock Text="CBS RebootInProgress" FontSize="10" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        <TextBlock Text="{Binding PendingStatus.CbsRebootInProgress}" FontSize="13" FontWeight="SemiBold" />
+                                    </StackPanel>
+                                </Border>
+                                <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="8,4" Margin="0,0,8,4">
+                                    <StackPanel>
+                                        <TextBlock Text="CBS SessionsPending" FontSize="10" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        <TextBlock Text="{Binding PendingStatus.CbsSessionsPending}" FontSize="13" FontWeight="SemiBold" />
+                                    </StackPanel>
+                                </Border>
+                                <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="8,4" Margin="0,0,8,4">
+                                    <StackPanel>
+                                        <TextBlock Text="Packages pending" FontSize="10" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        <TextBlock Text="{Binding PendingStatus.CbsPackagesPendingCount}" FontSize="13" FontWeight="SemiBold" />
+                                    </StackPanel>
+                                </Border>
+                                <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="8,4" Margin="0,0,8,4">
+                                    <StackPanel>
+                                        <TextBlock Text="WU RebootRequired" FontSize="10" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        <TextBlock Text="{Binding PendingStatus.WindowsUpdateRebootRequired}" FontSize="13" FontWeight="SemiBold" />
+                                    </StackPanel>
+                                </Border>
+                                <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="8,4" Margin="0,0,8,4">
+                                    <StackPanel>
+                                        <TextBlock Text="PendingFileRenameOperations" FontSize="10" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        <TextBlock Text="{Binding PendingStatus.PendingFileRenameOperations}" FontSize="13" FontWeight="SemiBold" />
+                                    </StackPanel>
+                                </Border>
+                            </WrapPanel>
+                        </StackPanel>
+                    </StackPanel>
+                </Expander>
+
+                <!-- #183: servicing log health - loads automatically when the panel opens (one folder
+                     size/count tally), per ServicingLogsViewModel.IsPanelOpen's own remarks. -->
+                <Expander Header="Servicing log health (Logs\CBS folder)" IsExpanded="True" FontSize="11.5" Margin="0,0,0,10">
+                    <StackPanel Margin="0,10,0,0">
+                        <TextBlock TextWrapping="Wrap" FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8"
+                                    Text="The size of %WinDir%\Logs\CBS and how many CbsPersist_*.log archives it holds - a stat, not a health verdict." />
+                        <WrapPanel Margin="0,0,0,8">
+                            <Button Content="Refresh" Command="{Binding RefreshLogHealthCommand}" Padding="8,3" Margin="0,0,8,0" />
+                            <Button Content="Reveal in Explorer" Command="{Binding RevealCbsFolderCommand}" Padding="8,3" Margin="0,0,8,0" />
+                            <ProgressBar Width="90" Height="6" IsIndeterminate="{Binding IsLogHealthLoading}" VerticalAlignment="Center" />
+                        </WrapPanel>
+                        <TextBlock Text="{Binding LogHealth.ErrorMessage}" TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource DangerBrush}" Margin="0,0,0,8"
+                                    Visibility="{Binding LogHealth.ErrorMessage, Converter={StaticResource NullToVisibilityConverter}}" />
+                        <WrapPanel Visibility="{Binding LogHealth.Exists, Converter={StaticResource BoolToVisibilityConverter}}">
+                            <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="8,4" Margin="0,0,8,4">
+                                <StackPanel>
+                                    <TextBlock Text="Folder size" FontSize="10" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                    <TextBlock Text="{Binding LogHealth.FolderSizeBytes, Converter={StaticResource BytesToReadableConverter}}" FontSize="14" FontWeight="SemiBold" />
+                                </StackPanel>
+                            </Border>
+                            <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="8,4" Margin="0,0,8,4">
+                                <StackPanel>
+                                    <TextBlock Text="CbsPersist archives" FontSize="10" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                    <TextBlock Text="{Binding LogHealth.CbsPersistArchiveCount}" FontSize="14" FontWeight="SemiBold" />
+                                </StackPanel>
+                            </Border>
+                        </WrapPanel>
+                        <TextBlock Text="{Binding LogHealth.FolderPath}" FontFamily="Consolas" FontSize="10" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,0" />
+                    </StackPanel>
+                </Expander>
+
+                <!-- #175: CBS.log parser -->
+                <Expander Header="CBS.log parser" FontSize="11.5" Margin="0,0,0,10">
+                    <StackPanel Margin="0,10,0,0">
+                        <TextBlock TextWrapping="Wrap" FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8"
+                                    Text="Reads %WinDir%\Logs\CBS\CBS.log and keeps only the [SR] (System File Checker) repair lines, &quot;Cannot repair member file&quot; targets, and any 0xNNNNNNNN error codes found in them." />
+                        <WrapPanel Margin="0,0,0,8">
+                            <Button Content="Parse CBS.log" Command="{Binding RefreshCbsLogCommand}" Padding="8,3" Margin="0,0,8,0" />
+                            <ProgressBar Width="110" Height="6" IsIndeterminate="{Binding IsCbsLoading}" VerticalAlignment="Center" />
+                        </WrapPanel>
+                        <StackPanel Visibility="{Binding CbsSummary, Converter={StaticResource NullToVisibilityConverter}}">
+                            <TextBlock Text="{Binding CbsSummary.ErrorMessage}" TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource DangerBrush}" Margin="0,0,0,8"
+                                        Visibility="{Binding CbsSummary.ErrorMessage, Converter={StaticResource NullToVisibilityConverter}}" />
+                            <WrapPanel Margin="0,0,0,8" Visibility="{Binding CbsSummary.Exists, Converter={StaticResource BoolToVisibilityConverter}}">
+                                <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="8,4" Margin="0,0,8,4">
+                                    <StackPanel>
+                                        <TextBlock Text="Log size" FontSize="10" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        <TextBlock Text="{Binding CbsSummary.SizeBytes, Converter={StaticResource BytesToReadableConverter}}" FontSize="13" FontWeight="SemiBold" />
+                                    </StackPanel>
+                                </Border>
+                                <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="8,4" Margin="0,0,8,4">
+                                    <StackPanel>
+                                        <TextBlock Text="Lines scanned" FontSize="10" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        <TextBlock Text="{Binding CbsSummary.TotalLinesScanned}" FontSize="13" FontWeight="SemiBold" />
+                                    </StackPanel>
+                                </Border>
+                                <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="8,4" Margin="0,0,8,4">
+                                    <StackPanel>
+                                        <TextBlock Text="[SR] lines matched" FontSize="10" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        <TextBlock Text="{Binding CbsSummary.SrLines.Count}" FontSize="13" FontWeight="SemiBold" />
+                                    </StackPanel>
+                                </Border>
+                            </WrapPanel>
+                            <TextBlock Text="Only the most recent matches are shown - the list was truncated." FontSize="10.5" Foreground="{DynamicResource WarningBrush}" Margin="0,0,0,6"
+                                        Visibility="{Binding CbsSummary.Truncated, Converter={StaticResource BoolToVisibilityConverter}}" />
+                            <DataGrid ItemsSource="{Binding CbsSummary.SrLines}" IsReadOnly="True" AutoGenerateColumns="False" MaxHeight="200" Margin="0,0,0,8">
+                                <DataGrid.RowStyle>
+                                    <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsUnrepairable}" Value="True">
+                                                <Setter Property="Background" Value="#1AE81123" />
+                                                <Setter Property="ToolTip" Value="sfc found damage it could not repair." />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </DataGrid.RowStyle>
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Time" Binding="{Binding Timestamp, StringFormat='{}{0:g}'}" Width="130" />
+                                    <DataGridTextColumn Header="Line" Binding="{Binding Text}" Width="*" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+
+                            <TextBlock Text="{Binding CbsSummary.CannotRepairFiles.Count, StringFormat='Cannot-repair files ({0})'}" FontSize="11" FontWeight="SemiBold" Margin="0,0,0,4"
+                                        Visibility="{Binding CbsSummary.Exists, Converter={StaticResource BoolToVisibilityConverter}}" />
+                            <ListBox ItemsSource="{Binding CbsSummary.CannotRepairFiles}" MaxHeight="100" FontSize="10.5" FontFamily="Consolas"
+                                      BorderThickness="0" Background="{DynamicResource BgElevatedBrush}" Margin="0,0,0,8" />
+
+                            <WrapPanel Margin="0,0,0,6">
+                                <TextBlock Text="{Binding CbsSummary.ErrorCodes.Count, StringFormat='Error codes seen ({0})'}" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,8,0" />
+                                <Button Content="Decode codes" Command="{Binding DecodeCbsCodesCommand}" Padding="6,2" FontSize="10.5" Margin="0,0,8,0" />
+                                <ProgressBar Width="90" Height="6" IsIndeterminate="{Binding IsDecodingCbsCodes}" VerticalAlignment="Center" />
+                            </WrapPanel>
+                            <DataGrid ItemsSource="{Binding CbsDecodedCodes}" IsReadOnly="True" AutoGenerateColumns="False" MaxHeight="140">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Code" Binding="{Binding Code}" Width="120" />
+                                    <DataGridTextColumn Header="Meaning" Binding="{Binding Meaning}" Width="*" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </StackPanel>
+                    </StackPanel>
+                </Expander>
+
+                <!-- #176: SFC result summary (+ CbsPersist archive fallback) -->
+                <Expander Header="SFC (System File Checker) result summary" FontSize="11.5" Margin="0,0,0,10">
+                    <StackPanel Margin="0,10,0,0">
+                        <TextBlock TextWrapping="Wrap" FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8"
+                                    Text="Summarizes the CBS [SR] block into a plain-English result. Falls back to expanding the most recent CbsPersist_*.log archives (via expand.exe) if the live CBS.log has no [SR] activity - it rolls over at roughly 128 MB." />
+                        <WrapPanel Margin="0,0,0,8">
+                            <Button Content="Summarize SFC result" Command="{Binding SummarizeSfcCommand}" Padding="8,3" Margin="0,0,8,0" />
+                            <ProgressBar Width="110" Height="6" IsIndeterminate="{Binding IsSfcLoading}" VerticalAlignment="Center" Margin="0,0,8,0" />
+                            <TextBlock Text="{Binding SfcStatusText}" TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" />
+                        </WrapPanel>
+                        <StackPanel Visibility="{Binding SfcSummary.Found, Converter={StaticResource BoolToVisibilityConverter}}">
+                            <WrapPanel Margin="0,0,0,8">
+                                <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="8,4" Margin="0,0,8,4">
+                                    <StackPanel>
+                                        <TextBlock Text="Files scanned" FontSize="10" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        <TextBlock Text="{Binding SfcSummary.FilesScanned, TargetNullValue=Unknown}" FontSize="14" FontWeight="SemiBold" />
+                                    </StackPanel>
+                                </Border>
+                                <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="8,4" Margin="0,0,8,4">
+                                    <StackPanel>
+                                        <TextBlock Text="Corrupt" FontSize="10" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        <TextBlock Text="{Binding SfcSummary.CorruptCount}" FontSize="14" FontWeight="SemiBold" />
+                                    </StackPanel>
+                                </Border>
+                                <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="8,4" Margin="0,0,8,4">
+                                    <StackPanel>
+                                        <TextBlock Text="Repaired" FontSize="10" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        <TextBlock Text="{Binding SfcSummary.RepairedCount}" FontSize="14" FontWeight="SemiBold" />
+                                    </StackPanel>
+                                </Border>
+                                <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="8,4" Margin="0,0,8,4">
+                                    <StackPanel>
+                                        <TextBlock Text="Last [SR] activity" FontSize="10" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        <TextBlock Text="{Binding SfcSummary.LastSrActivityUtc, StringFormat='{}{0:g}'}" FontSize="12" FontWeight="SemiBold" />
+                                    </StackPanel>
+                                </Border>
+                            </WrapPanel>
+                            <TextBlock Text="{Binding SfcSummary.UnrepairableFiles.Count, StringFormat='Unrepairable files ({0})'}" FontSize="11" FontWeight="SemiBold" Margin="0,0,0,4" />
+                            <ListBox ItemsSource="{Binding SfcSummary.UnrepairableFiles}" MaxHeight="100" FontSize="10.5" FontFamily="Consolas"
+                                      BorderThickness="0" Background="{DynamicResource BgElevatedBrush}" Margin="0,0,0,4" />
+                            <TextBlock Text="{Binding SfcSummary.SourceLogs, Converter={StaticResource StringListJoinConverter}, StringFormat='Source: {0}'}"
+                                        FontSize="10" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        </StackPanel>
+                    </StackPanel>
+                </Expander>
+
+                <!-- #177: DISM.log parser -->
+                <Expander Header="DISM.log parser" FontSize="11.5" Margin="0,0,0,10">
+                    <StackPanel Margin="0,10,0,0">
+                        <TextBlock TextWrapping="Wrap" FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8"
+                                    Text="Reads %WinDir%\Logs\DISM\dism.log for the Error/Warning lines of the most recent DISM session only. Each entry's HRESULT is decoded via the same status-code resolver the Events tab's own decoder uses." />
+                        <WrapPanel Margin="0,0,0,8">
+                            <Button Content="Parse DISM.log" Command="{Binding ParseDismLogCommand}" Padding="8,3" Margin="0,0,8,0" />
+                            <ProgressBar Width="110" Height="6" IsIndeterminate="{Binding IsDismLoading}" VerticalAlignment="Center" />
+                        </WrapPanel>
+                        <StackPanel Visibility="{Binding DismSummary, Converter={StaticResource NullToVisibilityConverter}}">
+                            <TextBlock Text="{Binding DismSummary.ErrorMessage}" TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource DangerBrush}" Margin="0,0,0,8"
+                                        Visibility="{Binding DismSummary.ErrorMessage, Converter={StaticResource NullToVisibilityConverter}}" />
+                            <WrapPanel Margin="0,0,0,8" Visibility="{Binding DismSummary.Exists, Converter={StaticResource BoolToVisibilityConverter}}">
+                                <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="8,4" Margin="0,0,8,4">
+                                    <StackPanel>
+                                        <TextBlock Text="Session start" FontSize="10" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        <TextBlock Text="{Binding DismSummary.SessionStartUtc, StringFormat='{}{0:g}'}" FontSize="12" FontWeight="SemiBold" />
+                                    </StackPanel>
+                                </Border>
+                                <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="8,4" Margin="0,0,8,4">
+                                    <StackPanel>
+                                        <TextBlock Text="Session end" FontSize="10" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        <TextBlock Text="{Binding DismSummary.SessionEndUtc, StringFormat='{}{0:g}'}" FontSize="12" FontWeight="SemiBold" />
+                                    </StackPanel>
+                                </Border>
+                                <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="8,4" Margin="0,0,8,4">
+                                    <StackPanel>
+                                        <TextBlock Text="Lines in session" FontSize="10" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        <TextBlock Text="{Binding DismSummary.LinesScannedInSession}" FontSize="14" FontWeight="SemiBold" />
+                                    </StackPanel>
+                                </Border>
+                            </WrapPanel>
+                            <DataGrid ItemsSource="{Binding DismEntries}" IsReadOnly="True" AutoGenerateColumns="False" MaxHeight="220">
+                                <DataGrid.RowStyle>
+                                    <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding Level}" Value="Error">
+                                                <Setter Property="Background" Value="#1AE81123" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </DataGrid.RowStyle>
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Time" Binding="{Binding Timestamp, StringFormat='{}{0:g}'}" Width="130" />
+                                    <DataGridTextColumn Header="Level" Binding="{Binding Level}" Width="70" />
+                                    <DataGridTextColumn Header="Operation" Binding="{Binding Operation}" Width="2*" />
+                                    <DataGridTextColumn Header="HRESULT" Binding="{Binding HResultCode}" Width="100" />
+                                    <DataGridTextColumn Header="Meaning" Binding="{Binding HResultMeaning}" Width="2*" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </StackPanel>
+                    </StackPanel>
+                </Expander>
+
+                <!-- #178: upgrade/setup failure analysis -->
+                <Expander Header="Upgrade / setup failure analysis" FontSize="11.5" Margin="0,0,0,10">
+                    <StackPanel Margin="0,10,0,0">
+                        <TextBlock TextWrapping="Wrap" FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8"
+                                    Text="Reads %WinDir%\Panther\setuperr.log/setupact.log (or, when present, $WINDOWS.~BT\Sources\Panther - left behind only by an in-place upgrade that actually rolled back) for the rollback reason and the last operation attempted before failure." />
+                        <WrapPanel Margin="0,0,0,8">
+                            <Button Content="Analyze setup failure" Command="{Binding AnalyzeSetupFailureCommand}" Padding="8,3" Margin="0,0,8,0" />
+                            <ProgressBar Width="110" Height="6" IsIndeterminate="{Binding IsSetupAnalysisLoading}" VerticalAlignment="Center" />
+                        </WrapPanel>
+                        <StackPanel Visibility="{Binding SetupAnalysis, Converter={StaticResource NullToVisibilityConverter}}">
+                            <TextBlock Text="{Binding SetupAnalysis.ErrorMessage}" TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource DangerBrush}" Margin="0,0,0,8"
+                                        Visibility="{Binding SetupAnalysis.ErrorMessage, Converter={StaticResource NullToVisibilityConverter}}" />
+                            <StackPanel Visibility="{Binding SetupAnalysis.Found, Converter={StaticResource BoolToVisibilityConverter}}">
+                                <TextBlock FontSize="11" FontWeight="SemiBold" Margin="0,0,0,4" TextWrapping="Wrap">
+                                    <Run Text="Source: " /><Run Text="{Binding SetupAnalysis.SourceFolder}" FontFamily="Consolas" FontWeight="Normal" />
+                                </TextBlock>
+                                <TextBlock Text="These logs are from $WINDOWS.~BT leftovers of a failed, rolled-back in-place upgrade (not the normal post-upgrade Panther folder)."
+                                            TextWrapping="Wrap" FontSize="10.5" Foreground="{DynamicResource WarningBrush}" Margin="0,0,0,8"
+                                            Visibility="{Binding SetupAnalysis.IsFromFailedUpgradeLeftovers, Converter={StaticResource BoolToVisibilityConverter}}" />
+
+                                <TextBlock Text="{Binding SetupAnalysis.RollbackReasonLines.Count, StringFormat='Rollback reason (setuperr.log tail, {0} line(s))'}" FontSize="11" FontWeight="SemiBold" Margin="0,0,0,4" />
+                                <ListBox ItemsSource="{Binding SetupAnalysis.RollbackReasonLines}" MaxHeight="140" FontSize="10" FontFamily="Consolas"
+                                          BorderThickness="0" Background="{DynamicResource BgElevatedBrush}" Margin="0,0,0,8" />
+
+                                <TextBlock Text="{Binding SetupAnalysis.LastOperationLines.Count, StringFormat='Last operation before failure (setupact.log tail, {0} line(s))'}" FontSize="11" FontWeight="SemiBold" Margin="0,0,0,4" />
+                                <ListBox ItemsSource="{Binding SetupAnalysis.LastOperationLines}" MaxHeight="140" FontSize="10" FontFamily="Consolas"
+                                          BorderThickness="0" Background="{DynamicResource BgElevatedBrush}" />
+                            </StackPanel>
+                        </StackPanel>
+                    </StackPanel>
+                </Expander>
+
+                <!-- #179: WindowsUpdate.log on demand -->
+                <Expander Header="WindowsUpdate.log (Get-WindowsUpdateLog)" FontSize="11.5" Margin="0,0,0,10">
+                    <StackPanel Margin="0,10,0,0">
+                        <TextBlock TextWrapping="Wrap" FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8"
+                                    Text="Since Windows 10, Windows Update no longer logs to plain text - this decodes the WindowsUpdate ETL traces via Get-WindowsUpdateLog (tracerpt under the hood), then scans the result for failure lines. This routinely takes tens of seconds to a couple of minutes." />
+                        <WrapPanel Margin="0,0,0,8">
+                            <Button Content="Run Get-WindowsUpdateLog" Command="{Binding RunGetWindowsUpdateLogCommand}" Padding="8,3" Margin="0,0,8,0" />
+                            <Button Content="Cancel" Command="{Binding CancelWuLogCommand}" Padding="8,3" Margin="0,0,8,0" />
+                            <Button Content="Open full log" Command="{Binding OpenWuLogFileCommand}" Padding="8,3" Margin="0,0,8,0" />
+                            <ProgressBar Width="110" Height="6" IsIndeterminate="{Binding IsWuLogRunning}" VerticalAlignment="Center" />
+                        </WrapPanel>
+                        <TextBlock Text="{Binding WuLogStatusText}" TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8"
+                                    Visibility="{Binding WuLogStatusText, Converter={StaticResource NullToVisibilityConverter}}" />
+                        <StackPanel Visibility="{Binding WuLogResult.Success, Converter={StaticResource BoolToVisibilityConverter}}">
+                            <TextBlock Text="{Binding WuLogResult.Failures.Count, StringFormat='Failure lines found: {0}'}" FontSize="11" FontWeight="SemiBold" Margin="0,0,0,4" />
+                            <DataGrid ItemsSource="{Binding WuLogResult.Failures}" IsReadOnly="True" AutoGenerateColumns="False" MaxHeight="200">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Line" Binding="{Binding Text}" Width="*" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </StackPanel>
+                    </StackPanel>
+                </Expander>
+
+                <!-- #180: combined update failure history -->
+                <Expander Header="Update failure history" FontSize="11.5" Margin="0,0,0,10">
+                    <StackPanel Margin="0,10,0,0">
+                        <TextBlock TextWrapping="Wrap" FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8"
+                                    Text="Combines Windows Update Client event 19/20, the Setup channel's events 1-4, and the Win32_QuickFixEngineering installed-hotfix inventory into one table, sorted newest first. Well-known result codes (0x800f081f, 0x80073712, 0x800f0922) are decoded inline; anything else falls back to the same status-code resolver used elsewhere in this app." />
+                        <WrapPanel Margin="0,0,0,8">
+                            <Button Content="Load update history" Command="{Binding LoadUpdateHistoryCommand}" Padding="8,3" Margin="0,0,8,0" />
+                            <ProgressBar Width="110" Height="6" IsIndeterminate="{Binding IsUpdateHistoryLoading}" VerticalAlignment="Center" Margin="0,0,8,0" />
+                            <TextBlock Text="{Binding UpdateHistoryStatusText}" TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" />
+                        </WrapPanel>
+                        <DataGrid ItemsSource="{Binding UpdateHistory}" IsReadOnly="True" AutoGenerateColumns="False" MaxHeight="260">
+                            <DataGrid.RowStyle>
+                                <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding Success}" Value="False">
+                                            <Setter Property="Background" Value="#1AE81123" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </DataGrid.RowStyle>
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Time" Binding="{Binding TimeCreated, StringFormat='{}{0:g}'}" Width="130" />
+                                <DataGridTextColumn Header="Source" Binding="{Binding Source}" Width="130" />
+                                <DataGridTextColumn Header="Success" Binding="{Binding Success}" Width="65" />
+                                <DataGridTextColumn Header="KB" Binding="{Binding KbArticle}" Width="90" />
+                                <DataGridTextColumn Header="Result code" Binding="{Binding ResultCode}" Width="100" />
+                                <DataGridTextColumn Header="Meaning" Binding="{Binding ResultCodeMeaning}" Width="1.4*" />
+                                <DataGridTextColumn Header="Description" Binding="{Binding Description}" Width="2*" />
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </StackPanel>
+                </Expander>
+
+                <!-- #182: App/Store install failure channel -->
+                <Expander Header="App / Store install failures (AppX, AppReadiness)" FontSize="11.5" Margin="0,0,0,10">
+                    <StackPanel Margin="0,10,0,0">
+                        <TextBlock TextWrapping="Wrap" FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8"
+                                    Text="Error/Warning events from Microsoft-Windows-AppXDeployment-Server/Operational and Microsoft-Windows-AppReadiness/Operational - covers Store app install/update/repair failures." />
+                        <WrapPanel Margin="0,0,0,8">
+                            <Button Content="Load AppX/AppReadiness failures" Command="{Binding LoadAppxFailuresCommand}" Padding="8,3" Margin="0,0,8,0" />
+                            <ProgressBar Width="110" Height="6" IsIndeterminate="{Binding IsAppxLoading}" VerticalAlignment="Center" Margin="0,0,8,0" />
+                            <TextBlock Text="{Binding AppxStatusText}" TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" />
+                        </WrapPanel>
+                        <DataGrid ItemsSource="{Binding AppxFailures}" IsReadOnly="True" AutoGenerateColumns="False" MaxHeight="240">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Time" Binding="{Binding TimeCreated, StringFormat='{}{0:g}'}" Width="130" />
+                                <DataGridTextColumn Header="Channel" Binding="{Binding ChannelName}" Width="220" />
+                                <DataGridTextColumn Header="Level" Binding="{Binding Level}" Width="65" />
+                                <DataGridTextColumn Header="Event ID" Binding="{Binding EventId}" Width="65" />
+                                <DataGridTextColumn Header="Message" Binding="{Binding Message}" Width="*" />
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </StackPanel>
+                </Expander>
+
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</UserControl>
