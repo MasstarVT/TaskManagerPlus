@@ -14,3 +14,6 @@ Desktop.ini
 
 ## Local notes
 suggestions.md
+
+# Claude Code worktrees / local session data
+.claude/
