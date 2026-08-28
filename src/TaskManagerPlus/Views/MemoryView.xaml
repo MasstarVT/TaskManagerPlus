@@ -43,7 +43,11 @@
                             <Run Text=" GB" FontSize="13" FontWeight="Normal" />
                         </TextBlock>
                     </Grid>
+                    <!-- #141: crash/error markers, reusing whatever the Stability tab last read - toggleable. -->
+                    <CheckBox Content="Show crash/error markers" IsChecked="{Binding Performance.ShowEventMarkers}"
+                               FontSize="10.5" HorizontalAlignment="Right" Margin="0,0,0,4" />
                     <lvc:CartesianChart Series="{Binding Performance.RamSeries}" XAxes="{Binding Performance.HiddenXAxes}" YAxes="{Binding Performance.PercentYAxes}"
+                                         Sections="{Binding Performance.EventMarkerSections}"
                                          Height="180" TooltipPosition="Hidden" LegendPosition="Hidden" Background="Transparent" />
                 </StackPanel>
             </Border>

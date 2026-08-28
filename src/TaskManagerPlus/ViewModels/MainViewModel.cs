@@ -235,6 +235,13 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         ApplyAxisThemeToStability();
         Theme.ThemeModeChanged += ApplyAxisThemeToStability;
 
+        // #141: crash/error markers on the CPU/RAM/Disk/Network charts - reuses whatever
+        // StabilityViewModel's own on-demand refresh already read, no new poll of its own. Applied
+        // once now (in case Stability already finished its own initial fire-and-forget refresh
+        // before this wiring ran) and again every time Stability refreshes after that.
+        ApplyStabilityMarkersToPerformance();
+        Stability.Refreshed += ApplyStabilityMarkersToPerformance;
+
         ApplyAxisThemeToStartup();
         Theme.ThemeModeChanged += ApplyAxisThemeToStartup;
 
@@ -275,6 +282,13 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         Stability.ApplyAxisTheme(TextOf("TextSecondaryBrush"), TextOf("BorderBrush2"));
     }
+
+    /// <summary>#141: RecentEvents is already the Stability tab's own Critical/Error digest (see
+    /// EventLogService.Query) - just reshaped into the (Time, Level, Text) tuple
+    /// PerformanceViewModel.SetEventMarkers wants.</summary>
+    private void ApplyStabilityMarkersToPerformance()
+        => Performance.SetEventMarkers(Stability.RecentEvents.Select(e =>
+            (e.TimeCreated, e.Level, $"{e.ProviderName} {e.EventId}")));
 
     private void ApplyAxisThemeToStartup()
     {
@@ -362,6 +376,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Theme.ThemeModeChanged -= ApplyAxisThemeToPerformance;
         Theme.ThemeModeChanged -= ApplyAxisThemeToEnergyThermals;
         Theme.ThemeModeChanged -= ApplyAxisThemeToStability;
+        Stability.Refreshed -= ApplyStabilityMarkersToPerformance;
         Theme.ThemeModeChanged -= ApplyAxisThemeToStartup;
         Theme.ThemeModeChanged -= ApplyAxisThemeToLogging;
         Processes.Dispose();

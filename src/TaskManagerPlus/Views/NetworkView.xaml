@@ -28,7 +28,11 @@
                         <Border Style="{StaticResource ColorDot}" Background="{Binding Performance.NetworkColor, Converter={StaticResource ColorToBrushConverter}}" />
                         <TextBlock Text="Throughput" Style="{StaticResource CardTitle}" Margin="0" />
                     </StackPanel>
+                    <!-- #141: crash/error markers, reusing whatever the Stability tab last read - toggleable. -->
+                    <CheckBox Content="Show crash/error markers" IsChecked="{Binding Performance.ShowEventMarkers}"
+                               FontSize="10.5" HorizontalAlignment="Right" Margin="0,0,0,4" />
                     <lvc:CartesianChart Series="{Binding Performance.NetworkSeries}" XAxes="{Binding Performance.HiddenXAxes}" YAxes="{Binding Performance.NetworkYAxes}"
+                                         Sections="{Binding Performance.EventMarkerSections}"
                                          Height="200" TooltipPosition="Top" LegendPosition="Bottom" Background="Transparent"
                                          LegendTextPaint="{Binding Performance.LegendTextPaint}" LegendBackgroundPaint="{Binding Performance.LegendBackgroundPaint}"
                                          TooltipTextPaint="{Binding Performance.TooltipTextPaint}" TooltipBackgroundPaint="{Binding Performance.TooltipBackgroundPaint}" />

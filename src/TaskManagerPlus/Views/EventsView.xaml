@@ -697,6 +697,11 @@
                                 <MenuItem Header="Show +/-5 minutes across all channels"
                                            Command="{Binding PlacementTarget.DataContext.ShowAroundTimeCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                                            CommandParameter="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                <!-- #140: "show the whole operation" for the selected row's ActivityId -
+                                     only enabled when the row actually has one (most events don't set it). -->
+                                <MenuItem Header="Show whole operation (Activity ID)"
+                                           Command="{Binding PlacementTarget.DataContext.CorrelateByActivityIdCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                           CommandParameter="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
                                 <Separator />
                                 <MenuItem Header="Add to evidence bundle"
                                            Command="{Binding PlacementTarget.DataContext.AddToEvidenceCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"

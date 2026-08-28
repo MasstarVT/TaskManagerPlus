@@ -30,6 +30,7 @@
             <conv:BoolToVisibilityConverter x:Key="BoolToVisibilityConverter" />
             <conv:ActivePlanSuffixConverter x:Key="ActivePlanSuffixConverter" />
             <conv:HeatCellCountToBrushConverter x:Key="HeatCellCountToBrushConverter" />
+            <conv:TimelineSourceToBrushConverter x:Key="TimelineSourceToBrushConverter" />
         </ResourceDictionary>
     </Application.Resources>
 </Application>

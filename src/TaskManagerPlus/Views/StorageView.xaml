@@ -29,7 +29,11 @@
                         <Border Style="{StaticResource ColorDot}" Background="{Binding Performance.DiskColor, Converter={StaticResource ColorToBrushConverter}}" />
                         <TextBlock Text="Disk activity" Style="{StaticResource CardTitle}" Margin="0" />
                     </StackPanel>
+                    <!-- #141: crash/error markers, reusing whatever the Stability tab last read - toggleable. -->
+                    <CheckBox Content="Show crash/error markers" IsChecked="{Binding Performance.ShowEventMarkers}"
+                               FontSize="10.5" HorizontalAlignment="Right" Margin="0,0,0,4" />
                     <lvc:CartesianChart Series="{Binding Performance.DiskSeries}" XAxes="{Binding Performance.HiddenXAxes}" YAxes="{Binding Performance.PercentYAxes}"
+                                         Sections="{Binding Performance.EventMarkerSections}"
                                          Height="200" TooltipPosition="Hidden" LegendPosition="Hidden" Background="Transparent" />
                 </StackPanel>
             </Border>

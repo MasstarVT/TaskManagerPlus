@@ -9,6 +9,31 @@ using TaskManagerPlus.Services;
 
 namespace TaskManagerPlus.ViewModels;
 
+/// <summary>#137: one checkable source filter chip shown above the unified incident timeline -
+/// toggling it re-filters the already-built merged list (StabilityViewModel._allTimelineEntries)
+/// rather than re-querying anything. Lives in ViewModels/ (not Models/, unlike every other type
+/// this file binds) since it's stateful UI-reactive glue, not a plain data row.</summary>
+public sealed class TimelineFilterChip : ObservableObject
+{
+    private readonly Action _onChanged;
+    public TimelineSource Source { get; }
+    public string Label { get; }
+
+    private bool _isEnabled = true;
+    public bool IsEnabled
+    {
+        get => _isEnabled;
+        set { if (SetProperty(ref _isEnabled, value)) _onChanged(); }
+    }
+
+    public TimelineFilterChip(TimelineSource source, string label, Action onChanged)
+    {
+        Source = source;
+        Label = label;
+        _onChanged = onChanged;
+    }
+}
+
 /// <summary>
 /// Backs the Stability tab. Queried on demand (an initial load plus a manual Refresh command),
 /// not on a live timer - unlike a PerformanceCounter read, an event log query walks potentially
@@ -32,6 +57,19 @@ public sealed class StabilityViewModel : ObservableObject
     // Events tab's ReadWindow/ScanProviderChurn/FindBootMarkers methods, none of which this tab calls).
     private readonly EventAnomalyDetectionService _anomaly = new(new EventLogExplorerService());
 
+    // #137-145: cross-channel timeline correlation - its own EventTimelineService instance (same
+    // "each ViewModel composes its own Services/* instances directly" convention as _kb/_anomaly
+    // above), plus a dedicated EventLogExplorerService for #138's crash-window drill-down (which
+    // needs EventLogExplorerService.ReadMultiChannel/BuildStructuredQuery directly, the same pair
+    // EventsViewModel.ShowAroundTimeAsync already uses for its own +/-5-minute lookup).
+    private readonly EventTimelineService _timeline = new(new EventLogExplorerService());
+    private readonly EventLogExplorerService _drillDownExplorer = new();
+
+    /// <summary>#141: fires once per refresh (success or failure) - MainViewModel wires this to push
+    /// fresh crash/error markers into PerformanceViewModel's charts, reusing this tab's own event
+    /// data rather than adding a second poll.</summary>
+    public event Action? Refreshed;
+
     public ObservableCollection<StabilityEvent> RecentEvents { get; } = new();
     public ObservableCollection<MinidumpInfo> Minidumps { get; } = new();
 
@@ -40,6 +78,46 @@ public sealed class StabilityViewModel : ObservableObject
     /// re-ranked severity (worst first) then by how often they occurred - see
     /// EventLogService.ScanForKnownBadIds and BuildKnownBadIdScorecard.</summary>
     public ObservableCollection<KnownBadIdScorecardRow> KnownBadIdScorecard { get; } = new();
+
+    // ---- #137: unified incident timeline ----
+
+    /// <summary>The full merged set built by the last refresh, before the filter chips below are
+    /// applied - kept so toggling a chip is a pure client-side re-filter, not a re-query.</summary>
+    private List<TimelineEntry> _allTimelineEntries = new();
+
+    public ObservableCollection<TimelineEntry> Timeline { get; } = new();
+
+    /// <summary>One chip per source actually wired into BuildTimeline today - see
+    /// TimelineSource's remarks for which sources exist yet.</summary>
+    public ObservableCollection<TimelineFilterChip> TimelineFilters { get; } = new();
+
+    // ---- #138: crash-window drill-down ----
+    public ObservableCollection<EventRecordRow> CrashWindowResults { get; } = new();
+
+    private bool _isCrashWindowLoading;
+    public bool IsCrashWindowLoading { get => _isCrashWindowLoading; private set => SetProperty(ref _isCrashWindowLoading, value); }
+
+    private string? _crashWindowStatusText;
+    public string? CrashWindowStatusText { get => _crashWindowStatusText; private set => SetProperty(ref _crashWindowStatusText, value); }
+
+    public RelayCommand DrillDownCommand { get; }
+
+    // ---- #139: attribute a crash to the change that preceded it ----
+    public ObservableCollection<PreCrashChange> ChangesBeforeCrash { get; } = new();
+
+    private string? _changeAttributionStatusText;
+    public string? ChangeAttributionStatusText { get => _changeAttributionStatusText; private set => SetProperty(ref _changeAttributionStatusText, value); }
+
+    public RelayCommand FindChangesBeforeCrashCommand { get; }
+
+    // ---- #142: sleep/resume incident chain ----
+    public ObservableCollection<SleepResumeCycle> SleepResumeCycles { get; } = new();
+
+    // ---- #143: "who rebooted this PC" ----
+    public ObservableCollection<RebootAttribution> RebootAttributions { get; } = new();
+
+    // ---- #144: uptime and session ledger ----
+    public ObservableCollection<BootSessionRow> BootLedger { get; } = new();
 
     // Round 10, #66: repeated crashes grouped by faulting module, most frequent first - see
     // FaultingModuleSummary's remarks. Pure derived aggregation over RecentEvents, no new query.
@@ -111,6 +189,14 @@ public sealed class StabilityViewModel : ObservableObject
     public StabilityViewModel()
     {
         RefreshCommand = new AsyncRelayCommand(RefreshAsync);
+        DrillDownCommand = new RelayCommand(p => _ = DrillDownAsync(p as TimelineEntry));
+        FindChangesBeforeCrashCommand = new RelayCommand(p => _ = FindChangesBeforeCrashAsync(p as TimelineEntry));
+
+        // #137: one chip per source actually wired into BuildTimeline - see TimelineSource's remarks.
+        TimelineFilters.Add(new TimelineFilterChip(TimelineSource.EventLog, "Event log", ApplyTimelineFilters));
+        TimelineFilters.Add(new TimelineFilterChip(TimelineSource.Minidump, "Minidump", ApplyTimelineFilters));
+        TimelineFilters.Add(new TimelineFilterChip(TimelineSource.Boot, "Boot", ApplyTimelineFilters));
+        TimelineFilters.Add(new TimelineFilterChip(TimelineSource.Shutdown, "Shutdown", ApplyTimelineFilters));
 
         _dailyEventColumns = new ColumnSeries<double>
         {
@@ -173,6 +259,9 @@ public sealed class StabilityViewModel : ObservableObject
             var hits = await Task.Run(() => _service.ScanForKnownBadIds(flaggedIds));
             BuildKnownBadIdScorecard(hits);
 
+            // #137/#142/#143/#144: folded into this same on-demand refresh, never a new timer.
+            await RefreshTimelineExtrasAsync(snapshot);
+
             RefreshErrorText = null;
         }
         catch (Exception ex)
@@ -182,6 +271,138 @@ public sealed class StabilityViewModel : ObservableObject
         finally
         {
             IsLoading = false;
+        }
+
+        // #141: fires whether or not the refresh above succeeded - PerformanceViewModel just wants
+        // whatever RecentEvents currently holds, same as every other reader of this tab's data.
+        Refreshed?.Invoke();
+    }
+
+    /// <summary>#137/#142/#143/#144: builds the unified timeline plus the sleep/resume, who-
+    /// rebooted, and boot-ledger cards. Each sub-computation is wrapped independently so one failing
+    /// scan (e.g. a locked-down channel, or a Windows edition without the WindowsUpdateClient
+    /// operational log enabled) doesn't blank out the others that already succeeded - the same
+    /// "degrade, never fabricate" rule every event-log read in this app follows.</summary>
+    private async Task RefreshTimelineExtrasAsync(StabilitySnapshot snapshot)
+    {
+        List<DateTime> bootMarkers = new();
+        try { bootMarkers = await Task.Run(() => _anomaly.FindBootMarkers(30, CancellationToken.None)); }
+        catch { /* degrade to no boot markers on the timeline */ }
+
+        List<RebootAttribution> attributions = new();
+        try
+        {
+            attributions = await Task.Run(() => _timeline.ComputeRebootAttributions());
+            RebootAttributions.Clear();
+            foreach (var a in attributions) RebootAttributions.Add(a);
+        }
+        catch { /* degrade to an empty "who rebooted" list */ }
+
+        try
+        {
+            var cycles = await Task.Run(() => _timeline.ReconstructSleepResumeCycles());
+            SleepResumeCycles.Clear();
+            foreach (var c in cycles) SleepResumeCycles.Add(c);
+        }
+        catch { /* degrade to an empty sleep/resume list */ }
+
+        try
+        {
+            var ledger = await Task.Run(() => _timeline.BuildBootLedger());
+
+            // #144 enrichment: join each session's end with the closest #143 attribution (within 5
+            // minutes) so the ledger's EndReason names who/what caused it, not just "clean"/"unclean".
+            foreach (var session in ledger)
+            {
+                if (session.EndTime is not { } end) continue;
+                var match = attributions
+                    .Where(a => Math.Abs((a.Timestamp - end).TotalMinutes) <= 5)
+                    .OrderBy(a => Math.Abs((a.Timestamp - end).TotalMinutes))
+                    .FirstOrDefault();
+                if (match is not null) session.EndReason = match.Answer;
+            }
+
+            BootLedger.Clear();
+            foreach (var s in ledger) BootLedger.Add(s);
+        }
+        catch { /* degrade to an empty boot ledger */ }
+
+        try
+        {
+            _allTimelineEntries = await Task.Run(() => _timeline.BuildTimeline(snapshot.RecentEvents, snapshot.Minidumps, bootMarkers, attributions));
+            ApplyTimelineFilters();
+        }
+        catch { /* degrade to an empty timeline */ }
+    }
+
+    /// <summary>#137: re-filters the already-built merged list by whichever source chips are
+    /// currently checked - never re-queries anything.</summary>
+    private void ApplyTimelineFilters()
+    {
+        var enabledSources = TimelineFilters.Where(f => f.IsEnabled).Select(f => f.Source).ToHashSet();
+        Timeline.Clear();
+        foreach (var entry in _allTimelineEntries.Where(e => enabledSources.Contains(e.Source)))
+            Timeline.Add(entry);
+    }
+
+    /// <summary>#138: "±5 minutes, every readable channel" for whatever timeline entry was clicked -
+    /// reuses EventLogExplorerService.ReadMultiChannel/BuildStructuredQuery exactly the way
+    /// EventsViewModel.ShowAroundTimeAsync already does for a selected grid row. Channel list
+    /// defaults to System+Application (the Stability tab has no channel selector of its own) plus
+    /// the entry's own channel, when it has one and it isn't already one of those two.</summary>
+    private async Task DrillDownAsync(TimelineEntry? entry)
+    {
+        if (entry is null) return;
+
+        var start = entry.Timestamp.ToUniversalTime().AddMinutes(-5);
+        var end = entry.Timestamp.ToUniversalTime().AddMinutes(5);
+        string xpath = $"*[System[TimeCreated[@SystemTime>='{start:o}'] and TimeCreated[@SystemTime<='{end:o}']]]";
+
+        var channels = new List<string> { "System", "Application" };
+        if (entry.SourceEvent?.ChannelName is { Length: > 0 } ch && !channels.Contains(ch, StringComparer.OrdinalIgnoreCase))
+            channels.Add(ch);
+
+        string structuredXml = EventLogExplorerService.BuildStructuredQuery(channels, xpath);
+
+        IsCrashWindowLoading = true;
+        CrashWindowResults.Clear();
+        CrashWindowStatusText = $"Loading events within +/-5 minutes of {entry.Timestamp:g}...";
+        try
+        {
+            var result = await Task.Run(() => _drillDownExplorer.ReadMultiChannel(structuredXml, null, pageSize: 500));
+            if (result.ErrorText is not null)
+            {
+                CrashWindowStatusText = $"Couldn't load the surrounding window: {result.ErrorText}";
+                return;
+            }
+            foreach (var r in result.Rows) CrashWindowResults.Add(r);
+            CrashWindowStatusText = $"{CrashWindowResults.Count} event(s) within +/-5 minutes of {entry.Timestamp:g} (all levels).";
+        }
+        finally
+        {
+            IsCrashWindowLoading = false;
+        }
+    }
+
+    /// <summary>#139: "changes shortly before this crash" for whatever crash-flagged timeline entry
+    /// was clicked - explicitly correlation, not causation (see StabilityView.xaml's card copy).</summary>
+    private async Task FindChangesBeforeCrashAsync(TimelineEntry? entry)
+    {
+        if (entry is null) return;
+
+        ChangesBeforeCrash.Clear();
+        ChangeAttributionStatusText = $"Looking for changes in the 7 days before {entry.Timestamp:g}...";
+        try
+        {
+            var changes = await Task.Run(() => _timeline.FindChangesBeforeCrash(entry.Timestamp));
+            foreach (var c in changes) ChangesBeforeCrash.Add(c);
+            ChangeAttributionStatusText = changes.Count == 0
+                ? "No driver/update/service-install changes found in the 7 days before this crash."
+                : $"{changes.Count} change(s) found in the 7 days before this crash — correlation, not proof of cause.";
+        }
+        catch (Exception ex)
+        {
+            ChangeAttributionStatusText = $"Couldn't search for preceding changes: {ex.Message}";
         }
     }
 

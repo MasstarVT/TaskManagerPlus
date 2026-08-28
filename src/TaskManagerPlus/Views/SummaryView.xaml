@@ -326,9 +326,19 @@
                                Style="{StaticResource SubStat}" Margin="0,-2,0,8" TextWrapping="Wrap" />
                     <TextBlock Text="{Binding DataContext.Logging.ReplayStatusText, RelativeSource={RelativeSource AncestorType=Window}}"
                                Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" />
+                    <!-- #145: overlay Critical/Error event markers on the replayed trace, bounded to
+                         this file's own time range - so a thermal event and an error burst can be
+                         lined up without exporting both to a spreadsheet. -->
+                    <WrapPanel Margin="0,0,0,6">
+                        <CheckBox Content="Overlay event-log errors" IsChecked="{Binding DataContext.Logging.ShowReplayEventMarkers, RelativeSource={RelativeSource AncestorType=Window}}"
+                                   FontSize="10.5" VerticalAlignment="Center" Margin="0,0,10,0" />
+                        <TextBlock Text="{Binding DataContext.Logging.ReplayMarkerStatusText, RelativeSource={RelativeSource AncestorType=Window}}"
+                                    Style="{StaticResource SubStat}" VerticalAlignment="Center" TextWrapping="Wrap" />
+                    </WrapPanel>
                     <lvc:CartesianChart Series="{Binding DataContext.Logging.ReplaySeries, RelativeSource={RelativeSource AncestorType=Window}}"
                                          XAxes="{Binding DataContext.Logging.ReplayXAxes, RelativeSource={RelativeSource AncestorType=Window}}"
                                          YAxes="{Binding DataContext.Logging.ReplayYAxes, RelativeSource={RelativeSource AncestorType=Window}}"
+                                         Sections="{Binding DataContext.Logging.ReplayMarkerSections, RelativeSource={RelativeSource AncestorType=Window}}"
                                          Height="180" TooltipPosition="Top" LegendPosition="Bottom" Background="Transparent">
                         <lvc:CartesianChart.Style>
                             <Style TargetType="lvc:CartesianChart">

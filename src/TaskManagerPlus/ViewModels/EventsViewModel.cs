@@ -242,6 +242,12 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
     public RelayCommand ShowAroundTimeCommand { get; }
     public RelayCommand AddToEvidenceCommand { get; }
 
+    /// <summary>#140: "show the whole operation" - queries every accessible channel for the
+    /// selected row's own ActivityId, the field a provider stamps on every event it logs for one
+    /// logical operation (the only thing that stitches a multi-component failure together across
+    /// channels). Enabled only when the row actually has a non-empty ActivityId.</summary>
+    public RelayCommand CorrelateByActivityIdCommand { get; }
+
     /// <summary>#115: a stub in-memory evidence collector - a real evidence-bundle exporter is
     /// item 200 (later); this just gathers selected rows with a small counter/badge in the UI.</summary>
     public ObservableCollection<EventRecordRow> EvidenceBundle { get; } = new();
@@ -465,6 +471,9 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
         FilterToProviderCommand = new RelayCommand(p => FilterToProvider(p as EventRecordRow));
         ShowAroundTimeCommand = new RelayCommand(p => _ = ShowAroundTimeAsync(p as EventRecordRow));
         AddToEvidenceCommand = new RelayCommand(p => AddToEvidence(p as EventRecordRow));
+        CorrelateByActivityIdCommand = new RelayCommand(
+            p => _ = CorrelateByActivityIdAsync(p as EventRecordRow),
+            p => (p as EventRecordRow)?.ActivityId is { } id && id != Guid.Empty);
 
         RunKbActionCommand = new RelayCommand(_ => RunKbAction(), _ => _kbActionTargetRow is not null);
         ExportUnknownEventsCommand = new RelayCommand(_ => ExportUnknownEvents(), _ => UnknownEventCount > 0);
@@ -1279,6 +1288,45 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
             _multiChannelBookmark = result.Bookmark;
             HasMoreMultiChannel = result.HasMore;
             MultiChannelStatusText = $"{MultiChannelResults.Count} event(s) within +/-5 minutes of {row.TimeCreated:g}.";
+        }
+        finally
+        {
+            IsMultiChannelLoading = false;
+        }
+    }
+
+    /// <summary>#140: "show the whole operation" - a multi-channel structured query for the
+    /// selected row's own ActivityId, the same #112 infrastructure #115's "Show +/-5 minutes"
+    /// already reuses. Correlation[@ActivityID=...] rather than a time bound, since the whole point
+    /// is following one logical operation across channels/components, however far apart in time its
+    /// pieces landed.</summary>
+    private async Task CorrelateByActivityIdAsync(EventRecordRow? row)
+    {
+        if (row?.ActivityId is not { } id || id == Guid.Empty) return;
+
+        string xpath = $"*[System[Correlation[@ActivityID='{id:B}']]]";
+        var channels = ChannelTree.SelectMany(g => g.Children).Where(c => !c.IsGroup && c.IsAccessible).Select(c => c.Name).ToList();
+        if (channels.Count == 0) return;
+
+        _multiChannelStructuredXml = EventLogExplorerService.BuildStructuredQuery(channels, xpath);
+        _multiChannelBookmark = null;
+        MultiChannelResults.Clear();
+        MultiChannelStatusText = $"Loading every event sharing ActivityId {id:B}...";
+
+        IsMultiChannelLoading = true;
+        try
+        {
+            var result = await Task.Run(() => _service.ReadMultiChannel(_multiChannelStructuredXml, null));
+            if (result.ErrorText is not null)
+            {
+                MultiChannelStatusText = $"Couldn't correlate by Activity ID: {result.ErrorText}";
+                return;
+            }
+            RegisterKbCoverage(result.Rows);
+            foreach (var r in result.Rows) MultiChannelResults.Add(r);
+            _multiChannelBookmark = result.Bookmark;
+            HasMoreMultiChannel = result.HasMore;
+            MultiChannelStatusText = $"{MultiChannelResults.Count} event(s) sharing ActivityId {id:B}.";
         }
         finally
         {
