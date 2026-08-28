@@ -493,7 +493,10 @@ public sealed class SystemSpecsService
         return result;
     }
 
-    private static string NormalizeForMatch(string s) => s.Replace(' ', '_').ToLowerInvariant();
+    // internal (not private): reused by SmartRawAttributeService for the same PNPDeviceID-prefix
+    // matching against MSStorageDriver_ATAPISmartData / MSStorageDriver_FailurePredictThresholds
+    // instance names (#301/#302), rather than duplicating this normalization elsewhere.
+    internal static string NormalizeForMatch(string s) => s.Replace(' ', '_').ToLowerInvariant();
 
     /// <summary>
     /// SSD wear/life-used percentage (#65), via the Storage Management API's

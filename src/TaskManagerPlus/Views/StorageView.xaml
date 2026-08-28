@@ -208,6 +208,131 @@
                 </StackPanel>
             </Border>
 
+            <!-- Round 10, #301/#302/#303/#304/#306/#307/#308/#312: raw ATA SMART attribute table
+                 for the disk selected above, populated by the same "Read SMART details" action -
+                 the real 30-entry attribute table (MSStorageDriver_ATAPISmartData), not just the
+                 driver-summarised MSFT_StorageReliabilityCounter fields in the card above. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Raw SMART attributes" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Full 30-entry ATA attribute table + published failure thresholds for the disk selected above. Vendor-reassigned IDs (0xAD/0xB1/0xE8/0xE9/0xF1/0xF2, ...) are reinterpreted per the matched vendor profile where one exists."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+
+                    <!-- #306: critical-attribute triage strip - "quick flag, not a verdict". -->
+                    <TextBlock Text="One pending sector is worth watching, not replacing a drive over - a quick flag, not a verdict."
+                               Margin="0,0,0,6" TextWrapping="Wrap">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding SmartTriageTiles.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <ItemsControl ItemsSource="{Binding SmartTriageTiles}" Margin="0,0,0,10">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate><UniformGrid Columns="5" /></ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <views:VfdMeter Title="{Binding Title}" Glow="False" Margin="0,0,6,0"
+                                                ValueText="{Binding ValueText}" Percent="0">
+                                    <views:VfdMeter.Style>
+                                        <Style TargetType="views:VfdMeter">
+                                            <Setter Property="AccentBrush" Value="{DynamicResource SuccessBrush}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsCritical}" Value="True">
+                                                    <Setter Property="AccentBrush" Value="{DynamicResource DangerBrush}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </views:VfdMeter.Style>
+                                </views:VfdMeter>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <!-- #307/#308: per-disk temperature and power-on/duty-cycle summary lines. -->
+                    <TextBlock Text="{Binding SmartTemperatureSummary}" Style="{StaticResource SubStat}" Margin="0,0,0,2" TextWrapping="Wrap"
+                               Visibility="{Binding SmartTemperatureSummary, Converter={StaticResource StringToVisibilityConverter}}" />
+                    <TextBlock Text="{Binding SmartPowerOnSummary}" Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap"
+                               Visibility="{Binding SmartPowerOnSummary, Converter={StaticResource StringToVisibilityConverter}}" />
+
+                    <TextBlock Text="{Binding SmartRawStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,2" />
+                    <TextBlock Text="{Binding SmartVendorProfileText}" Style="{StaticResource SubStat}" Margin="0,0,0,2" TextWrapping="Wrap"
+                               Visibility="{Binding SmartVendorProfileText, Converter={StaticResource StringToVisibilityConverter}}" />
+                    <!-- #312: explains why the grid below is empty (USB/1394/SD bridge, NVMe, etc.), or names the data source (WMI vs. SCSI pass-through fallback) when it isn't. -->
+                    <TextBlock Text="{Binding SmartAvailabilityNote}" Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap"
+                               Visibility="{Binding SmartAvailabilityNote, Converter={StaticResource StringToVisibilityConverter}}" />
+
+                    <DataGrid ItemsSource="{Binding SmartRawAttributes}" IsReadOnly="True" MaxHeight="320" AutoGenerateColumns="False">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="ID" Binding="{Binding IdHex}" Width="45" />
+                            <DataGridTextColumn Header="Attribute" Binding="{Binding Name}" Width="1.6*" />
+                            <DataGridTextColumn Header="Current" Binding="{Binding Current}" Width="60" />
+                            <DataGridTextColumn Header="Worst" Binding="{Binding Worst}" Width="55" />
+                            <DataGridTextColumn Header="Threshold" Binding="{Binding ThresholdText}" Width="70" />
+                            <DataGridTextColumn Header="Margin" Binding="{Binding MarginText}" Width="60" />
+                            <DataGridTextColumn Header="Raw value" Binding="{Binding RawDisplay}" Width="1.2*" />
+                            <DataGridTextColumn Header="Note" Binding="{Binding VendorNote}" Width="1.2*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- #309: Load/Unload + Start/Stop wear vs. this vendor's typical rated maximum -
+                 HDD-only, hidden entirely for SSD/NVMe media. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding ShowSmartWearCycles}" Value="True">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="HDD mechanical wear" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Head-parking and spin-up/down cycles against this vendor's typical (not per-model) rated maximum - informational only."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,4" TextWrapping="Wrap">
+                        <Run Text="Load/unload cycles: " FontWeight="SemiBold" /><Run Text="{Binding SmartLoadUnloadText, Mode=OneWay}" />
+                    </TextBlock>
+                    <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap">
+                        <Run Text="Start/stop cycles: " FontWeight="SemiBold" /><Run Text="{Binding SmartStartStopText, Mode=OneWay}" />
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- #310/#311: Endurance card - host TBW/write-amplification estimate plus SSD
+                 wear-levelling detail cross-checked against the driver's own Wear% summary. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding ShowSmartEndurance}" Value="True">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Endurance" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="{Binding SmartEnduranceTbwText}" Style="{StaticResource SubStat}" Margin="0,-4,0,4" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding SmartEnduranceWafText}" Style="{StaticResource SubStat}" Margin="0,0,0,4" TextWrapping="Wrap"
+                               Visibility="{Binding SmartEnduranceWafText, Converter={StaticResource StringToVisibilityConverter}}" />
+                    <TextBlock Text="{Binding SmartWearLevelText}" Style="{StaticResource SubStat}" Margin="0,0,0,4" TextWrapping="Wrap"
+                               Visibility="{Binding SmartWearLevelText, Converter={StaticResource StringToVisibilityConverter}}" />
+                    <TextBlock Text="{Binding SmartWearWarningText}" Foreground="{DynamicResource WarningBrush}" FontSize="12.5" TextWrapping="Wrap"
+                               Visibility="{Binding SmartWearWarningText, Converter={StaticResource StringToVisibilityConverter}}" />
+                </StackPanel>
+            </Border>
+
             <!-- Round 9, #39: largest files/folders scanner - on-demand, depth-capped, for
                  finding what's eating a nearly-full volume. Access-denied subtrees are skipped
                  silently rather than failing the whole scan. -->
