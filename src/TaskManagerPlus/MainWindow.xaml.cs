@@ -1,4 +1,5 @@
-﻿using System.Linq;
+﻿using System.Collections.Generic;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
@@ -72,13 +73,32 @@ public partial class MainWindow : Window
     /// strip's selection moves away from it - a live EventLogWatcher has no reason to keep
     /// pushing rows into a grid nobody's looking at, and this is the one place that reliably knows
     /// when that happens regardless of how the user navigated away (tab click, Ctrl+1..9, --tab).
-    /// Ignores selection-changed events bubbling up from nested controls (e.g. this app's own
-    /// TabControl-based settings sub-navigation) by checking the event's OriginalSource.</summary>
+    /// Since the tab strip became a two-level group/leaf structure, Events is no longer a direct
+    /// child of MainTabControl and selection changes reach here bubbled up from the group-level
+    /// TabControl (and from any in-page section chip bar). So rather than filtering on
+    /// OriginalSource being MainTabControl itself - which is now never true for the change that
+    /// actually moves off Events - this asks the only question that matters: after this change, is
+    /// Events still the visible leaf? A bubbled change from somewhere Events isn't visible answers
+    /// no and stops the watcher, which is the correct outcome either way.</summary>
     private void MainTabControl_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (!ReferenceEquals(e.OriginalSource, MainTabControl)) return;
-        if (MainTabControl.SelectedItem is not TabItem selected || !string.Equals(selected.Header as string, "Events", StringComparison.OrdinalIgnoreCase))
-            _viewModel.Events.OnTabDeactivated();
+        if (e.OriginalSource is not TabControl) return;
+        if (!IsLeafTabActive("Events")) _viewModel.Events.OnTabDeactivated();
+    }
+
+    /// <summary>True when <paramref name="name"/> is on the currently selected path of tabs -
+    /// i.e. its view is the one on screen. Walks down from MainTabControl through each selected
+    /// TabItem whose content is itself a TabControl (the group level).</summary>
+    private bool IsLeafTabActive(string name)
+    {
+        for (TabControl? control = MainTabControl; control is not null;)
+        {
+            if (control.SelectedItem is not TabItem tab) return false;
+            if (string.Equals(HeaderNameOf(tab), name, StringComparison.OrdinalIgnoreCase)) return true;
+            control = tab.Content as TabControl;
+        }
+
+        return false;
     }
 
     /// <summary>#690: forwards WM_DISPLAYCHANGE (resolution/color-depth change, or a monitor
@@ -151,14 +171,44 @@ public partial class MainWindow : Window
     /// what's ultimately a convenience shortcut, not a required argument.</summary>
     public void SelectTabByName(string name)
     {
-        foreach (var item in MainTabControl.Items)
+        var path = FindTabPath(name);
+        if (path is null) return;
+
+        // Outermost first: selecting the group is what makes its nested TabControl the live one,
+        // so the inner assignment has to come after it, not before.
+        foreach (var (owner, tab) in path) owner.SelectedItem = tab;
+    }
+
+    /// <summary>Finds a tab by name anywhere in the group/leaf tree and returns the full
+    /// (owner, tab) chain from MainTabControl down to it, or null if no tab matches.
+    ///
+    /// Breadth-first on purpose: a group and one of its leaves can legitimately share a name
+    /// (the System group's first leaf is also called System), and the shallower one has to win so
+    /// that `--tab System` lands where it did before the tabs were grouped.
+    ///
+    /// This walks TabItem.Content rather than the visual tree because a TabControl only realizes
+    /// the selected tab's content - the nested TabControls are plain XAML-declared objects and are
+    /// therefore reachable this way whether or not their group has ever been shown, which a
+    /// VisualTreeHelper walk would not be.</summary>
+    private List<(TabControl Owner, TabItem Tab)>? FindTabPath(string name)
+    {
+        var queue = new Queue<(TabControl Owner, List<(TabControl, TabItem)> Prefix)>();
+        queue.Enqueue((MainTabControl, new List<(TabControl, TabItem)>()));
+
+        while (queue.Count > 0)
         {
-            if (item is TabItem tab && string.Equals(HeaderNameOf(tab), name, StringComparison.OrdinalIgnoreCase))
+            var (owner, prefix) = queue.Dequeue();
+            foreach (var item in owner.Items)
             {
-                MainTabControl.SelectedItem = tab;
-                return;
+                if (item is not TabItem tab) continue;
+
+                var path = new List<(TabControl, TabItem)>(prefix) { (owner, tab) };
+                if (string.Equals(HeaderNameOf(tab), name, StringComparison.OrdinalIgnoreCase)) return path;
+                if (tab.Content is TabControl nested) queue.Enqueue((nested, path));
             }
         }
+
+        return null;
     }
 
     /// <summary>The name a tab is addressed by. Header is a plain string for every tab but
@@ -295,17 +345,17 @@ public partial class MainWindow : Window
 
         var order = _viewModel.TabShortcutOrder;
         if (index >= order.Count) return;
-        var targetHeader = order[index];
 
-        foreach (var item in MainTabControl.Items)
-        {
-            if (item is TabItem tab && string.Equals(tab.Header as string, targetHeader, StringComparison.OrdinalIgnoreCase))
-            {
-                MainTabControl.SelectedItem = tab;
-                e.Handled = true;
-                return;
-            }
-        }
+        // Goes through SelectTabByName rather than scanning MainTabControl.Items directly: the
+        // configured shortcut names are leaf tabs ("Memory", "Stability", ...), which are now one
+        // level down inside their group, and this is the one place that knows how to walk there.
+        // It also picks up HeaderNameOf's AutomationProperties.Name fallback, so Ctrl+1..9 can
+        // reach Stability - whose Header is a panel, not a string - which it previously could not.
+        var target = order[index];
+        if (FindTabPath(target) is null) return;
+
+        SelectTabByName(target);
+        e.Handled = true;
     }
 
     /// <summary>

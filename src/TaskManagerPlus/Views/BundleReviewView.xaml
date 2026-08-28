@@ -21,8 +21,8 @@
                         <Border Grid.Column="0" Width="8" Height="8" CornerRadius="4" Margin="0,3,8,0" VerticalAlignment="Top"
                                 Background="{Binding Severity, Converter={StaticResource RuleSeverityToBrushConverter}}" />
                         <StackPanel Grid.Column="1">
-                            <TextBlock Text="{Binding Message}" FontSize="12.5" TextWrapping="Wrap" />
-                            <TextBlock FontSize="10.5" Foreground="{DynamicResource TextTertiaryBrush}" Margin="0,2,0,0">
+                            <TextBlock Text="{Binding Message}" FontSize="{StaticResource FontStrong}" TextWrapping="Wrap" />
+                            <TextBlock FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextTertiaryBrush}" Margin="0,2,0,0">
                                 <Run Text="{Binding Severity, Mode=OneWay}" /><Run Text=" · " /><Run Text="{Binding ConfidenceWord, Mode=OneWay}" />
                             </TextBlock>
                         </StackPanel>
@@ -38,8 +38,8 @@
                     <ColumnDefinition Width="130" />
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
-                <TextBlock Grid.Column="0" Text="{Binding Timestamp, StringFormat={}{0:g}}" FontSize="11" />
-                <TextBlock Grid.Column="1" Text="{Binding LaneDisplayName}" FontSize="11">
+                <TextBlock Grid.Column="0" Text="{Binding Timestamp, StringFormat={}{0:g}}" FontSize="{StaticResource FontBody}" />
+                <TextBlock Grid.Column="1" Text="{Binding LaneDisplayName}" FontSize="{StaticResource FontBody}">
                     <TextBlock.Style>
                         <Style TargetType="TextBlock">
                             <Style.Triggers>
@@ -50,7 +50,7 @@
                         </Style>
                     </TextBlock.Style>
                 </TextBlock>
-                <TextBlock Grid.Column="2" FontSize="11" TextWrapping="Wrap">
+                <TextBlock Grid.Column="2" FontSize="{StaticResource FontBody}" TextWrapping="Wrap">
                     <Run Text="{Binding Title, Mode=OneWay}" FontWeight="SemiBold" />
                     <Run Text=" — " />
                     <Run Text="{Binding Detail, Mode=OneWay}" />
@@ -64,8 +64,8 @@
                     <ColumnDefinition Width="140" />
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
-                <TextBlock Grid.Column="0" Text="{Binding CapturedAt, StringFormat={}{0:g}}" FontSize="11" />
-                <TextBlock Grid.Column="1" FontSize="11" TextWrapping="Wrap">
+                <TextBlock Grid.Column="0" Text="{Binding CapturedAt, StringFormat={}{0:g}}" FontSize="{StaticResource FontBody}" />
+                <TextBlock Grid.Column="1" FontSize="{StaticResource FontBody}" TextWrapping="Wrap">
                     <Run Text="{Binding Label, TargetNullValue='(routine baseline)', Mode=OneWay}" />
                     <Run Text=" — Fingerprint: " Foreground="{DynamicResource TextTertiaryBrush}" />
                     <Run Text="{Binding Fingerprint.CpuName, Mode=OneWay}" />
@@ -74,7 +74,7 @@
         </DataTemplate>
 
         <DataTemplate x:Key="ReadOnlyFileTemplate" DataType="{x:Type models:EvidenceBundleManifestEntry}">
-            <TextBlock FontSize="11" TextWrapping="Wrap" Margin="0,0,0,3">
+            <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,3">
                 <Run Text="{Binding Title, Mode=OneWay}" FontWeight="SemiBold" />
                 <Run Text=" — " />
                 <Run Text="{Binding FileName, Mode=OneWay}" Foreground="{DynamicResource TextTertiaryBrush}" />
@@ -96,7 +96,7 @@
                         Padding="10,4" Margin="0,0,14,0" VerticalAlignment="Center"
                         AutomationProperties.Name="Back to Troubleshoot landing page" />
                 <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                    <TextBlock Text="Bundle review" FontSize="17" FontWeight="SemiBold" />
+                    <TextBlock Text="Bundle review" FontSize="{StaticResource FontTitle}" FontWeight="SemiBold" />
                     <TextBlock Text="Open someone else's exported evidence bundle and review it read-only, without affecting anything on this machine."
                                Style="{StaticResource SubStat}" TextWrapping="Wrap" />
                 </StackPanel>
@@ -112,7 +112,7 @@
             <Border Background="{DynamicResource AccentMutedBrush}" BorderBrush="{DynamicResource AccentBrush}"
                     BorderThickness="1" CornerRadius="8" Padding="12,8" Margin="0,0,0,14"
                     Visibility="{Binding IsBundleLoaded, Converter={StaticResource BoolToVisibilityConverter}}">
-                <TextBlock Text="{Binding BannerText}" FontSize="12.5" FontWeight="SemiBold" TextWrapping="Wrap" />
+                <TextBlock Text="{Binding BannerText}" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" TextWrapping="Wrap" />
             </Border>
 
             <TextBlock Text="{Binding StatusText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,16" />

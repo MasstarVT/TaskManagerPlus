@@ -19,7 +19,7 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <StackPanel Grid.Column="0" Margin="0,0,10,0">
-                            <TextBlock FontSize="13" FontWeight="SemiBold" TextWrapping="Wrap">
+                            <TextBlock FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" TextWrapping="Wrap">
                                 <Run Text="{Binding Entry.ActionDescription, Mode=OneWay}" />
                                 <Run Text=" — " />
                                 <Run Text="{Binding Entry.Target, Mode=OneWay}" />
@@ -29,14 +29,14 @@
                                 <Run Text=" (UTC) · " />
                                 <Run Text="{Binding Entry.TriggeredBy, Mode=OneWay}" />
                             </TextBlock>
-                            <TextBlock FontSize="11.5" TextWrapping="Wrap" Margin="0,4,0,0"
+                            <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,4,0,0"
                                        Visibility="{Binding Entry.BeforeValue, Converter={StaticResource NullToVisibilityConverter}}">
                                 <Run Text="Before: " Foreground="{DynamicResource TextTertiaryBrush}" />
                                 <Run Text="{Binding Entry.BeforeValue, Mode=OneWay}" />
                                 <Run Text="   After: " Foreground="{DynamicResource TextTertiaryBrush}" />
                                 <Run Text="{Binding Entry.AfterValue, Mode=OneWay}" />
                             </TextBlock>
-                            <TextBlock FontSize="11.5" Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" Margin="0,4,0,0">
+                            <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" Margin="0,4,0,0">
                                 <TextBlock.Style>
                                     <Style TargetType="TextBlock">
                                         <Setter Property="Visibility" Value="Collapsed" />
@@ -53,7 +53,7 @@
 
                         <StackPanel Grid.Column="1" VerticalAlignment="Top" HorizontalAlignment="Right">
                             <!-- Undone / not-undoable status, or the Undo button itself. -->
-                            <TextBlock Text="Undone" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource SuccessBrush}"
+                            <TextBlock Text="Undone" FontSize="{StaticResource FontBody}" FontWeight="SemiBold" Foreground="{DynamicResource SuccessBrush}"
                                        HorizontalAlignment="Right">
                                 <TextBlock.Style>
                                     <Style TargetType="TextBlock">
@@ -88,7 +88,7 @@
                                 </Button.Style>
                             </Button>
 
-                            <TextBlock Text="{Binding BlockedReason}" FontSize="10.5" TextWrapping="Wrap" MaxWidth="180"
+                            <TextBlock Text="{Binding BlockedReason}" FontSize="{StaticResource FontCaption}" TextWrapping="Wrap" MaxWidth="180"
                                        Foreground="{DynamicResource TextTertiaryBrush}" HorizontalAlignment="Right" TextAlignment="Right" Margin="0,2,0,0">
                                 <TextBlock.Style>
                                     <Style TargetType="TextBlock">
@@ -107,7 +107,7 @@
 
                             <!-- #971: secondary "restore from registry backup" option, offered
                                  alongside the primary Undo whenever a backup was taken. -->
-                            <Button Content="Restore reg backup" Padding="8,3" Margin="0,4,0,0" FontSize="10.5" HorizontalAlignment="Right"
+                            <Button Content="Restore reg backup" Padding="8,3" Margin="0,4,0,0" FontSize="{StaticResource FontCaption}" HorizontalAlignment="Right"
                                     Command="{Binding DataContext.RestoreFromBackupCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                     CommandParameter="{Binding}">
                                 <Button.Style>
@@ -124,7 +124,7 @@
                         </StackPanel>
                     </Grid>
 
-                    <TextBlock Text="{Binding ResultText}" FontSize="11.5" TextWrapping="Wrap" Margin="0,8,0,0">
+                    <TextBlock Text="{Binding ResultText}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,8,0,0">
                         <TextBlock.Style>
                             <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
                                 <Setter Property="Visibility" Value="Visible" />
@@ -149,12 +149,12 @@
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     <StackPanel Grid.Column="0" Margin="0,0,10,0">
-                        <TextBlock FontSize="13" FontWeight="SemiBold" TextWrapping="Wrap" Text="{Binding ActionTitle}" />
+                        <TextBlock FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" TextWrapping="Wrap" Text="{Binding ActionTitle}" />
                         <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap">
                             <Run Text="Scheduled: " /><Run Text="{Binding ScheduleText, Mode=OneWay}" />
                             <Run Text=" · Queued " /><Run Text="{Binding CreatedUtc, StringFormat={}{0:g}, Mode=OneWay}" /><Run Text=" (UTC)" />
                         </TextBlock>
-                        <TextBlock Text="{Binding Command}" FontFamily="Consolas" FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0"
+                        <TextBlock Text="{Binding Command}" FontFamily="Consolas" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,4,0,0"
                                    Foreground="{DynamicResource TextTertiaryBrush}" />
                     </StackPanel>
                     <Button Grid.Column="1" Content="Cancel" Padding="10,4" VerticalAlignment="Top"
@@ -178,7 +178,7 @@
                 <Button Grid.Column="0" Content="&#8592; Back"
                         Command="{Binding DataContext.HideChangeJournalCommand, RelativeSource={RelativeSource AncestorType=UserControl, AncestorLevel=2}}"
                         Padding="10,4" Margin="0,0,14,0" VerticalAlignment="Center" />
-                <TextBlock Grid.Column="1" Text="Changes made by this app" FontSize="17" FontWeight="SemiBold" VerticalAlignment="Center" />
+                <TextBlock Grid.Column="1" Text="Changes made by this app" FontSize="{StaticResource FontTitle}" FontWeight="SemiBold" VerticalAlignment="Center" />
                 <Button Grid.Column="2" Content="Refresh" Padding="10,4" Command="{Binding RefreshCommand}" />
             </Grid>
             <TextBlock Text="Every service/startup/process/power-plan change (and every #967 remediation action run) this app has made, newest first. Undo runs the same underlying action, in reverse."
@@ -201,7 +201,7 @@
 
             <!-- #979: "Queued fixes" - a small sibling section listing fixes queued for next boot
                  or a chosen time, each cancellable here (deletes the underlying scheduled task). -->
-            <TextBlock Text="Queued fixes" FontSize="15" FontWeight="SemiBold" Margin="0,22,0,4" />
+            <TextBlock Text="Queued fixes" FontSize="{StaticResource FontSection}" FontWeight="SemiBold" Margin="0,20,0,4" />
             <TextBlock Text="Fixes queued for next boot (or a chosen time) via a remediation review dialog's &quot;Queue for next boot&quot; option - each runs as a real Windows Scheduled Task independent of this app being open."
                        Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,10" />
             <TextBlock Text="{Binding DeferredStatusText}" TextWrapping="Wrap" Margin="0,0,0,10">

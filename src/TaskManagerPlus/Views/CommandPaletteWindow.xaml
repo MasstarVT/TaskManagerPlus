@@ -24,7 +24,7 @@
                        Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,8" />
 
             <TextBox Grid.Row="1" x:Name="SearchBox" Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
-                     FontSize="16" Padding="8,7" Margin="0,0,0,10" KeyDown="SearchBox_KeyDown"
+                     FontSize="{StaticResource FontTitle}" Padding="8,6" Margin="0,0,0,10" KeyDown="SearchBox_KeyDown"
                      AutomationProperties.Name="Command palette search box" />
 
             <ListBox Grid.Row="2" x:Name="ResultsList" ItemsSource="{Binding Results}"
@@ -34,11 +34,11 @@
                     <DataTemplate DataType="{x:Type models:SearchResult}">
                         <StackPanel Margin="4,4">
                             <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="{Binding Category}" FontSize="10" FontWeight="Bold"
+                                <TextBlock Text="{Binding Category}" FontSize="{StaticResource FontCaption}" FontWeight="Bold"
                                            Foreground="{DynamicResource AccentBrush}" Margin="0,0,8,0" />
-                                <TextBlock Text="{Binding Name}" FontSize="13" FontWeight="SemiBold" />
+                                <TextBlock Text="{Binding Name}" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" />
                             </StackPanel>
-                            <TextBlock Text="{Binding Detail}" FontSize="11" TextWrapping="Wrap"
+                            <TextBlock Text="{Binding Detail}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap"
                                        Foreground="{DynamicResource TextTertiaryBrush}" Margin="0,2,0,0" />
                         </StackPanel>
                     </DataTemplate>

@@ -64,6 +64,13 @@ wrong with this PC" diagnostics.
   offer a dry run where one exists, and take a restore point plus a registry
   backup ahead of anything risky. Also hosts the timeline, baselines,
   background health, evidence bundles, and a glossary.
+- **Navigation** — the eighteen tabs are grouped into six (Summary,
+  Hardware, Activity, System, Diagnostics, Security), and the deeper tabs
+  are split into named sections by a chip bar rather than one long scroll —
+  Stability alone had 91 stacked cards. Ctrl+1..9 jumps straight to a tab,
+  Ctrl+K opens a command palette, and `--tab <name>` opens the app on a
+  given tab; all three address tabs by their own name regardless of which
+  group they sit in.
 - **Theming** — six palette families (Dark/Light/Green/Amber/Blue/
   Monochrome) plus High Contrast, a saturation slider, and per-metric
   accent colors. Click the ⊙ button in the tab strip to open the Colors

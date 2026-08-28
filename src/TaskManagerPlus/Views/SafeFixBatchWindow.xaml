@@ -19,8 +19,8 @@
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="{Binding Title}" FontSize="13" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,0,10,0" />
-                        <TextBlock Grid.Column="1" Text="{Binding StatusText}" FontSize="11.5" FontWeight="SemiBold" VerticalAlignment="Center">
+                        <TextBlock Grid.Column="0" Text="{Binding Title}" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,0,10,0" />
+                        <TextBlock Grid.Column="1" Text="{Binding StatusText}" FontSize="{StaticResource FontBody}" FontWeight="SemiBold" VerticalAlignment="Center">
                             <TextBlock.Style>
                                 <Style TargetType="TextBlock">
                                     <Setter Property="Foreground" Value="{DynamicResource TextTertiaryBrush}" />
@@ -39,7 +39,7 @@
                             </TextBlock.Style>
                         </TextBlock>
                     </Grid>
-                    <TextBlock Text="{Binding ResultText}" FontSize="11" TextWrapping="Wrap" Margin="0,6,0,0" MaxHeight="70"
+                    <TextBlock Text="{Binding ResultText}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,6,0,0" MaxHeight="70"
                                Foreground="{DynamicResource TextSecondaryBrush}">
                         <TextBlock.Style>
                             <Style TargetType="TextBlock">
@@ -57,8 +57,8 @@
         </DataTemplate>
     </Window.Resources>
 
-    <DockPanel Margin="18">
-        <TextBlock DockPanel.Dock="Top" Text="Run safe fixes" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,4" />
+    <DockPanel Margin="16">
+        <TextBlock DockPanel.Dock="Top" Text="Run safe fixes" FontSize="{StaticResource FontTitle}" FontWeight="SemiBold" Margin="0,0,0,4" />
         <TextBlock DockPanel.Dock="Top" TextWrapping="Wrap" Margin="0,0,0,14" Style="{StaticResource SubStat}"
                    Text="Only low-risk, reversible fixes are batched here - anything Medium/High risk or non-undoable is left for its own &quot;Fix this&quot; button. Each one still runs the same real operation and gets journaled the same way, just without a one-at-a-time review dialog." />
 
@@ -73,7 +73,7 @@
             </TextBlock>
             <Button Grid.Column="1" Content="Run safe fixes" Command="{Binding RunSafeFixesCommand}" Padding="16,6" Margin="0,0,8,0"
                     Background="{DynamicResource AccentBrush}" Foreground="{DynamicResource AccentForegroundBrush}" FontWeight="SemiBold" />
-            <Button Grid.Column="2" Content="Close" Padding="14,5" Click="OnClose" />
+            <Button Grid.Column="2" Content="Close" Padding="14,4" Click="OnClose" />
         </Grid>
 
         <TextBlock Text="Nothing eligible right now - every current finding either has no fix, or its fix isn't both low-risk and reversible." Margin="0,20,0,0">

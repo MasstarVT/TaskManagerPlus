@@ -18,22 +18,22 @@
         <Border Grid.Row="0" Background="{DynamicResource DangerMutedBrush}" BorderBrush="{DynamicResource DangerBrush}"
                 BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,14">
             <StackPanel>
-                <TextBlock Text="This will deliberately crash the machine on a misbehaving driver" FontSize="15"
+                <TextBlock Text="This will deliberately crash the machine on a misbehaving driver" FontSize="{StaticResource FontSection}"
                            FontWeight="Bold" Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" />
-                <TextBlock Margin="0,8,0,0" TextWrapping="Wrap" FontSize="12.5" LineHeight="19">
+                <TextBlock Margin="0,8,0,0" TextWrapping="Wrap" FontSize="{StaticResource FontStrong}" LineHeight="19">
                     Driver Verifier subjects every selected driver to intensive runtime checks (special pool
                     allocations, forced IRQL checking, I/O verification, deadlock detection, and more). The FIRST time
                     a selected driver does something Driver Verifier flags as incorrect, Windows deliberately
                     bugchecks (blue-screens) the machine on the spot - by design, not a malfunction of this tool.
                     This is normal, expected behavior for a driver stress-test, not something gone wrong.
                 </TextBlock>
-                <TextBlock Margin="0,10,0,0" FontWeight="SemiBold" FontSize="12.5" Text="Before continuing:" />
+                <TextBlock Margin="0,10,0,0" FontWeight="SemiBold" FontSize="{StaticResource FontStrong}" Text="Before continuing:" />
                 <StackPanel Margin="6,4,0,0">
-                    <TextBlock TextWrapping="Wrap" FontSize="12.5" Margin="0,2,0,0"
+                    <TextBlock TextWrapping="Wrap" FontSize="{StaticResource FontStrong}" Margin="0,2,0,0"
                                Text="• Create a System Restore point first, in case a driver update is needed to recover." />
-                    <TextBlock TextWrapping="Wrap" FontSize="12.5" Margin="0,2,0,0"
+                    <TextBlock TextWrapping="Wrap" FontSize="{StaticResource FontStrong}" Margin="0,2,0,0"
                                Text="• Know how to boot into Safe Mode (hold Shift while restarting, or interrupt boot 3 times) - Driver Verifier can be reset from there if the machine won't boot normally afterward. See the Recovery section on the Devices &amp; Drivers tab." />
-                    <TextBlock TextWrapping="Wrap" FontSize="12.5" Margin="0,2,0,0"
+                    <TextBlock TextWrapping="Wrap" FontSize="{StaticResource FontStrong}" Margin="0,2,0,0"
                                Text="• Do not select Microsoft-signed drivers. This list only shows third-party drivers already; Microsoft's own core drivers are excluded entirely." />
                 </StackPanel>
             </StackPanel>
@@ -61,11 +61,11 @@
                     <ItemsControl x:Name="CandidatesList" ItemsSource="{Binding Candidates}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <Border Padding="6,5" Margin="0,0,0,2" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
+                                <Border Padding="6,4" Margin="0,0,0,2" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
                                     <CheckBox IsChecked="{Binding IsChecked, Mode=TwoWay}">
                                         <StackPanel Margin="4,0,0,0">
-                                            <TextBlock Text="{Binding DisplayName}" FontSize="12.5" FontWeight="SemiBold" />
-                                            <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}">
+                                            <TextBlock Text="{Binding DisplayName}" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" />
+                                            <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}">
                                                 <Run Text="{Binding FileName, Mode=OneWay}" />
                                                 <Run Text=" - " />
                                                 <Run Text="{Binding CompanyName, Mode=OneWay, TargetNullValue=Unknown publisher}" />
@@ -82,7 +82,7 @@
 
         <!-- Typed confirmation - the action button stays disabled until this matches exactly. -->
         <StackPanel Grid.Row="2">
-            <TextBlock TextWrapping="Wrap" FontSize="12.5" Margin="0,0,0,6">
+            <TextBlock TextWrapping="Wrap" FontSize="{StaticResource FontStrong}" Margin="0,0,0,6">
                 <Run Text="Type " /><Run Text="ENABLE VERIFIER" FontWeight="Bold" /><Run Text=" below (exact case) to enable the button." />
             </TextBlock>
             <TextBox x:Name="ConfirmTextBox" Margin="0,0,0,12" TextChanged="OnConfirmTextChanged" />
@@ -92,7 +92,7 @@
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
-                <TextBlock Grid.Column="0" VerticalAlignment="Center" FontSize="11.5" TextWrapping="Wrap"
+                <TextBlock Grid.Column="0" VerticalAlignment="Center" FontSize="{StaticResource FontBody}" TextWrapping="Wrap"
                            Foreground="{DynamicResource TextSecondaryBrush}"
                            Text="Runs: verifier /standard /driver &lt;selected .sys files&gt; - takes effect after the next restart." />
                 <Button Grid.Column="1" Content="Cancel" Padding="14,8" Margin="0,0,8,0" Click="OnCancel" />

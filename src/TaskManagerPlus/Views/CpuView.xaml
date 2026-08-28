@@ -8,671 +8,671 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              mc:Ignorable="d">
-    <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16">
-        <StackPanel>
-
-            <!-- #9: best-effort thermal-throttle flag - hot package temp AND meaningfully below
-                 rated base clock under load. See CpuViewModel.IsThrottling's remarks for why this
-                 is a heuristic, not a verified "throttle reason" the way HWiNFO's MSR reads are. -->
-            <Border Background="{DynamicResource DangerMutedBrush}" BorderBrush="{DynamicResource DangerBrush}"
-                    BorderThickness="1" CornerRadius="8" Padding="14,10" Margin="0,0,0,16">
-                <Border.Style>
-                    <Style TargetType="Border">
-                        <Setter Property="Visibility" Value="Collapsed" />
-                        <Style.Triggers>
-                            <DataTrigger Binding="{Binding IsThrottling}" Value="True">
-                                <Setter Property="Visibility" Value="Visible" />
-                            </DataTrigger>
-                        </Style.Triggers>
-                    </Style>
-                </Border.Style>
-                <TextBlock Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" FontSize="12.5">
-                    <Run Text="Possible thermal throttling: " /><Run Text="{Binding ThrottleText, Mode=OneWay}" />
-                </TextBlock>
-            </Border>
-
-            <!-- #35: power-ceiling detector - distinct from the thermal-throttle banner above:
-                 pinned at its own session-high power draw while below base clock under load, but
-                 NOT running hot, points at a PSU/motherboard power limit or a vendor PL1/PL2 cap
-                 rather than the cooler. See CpuViewModel.IsPowerLimited's remarks. -->
-            <Border Background="{DynamicResource BgElevatedBrush}" BorderBrush="{DynamicResource WarningBrush}"
-                    BorderThickness="1" CornerRadius="8" Padding="14,10" Margin="0,0,0,16">
-                <Border.Style>
-                    <Style TargetType="Border">
-                        <Setter Property="Visibility" Value="Collapsed" />
-                        <Style.Triggers>
-                            <DataTrigger Binding="{Binding IsPowerLimited}" Value="True">
-                                <Setter Property="Visibility" Value="Visible" />
-                            </DataTrigger>
-                        </Style.Triggers>
-                    </Style>
-                </Border.Style>
-                <TextBlock Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" FontSize="12.5">
-                    <Run Text="Possible power limit (not thermal): " /><Run Text="{Binding PowerLimitText, Mode=OneWay}" />
-                </TextBlock>
-            </Border>
-
-            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+    <!-- Sections, matching the other Hardware tabs.
+         Sections, matching the other Hardware tabs. -->
+    <TabControl Style="{StaticResource SectionTabControl}" SelectedIndex="0">
+        <TabItem Header="Overview">
+            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
                 <StackPanel>
-                    <StackPanel Style="{StaticResource TitleRow}" Margin="0,0,0,4">
-                        <Border Style="{StaticResource ColorDot}" Background="{Binding Performance.CpuColor, Converter={StaticResource ColorToBrushConverter}}" />
-                        <TextBlock Text="CPU" Style="{StaticResource CardTitle}" Margin="0" />
-                    </StackPanel>
-                    <TextBlock Text="{Binding Performance.CpuCurrentPercent, StringFormat={}{0:0.0}%}" Style="{StaticResource BigStat}" />
-                    <TextBlock Text="{Binding Performance.CpuCurrentClockGhz, StringFormat={}{0:0.00} GHz}" Style="{StaticResource SubStat}" />
-                    <!-- #18: base vs. current clock, so "stuck at base clock" (≈0%) or a turbo
-                         boost (positive %) is explicit rather than implied by two separate numbers. -->
-                    <TextBlock Style="{StaticResource SubStat}" Margin="0,2,0,0">
-                        <Run Text="{Binding Performance.CpuBaseClockGhz, StringFormat={}Base {0:0.00} GHz, Mode=OneWay}" />
-                        <Run Text=" · " />
-                        <Run Text="{Binding Performance.CpuVsBasePercent, StringFormat={}{0:+0;-0;0}% vs base, Mode=OneWay}" />
-                    </TextBlock>
-                </StackPanel>
-            </Border>
-
-            <!-- CPU chart + per-core grid -->
-            <Border Style="{StaticResource CardStyle}">
-                <StackPanel>
-                    <Grid Margin="0,0,0,10">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <StackPanel Grid.Column="0" Style="{StaticResource TitleRow}" Margin="0">
-                            <Border Style="{StaticResource ColorDot}" Background="{Binding Performance.CpuColor, Converter={StaticResource ColorToBrushConverter}}" />
-                            <TextBlock Text="{Binding Performance.CpuName}" Style="{StaticResource CardTitle}" Margin="0" />
-                        </StackPanel>
-                        <TextBlock Grid.Column="1" Text="{Binding Performance.CpuSpecs}" Style="{StaticResource SubStat}" VerticalAlignment="Center" />
-                    </Grid>
-                    <!-- #141: crash/error markers, reusing whatever the Stability tab last read - toggleable. -->
-                    <CheckBox Content="Show crash/error markers" IsChecked="{Binding Performance.ShowEventMarkers}"
-                               FontSize="10.5" HorizontalAlignment="Right" Margin="0,0,0,4" />
-                    <lvc:CartesianChart Series="{Binding Performance.CpuSeries}" XAxes="{Binding Performance.HiddenXAxes}" YAxes="{Binding Performance.PercentYAxes}"
-                                         Sections="{Binding Performance.EventMarkerSections}"
-                                         Height="200" TooltipPosition="Hidden" LegendPosition="Hidden" Background="Transparent" />
-
-                    <TextBlock Text="Per-core usage" Style="{StaticResource SubStat}" Margin="0,16,0,10" />
-
-                    <!-- One nested ItemsControl per NUMA node (CoreGroups is built in
-                         CpuViewModel, not via ICollectionView grouping - a plain nested
-                         ItemsControl+WrapPanel is what reliably lays cores out side by side;
-                         binding a single ItemsControl to an externally-grouped CollectionView
-                         via GroupStyle did not). Outer panel is a vertical StackPanel (one entry
-                         per NUMA node - almost always just one), inner panel is the WrapPanel
-                         that actually arranges that node's cores in a grid. -->
-                    <ItemsControl ItemsSource="{Binding CoreGroups}">
-                        <ItemsControl.ItemsPanel>
-                            <ItemsPanelTemplate>
-                                <StackPanel />
-                            </ItemsPanelTemplate>
-                        </ItemsControl.ItemsPanel>
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <StackPanel>
-                                    <TextBlock Text="{Binding NumaNode, StringFormat=NUMA node {0}}"
-                                               FontSize="10.5" FontWeight="SemiBold" Margin="0,4,0,6">
-                                        <TextBlock.Style>
-                                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
-                                                <Setter Property="Visibility" Value="Collapsed" />
-                                                <Style.Triggers>
-                                                    <DataTrigger Binding="{Binding DataContext.HasMultipleNumaNodes, RelativeSource={RelativeSource AncestorType=UserControl}}" Value="True">
-                                                        <Setter Property="Visibility" Value="Visible" />
-                                                    </DataTrigger>
-                                                </Style.Triggers>
-                                            </Style>
-                                        </TextBlock.Style>
-                                    </TextBlock>
-                                    <ItemsControl ItemsSource="{Binding Cores}">
-                                        <ItemsControl.ItemsPanel>
-                                            <ItemsPanelTemplate>
-                                                <WrapPanel />
-                                            </ItemsPanelTemplate>
-                                        </ItemsControl.ItemsPanel>
-                                        <ItemsControl.ItemTemplate>
-                                            <DataTemplate>
-                                                <!-- #78: a parked core is dimmed and tagged "Parked"
-                                                     (taking priority over the P-core/E-core tag) -
-                                                     Windows has scheduled it off to save power, not
-                                                     a fault, but a common, otherwise invisible
-                                                     reason only some cores appear busy under light
-                                                     load. -->
-                                                <views:VfdMeter Title="{Binding Label}" Percent="{Binding Percent}" Glow="False"
-                                                                 ValueText="{Binding Percent, StringFormat={}{0:0}}" Unit="%"
-                                                                 AccentBrush="{Binding Percent, Converter={StaticResource PercentToBrushConverter}}"
-                                                                 Width="104" Margin="0,0,8,8">
-                                                    <views:VfdMeter.Style>
-                                                        <Style TargetType="views:VfdMeter">
-                                                            <Setter Property="SubText" Value="" />
-                                                            <Setter Property="Opacity" Value="1" />
-                                                            <Style.Triggers>
-                                                                <MultiDataTrigger>
-                                                                    <MultiDataTrigger.Conditions>
-                                                                        <Condition Binding="{Binding DataContext.HasHybridTopology, RelativeSource={RelativeSource AncestorType=UserControl}}" Value="True" />
-                                                                        <Condition Binding="{Binding IsPCore}" Value="True" />
-                                                                    </MultiDataTrigger.Conditions>
-                                                                    <Setter Property="SubText" Value="P-core" />
-                                                                </MultiDataTrigger>
-                                                                <MultiDataTrigger>
-                                                                    <MultiDataTrigger.Conditions>
-                                                                        <Condition Binding="{Binding DataContext.HasHybridTopology, RelativeSource={RelativeSource AncestorType=UserControl}}" Value="True" />
-                                                                        <Condition Binding="{Binding IsPCore}" Value="False" />
-                                                                    </MultiDataTrigger.Conditions>
-                                                                    <Setter Property="SubText" Value="E-core" />
-                                                                </MultiDataTrigger>
-                                                                <DataTrigger Binding="{Binding IsParked}" Value="True">
-                                                                    <Setter Property="SubText" Value="Parked" />
-                                                                    <Setter Property="Opacity" Value="0.5" />
-                                                                </DataTrigger>
-                                                            </Style.Triggers>
-                                                        </Style>
-                                                    </views:VfdMeter.Style>
-                                                </views:VfdMeter>
-                                            </DataTemplate>
-                                        </ItemsControl.ItemTemplate>
-                                    </ItemsControl>
-                                </StackPanel>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                </StackPanel>
-            </Border>
-
-            <!-- #84/#603: throttle reason breakdown - now a full Thermal/Power/Firmware/
-                 Core-parked/None classification (see CpuViewModel.ThrottleReason's remarks), plus
-                 the CPU thermal-headroom readout (#608, from EnergyThermalsViewModel) and a
-                 session-long dwell-time stacked bar answering "what is actually holding my clocks
-                 back" instead of just the instantaneous flag. -->
-            <UniformGrid Columns="2" Margin="0,16,0,0">
-                <views:VfdMeter Title="Throttle reason" Glow="False" Margin="0,0,6,0"
-                                ValueText="{Binding ThrottleReason}"
-                                SubText="Best-effort — no vendor limit-reason API available">
-                    <views:VfdMeter.Style>
-                        <Style TargetType="views:VfdMeter">
-                            <Setter Property="AccentBrush" Value="{DynamicResource TextSecondaryBrush}" />
-                            <Style.Triggers>
-                                <DataTrigger Binding="{Binding ThrottleReason}" Value="Thermal">
-                                    <Setter Property="AccentBrush" Value="{DynamicResource DangerBrush}" />
-                                </DataTrigger>
-                                <DataTrigger Binding="{Binding ThrottleReason}" Value="Power">
-                                    <Setter Property="AccentBrush" Value="{DynamicResource WarningBrush}" />
-                                </DataTrigger>
-                                <DataTrigger Binding="{Binding ThrottleReason}" Value="Firmware">
-                                    <Setter Property="AccentBrush" Value="{DynamicResource DangerBrush}" />
-                                    <Setter Property="SubText" Value="Confirmed by Windows (Kernel-Processor-Power 37)" />
-                                </DataTrigger>
-                                <DataTrigger Binding="{Binding ThrottleReason}" Value="Core-parked">
-                                    <Setter Property="AccentBrush" Value="{DynamicResource AccentBrush}" />
-                                </DataTrigger>
-                            </Style.Triggers>
-                        </Style>
-                    </views:VfdMeter.Style>
-                </views:VfdMeter>
-
-                <!-- #608: thermal headroom - remaining °C before an inferred/reported throttle
-                     point, owned by EnergyThermalsViewModel (see its remarks) and exposed here via
-                     CpuViewModel.EnergyThermals. Hidden until a ceiling is available. -->
-                <views:VfdMeter Title="Thermal headroom" Glow="False" Margin="6,0,0,0"
-                                ValueText="{Binding EnergyThermals.CpuThermalHeadroomC, StringFormat={}{0:0.#}, TargetNullValue=–}" Unit="°C"
-                                SubText="Remaining before this CPU's known/inferred throttle point"
-                                AccentBrush="{DynamicResource AccentBrush}">
-                    <views:VfdMeter.Style>
-                        <Style TargetType="views:VfdMeter">
-                            <Style.Triggers>
-                                <DataTrigger Binding="{Binding EnergyThermals.CpuThermalHeadroomC}" Value="{x:Null}">
-                                    <Setter Property="Visibility" Value="Collapsed" />
-                                </DataTrigger>
-                            </Style.Triggers>
-                        </Style>
-                    </views:VfdMeter.Style>
-                </views:VfdMeter>
-            </UniformGrid>
-
-            <!-- #603: session-long dwell-time breakdown, stacked as one bar - answers "what is
-                 actually holding my clocks back" instead of a single instantaneous flag. -->
-            <Border Style="{StaticResource CardStyle}" Margin="0,10,0,0">
-                <StackPanel>
-                    <TextBlock Text="Throttle-reason dwell time (this session)" Style="{StaticResource CardTitle}" />
-                    <TextBlock Text="Share of time since this tab was opened spent in each classified state - None/Thermal/Power/Firmware/Core-parked."
-                               Style="{StaticResource SubStat}" Margin="0,-6,0,10" TextWrapping="Wrap" />
-                    <lvc:CartesianChart Series="{Binding ThrottleDwellSeries}" XAxes="{Binding ThrottleDwellXAxes}" YAxes="{Binding ThrottleDwellYAxes}"
-                                         Height="140" TooltipPosition="Top" LegendPosition="Bottom" Background="Transparent" />
-                </StackPanel>
-            </Border>
-
-            <!-- #83: C-state residency - a CPU idling deeply for power savings (high C2/C3) looks
-                 very different from one held at a low clock by real throttling, even though both
-                 can present as "the CPU seems slow". Collapsed entirely when the counters aren't
-                 exposed on this Windows/CPU generation. -->
-            <StackPanel Margin="0,16,0,0">
-                <StackPanel.Style>
-                    <Style TargetType="StackPanel">
-                        <Setter Property="Visibility" Value="Visible" />
-                        <Style.Triggers>
-                            <DataTrigger Binding="{Binding Performance.CStatesAvailable}" Value="False">
+                    <!-- #9: best-effort thermal-throttle flag - hot package temp AND meaningfully below
+                         rated base clock under load. See CpuViewModel.IsThrottling's remarks for why this
+                         is a heuristic, not a verified "throttle reason" the way HWiNFO's MSR reads are. -->
+                    <Border Background="{DynamicResource DangerMutedBrush}" BorderBrush="{DynamicResource DangerBrush}"
+                            BorderThickness="1" CornerRadius="8" Padding="14,10" Margin="0,0,0,16">
+                        <Border.Style>
+                            <Style TargetType="Border">
                                 <Setter Property="Visibility" Value="Collapsed" />
-                            </DataTrigger>
-                        </Style.Triggers>
-                    </Style>
-                </StackPanel.Style>
-                <TextBlock Text="C-state residency" Style="{StaticResource SubStat}" Margin="0,0,0,10" />
-                <UniformGrid Columns="4">
-                    <views:VfdMeter Title="Idle (C0/halt)" Glow="False" Margin="0,0,6,0"
-                                    Percent="{Binding Performance.CpuIdlePercent}"
-                                    ValueText="{Binding Performance.CpuIdlePercent, StringFormat={}{0:0.0}}" Unit="%"
-                                    AccentBrush="{DynamicResource TextSecondaryBrush}" />
-                    <views:VfdMeter Title="C1" Glow="False" Margin="3,0,3,0"
-                                    Percent="{Binding Performance.CpuC1Percent}"
-                                    ValueText="{Binding Performance.CpuC1Percent, StringFormat={}{0:0.0}}" Unit="%"
-                                    AccentBrush="{DynamicResource AccentBrush}" />
-                    <views:VfdMeter Title="C2" Glow="False" Margin="3,0,3,0"
-                                    Percent="{Binding Performance.CpuC2Percent}"
-                                    ValueText="{Binding Performance.CpuC2Percent, StringFormat={}{0:0.0}}" Unit="%"
-                                    AccentBrush="{DynamicResource AccentBrush}" />
-                    <views:VfdMeter Title="C3" Glow="False" Margin="6,0,0,0"
-                                    Percent="{Binding Performance.CpuC3Percent}"
-                                    ValueText="{Binding Performance.CpuC3Percent, StringFormat={}{0:0.0}}" Unit="%"
-                                    AccentBrush="{DynamicResource AccentBrush}" />
-                </UniformGrid>
-
-                <!-- #233: deep-idle-exit-latency quick flag - heavy C3 residency alongside an
-                     elevated worst-observed DPC latency (from the Responsiveness tab) for several
-                     consecutive ticks in a row. See CpuViewModel.DeepIdleExitLatencySuspected's
-                     remarks. -->
-                <TextBlock Text="{Binding DeepIdleExitLatencyText}" Foreground="{DynamicResource WarningBrush}"
-                           FontSize="11" FontStyle="Italic" TextWrapping="Wrap" Margin="0,8,0,0">
-                    <TextBlock.Style>
-                        <Style TargetType="TextBlock">
-                            <Setter Property="Visibility" Value="Collapsed" />
-                            <Style.Triggers>
-                                <DataTrigger Binding="{Binding DeepIdleExitLatencySuspected}" Value="True">
-                                    <Setter Property="Visibility" Value="Visible" />
-                                </DataTrigger>
-                            </Style.Triggers>
-                        </Style>
-                    </TextBlock.Style>
-                </TextBlock>
-            </StackPanel>
-
-            <!-- CPU diagnostics: interrupt/DPC time (#13, a sustained spike usually means a bad
-                 driver, not app load), context-switch rate (#14, thrashing/livelock), queue
-                 length (#15, threads waiting for a core - CpuQueueLengthGaugePercent is a rough
-                 "how concerning" fill past 2x logical processors, same idea as the Storage tab's
-                 latency gauges), and session min/max/avg clock (#11). -->
-            <TextBlock Text="CPU diagnostics" Style="{StaticResource SubStat}" Margin="0,16,0,10" />
-            <UniformGrid Columns="5">
-                <views:VfdMeter Title="Interrupt / DPC" Glow="False" Margin="0,0,6,0"
-                                Percent="{Binding Performance.CpuInterruptPercent}"
-                                ValueText="{Binding Performance.CpuInterruptPercent, StringFormat={}{0:0.0}}" Unit="%"
-                                SubText="{Binding Performance.CpuDpcPercent, StringFormat={}+{0:0.0}% DPC}"
-                                AccentBrush="{DynamicResource AccentBrush}" />
-                <views:VfdMeter Title="Context switches" Glow="False" Margin="3,0,3,0"
-                                ValueText="{Binding Performance.ContextSwitchesPerSec, StringFormat={}{0:0}}" Unit="/s"
-                                SubText="Thrashing indicator" AccentBrush="{DynamicResource AccentBrush}" />
-                <views:VfdMeter Title="Queue length" Glow="False" Margin="3,0,3,0"
-                                Percent="{Binding Performance.CpuQueueLengthGaugePercent}"
-                                ValueText="{Binding Performance.CpuQueueLength, StringFormat={}{0:0}}" Unit="threads"
-                                SubText="Waiting for a core" AccentBrush="{Binding Performance.CpuQueueLengthGaugePercent, Converter={StaticResource PercentToBrushConverter}}" />
-                <views:VfdMeter Title="Clock (session)" Glow="False" Margin="3,0,3,0"
-                                ValueText="{Binding Performance.CpuAvgClockGhz, StringFormat={}{0:0.00}}" Unit="GHz avg"
-                                SubText="{Binding Performance.CpuMaxClockGhzSeen, StringFormat={}up to {0:0.00} GHz}"
-                                AccentBrush="{DynamicResource AccentBrush}" />
-                <!-- #78: how many logical cores Windows currently has parked to save power - a
-                     common, otherwise invisible reason "only half my CPU seems busy" under
-                     light load. Always 0 (not "unavailable") when the counter itself doesn't
-                     exist on this Windows version - see HardwareMonitorService's remarks. -->
-                <views:VfdMeter Title="Parked cores" Glow="False" Margin="6,0,0,0"
-                                ValueText="{Binding Performance.ParkedCoreCount, StringFormat={}{0}}" Unit="cores"
-                                SubText="Power-saving" AccentBrush="{DynamicResource AccentBrush}" />
-            </UniformGrid>
-
-            <!-- Round 8 #26: SMT/Hyper-Threading summary - per-core sibling pairing is shown
-                 directly in each core tile's label above ("CPU 0 ↔4"), see CoreUsage.Label. -->
-            <TextBlock Margin="0,16,0,0" Style="{StaticResource SubStat}" TextWrapping="Wrap">
-                <Run Text="SMT / Hyper-Threading: " />
-                <Run FontWeight="SemiBold">
-                    <Run.Style>
-                        <Style TargetType="Run">
-                            <Setter Property="Text" Value="Off (or not determined)" />
-                            <Style.Triggers>
-                                <DataTrigger Binding="{Binding Performance.HasSmt}" Value="True">
-                                    <Setter Property="Text" Value="On - sibling cores are marked ↔ in the grid above" />
-                                </DataTrigger>
-                            </Style.Triggers>
-                        </Style>
-                    </Run.Style>
-                </Run>
-            </TextBlock>
-
-            <!-- Round 8 #27: turbo-boost time-at-frequency histogram, accumulated across this
-                 session - bucketed by percent above/below base clock (see PerformanceViewModel's
-                 TurboHistogram remarks), not raw GHz, so it stays meaningful across CPU models. -->
-            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
-                <StackPanel>
-                    <TextBlock Text="Turbo-boost histogram (this session)" Style="{StaticResource CardTitle}" />
-                    <TextBlock Text="What percent of this session's samples fell into each range vs. rated base clock."
-                               Style="{StaticResource SubStat}" Margin="0,-8,0,4" TextWrapping="Wrap" />
-                    <!-- #634: explicit rated-clock reference line + heat-correlation interpretation
-                         for the "Below base" bucket below - long dwell below base without heat is a
-                         power-plan/firmware limit, long dwell below base with heat confirms thermal
-                         throttling. -->
-                    <TextBlock Text="{Binding BoostResidencyText}" Style="{StaticResource SubStat}"
-                               FontWeight="SemiBold" Margin="0,0,0,12" TextWrapping="Wrap" />
-                    <ItemsControl ItemsSource="{Binding Performance.TurboHistogram}">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <Grid Margin="0,0,0,8">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="110" />
-                                        <ColumnDefinition Width="220" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0" Text="{Binding Label}" VerticalAlignment="Center" FontSize="11.5"
-                                               Foreground="{DynamicResource TextSecondaryBrush}" />
-                                    <Border Grid.Column="1" Height="14" CornerRadius="3" Background="{DynamicResource BgElevatedBrush}" HorizontalAlignment="Left" Width="220">
-                                        <Border CornerRadius="3" Background="{DynamicResource AccentBrush}" HorizontalAlignment="Left"
-                                                Width="{Binding Percent, Converter={StaticResource PercentToWidthConverter}, ConverterParameter=220}" />
-                                    </Border>
-                                    <TextBlock Grid.Column="2" Text="{Binding Percent, StringFormat={}{0:0.0}%}" Margin="8,0,0,0"
-                                               VerticalAlignment="Center" FontSize="11.5" FontWeight="SemiBold" />
-                                </Grid>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                </StackPanel>
-            </Border>
-
-            <!-- Round 8 #24: best-effort core-affinity heatmap - which cores the current top-CPU
-                 processes' threads prefer (GetThreadIdealProcessorEx), not a live trace of actual
-                 scheduling - see CoreAffinityService's remarks. -->
-            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
-                <StackPanel>
-                    <TextBlock Text="Core affinity heatmap (top CPU processes)" Style="{StaticResource CardTitle}" />
-                    <TextBlock Text="Preferred (ideal) core per thread for the current top few CPU-consuming processes - an approximation, not a live trace of every context switch."
-                               Style="{StaticResource SubStat}" Margin="0,-8,0,12" TextWrapping="Wrap" />
-                    <ItemsControl ItemsSource="{Binding CoreAffinity}">
-                        <ItemsControl.ItemsPanel>
-                            <ItemsPanelTemplate>
-                                <WrapPanel />
-                            </ItemsPanelTemplate>
-                        </ItemsControl.ItemsPanel>
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <Border Width="76" Height="52" CornerRadius="6" Margin="0,0,6,6" Padding="6"
-                                        Background="{DynamicResource BgElevatedBrush}"
-                                        ToolTip="{Binding ProcessNames}">
-                                    <Border.Style>
-                                        <Style TargetType="Border">
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding ProcessCount}" Value="1">
-                                                    <Setter Property="Background" Value="{DynamicResource AccentMutedBrush}" />
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </Border.Style>
-                                    <StackPanel>
-                                        <TextBlock Text="{Binding CoreIndex, StringFormat=CPU {0}}" FontSize="10.5"
-                                                   Foreground="{DynamicResource TextSecondaryBrush}" />
-                                        <TextBlock Text="{Binding ProcessCount}" FontSize="18" FontWeight="SemiBold" />
-                                        <TextBlock Text="processes" FontSize="9" Foreground="{DynamicResource TextSecondaryBrush}" />
-                                    </StackPanel>
-                                </Border>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                    <!-- #267: hybrid-CPU (P-core/E-core) misplacement flag - a plain text note next
-                         to the heatmap rather than a full P/E-tint overlay (a documented
-                         simplification, see CpuViewModel.HybridMisplacementText's remarks). Only
-                         ever shown on genuinely hybrid systems, matching this whole card's own
-                         HasHybridTopology gating. -->
-                    <TextBlock Text="{Binding HybridMisplacementText}" TextWrapping="Wrap" FontSize="11.5" Margin="0,10,0,0">
-                        <TextBlock.Style>
-                            <Style TargetType="TextBlock">
-                                <Setter Property="Visibility" Value="Collapsed" />
-                                <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
                                 <Style.Triggers>
-                                    <DataTrigger Binding="{Binding HybridMisplacementSuspected}" Value="True">
+                                    <DataTrigger Binding="{Binding IsThrottling}" Value="True">
                                         <Setter Property="Visibility" Value="Visible" />
-                                        <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
                                     </DataTrigger>
                                 </Style.Triggers>
                             </Style>
-                        </TextBlock.Style>
-                    </TextBlock>
-                </StackPanel>
-            </Border>
-
-            <!-- Round 8 #25/#28/#29/#30: static CPU identification readouts - microcode revision,
-                 Spectre/Meltdown mitigation override status, instruction-set support (backed by
-                 .NET's own CPUID-driven runtime feature detection, not raw CPUID execution - see
-                 CpuFeatureInfo's remarks), and L1/L2/L3 cache sizes. -->
-            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
-                <StackPanel>
-                    <TextBlock Text="CPU identification" Style="{StaticResource CardTitle}" />
-                    <UniformGrid Columns="3" Margin="0,10,0,10">
-                        <StackPanel Margin="0,0,6,10">
-                            <TextBlock Text="Microcode revision" Style="{StaticResource SpecLabel}" />
-                            <TextBlock Text="{Binding Features.MicrocodeRevision}" Style="{StaticResource SpecValue}" />
-                        </StackPanel>
-                        <StackPanel Margin="3,0,3,10">
-                            <TextBlock Text="L1 cache" Style="{StaticResource SpecLabel}" />
-                            <TextBlock Text="{Binding Features.L1CacheText}" Style="{StaticResource SpecValue}" />
-                        </StackPanel>
-                        <StackPanel Margin="3,0,3,10">
-                            <TextBlock Text="L2 cache" Style="{StaticResource SpecLabel}" />
-                            <TextBlock Text="{Binding Features.L2CacheText}" Style="{StaticResource SpecValue}" />
-                        </StackPanel>
-                        <StackPanel Margin="0,0,6,0">
-                            <TextBlock Text="L3 cache" Style="{StaticResource SpecLabel}" />
-                            <TextBlock Text="{Binding Features.L3CacheText}" Style="{StaticResource SpecValue}" />
-                        </StackPanel>
-                        <StackPanel Margin="3,0,3,0">
-                            <TextBlock Text="Instruction sets" Style="{StaticResource SpecLabel}" />
-                            <TextBlock Style="{StaticResource SpecValue}" TextWrapping="Wrap" FontSize="12">
-                                <Run Text="{Binding Features.Sse42Supported, StringFormat={}SSE4.2: {0}, Mode=OneWay}" />
-                                <Run Text="  ·  " />
-                                <Run Text="{Binding Features.AvxSupported, StringFormat={}AVX: {0}, Mode=OneWay}" />
-                                <Run Text="  ·  " />
-                                <Run Text="{Binding Features.Avx2Supported, StringFormat={}AVX2: {0}, Mode=OneWay}" />
-                                <Run Text="  ·  " />
-                                <Run Text="{Binding Features.Avx512Supported, StringFormat={}AVX-512: {0}, Mode=OneWay}" />
-                                <Run Text="  ·  " />
-                                <Run Text="{Binding Features.FmaSupported, StringFormat={}FMA: {0}, Mode=OneWay}" />
+                        </Border.Style>
+                        <TextBlock Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" FontSize="{StaticResource FontStrong}">
+                            <Run Text="Possible thermal throttling: " /><Run Text="{Binding ThrottleText, Mode=OneWay}" />
+                        </TextBlock>
+                    </Border>
+                    <!-- #35: power-ceiling detector - distinct from the thermal-throttle banner above:
+                         pinned at its own session-high power draw while below base clock under load, but
+                         NOT running hot, points at a PSU/motherboard power limit or a vendor PL1/PL2 cap
+                         rather than the cooler. See CpuViewModel.IsPowerLimited's remarks. -->
+                    <Border Background="{DynamicResource BgElevatedBrush}" BorderBrush="{DynamicResource WarningBrush}"
+                            BorderThickness="1" CornerRadius="8" Padding="14,10" Margin="0,0,0,16">
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsPowerLimited}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                        <TextBlock Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" FontSize="{StaticResource FontStrong}">
+                            <Run Text="Possible power limit (not thermal): " /><Run Text="{Binding PowerLimitText, Mode=OneWay}" />
+                        </TextBlock>
+                    </Border>
+                    <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                        <StackPanel>
+                            <StackPanel Style="{StaticResource TitleRow}" Margin="0,0,0,4">
+                                <Border Style="{StaticResource ColorDot}" Background="{Binding Performance.CpuColor, Converter={StaticResource ColorToBrushConverter}}" />
+                                <TextBlock Text="CPU" Style="{StaticResource CardTitle}" Margin="0" />
+                            </StackPanel>
+                            <TextBlock Text="{Binding Performance.CpuCurrentPercent, StringFormat={}{0:0.0}%}" Style="{StaticResource BigStat}" />
+                            <TextBlock Text="{Binding Performance.CpuCurrentClockGhz, StringFormat={}{0:0.00} GHz}" Style="{StaticResource SubStat}" />
+                            <!-- #18: base vs. current clock, so "stuck at base clock" (≈0%) or a turbo
+                                 boost (positive %) is explicit rather than implied by two separate numbers. -->
+                            <TextBlock Style="{StaticResource SubStat}" Margin="0,2,0,0">
+                                <Run Text="{Binding Performance.CpuBaseClockGhz, StringFormat={}Base {0:0.00} GHz, Mode=OneWay}" />
+                                <Run Text=" · " />
+                                <Run Text="{Binding Performance.CpuVsBasePercent, StringFormat={}{0:+0;-0;0}% vs base, Mode=OneWay}" />
                             </TextBlock>
                         </StackPanel>
-                    </UniformGrid>
-                    <TextBlock Text="Instruction-set flags come from .NET's own runtime CPUID-driven feature detection (accurate for what code on this machine can use); AVX-512 can read false on hardware that has the silicon but isn't exposed by this OS/runtime combination."
-                               Style="{StaticResource SubStat}" TextWrapping="Wrap" Opacity="0.7" Margin="0,4,0,10" />
-                    <Border BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,1,0,0" Padding="0,10,0,0">
+                    </Border>
+                    <!-- CPU chart + per-core grid -->
+                    <Border Style="{StaticResource CardStyle}">
                         <StackPanel>
-                            <TextBlock Text="Spectre/Meltdown mitigation override" Style="{StaticResource SpecLabel}" />
-                            <TextBlock Text="{Binding Features.MitigationOverrideText}" Style="{StaticResource SpecValue}" TextWrapping="Wrap" FontSize="12" />
+                            <Grid Margin="0,0,0,10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0" Style="{StaticResource TitleRow}" Margin="0">
+                                    <Border Style="{StaticResource ColorDot}" Background="{Binding Performance.CpuColor, Converter={StaticResource ColorToBrushConverter}}" />
+                                    <TextBlock Text="{Binding Performance.CpuName}" Style="{StaticResource CardTitle}" Margin="0" />
+                                </StackPanel>
+                                <TextBlock Grid.Column="1" Text="{Binding Performance.CpuSpecs}" Style="{StaticResource SubStat}" VerticalAlignment="Center" />
+                            </Grid>
+                            <!-- #141: crash/error markers, reusing whatever the Stability tab last read - toggleable. -->
+                            <CheckBox Content="Show crash/error markers" IsChecked="{Binding Performance.ShowEventMarkers}"
+                                       FontSize="{StaticResource FontCaption}" HorizontalAlignment="Right" Margin="0,0,0,4" />
+                            <lvc:CartesianChart Series="{Binding Performance.CpuSeries}" XAxes="{Binding Performance.HiddenXAxes}" YAxes="{Binding Performance.PercentYAxes}"
+                                                 Sections="{Binding Performance.EventMarkerSections}"
+                                                 Height="200" TooltipPosition="Hidden" LegendPosition="Hidden" Background="Transparent" />
+
+                            <TextBlock Text="Per-core usage" Style="{StaticResource SubStat}" Margin="0,16,0,10" />
+
+                            <!-- One nested ItemsControl per NUMA node (CoreGroups is built in
+                                 CpuViewModel, not via ICollectionView grouping - a plain nested
+                                 ItemsControl+WrapPanel is what reliably lays cores out side by side;
+                                 binding a single ItemsControl to an externally-grouped CollectionView
+                                 via GroupStyle did not). Outer panel is a vertical StackPanel (one entry
+                                 per NUMA node - almost always just one), inner panel is the WrapPanel
+                                 that actually arranges that node's cores in a grid. -->
+                            <ItemsControl ItemsSource="{Binding CoreGroups}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <StackPanel />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <StackPanel>
+                                            <TextBlock Text="{Binding NumaNode, StringFormat=NUMA node {0}}"
+                                                       FontSize="{StaticResource FontCaption}" FontWeight="SemiBold" Margin="0,4,0,6">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding DataContext.HasMultipleNumaNodes, RelativeSource={RelativeSource AncestorType=UserControl}}" Value="True">
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                            <ItemsControl ItemsSource="{Binding Cores}">
+                                                <ItemsControl.ItemsPanel>
+                                                    <ItemsPanelTemplate>
+                                                        <WrapPanel />
+                                                    </ItemsPanelTemplate>
+                                                </ItemsControl.ItemsPanel>
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <!-- #78: a parked core is dimmed and tagged "Parked"
+                                                             (taking priority over the P-core/E-core tag) -
+                                                             Windows has scheduled it off to save power, not
+                                                             a fault, but a common, otherwise invisible
+                                                             reason only some cores appear busy under light
+                                                             load. -->
+                                                        <views:VfdMeter Title="{Binding Label}" Percent="{Binding Percent}" Glow="False"
+                                                                         ValueText="{Binding Percent, StringFormat={}{0:0}}" Unit="%"
+                                                                         AccentBrush="{Binding Percent, Converter={StaticResource PercentToBrushConverter}}"
+                                                                         Width="104" Margin="0,0,8,8">
+                                                            <views:VfdMeter.Style>
+                                                                <Style TargetType="views:VfdMeter">
+                                                                    <Setter Property="SubText" Value="" />
+                                                                    <Setter Property="Opacity" Value="1" />
+                                                                    <Style.Triggers>
+                                                                        <MultiDataTrigger>
+                                                                            <MultiDataTrigger.Conditions>
+                                                                                <Condition Binding="{Binding DataContext.HasHybridTopology, RelativeSource={RelativeSource AncestorType=UserControl}}" Value="True" />
+                                                                                <Condition Binding="{Binding IsPCore}" Value="True" />
+                                                                            </MultiDataTrigger.Conditions>
+                                                                            <Setter Property="SubText" Value="P-core" />
+                                                                        </MultiDataTrigger>
+                                                                        <MultiDataTrigger>
+                                                                            <MultiDataTrigger.Conditions>
+                                                                                <Condition Binding="{Binding DataContext.HasHybridTopology, RelativeSource={RelativeSource AncestorType=UserControl}}" Value="True" />
+                                                                                <Condition Binding="{Binding IsPCore}" Value="False" />
+                                                                            </MultiDataTrigger.Conditions>
+                                                                            <Setter Property="SubText" Value="E-core" />
+                                                                        </MultiDataTrigger>
+                                                                        <DataTrigger Binding="{Binding IsParked}" Value="True">
+                                                                            <Setter Property="SubText" Value="Parked" />
+                                                                            <Setter Property="Opacity" Value="0.5" />
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </views:VfdMeter.Style>
+                                                        </views:VfdMeter>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </Border>
+                    <!-- #84/#603: throttle reason breakdown - now a full Thermal/Power/Firmware/
+                         Core-parked/None classification (see CpuViewModel.ThrottleReason's remarks), plus
+                         the CPU thermal-headroom readout (#608, from EnergyThermalsViewModel) and a
+                         session-long dwell-time stacked bar answering "what is actually holding my clocks
+                         back" instead of just the instantaneous flag. -->
+                    <UniformGrid Columns="2" Margin="0,16,0,0">
+                        <views:VfdMeter Title="Throttle reason" Glow="False" Margin="0,0,6,0"
+                                        ValueText="{Binding ThrottleReason}"
+                                        SubText="Best-effort — no vendor limit-reason API available">
+                            <views:VfdMeter.Style>
+                                <Style TargetType="views:VfdMeter">
+                                    <Setter Property="AccentBrush" Value="{DynamicResource TextSecondaryBrush}" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding ThrottleReason}" Value="Thermal">
+                                            <Setter Property="AccentBrush" Value="{DynamicResource DangerBrush}" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding ThrottleReason}" Value="Power">
+                                            <Setter Property="AccentBrush" Value="{DynamicResource WarningBrush}" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding ThrottleReason}" Value="Firmware">
+                                            <Setter Property="AccentBrush" Value="{DynamicResource DangerBrush}" />
+                                            <Setter Property="SubText" Value="Confirmed by Windows (Kernel-Processor-Power 37)" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding ThrottleReason}" Value="Core-parked">
+                                            <Setter Property="AccentBrush" Value="{DynamicResource AccentBrush}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </views:VfdMeter.Style>
+                        </views:VfdMeter>
+
+                        <!-- #608: thermal headroom - remaining °C before an inferred/reported throttle
+                             point, owned by EnergyThermalsViewModel (see its remarks) and exposed here via
+                             CpuViewModel.EnergyThermals. Hidden until a ceiling is available. -->
+                        <views:VfdMeter Title="Thermal headroom" Glow="False" Margin="6,0,0,0"
+                                        ValueText="{Binding EnergyThermals.CpuThermalHeadroomC, StringFormat={}{0:0.#}, TargetNullValue=–}" Unit="°C"
+                                        SubText="Remaining before this CPU's known/inferred throttle point"
+                                        AccentBrush="{DynamicResource AccentBrush}">
+                            <views:VfdMeter.Style>
+                                <Style TargetType="views:VfdMeter">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding EnergyThermals.CpuThermalHeadroomC}" Value="{x:Null}">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </views:VfdMeter.Style>
+                        </views:VfdMeter>
+                    </UniformGrid>
+                    <!-- #603: session-long dwell-time breakdown, stacked as one bar - answers "what is
+                         actually holding my clocks back" instead of a single instantaneous flag. -->
+                    <Border Style="{StaticResource CardStyle}" Margin="0,10,0,0">
+                        <StackPanel>
+                            <TextBlock Text="Throttle-reason dwell time (this session)" Style="{StaticResource CardTitle}" />
+                            <TextBlock Text="Share of time since this tab was opened spent in each classified state - None/Thermal/Power/Firmware/Core-parked."
+                                       Style="{StaticResource SubStat}" Margin="0,-6,0,10" TextWrapping="Wrap" />
+                            <lvc:CartesianChart Series="{Binding ThrottleDwellSeries}" XAxes="{Binding ThrottleDwellXAxes}" YAxes="{Binding ThrottleDwellYAxes}"
+                                                 Height="140" TooltipPosition="Top" LegendPosition="Bottom" Background="Transparent" />
+                        </StackPanel>
+                    </Border>
+                    <!-- #83: C-state residency - a CPU idling deeply for power savings (high C2/C3) looks
+                         very different from one held at a low clock by real throttling, even though both
+                         can present as "the CPU seems slow". Collapsed entirely when the counters aren't
+                         exposed on this Windows/CPU generation. -->
+                    <StackPanel Margin="0,16,0,0">
+                        <StackPanel.Style>
+                            <Style TargetType="StackPanel">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding Performance.CStatesAvailable}" Value="False">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </StackPanel.Style>
+                        <TextBlock Text="C-state residency" Style="{StaticResource SubStat}" Margin="0,0,0,10" />
+                        <UniformGrid Columns="4">
+                            <views:VfdMeter Title="Idle (C0/halt)" Glow="False" Margin="0,0,6,0"
+                                            Percent="{Binding Performance.CpuIdlePercent}"
+                                            ValueText="{Binding Performance.CpuIdlePercent, StringFormat={}{0:0.0}}" Unit="%"
+                                            AccentBrush="{DynamicResource TextSecondaryBrush}" />
+                            <views:VfdMeter Title="C1" Glow="False" Margin="3,0,3,0"
+                                            Percent="{Binding Performance.CpuC1Percent}"
+                                            ValueText="{Binding Performance.CpuC1Percent, StringFormat={}{0:0.0}}" Unit="%"
+                                            AccentBrush="{DynamicResource AccentBrush}" />
+                            <views:VfdMeter Title="C2" Glow="False" Margin="3,0,3,0"
+                                            Percent="{Binding Performance.CpuC2Percent}"
+                                            ValueText="{Binding Performance.CpuC2Percent, StringFormat={}{0:0.0}}" Unit="%"
+                                            AccentBrush="{DynamicResource AccentBrush}" />
+                            <views:VfdMeter Title="C3" Glow="False" Margin="6,0,0,0"
+                                            Percent="{Binding Performance.CpuC3Percent}"
+                                            ValueText="{Binding Performance.CpuC3Percent, StringFormat={}{0:0.0}}" Unit="%"
+                                            AccentBrush="{DynamicResource AccentBrush}" />
+                        </UniformGrid>
+
+                        <!-- #233: deep-idle-exit-latency quick flag - heavy C3 residency alongside an
+                             elevated worst-observed DPC latency (from the Responsiveness tab) for several
+                             consecutive ticks in a row. See CpuViewModel.DeepIdleExitLatencySuspected's
+                             remarks. -->
+                        <TextBlock Text="{Binding DeepIdleExitLatencyText}" Foreground="{DynamicResource WarningBrush}"
+                                   FontSize="{StaticResource FontBody}" FontStyle="Italic" TextWrapping="Wrap" Margin="0,8,0,0">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding DeepIdleExitLatencySuspected}" Value="True">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </StackPanel>
+                    <!-- CPU diagnostics: interrupt/DPC time (#13, a sustained spike usually means a bad
+                         driver, not app load), context-switch rate (#14, thrashing/livelock), queue
+                         length (#15, threads waiting for a core - CpuQueueLengthGaugePercent is a rough
+                         "how concerning" fill past 2x logical processors, same idea as the Storage tab's
+                         latency gauges), and session min/max/avg clock (#11). -->
+                    <TextBlock Text="CPU diagnostics" Style="{StaticResource SubStat}" Margin="0,16,0,10" />
+                    <UniformGrid Columns="5">
+                        <views:VfdMeter Title="Interrupt / DPC" Glow="False" Margin="0,0,6,0"
+                                        Percent="{Binding Performance.CpuInterruptPercent}"
+                                        ValueText="{Binding Performance.CpuInterruptPercent, StringFormat={}{0:0.0}}" Unit="%"
+                                        SubText="{Binding Performance.CpuDpcPercent, StringFormat={}+{0:0.0}% DPC}"
+                                        AccentBrush="{DynamicResource AccentBrush}" />
+                        <views:VfdMeter Title="Context switches" Glow="False" Margin="3,0,3,0"
+                                        ValueText="{Binding Performance.ContextSwitchesPerSec, StringFormat={}{0:0}}" Unit="/s"
+                                        SubText="Thrashing indicator" AccentBrush="{DynamicResource AccentBrush}" />
+                        <views:VfdMeter Title="Queue length" Glow="False" Margin="3,0,3,0"
+                                        Percent="{Binding Performance.CpuQueueLengthGaugePercent}"
+                                        ValueText="{Binding Performance.CpuQueueLength, StringFormat={}{0:0}}" Unit="threads"
+                                        SubText="Waiting for a core" AccentBrush="{Binding Performance.CpuQueueLengthGaugePercent, Converter={StaticResource PercentToBrushConverter}}" />
+                        <views:VfdMeter Title="Clock (session)" Glow="False" Margin="3,0,3,0"
+                                        ValueText="{Binding Performance.CpuAvgClockGhz, StringFormat={}{0:0.00}}" Unit="GHz avg"
+                                        SubText="{Binding Performance.CpuMaxClockGhzSeen, StringFormat={}up to {0:0.00} GHz}"
+                                        AccentBrush="{DynamicResource AccentBrush}" />
+                        <!-- #78: how many logical cores Windows currently has parked to save power - a
+                             common, otherwise invisible reason "only half my CPU seems busy" under
+                             light load. Always 0 (not "unavailable") when the counter itself doesn't
+                             exist on this Windows version - see HardwareMonitorService's remarks. -->
+                        <views:VfdMeter Title="Parked cores" Glow="False" Margin="6,0,0,0"
+                                        ValueText="{Binding Performance.ParkedCoreCount, StringFormat={}{0}}" Unit="cores"
+                                        SubText="Power-saving" AccentBrush="{DynamicResource AccentBrush}" />
+                    </UniformGrid>
+                    <!-- Round 8 #26: SMT/Hyper-Threading summary - per-core sibling pairing is shown
+                         directly in each core tile's label above ("CPU 0 ↔4"), see CoreUsage.Label. -->
+                    <TextBlock Margin="0,16,0,0" Style="{StaticResource SubStat}" TextWrapping="Wrap">
+                        <Run Text="SMT / Hyper-Threading: " />
+                        <Run FontWeight="SemiBold">
+                            <Run.Style>
+                                <Style TargetType="Run">
+                                    <Setter Property="Text" Value="Off (or not determined)" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding Performance.HasSmt}" Value="True">
+                                            <Setter Property="Text" Value="On - sibling cores are marked ↔ in the grid above" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Run.Style>
+                        </Run>
+                    </TextBlock>
+                </StackPanel>
+            </ScrollViewer>
+        </TabItem>
+        <TabItem Header="Frequency &amp; power">
+            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+                <StackPanel>
+                    <!-- Round 8 #27: turbo-boost time-at-frequency histogram, accumulated across this
+                         session - bucketed by percent above/below base clock (see PerformanceViewModel's
+                         TurboHistogram remarks), not raw GHz, so it stays meaningful across CPU models. -->
+                    <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                        <StackPanel>
+                            <TextBlock Text="Turbo-boost histogram (this session)" Style="{StaticResource CardTitle}" />
+                            <TextBlock Text="What percent of this session's samples fell into each range vs. rated base clock."
+                                       Style="{StaticResource SubStat}" Margin="0,-8,0,4" TextWrapping="Wrap" />
+                            <!-- #634: explicit rated-clock reference line + heat-correlation interpretation
+                                 for the "Below base" bucket below - long dwell below base without heat is a
+                                 power-plan/firmware limit, long dwell below base with heat confirms thermal
+                                 throttling. -->
+                            <TextBlock Text="{Binding BoostResidencyText}" Style="{StaticResource SubStat}"
+                                       FontWeight="SemiBold" Margin="0,0,0,12" TextWrapping="Wrap" />
+                            <ItemsControl ItemsSource="{Binding Performance.TurboHistogram}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid Margin="0,0,0,8">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="110" />
+                                                <ColumnDefinition Width="220" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" Text="{Binding Label}" VerticalAlignment="Center" FontSize="{StaticResource FontBody}"
+                                                       Foreground="{DynamicResource TextSecondaryBrush}" />
+                                            <Border Grid.Column="1" Height="14" CornerRadius="4" Background="{DynamicResource BgElevatedBrush}" HorizontalAlignment="Left" Width="220">
+                                                <Border CornerRadius="4" Background="{DynamicResource AccentBrush}" HorizontalAlignment="Left"
+                                                        Width="{Binding Percent, Converter={StaticResource PercentToWidthConverter}, ConverterParameter=220}" />
+                                            </Border>
+                                            <TextBlock Grid.Column="2" Text="{Binding Percent, StringFormat={}{0:0.0}%}" Margin="8,0,0,0"
+                                                       VerticalAlignment="Center" FontSize="{StaticResource FontBody}" FontWeight="SemiBold" />
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </Border>
+                    <!-- #627: PL1/PL2/tau inference from a package-power dwell histogram, accumulated only
+                         while under sustained load. Explicitly labeled "inferred, not read from MSRs" - the
+                         real registers need a kernel driver this app deliberately does not ship. -->
+                    <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                        <StackPanel>
+                            <TextBlock Text="Power dwell histogram (PL1/PL2 inference)" Style="{StaticResource CardTitle}" />
+                            <TextBlock Text="{Binding PowerPlateauText}" Style="{StaticResource SubStat}" Margin="0,-8,0,12" TextWrapping="Wrap" />
+                            <ItemsControl ItemsSource="{Binding PowerDwellHistogram}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid Margin="0,0,0,6">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="70" />
+                                                <ColumnDefinition Width="220" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" Text="{Binding Label}" VerticalAlignment="Center" FontSize="{StaticResource FontBody}"
+                                                       Foreground="{DynamicResource TextSecondaryBrush}" />
+                                            <Border Grid.Column="1" Height="12" CornerRadius="4" Background="{DynamicResource BgElevatedBrush}" HorizontalAlignment="Left" Width="220">
+                                                <Border CornerRadius="4" Background="{DynamicResource WarningBrush}" HorizontalAlignment="Left"
+                                                        Width="{Binding Percent, Converter={StaticResource PercentToWidthConverter}, ConverterParameter=220}" />
+                                            </Border>
+                                            <TextBlock Grid.Column="2" Text="{Binding Percent, StringFormat={}{0:0.#}%}" Margin="8,0,0,0"
+                                                       VerticalAlignment="Center" FontSize="{StaticResource FontBody}" />
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <TextBlock Text="No sustained-load samples recorded yet - run something CPU-heavy for a while."
+                                       Opacity="0.7" Margin="0,4,0,0">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding PowerDwellHistogram.Count}" Value="0">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </StackPanel>
+                    </Border>
+                    <!-- #629: clock-stretching detector - a tiny fixed-work microbenchmark on a slow timer,
+                         compared against the reported effective clock. -->
+                    <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                        <StackPanel>
+                            <TextBlock Text="Clock-stretching check" Style="{StaticResource CardTitle}" />
+                            <TextBlock Text="{Binding ClockStretchText}" Margin="0,-8,0,0" TextWrapping="Wrap">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                        <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding ClockStretchDetected}" Value="True">
+                                                <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                <Setter Property="FontWeight" Value="SemiBold" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </StackPanel>
+                    </Border>
+                    <!-- #630: effective- vs. requested-frequency gap - session trend plus a per-NUMA-node
+                         breakdown, both hidden entirely when the underlying per-core counters aren't
+                         available on this Windows/CPU generation. -->
+                    <Border Margin="0,16,0,0">
+                        <Border.Style>
+                            <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding Performance.CpuFrequencyGapAvailable}" Value="False">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                        <StackPanel>
+                            <Grid Margin="0,0,0,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Effective vs. requested frequency" Style="{StaticResource CardTitle}" Margin="0" />
+                                <TextBlock Grid.Column="1" Text="{Binding Performance.CpuFrequencyGapPercent, StringFormat={}{0:+0.#;-0.#;0}pp}" Style="{StaticResource SubStat}" VerticalAlignment="Center" />
+                            </Grid>
+                            <TextBlock Text="OS-requested clock minus silicon-delivered clock, as percentage points of rated max. A persistent positive gap means the OS is asking for more than the silicon delivers."
+                                       Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+                            <lvc:CartesianChart Series="{Binding Performance.CpuFrequencyGapSeries}" XAxes="{Binding Performance.HiddenXAxes}" YAxes="{Binding Performance.FrequencyGapYAxes}"
+                                                 Height="140" TooltipPosition="Hidden" LegendPosition="Hidden" Background="Transparent" Margin="0,0,0,10" />
+                            <ItemsControl ItemsSource="{Binding FrequencyGapByGroup}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <WrapPanel />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <views:VfdMeter Title="{Binding NumaNode, StringFormat=NUMA node {0}}" Glow="False" Width="150" Margin="0,0,8,8"
+                                                        ValueText="{Binding GapPoints, StringFormat={}{0:+0.#;-0.#;0}, TargetNullValue=–}" Unit="pp"
+                                                        AccentBrush="{DynamicResource WarningBrush}" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </Border>
+                    <!-- #631: core parking and frequency-floor misconfiguration checklist - the first line
+                         (parked cores under load) is always live; the rest fill in from powercfg /qh once
+                         checked. -->
+                    <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                        <StackPanel>
+                            <Grid Margin="0,0,0,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Processor power management" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                                <Button Grid.Column="1" Content="Check power settings" Command="{Binding LoadProcessorPowerSettingsCommand}" />
+                            </Grid>
+                            <TextBlock Text="{Binding ProcessorPowerSettingsStatusText}" Margin="0,0,0,10" TextWrapping="Wrap">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding ProcessorPowerSettingsStatusText}" Value="">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                            <ItemsControl ItemsSource="{Binding ProcessorPowerChecklist}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,8" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
                         </StackPanel>
                     </Border>
                 </StackPanel>
-            </Border>
-
-            <!-- #627: PL1/PL2/tau inference from a package-power dwell histogram, accumulated only
-                 while under sustained load. Explicitly labeled "inferred, not read from MSRs" - the
-                 real registers need a kernel driver this app deliberately does not ship. -->
-            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+            </ScrollViewer>
+        </TabItem>
+        <TabItem Header="Details">
+            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
                 <StackPanel>
-                    <TextBlock Text="Power dwell histogram (PL1/PL2 inference)" Style="{StaticResource CardTitle}" />
-                    <TextBlock Text="{Binding PowerPlateauText}" Style="{StaticResource SubStat}" Margin="0,-8,0,12" TextWrapping="Wrap" />
-                    <ItemsControl ItemsSource="{Binding PowerDwellHistogram}">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <Grid Margin="0,0,0,6">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="70" />
-                                        <ColumnDefinition Width="220" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0" Text="{Binding Label}" VerticalAlignment="Center" FontSize="11.5"
-                                               Foreground="{DynamicResource TextSecondaryBrush}" />
-                                    <Border Grid.Column="1" Height="12" CornerRadius="3" Background="{DynamicResource BgElevatedBrush}" HorizontalAlignment="Left" Width="220">
-                                        <Border CornerRadius="3" Background="{DynamicResource WarningBrush}" HorizontalAlignment="Left"
-                                                Width="{Binding Percent, Converter={StaticResource PercentToWidthConverter}, ConverterParameter=220}" />
-                                    </Border>
-                                    <TextBlock Grid.Column="2" Text="{Binding Percent, StringFormat={}{0:0.#}%}" Margin="8,0,0,0"
-                                               VerticalAlignment="Center" FontSize="11" />
-                                </Grid>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                    <TextBlock Text="No sustained-load samples recorded yet - run something CPU-heavy for a while."
-                               Opacity="0.7" Margin="0,4,0,0">
-                        <TextBlock.Style>
-                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
-                                <Setter Property="Visibility" Value="Collapsed" />
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding PowerDwellHistogram.Count}" Value="0">
+                    <!-- Round 8 #24: best-effort core-affinity heatmap - which cores the current top-CPU
+                         processes' threads prefer (GetThreadIdealProcessorEx), not a live trace of actual
+                         scheduling - see CoreAffinityService's remarks. -->
+                    <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                        <StackPanel>
+                            <TextBlock Text="Core affinity heatmap (top CPU processes)" Style="{StaticResource CardTitle}" />
+                            <TextBlock Text="Preferred (ideal) core per thread for the current top few CPU-consuming processes - an approximation, not a live trace of every context switch."
+                                       Style="{StaticResource SubStat}" Margin="0,-8,0,12" TextWrapping="Wrap" />
+                            <ItemsControl ItemsSource="{Binding CoreAffinity}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <WrapPanel />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Width="76" Height="52" CornerRadius="6" Margin="0,0,6,6" Padding="6"
+                                                Background="{DynamicResource BgElevatedBrush}"
+                                                ToolTip="{Binding ProcessNames}">
+                                            <Border.Style>
+                                                <Style TargetType="Border">
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding ProcessCount}" Value="1">
+                                                            <Setter Property="Background" Value="{DynamicResource AccentMutedBrush}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Border.Style>
+                                            <StackPanel>
+                                                <TextBlock Text="{Binding CoreIndex, StringFormat=CPU {0}}" FontSize="{StaticResource FontCaption}"
+                                                           Foreground="{DynamicResource TextSecondaryBrush}" />
+                                                <TextBlock Text="{Binding ProcessCount}" FontSize="{StaticResource FontTitle}" FontWeight="SemiBold" />
+                                                <TextBlock Text="processes" FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                            </StackPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <!-- #267: hybrid-CPU (P-core/E-core) misplacement flag - a plain text note next
+                                 to the heatmap rather than a full P/E-tint overlay (a documented
+                                 simplification, see CpuViewModel.HybridMisplacementText's remarks). Only
+                                 ever shown on genuinely hybrid systems, matching this whole card's own
+                                 HasHybridTopology gating. -->
+                            <TextBlock Text="{Binding HybridMisplacementText}" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Margin="0,10,0,0">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding HybridMisplacementSuspected}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                                <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </StackPanel>
+                    </Border>
+                    <!-- Round 8 #25/#28/#29/#30: static CPU identification readouts - microcode revision,
+                         Spectre/Meltdown mitigation override status, instruction-set support (backed by
+                         .NET's own CPUID-driven runtime feature detection, not raw CPUID execution - see
+                         CpuFeatureInfo's remarks), and L1/L2/L3 cache sizes. -->
+                    <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                        <StackPanel>
+                            <TextBlock Text="CPU identification" Style="{StaticResource CardTitle}" />
+                            <UniformGrid Columns="3" Margin="0,10,0,10">
+                                <StackPanel Margin="0,0,6,10">
+                                    <TextBlock Text="Microcode revision" Style="{StaticResource SpecLabel}" />
+                                    <TextBlock Text="{Binding Features.MicrocodeRevision}" Style="{StaticResource SpecValue}" />
+                                </StackPanel>
+                                <StackPanel Margin="3,0,3,10">
+                                    <TextBlock Text="L1 cache" Style="{StaticResource SpecLabel}" />
+                                    <TextBlock Text="{Binding Features.L1CacheText}" Style="{StaticResource SpecValue}" />
+                                </StackPanel>
+                                <StackPanel Margin="3,0,3,10">
+                                    <TextBlock Text="L2 cache" Style="{StaticResource SpecLabel}" />
+                                    <TextBlock Text="{Binding Features.L2CacheText}" Style="{StaticResource SpecValue}" />
+                                </StackPanel>
+                                <StackPanel Margin="0,0,6,0">
+                                    <TextBlock Text="L3 cache" Style="{StaticResource SpecLabel}" />
+                                    <TextBlock Text="{Binding Features.L3CacheText}" Style="{StaticResource SpecValue}" />
+                                </StackPanel>
+                                <StackPanel Margin="3,0,3,0">
+                                    <TextBlock Text="Instruction sets" Style="{StaticResource SpecLabel}" />
+                                    <TextBlock Style="{StaticResource SpecValue}" TextWrapping="Wrap" FontSize="{StaticResource FontBody}">
+                                        <Run Text="{Binding Features.Sse42Supported, StringFormat={}SSE4.2: {0}, Mode=OneWay}" />
+                                        <Run Text="  ·  " />
+                                        <Run Text="{Binding Features.AvxSupported, StringFormat={}AVX: {0}, Mode=OneWay}" />
+                                        <Run Text="  ·  " />
+                                        <Run Text="{Binding Features.Avx2Supported, StringFormat={}AVX2: {0}, Mode=OneWay}" />
+                                        <Run Text="  ·  " />
+                                        <Run Text="{Binding Features.Avx512Supported, StringFormat={}AVX-512: {0}, Mode=OneWay}" />
+                                        <Run Text="  ·  " />
+                                        <Run Text="{Binding Features.FmaSupported, StringFormat={}FMA: {0}, Mode=OneWay}" />
+                                    </TextBlock>
+                                </StackPanel>
+                            </UniformGrid>
+                            <TextBlock Text="Instruction-set flags come from .NET's own runtime CPUID-driven feature detection (accurate for what code on this machine can use); AVX-512 can read false on hardware that has the silicon but isn't exposed by this OS/runtime combination."
+                                       Style="{StaticResource SubStat}" TextWrapping="Wrap" Opacity="0.7" Margin="0,4,0,10" />
+                            <Border BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,1,0,0" Padding="0,10,0,0">
+                                <StackPanel>
+                                    <TextBlock Text="Spectre/Meltdown mitigation override" Style="{StaticResource SpecLabel}" />
+                                    <TextBlock Text="{Binding Features.MitigationOverrideText}" Style="{StaticResource SpecValue}" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" />
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </Border>
+                    <!-- #635: on-demand steady-state snapshot for before/after comparison (BIOS update,
+                         repaste, undervolt change, ...). -->
+                    <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                        <StackPanel>
+                            <Grid Margin="0,0,0,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Silicon behavior snapshots" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                                <Button Grid.Column="1" Content="Snapshot current behavior" Command="{Binding SnapshotCurrentBehaviorCommand}" />
+                            </Grid>
+                            <TextBlock Text="Captures steady-state clock, Vcore, package power, temperature, and throttle percentage as one row - compare before and after a BIOS update, a repaste, or an undervolt change."
+                                       Style="{StaticResource SubStat}" Margin="0,-4,0,8" TextWrapping="Wrap" />
+                            <TextBlock Text="{Binding SiliconSnapshotStatusText}" Margin="0,0,0,8" TextWrapping="Wrap">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
                                         <Setter Property="Visibility" Value="Visible" />
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </TextBlock.Style>
-                    </TextBlock>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding SiliconSnapshotStatusText}" Value="">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                            <DataGrid ItemsSource="{Binding SiliconSnapshots}" Height="200" IsReadOnly="True">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Captured" Binding="{Binding Timestamp, StringFormat={}{0:g}}" Width="140" />
+                                    <DataGridTextColumn Header="Clock" Binding="{Binding ClockGhz, StringFormat={}{0:0.00} GHz}" Width="90" />
+                                    <DataGridTextColumn Header="Vcore" Binding="{Binding VcoreV, StringFormat={}{0:0.###} V}" Width="90" />
+                                    <DataGridTextColumn Header="Power" Binding="{Binding PackagePowerW, StringFormat={}{0:0.#} W}" Width="90" />
+                                    <DataGridTextColumn Header="Temp" Binding="{Binding TempC, StringFormat={}{0:0.#}°C}" Width="80" />
+                                    <DataGridTextColumn Header="Throttle" Binding="{Binding ThrottlePercent, StringFormat={}{0:0.#}%}" Width="*" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </StackPanel>
+                    </Border>
                 </StackPanel>
-            </Border>
-
-            <!-- #629: clock-stretching detector - a tiny fixed-work microbenchmark on a slow timer,
-                 compared against the reported effective clock. -->
-            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
-                <StackPanel>
-                    <TextBlock Text="Clock-stretching check" Style="{StaticResource CardTitle}" />
-                    <TextBlock Text="{Binding ClockStretchText}" Margin="0,-8,0,0" TextWrapping="Wrap">
-                        <TextBlock.Style>
-                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
-                                <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding ClockStretchDetected}" Value="True">
-                                        <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
-                                        <Setter Property="FontWeight" Value="SemiBold" />
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </TextBlock.Style>
-                    </TextBlock>
-                </StackPanel>
-            </Border>
-
-            <!-- #630: effective- vs. requested-frequency gap - session trend plus a per-NUMA-node
-                 breakdown, both hidden entirely when the underlying per-core counters aren't
-                 available on this Windows/CPU generation. -->
-            <Border Margin="0,16,0,0">
-                <Border.Style>
-                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
-                        <Style.Triggers>
-                            <DataTrigger Binding="{Binding Performance.CpuFrequencyGapAvailable}" Value="False">
-                                <Setter Property="Visibility" Value="Collapsed" />
-                            </DataTrigger>
-                        </Style.Triggers>
-                    </Style>
-                </Border.Style>
-                <StackPanel>
-                    <Grid Margin="0,0,0,4">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="Effective vs. requested frequency" Style="{StaticResource CardTitle}" Margin="0" />
-                        <TextBlock Grid.Column="1" Text="{Binding Performance.CpuFrequencyGapPercent, StringFormat={}{0:+0.#;-0.#;0}pp}" Style="{StaticResource SubStat}" VerticalAlignment="Center" />
-                    </Grid>
-                    <TextBlock Text="OS-requested clock minus silicon-delivered clock, as percentage points of rated max. A persistent positive gap means the OS is asking for more than the silicon delivers."
-                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
-                    <lvc:CartesianChart Series="{Binding Performance.CpuFrequencyGapSeries}" XAxes="{Binding Performance.HiddenXAxes}" YAxes="{Binding Performance.FrequencyGapYAxes}"
-                                         Height="140" TooltipPosition="Hidden" LegendPosition="Hidden" Background="Transparent" Margin="0,0,0,10" />
-                    <ItemsControl ItemsSource="{Binding FrequencyGapByGroup}">
-                        <ItemsControl.ItemsPanel>
-                            <ItemsPanelTemplate>
-                                <WrapPanel />
-                            </ItemsPanelTemplate>
-                        </ItemsControl.ItemsPanel>
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <views:VfdMeter Title="{Binding NumaNode, StringFormat=NUMA node {0}}" Glow="False" Width="150" Margin="0,0,8,8"
-                                                ValueText="{Binding GapPoints, StringFormat={}{0:+0.#;-0.#;0}, TargetNullValue=–}" Unit="pp"
-                                                AccentBrush="{DynamicResource WarningBrush}" />
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                </StackPanel>
-            </Border>
-
-            <!-- #631: core parking and frequency-floor misconfiguration checklist - the first line
-                 (parked cores under load) is always live; the rest fill in from powercfg /qh once
-                 checked. -->
-            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
-                <StackPanel>
-                    <Grid Margin="0,0,0,4">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="Processor power management" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
-                        <Button Grid.Column="1" Content="Check power settings" Command="{Binding LoadProcessorPowerSettingsCommand}" />
-                    </Grid>
-                    <TextBlock Text="{Binding ProcessorPowerSettingsStatusText}" Margin="0,0,0,10" TextWrapping="Wrap">
-                        <TextBlock.Style>
-                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
-                                <Setter Property="Visibility" Value="Visible" />
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding ProcessorPowerSettingsStatusText}" Value="">
-                                        <Setter Property="Visibility" Value="Collapsed" />
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </TextBlock.Style>
-                    </TextBlock>
-                    <ItemsControl ItemsSource="{Binding ProcessorPowerChecklist}">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <TextBlock Text="{Binding}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8" />
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                </StackPanel>
-            </Border>
-
-            <!-- #635: on-demand steady-state snapshot for before/after comparison (BIOS update,
-                 repaste, undervolt change, ...). -->
-            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
-                <StackPanel>
-                    <Grid Margin="0,0,0,4">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="Silicon behavior snapshots" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
-                        <Button Grid.Column="1" Content="Snapshot current behavior" Command="{Binding SnapshotCurrentBehaviorCommand}" />
-                    </Grid>
-                    <TextBlock Text="Captures steady-state clock, Vcore, package power, temperature, and throttle percentage as one row - compare before and after a BIOS update, a repaste, or an undervolt change."
-                               Style="{StaticResource SubStat}" Margin="0,-4,0,8" TextWrapping="Wrap" />
-                    <TextBlock Text="{Binding SiliconSnapshotStatusText}" Margin="0,0,0,8" TextWrapping="Wrap">
-                        <TextBlock.Style>
-                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
-                                <Setter Property="Visibility" Value="Visible" />
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding SiliconSnapshotStatusText}" Value="">
-                                        <Setter Property="Visibility" Value="Collapsed" />
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </TextBlock.Style>
-                    </TextBlock>
-                    <DataGrid ItemsSource="{Binding SiliconSnapshots}" Height="200" IsReadOnly="True">
-                        <DataGrid.Columns>
-                            <DataGridTextColumn Header="Captured" Binding="{Binding Timestamp, StringFormat={}{0:g}}" Width="140" />
-                            <DataGridTextColumn Header="Clock" Binding="{Binding ClockGhz, StringFormat={}{0:0.00} GHz}" Width="90" />
-                            <DataGridTextColumn Header="Vcore" Binding="{Binding VcoreV, StringFormat={}{0:0.###} V}" Width="90" />
-                            <DataGridTextColumn Header="Power" Binding="{Binding PackagePowerW, StringFormat={}{0:0.#} W}" Width="90" />
-                            <DataGridTextColumn Header="Temp" Binding="{Binding TempC, StringFormat={}{0:0.#}°C}" Width="80" />
-                            <DataGridTextColumn Header="Throttle" Binding="{Binding ThrottlePercent, StringFormat={}{0:0.#}%}" Width="*" />
-                        </DataGrid.Columns>
-                    </DataGrid>
-                </StackPanel>
-            </Border>
-
-        </StackPanel>
-    </ScrollViewer>
+            </ScrollViewer>
+        </TabItem>
+    </TabControl>
 </UserControl>

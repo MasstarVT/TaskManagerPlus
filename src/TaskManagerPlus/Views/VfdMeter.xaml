@@ -22,7 +22,7 @@
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
-                <Border Grid.Column="0" Width="8" Height="8" CornerRadius="4" Margin="0,0,7,0" VerticalAlignment="Center"
+                <Border Grid.Column="0" Width="8" Height="8" CornerRadius="4" Margin="0,0,6,0" VerticalAlignment="Center"
                         Background="{Binding AccentBrush, ElementName=Root}" />
                 <!-- A Grid column (not a horizontal StackPanel, which always offers its children
                      infinite width) actually constrains this TextBlock so TextTrimming can kick
@@ -33,12 +33,12 @@
 
             <!-- Inset bezel around the readout -->
             <Border Background="{DynamicResource BgBrush}" BorderBrush="{DynamicResource BorderSubtleBrush}"
-                    BorderThickness="1" CornerRadius="5" Padding="10,6" Margin="0,0,0,8">
+                    BorderThickness="1" CornerRadius="6" Padding="10,6" Margin="0,0,0,8">
                 <StackPanel Orientation="Horizontal">
                     <TextBlock x:Name="ValueTextBlock" Text="{Binding ValueText, ElementName=Root}"
-                               FontFamily="Consolas" FontSize="20" FontWeight="Bold"
+                               FontFamily="Consolas" FontSize="{StaticResource FontDisplay}" FontWeight="Bold"
                                Foreground="{Binding AccentBrush, ElementName=Root}" VerticalAlignment="Bottom" />
-                    <TextBlock Text="{Binding Unit, ElementName=Root}" FontFamily="Consolas" FontSize="11"
+                    <TextBlock Text="{Binding Unit, ElementName=Root}" FontFamily="Consolas" FontSize="{StaticResource FontBody}"
                                Foreground="{Binding AccentBrush, ElementName=Root}" Opacity="0.7"
                                Margin="4,0,0,3" VerticalAlignment="Bottom" />
                 </StackPanel>

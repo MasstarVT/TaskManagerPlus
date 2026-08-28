@@ -30,7 +30,7 @@
                         <TextBlock Text="{Binding Primary}" FontWeight="SemiBold" TextWrapping="Wrap" />
                         <!-- Disk health badge (SMART / WMI status) - empty and collapsed for
                              rows that don't carry a health concept (memory, GPU). -->
-                        <Border CornerRadius="3" Padding="5,1" Margin="8,0,0,0" VerticalAlignment="Center">
+                        <Border CornerRadius="4" Padding="4,0" Margin="8,0,0,0" VerticalAlignment="Center">
                             <Border.Style>
                                 <Style TargetType="Border">
                                     <Setter Property="Background" Value="{DynamicResource SuccessBrush}" />
@@ -45,7 +45,7 @@
                                     </Style.Triggers>
                                 </Style>
                             </Border.Style>
-                            <TextBlock Text="{Binding HealthText}" FontSize="10" FontWeight="SemiBold" Foreground="White">
+                            <TextBlock Text="{Binding HealthText}" FontSize="{StaticResource FontCaption}" FontWeight="SemiBold" Foreground="White">
                                 <TextBlock.Style>
                                     <Style TargetType="TextBlock">
                                         <Style.Triggers>
@@ -84,7 +84,7 @@
                         <TextBlock Text="{Binding Primary}" FontWeight="SemiBold" />
                         <!-- #29: dirty-bit badge - reuses the disk health badge's visual (colored
                              pill) but keyed off IsDirty instead of HealthText. -->
-                        <Border Background="{DynamicResource DangerBrush}" CornerRadius="3" Padding="5,1" Margin="8,0,0,0" VerticalAlignment="Center">
+                        <Border Background="{DynamicResource DangerBrush}" CornerRadius="4" Padding="4,0" Margin="8,0,0,0" VerticalAlignment="Center">
                             <Border.Style>
                                 <Style TargetType="Border">
                                     <Setter Property="Visibility" Value="Collapsed" />
@@ -95,12 +95,12 @@
                                     </Style.Triggers>
                                 </Style>
                             </Border.Style>
-                            <TextBlock Text="Needs chkdsk" FontSize="10" FontWeight="SemiBold" Foreground="White" />
+                            <TextBlock Text="Needs chkdsk" FontSize="{StaticResource FontCaption}" FontWeight="SemiBold" Foreground="White" />
                         </Border>
                         <!-- Round 9, #37: BitLocker badge - only shown for a confirmed "On" status,
                              not "Off"/"Unknown"/"Not applicable" (a permission gap or an
                              unencryptable volume isn't the same as a real finding). -->
-                        <Border Background="{DynamicResource SuccessBrush}" CornerRadius="3" Padding="5,1" Margin="8,0,0,0" VerticalAlignment="Center">
+                        <Border Background="{DynamicResource SuccessBrush}" CornerRadius="4" Padding="4,0" Margin="8,0,0,0" VerticalAlignment="Center">
                             <Border.Style>
                                 <Style TargetType="Border">
                                     <Setter Property="Visibility" Value="Collapsed" />
@@ -111,7 +111,7 @@
                                     </Style.Triggers>
                                 </Style>
                             </Border.Style>
-                            <TextBlock Text="BitLocker" FontSize="10" FontWeight="SemiBold" Foreground="White" />
+                            <TextBlock Text="BitLocker" FontSize="{StaticResource FontCaption}" FontWeight="SemiBold" Foreground="White" />
                         </Border>
                     </StackPanel>
                     <TextBlock Text="{Binding Secondary}" Style="{StaticResource SecondaryLine}" />
@@ -149,991 +149,1009 @@
         </Style>
     </UserControl.Resources>
 
-    <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16">
-        <StackPanel>
-
-            <Grid Margin="0,0,0,4">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
-                </Grid.ColumnDefinitions>
-                <TextBlock Grid.Column="0" VerticalAlignment="Center"
-                           Text="Hardware and software detected on this PC."
-                           Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,16" />
-                <StackPanel Grid.Column="1" Orientation="Horizontal">
-                    <!-- #64: one-click "copy hardware IDs" (system product + CPU + GPU
-                         identifiers) for pasting into a support ticket. -->
-                    <Button Content="Copy hardware IDs" Command="{Binding CopyHardwareIdsCommand}" Padding="10,4" Margin="0,0,8,16" />
-                    <Button Content="Refresh" Command="{Binding RefreshCommand}"
-                            Style="{StaticResource PrimaryButton}" Margin="0,0,0,16" />
-                </StackPanel>
-            </Grid>
-
-            <!-- Summary tiles -->
-            <UniformGrid Columns="3">
-                <Border Style="{StaticResource CardStyle}" Margin="0,0,8,16">
-                    <StackPanel>
-                        <TextBlock Text="Operating System" Style="{StaticResource CardTitle}" />
-                        <TextBlock Text="{Binding OsName}" Style="{StaticResource SpecValue}" FontSize="16" FontWeight="SemiBold" />
-                        <TextBlock Text="{Binding OsDetails}" Style="{StaticResource SubStat}" Margin="0,4,0,0" TextWrapping="Wrap" />
-                    </StackPanel>
-                </Border>
-                <Border Style="{StaticResource CardStyle}" Margin="4,0,4,16">
-                    <StackPanel>
-                        <TextBlock Text="Processor" Style="{StaticResource CardTitle}" />
-                        <TextBlock Text="{Binding CpuName}" Style="{StaticResource SpecValue}" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" />
-                        <TextBlock Text="{Binding CpuDetails}" Style="{StaticResource SubStat}" Margin="0,4,0,0" TextWrapping="Wrap" />
-                    </StackPanel>
-                </Border>
-                <Border Style="{StaticResource CardStyle}" Margin="8,0,0,16">
-                    <StackPanel>
-                        <TextBlock Text="Memory" Style="{StaticResource CardTitle}" />
-                        <TextBlock Text="{Binding RamTotal}" Style="{StaticResource SpecValue}" FontSize="16" FontWeight="SemiBold" />
-                        <TextBlock Text="{Binding RamDetails}" Style="{StaticResource SubStat}" Margin="0,4,0,0" />
-                        <!-- #441: CAS latency/primary timings, next to the speed figures above -
-                             "Unknown" on almost every system today (LibreHardwareMonitorLib
-                             doesn't expose SPD timing sensors on any chipset backend yet), a real
-                             sensor lookup rather than a hardcoded string - see
-                             SystemSpecsService.ReadMemoryTimingsText. -->
-                        <TextBlock Style="{StaticResource SubStat}" Margin="0,2,0,0" TextWrapping="Wrap">
-                            <Run Text="Timings: " /><Run Text="{Binding MemoryTimingsText, Mode=OneWay}" />
-                        </TextBlock>
-                    </StackPanel>
-                </Border>
-            </UniformGrid>
-
-            <!-- System / motherboard -->
-            <Border Style="{StaticResource CardStyle}">
+    <!-- Sections. A 23-card spec sheet reads better as named pages than as one long column.
+         Sections. A 23-card spec sheet reads better as named pages than as one long column. -->
+    <TabControl Style="{StaticResource SectionTabControl}" SelectedIndex="0">
+        <TabItem Header="Overview">
+            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
                 <StackPanel>
-                    <TextBlock Text="System" Style="{StaticResource CardTitle}" />
-                    <UniformGrid Columns="2" Rows="4">
-                        <StackPanel Margin="0,0,12,14">
-                            <TextBlock Text="Computer name" Style="{StaticResource SpecLabel}" />
-                            <TextBlock Text="{Binding ComputerName}" Style="{StaticResource SpecValue}" />
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" VerticalAlignment="Center"
+                                   Text="Hardware and software detected on this PC."
+                                   Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,16" />
+                        <StackPanel Grid.Column="1" Orientation="Horizontal">
+                            <!-- #64: one-click "copy hardware IDs" (system product + CPU + GPU
+                                 identifiers) for pasting into a support ticket. -->
+                            <Button Content="Copy hardware IDs" Command="{Binding CopyHardwareIdsCommand}" Padding="10,4" Margin="0,0,8,16" />
+                            <Button Content="Refresh" Command="{Binding RefreshCommand}"
+                                    Style="{StaticResource PrimaryButton}" Margin="0,0,0,16" />
                         </StackPanel>
-                        <StackPanel Margin="0,0,0,14">
-                            <TextBlock Text="Model" Style="{StaticResource SpecLabel}" />
-                            <TextBlock Text="{Binding SystemModel}" Style="{StaticResource SpecValue}" />
-                        </StackPanel>
-                        <!-- #57: chassis/form-factor readout. -->
-                        <StackPanel Margin="0,0,12,14">
-                            <TextBlock Text="Chassis" Style="{StaticResource SpecLabel}" />
-                            <TextBlock Text="{Binding ChassisType}" Style="{StaticResource SpecValue}" />
-                        </StackPanel>
-                        <!-- #58: Windows edition (see OsName above) & activation status - informational
-                             only, no product key is ever read or shown. -->
-                        <StackPanel Margin="0,0,0,14">
-                            <TextBlock Text="Activation" Style="{StaticResource SpecLabel}" />
-                            <TextBlock Text="{Binding ActivationStatus}" Style="{StaticResource SpecValue}" />
-                        </StackPanel>
-                        <StackPanel Margin="0,0,12,14">
-                            <TextBlock Text="Motherboard" Style="{StaticResource SpecLabel}" />
-                            <TextBlock Text="{Binding Motherboard}" Style="{StaticResource SpecValue}" />
-                        </StackPanel>
-                        <StackPanel Margin="0,0,0,14">
-                            <TextBlock Text="BIOS version" Style="{StaticResource SpecLabel}" />
-                            <TextBlock Text="{Binding BiosVersion}" TextWrapping="Wrap">
-                                <TextBlock.Style>
-                                    <Style TargetType="TextBlock" BasedOn="{StaticResource SpecValue}">
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding BiosAgeWarning}" Value="True">
-                                                <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </TextBlock.Style>
-                            </TextBlock>
-                        </StackPanel>
-                        <!-- #61: motherboard chipset driver version - best-effort, see
-                             SystemSpecsService.ReadChipsetDriverInfo. -->
-                        <StackPanel Margin="0,0,12,0">
-                            <TextBlock Text="Chipset driver" Style="{StaticResource SpecLabel}" />
-                            <TextBlock Text="{Binding ChipsetDriverText}" Style="{StaticResource SpecValue}" TextWrapping="Wrap" />
-                        </StackPanel>
-                        <!-- #62: longest-uptime records this month/year, derived from the boot-history
-                             trend the Startup tab already persists - no new sampling. -->
-                        <StackPanel Margin="0,0,0,0">
-                            <TextBlock Text="Longest uptime (month / year)" Style="{StaticResource SpecLabel}" />
-                            <TextBlock Style="{StaticResource SpecValue}">
-                                <Run Text="{Binding LongestUptimeThisMonthText, Mode=OneWay}" />
-                                <Run Text=" / " />
-                                <Run Text="{Binding LongestUptimeThisYearText, Mode=OneWay}" />
-                            </TextBlock>
-                        </StackPanel>
+                    </Grid>
+                    <!-- Summary tiles -->
+                    <UniformGrid Columns="3">
+                        <Border Style="{StaticResource CardStyle}" Margin="0,0,8,16">
+                            <StackPanel>
+                                <TextBlock Text="Operating System" Style="{StaticResource CardTitle}" />
+                                <TextBlock Text="{Binding OsName}" Style="{StaticResource SpecValue}" FontSize="{StaticResource FontTitle}" FontWeight="SemiBold" />
+                                <TextBlock Text="{Binding OsDetails}" Style="{StaticResource SubStat}" Margin="0,4,0,0" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource CardStyle}" Margin="4,0,4,16">
+                            <StackPanel>
+                                <TextBlock Text="Processor" Style="{StaticResource CardTitle}" />
+                                <TextBlock Text="{Binding CpuName}" Style="{StaticResource SpecValue}" FontSize="{StaticResource FontTitle}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                <TextBlock Text="{Binding CpuDetails}" Style="{StaticResource SubStat}" Margin="0,4,0,0" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource CardStyle}" Margin="8,0,0,16">
+                            <StackPanel>
+                                <TextBlock Text="Memory" Style="{StaticResource CardTitle}" />
+                                <TextBlock Text="{Binding RamTotal}" Style="{StaticResource SpecValue}" FontSize="{StaticResource FontTitle}" FontWeight="SemiBold" />
+                                <TextBlock Text="{Binding RamDetails}" Style="{StaticResource SubStat}" Margin="0,4,0,0" />
+                                <!-- #441: CAS latency/primary timings, next to the speed figures above -
+                                     "Unknown" on almost every system today (LibreHardwareMonitorLib
+                                     doesn't expose SPD timing sensors on any chipset backend yet), a real
+                                     sensor lookup rather than a hardcoded string - see
+                                     SystemSpecsService.ReadMemoryTimingsText. -->
+                                <TextBlock Style="{StaticResource SubStat}" Margin="0,2,0,0" TextWrapping="Wrap">
+                                    <Run Text="Timings: " /><Run Text="{Binding MemoryTimingsText, Mode=OneWay}" />
+                                </TextBlock>
+                            </StackPanel>
+                        </Border>
                     </UniformGrid>
-                </StackPanel>
-            </Border>
-
-            <!-- #451: RAM health rollup - mismatched DIMMs, ECC corrected errors, memory
-                 diagnostic results, XMP state, channel population and memory-related bugchecks,
-                 combined into one verdict card at the top of the memory section. "Quick flag, not
-                 a verdict" - see MemoryDiagnosticsService.BuildRamHealth. -->
-            <Border Margin="0,0,0,16">
-                <Border.Style>
-                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
-                        <Style.Triggers>
-                            <DataTrigger Binding="{Binding RamHealthIsWarning}" Value="True">
-                                <Setter Property="BorderBrush" Value="{DynamicResource WarningBrush}" />
-                            </DataTrigger>
-                        </Style.Triggers>
-                    </Style>
-                </Border.Style>
-                <StackPanel>
-                    <Grid Margin="0,0,0,4">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="RAM health" Style="{StaticResource CardTitle}" Margin="0" />
-                        <TextBlock Grid.Column="1" Text="{Binding RamHealthVerdictText}" FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center">
-                            <TextBlock.Style>
-                                <Style TargetType="TextBlock">
-                                    <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding RamHealthIsWarning}" Value="True">
-                                            <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
-                                        </DataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </TextBlock.Style>
-                        </TextBlock>
-                    </Grid>
-                    <TextBlock Text="A rolled-up, automated check across mismatched modules, ECC-corrected errors, the last Windows Memory Diagnostic result, XMP/EXPO state, channel population and memory-related crash history - informational, not a certified hardware diagnosis."
-                               Style="{StaticResource SubStat}" Margin="0,0,0,10" TextWrapping="Wrap" />
-                    <ItemsControl ItemsSource="{Binding RamHealthFindings}">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <TextBlock Text="{Binding}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,4" />
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                </StackPanel>
-            </Border>
-
-            <!-- Memory modules: richer per-module grid (#440) - part number/serial/rank/voltage/
-                 form factor/memory technology come from raw SMBIOS Type 17 parsing
-                 (SmbiosMemoryService) where WMI drops those fields entirely; blank/hidden per row
-                 when no SMBIOS match was found for that module. -->
-            <Border Style="{StaticResource CardStyle}">
-                <StackPanel>
-                    <TextBlock Text="Memory modules" Style="{StaticResource CardTitle}" />
-                    <ItemsControl ItemsSource="{Binding MemoryModules}">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <Border BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,0,0,1" Margin="0,0,0,12" Padding="0,0,0,12">
-                                    <Grid>
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
-                                        <StackPanel Grid.Column="0" Margin="0,0,12,0">
-                                            <StackPanel Orientation="Horizontal">
-                                                <TextBlock Text="{Binding Location}" FontWeight="SemiBold" />
-                                                <TextBlock Text="{Binding ChannelText}" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="8,0,0,0" VerticalAlignment="Center" />
-                                                <!-- #443: mismatch badge - "quick flag, not a verdict". -->
-                                                <Border Background="{DynamicResource WarningBrush}" CornerRadius="3" Padding="5,1" Margin="8,0,0,0" VerticalAlignment="Center">
-                                                    <Border.Style>
-                                                        <Style TargetType="Border">
-                                                            <Setter Property="Visibility" Value="Collapsed" />
-                                                            <Style.Triggers>
-                                                                <DataTrigger Binding="{Binding IsMismatched}" Value="True">
-                                                                    <Setter Property="Visibility" Value="Visible" />
-                                                                </DataTrigger>
-                                                            </Style.Triggers>
-                                                        </Style>
-                                                    </Border.Style>
-                                                    <TextBlock Text="Mismatch" FontSize="10" FontWeight="SemiBold" Foreground="White" />
-                                                </Border>
-                                            </StackPanel>
-                                            <TextBlock Style="{StaticResource SecondaryLine}">
-                                                <Run Text="{Binding SpeedText, Mode=OneWay}" /><Run Text="  " /><Run Text="{Binding ManufacturerText, Mode=OneWay}" />
-                                            </TextBlock>
-                                            <TextBlock Style="{StaticResource SecondaryLine}" Text="{Binding FormFactorAndTechnologyText}" />
-                                            <TextBlock Style="{StaticResource SecondaryLine}">
-                                                <Run Text="{Binding PartNumberText, Mode=OneWay}" /><Run Text="  " /><Run Text="{Binding SerialNumberText, Mode=OneWay}" />
-                                            </TextBlock>
-                                            <TextBlock Style="{StaticResource SecondaryLine}" Text="{Binding RankAndVoltageText}" />
-                                            <!-- #442: XMP/EXPO hint - hidden when the module already runs at rated speed. -->
-                                            <TextBlock Text="{Binding XmpHintText}" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" Margin="0,4,0,0">
-                                                <TextBlock.Style>
-                                                    <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
-                                                        <Setter Property="FontSize" Value="11" />
-                                                        <Setter Property="Visibility" Value="Visible" />
-                                                        <Style.Triggers>
-                                                            <DataTrigger Binding="{Binding XmpHintText}" Value="">
-                                                                <Setter Property="Visibility" Value="Collapsed" />
-                                                            </DataTrigger>
-                                                        </Style.Triggers>
-                                                    </Style>
-                                                </TextBlock.Style>
-                                            </TextBlock>
-                                            <!-- #443: mismatch reason text. -->
-                                            <TextBlock Text="{Binding MismatchText}" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" Margin="0,4,0,0">
-                                                <TextBlock.Style>
-                                                    <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
-                                                        <Setter Property="FontSize" Value="11" />
-                                                        <Setter Property="Visibility" Value="Visible" />
-                                                        <Style.Triggers>
-                                                            <DataTrigger Binding="{Binding IsMismatched}" Value="False">
-                                                                <Setter Property="Visibility" Value="Collapsed" />
-                                                            </DataTrigger>
-                                                        </Style.Triggers>
-                                                    </Style>
-                                                </TextBlock.Style>
-                                            </TextBlock>
-                                        </StackPanel>
-                                        <TextBlock Grid.Column="1" Text="{Binding SizeText}" VerticalAlignment="Top"
-                                                   Foreground="{DynamicResource TextSecondaryBrush}" FontWeight="SemiBold" />
-                                    </Grid>
-                                </Border>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                    <TextBlock Text="No memory modules detected.">
-                        <TextBlock.Style>
-                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
-                                <Setter Property="Visibility" Value="Collapsed" />
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding MemoryModules.Count}" Value="0">
-                                        <Setter Property="Visibility" Value="Visible" />
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </TextBlock.Style>
-                    </TextBlock>
-                </StackPanel>
-            </Border>
-
-            <!-- #445: slot map - populated (solid) vs. empty (outline) slots, plus the array's
-                 documented maximum capacity for upgrade headroom. -->
-            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
-                <StackPanel>
-                    <Grid Margin="0,0,0,4">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="Slot map" Style="{StaticResource CardTitle}" Margin="0" />
-                        <TextBlock Grid.Column="1" Text="{Binding MemoryArrayMaxCapacityText}" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" />
-                    </Grid>
-                    <ItemsControl ItemsSource="{Binding MemorySlots}" Margin="0,8,0,0">
-                        <ItemsControl.ItemsPanel>
-                            <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
-                        </ItemsControl.ItemsPanel>
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <Border CornerRadius="6" Padding="10,8" Margin="0,0,8,8" Width="120">
-                                    <Border.Style>
-                                        <Style TargetType="Border">
-                                            <Setter Property="Background" Value="{DynamicResource BgElevatedBrush}" />
-                                            <Setter Property="BorderThickness" Value="1" />
-                                            <Setter Property="BorderBrush" Value="{DynamicResource BorderSubtleBrush}" />
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding IsPopulated}" Value="True">
-                                                    <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </Border.Style>
-                                    <StackPanel>
-                                        <TextBlock Text="{Binding SlotNumber, StringFormat=Slot {0}}" FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" />
-                                        <TextBlock Text="{Binding SummaryText}" FontSize="11.5" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,2,0,0">
-                                            <TextBlock.Style>
-                                                <Style TargetType="TextBlock">
-                                                    <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
-                                                    <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding IsPopulated}" Value="False">
-                                                            <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
-                                                            <Setter Property="Opacity" Value="0.6" />
-                                                        </DataTrigger>
-                                                    </Style.Triggers>
-                                                </Style>
-                                            </TextBlock.Style>
-                                        </TextBlock>
-                                    </StackPanel>
-                                </Border>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                </StackPanel>
-            </Border>
-
-            <!-- #444/#446: channel population + ECC status. -->
-            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
-                <StackPanel>
-                    <TextBlock Text="Channel layout &amp; ECC" Style="{StaticResource CardTitle}" />
-                    <UniformGrid Columns="2" Margin="0,8,0,0">
-                        <StackPanel Margin="0,0,8,0">
-                            <TextBlock Text="Channel population" Style="{StaticResource SpecLabel}" />
-                            <TextBlock Text="{Binding MemoryChannelText}" TextWrapping="Wrap">
-                                <TextBlock.Style>
-                                    <Style TargetType="TextBlock" BasedOn="{StaticResource SpecValue}">
-                                        <Setter Property="FontSize" Value="12.5" />
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding MemoryChannelWarning}" Value="True">
-                                                <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </TextBlock.Style>
-                            </TextBlock>
-                        </StackPanel>
-                        <StackPanel Margin="8,0,0,0">
-                            <TextBlock Text="ECC" Style="{StaticResource SpecLabel}" />
-                            <TextBlock Text="{Binding MemoryEccStatusText}" Style="{StaticResource SpecValue}" FontSize="12.5" TextWrapping="Wrap" />
-                        </StackPanel>
-                    </UniformGrid>
-                </StackPanel>
-            </Border>
-
-            <!-- #447: corrected memory errors (WHEA) - same figure the Stability tab shows. -->
-            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
-                <StackPanel>
-                    <TextBlock Text="Corrected memory errors (WHEA)" Style="{StaticResource CardTitle}" />
-                    <Grid Margin="0,4,0,0">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="{Binding CorrectedMemoryErrorCount, StringFormat={}{0} in the last 30 days}" Style="{StaticResource SpecValue}" />
-                        <TextBlock Grid.Column="1" Text="{Binding LastCorrectedMemoryErrorText}" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" />
-                    </Grid>
-                    <TextBlock Text="Occasional corrected errors happen on healthy ECC systems - a high or climbing count is worth a closer look. See the Stability tab for per-event DIMM/address hints."
-                               Style="{StaticResource SubStat}" Margin="0,4,0,0" TextWrapping="Wrap" />
-                </StackPanel>
-            </Border>
-
-            <!-- #448/#449: Windows Memory Diagnostic launcher + last-run result. -->
-            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,16">
-                <StackPanel>
-                    <Grid Margin="0,0,0,4">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="Windows Memory Diagnostic" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
-                        <Button Grid.Column="1" Content="Run Windows Memory Diagnostic…" Command="{Binding RunMemoryDiagnosticCommand}" />
-                    </Grid>
-                    <TextBlock Text="Opens Windows' own boot-time memory tester - choose to restart now or on next boot. The test takes 10-40 minutes and runs entirely offline, before Windows loads; this app has no part in running it."
-                               Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" />
-                    <TextBlock Text="{Binding MemoryDiagnosticLaunchStatusText}" TextWrapping="Wrap" Margin="0,0,0,8">
-                        <TextBlock.Style>
-                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
-                                <Setter Property="Visibility" Value="Visible" />
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding MemoryDiagnosticLaunchStatusText}" Value="{x:Null}">
-                                        <Setter Property="Visibility" Value="Collapsed" />
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </TextBlock.Style>
-                    </TextBlock>
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="Last result" Style="{StaticResource SpecLabel}" VerticalAlignment="Center" />
-                        <TextBlock Grid.Column="1" Text="{Binding MemoryDiagnosticResultText}">
-                            <TextBlock.Style>
-                                <Style TargetType="TextBlock" BasedOn="{StaticResource SpecValue}">
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding MemoryDiagnosticFailed}" Value="True">
-                                            <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
-                                        </DataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </TextBlock.Style>
-                        </TextBlock>
-                    </Grid>
-                </StackPanel>
-            </Border>
-
-            <!-- Graphics -->
-            <Border Style="{StaticResource CardStyle}">
-                <StackPanel>
-                    <TextBlock Text="Graphics" Style="{StaticResource CardTitle}" />
-                    <ItemsControl ItemsSource="{Binding Gpus}" ItemTemplate="{StaticResource SpecRowTemplate}" />
-                    <TextBlock Text="No graphics adapters detected.">
-                        <TextBlock.Style>
-                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
-                                <Setter Property="Visibility" Value="Collapsed" />
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding Gpus.Count}" Value="0">
-                                        <Setter Property="Visibility" Value="Visible" />
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </TextBlock.Style>
-                    </TextBlock>
-                </StackPanel>
-            </Border>
-
-            <!-- Storage -->
-            <Border Style="{StaticResource CardStyle}">
-                <StackPanel>
-                    <TextBlock Text="Storage" Style="{StaticResource CardTitle}" />
-                    <ItemsControl ItemsSource="{Binding Disks}" ItemTemplate="{StaticResource SpecRowTemplate}" />
-                    <TextBlock Text="No disks detected.">
-                        <TextBlock.Style>
-                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
-                                <Setter Property="Visibility" Value="Collapsed" />
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding Disks.Count}" Value="0">
-                                        <Setter Property="Visibility" Value="Visible" />
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </TextBlock.Style>
-                    </TextBlock>
-                    <!-- #70: page file location vs. the boot drive's media type - a page file left
-                         on a slower secondary HDD (or the reverse) is a common, silent slowdown
-                         cause on multi-drive systems, easy to miss since this tab otherwise only
-                         shows aggregate disk activity. -->
-                    <Border BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,1,0,0" Margin="0,12,0,0" Padding="0,10,0,0">
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="Page file: " Style="{StaticResource SpecLabel}" Margin="0" />
-                            <TextBlock Text="{Binding PageFileLocationText}">
-                                <TextBlock.Style>
-                                    <Style TargetType="TextBlock" BasedOn="{StaticResource SpecValue}">
-                                        <Setter Property="FontSize" Value="12" />
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding PageFileLocationWarning}" Value="True">
-                                                <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </TextBlock.Style>
-                            </TextBlock>
+                    <!-- System / motherboard -->
+                    <Border Style="{StaticResource CardStyle}">
+                        <StackPanel>
+                            <TextBlock Text="System" Style="{StaticResource CardTitle}" />
+                            <UniformGrid Columns="2" Rows="4">
+                                <StackPanel Margin="0,0,12,14">
+                                    <TextBlock Text="Computer name" Style="{StaticResource SpecLabel}" />
+                                    <TextBlock Text="{Binding ComputerName}" Style="{StaticResource SpecValue}" />
+                                </StackPanel>
+                                <StackPanel Margin="0,0,0,14">
+                                    <TextBlock Text="Model" Style="{StaticResource SpecLabel}" />
+                                    <TextBlock Text="{Binding SystemModel}" Style="{StaticResource SpecValue}" />
+                                </StackPanel>
+                                <!-- #57: chassis/form-factor readout. -->
+                                <StackPanel Margin="0,0,12,14">
+                                    <TextBlock Text="Chassis" Style="{StaticResource SpecLabel}" />
+                                    <TextBlock Text="{Binding ChassisType}" Style="{StaticResource SpecValue}" />
+                                </StackPanel>
+                                <!-- #58: Windows edition (see OsName above) & activation status - informational
+                                     only, no product key is ever read or shown. -->
+                                <StackPanel Margin="0,0,0,14">
+                                    <TextBlock Text="Activation" Style="{StaticResource SpecLabel}" />
+                                    <TextBlock Text="{Binding ActivationStatus}" Style="{StaticResource SpecValue}" />
+                                </StackPanel>
+                                <StackPanel Margin="0,0,12,14">
+                                    <TextBlock Text="Motherboard" Style="{StaticResource SpecLabel}" />
+                                    <TextBlock Text="{Binding Motherboard}" Style="{StaticResource SpecValue}" />
+                                </StackPanel>
+                                <StackPanel Margin="0,0,0,14">
+                                    <TextBlock Text="BIOS version" Style="{StaticResource SpecLabel}" />
+                                    <TextBlock Text="{Binding BiosVersion}" TextWrapping="Wrap">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock" BasedOn="{StaticResource SpecValue}">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding BiosAgeWarning}" Value="True">
+                                                        <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </StackPanel>
+                                <!-- #61: motherboard chipset driver version - best-effort, see
+                                     SystemSpecsService.ReadChipsetDriverInfo. -->
+                                <StackPanel Margin="0,0,12,0">
+                                    <TextBlock Text="Chipset driver" Style="{StaticResource SpecLabel}" />
+                                    <TextBlock Text="{Binding ChipsetDriverText}" Style="{StaticResource SpecValue}" TextWrapping="Wrap" />
+                                </StackPanel>
+                                <!-- #62: longest-uptime records this month/year, derived from the boot-history
+                                     trend the Startup tab already persists - no new sampling. -->
+                                <StackPanel Margin="0,0,0,0">
+                                    <TextBlock Text="Longest uptime (month / year)" Style="{StaticResource SpecLabel}" />
+                                    <TextBlock Style="{StaticResource SpecValue}">
+                                        <Run Text="{Binding LongestUptimeThisMonthText, Mode=OneWay}" />
+                                        <Run Text=" / " />
+                                        <Run Text="{Binding LongestUptimeThisYearText, Mode=OneWay}" />
+                                    </TextBlock>
+                                </StackPanel>
+                            </UniformGrid>
                         </StackPanel>
                     </Border>
                 </StackPanel>
-            </Border>
-
-            <!-- #60: active display inventory - resolution/refresh rate from the GPU's current
-                 output mode, connection type (best-effort) from root\wmi's monitor classes. HDR
-                 support is deliberately not shown - see MonitorInfo's remarks for why. -->
-            <Border Style="{StaticResource CardStyle}">
+            </ScrollViewer>
+        </TabItem>
+        <TabItem Header="Memory">
+            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
                 <StackPanel>
-                    <TextBlock Text="Displays" Style="{StaticResource CardTitle}" />
-                    <ItemsControl ItemsSource="{Binding Monitors}" ItemTemplate="{StaticResource SpecRowTemplate}" />
-                    <TextBlock Text="No displays detected.">
-                        <TextBlock.Style>
-                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
-                                <Setter Property="Visibility" Value="Collapsed" />
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding Monitors.Count}" Value="0">
-                                        <Setter Property="Visibility" Value="Visible" />
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </TextBlock.Style>
-                    </TextBlock>
-                </StackPanel>
-            </Border>
-
-            <!-- #685-689: rich per-monitor detail - raw-EDID identity, refresh-rate-vs-EDID
-                 mismatch, cable bandwidth sufficiency, HDR/advanced color, and scaling/DPI/
-                 rotation. All quick flags/estimates from best-effort sources (see MonitorInfo's
-                 and SystemSpecsService.ReadMonitors' remarks), never a guaranteed-accurate reading -
-                 collapsed entirely when there are no displays to show. -->
-            <Border Margin="0,0,0,16">
-                <Border.Style>
-                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
-                        <Style.Triggers>
-                            <DataTrigger Binding="{Binding MonitorDetails.Count}" Value="0">
-                                <Setter Property="Visibility" Value="Collapsed" />
-                            </DataTrigger>
-                        </Style.Triggers>
-                    </Style>
-                </Border.Style>
-                <StackPanel>
-                    <TextBlock Text="Display details" Style="{StaticResource CardTitle}" />
-                    <ItemsControl ItemsSource="{Binding MonitorDetails}" Margin="0,8,0,0">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <Border Background="{DynamicResource BgElevatedBrush}" BorderBrush="{DynamicResource BorderSubtleBrush}"
-                                        BorderThickness="1" CornerRadius="8" Padding="12,10" Margin="0,0,0,10">
-                                    <StackPanel>
-                                        <StackPanel Orientation="Horizontal">
-                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextWrapping="Wrap" />
-                                            <TextBlock Text="{Binding ConnectionType}" FontSize="10.5" Margin="8,0,0,0" VerticalAlignment="Center"
-                                                       Foreground="{DynamicResource TextTertiaryBrush}" />
-                                        </StackPanel>
-                                        <TextBlock Style="{StaticResource SubStat}" Margin="0,2,0,8">
-                                            <Run Text="{Binding WidthPx, Mode=OneWay}" />×<Run Text="{Binding HeightPx, Mode=OneWay}" />
-                                            <Run Text=" @ " /><Run Text="{Binding RefreshHz, Mode=OneWay}" /><Run Text=" Hz" />
-                                            <Run Text=" · Scaling: " /><Run Text="{Binding ScalingModeText, Mode=OneWay}" />
-                                            <Run Text=" · Rotation: " /><Run Text="{Binding RotationText, Mode=OneWay}" />
-                                            <Run Text=" · DPI: " /><Run Text="{Binding DpiScalePercent, TargetNullValue=Unknown, StringFormat={}{0:0}%, Mode=OneWay}" />
-                                        </TextBlock>
-
-                                        <!-- #686: refresh-rate-vs-EDID mismatch. -->
-                                        <TextBlock Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" FontSize="11.5" Margin="0,0,0,6">
-                                            <TextBlock.Style>
-                                                <Style TargetType="TextBlock">
-                                                    <Setter Property="Visibility" Value="Collapsed" />
-                                                    <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding RefreshMismatch}" Value="True">
-                                                            <Setter Property="Visibility" Value="Visible" />
-                                                        </DataTrigger>
-                                                    </Style.Triggers>
-                                                </Style>
-                                            </TextBlock.Style>
-                                            <Run Text="Running at " /><Run Text="{Binding RefreshHz, Mode=OneWay}" /><Run Text=" Hz, but this panel's EDID advertises up to " />
-                                            <Run Text="{Binding EdidMaxRefreshHz, Mode=OneWay}" /><Run Text=" Hz at this resolution - check Display settings for a higher refresh-rate option." />
-                                        </TextBlock>
-
-                                        <!-- #687: cable bandwidth sufficiency. -->
-                                        <TextBlock Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" FontSize="11.5" Margin="0,0,0,6"
-                                                   Text="{Binding BandwidthWarningText}">
-                                            <TextBlock.Style>
-                                                <Style TargetType="TextBlock">
-                                                    <Setter Property="Visibility" Value="Visible" />
-                                                    <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding BandwidthWarningText}" Value="{x:Null}">
-                                                            <Setter Property="Visibility" Value="Collapsed" />
-                                                        </DataTrigger>
-                                                    </Style.Triggers>
-                                                </Style>
-                                            </TextBlock.Style>
-                                        </TextBlock>
-
-                                        <!-- #688: HDR / advanced color state. -->
-                                        <TextBlock Margin="0,0,0,6">
-                                            <TextBlock.Style>
-                                                <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
-                                                    <Setter Property="Visibility" Value="Visible" />
-                                                    <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding HdrSupported}" Value="{x:Null}">
-                                                            <Setter Property="Visibility" Value="Collapsed" />
-                                                        </DataTrigger>
-                                                    </Style.Triggers>
-                                                </Style>
-                                            </TextBlock.Style>
-                                            <Run Text="HDR: " />
-                                            <Run Text="{Binding HdrSupported, Converter={StaticResource NullableBoolToYesNoConverter}, Mode=OneWay}" /><Run Text=" supported" />
-                                            <Run Text=", " /><Run Text="{Binding HdrEnabled, Converter={StaticResource NullableBoolToYesNoConverter}, Mode=OneWay}" /><Run Text=" enabled" />
-                                            <Run Text=" · Wide color gamut: " /><Run Text="{Binding WideColorEnabled, Converter={StaticResource NullableBoolToYesNoConverter}, Mode=OneWay}" />
-                                        </TextBlock>
-
-                                        <!-- #685: raw-EDID identity panel. -->
-                                        <Expander Header="EDID details" Foreground="{DynamicResource TextSecondaryBrush}" Background="Transparent" FontSize="11.5">
-                                            <Expander.Style>
-                                                <Style TargetType="Expander">
-                                                    <Setter Property="Visibility" Value="Visible" />
-                                                    <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding Edid}" Value="{x:Null}">
-                                                            <Setter Property="Visibility" Value="Collapsed" />
-                                                        </DataTrigger>
-                                                    </Style.Triggers>
-                                                </Style>
-                                            </Expander.Style>
-                                            <StackPanel Margin="4,8,0,0" DataContext="{Binding Edid}">
-                                                <TextBlock Style="{StaticResource SubStat}">
-                                                    <Run Text="Manufacturer: " /><Run Text="{Binding ManufacturerId, Mode=OneWay}" />
-                                                    <Run Text=" · Product code: " /><Run Text="{Binding ProductCode, Mode=OneWay}" />
-                                                </TextBlock>
-                                                <TextBlock Style="{StaticResource SubStat}" Margin="0,2,0,0">
-                                                    <Run Text="Model: " /><Run Text="{Binding ModelName, TargetNullValue=Unknown, Mode=OneWay}" />
-                                                    <Run Text=" · Serial: " /><Run Text="{Binding SerialNumber, TargetNullValue=Unknown, Mode=OneWay}" />
-                                                </TextBlock>
-                                                <TextBlock Style="{StaticResource SubStat}" Margin="0,2,0,0">
-                                                    <Run Text="Manufactured: week " /><Run Text="{Binding ManufactureWeek, Mode=OneWay}" />
-                                                    <Run Text=" of " /><Run Text="{Binding ManufactureYear, Mode=OneWay}" />
-                                                </TextBlock>
-                                                <TextBlock Style="{StaticResource SubStat}" Margin="0,2,0,0">
-                                                    <Run Text="Physical size: " /><Run Text="{Binding PhysicalWidthCm, Mode=OneWay}" />×<Run Text="{Binding PhysicalHeightCm, Mode=OneWay}" /><Run Text=" cm" />
-                                                </TextBlock>
-                                                <TextBlock Style="{StaticResource SubStat}" Margin="0,2,0,0">
-                                                    <Run Text="Native (EDID preferred) timing: " /><Run Text="{Binding NativeWidthPx, Mode=OneWay}" />×<Run Text="{Binding NativeHeightPx, Mode=OneWay}" />
-                                                    <Run Text=" @ " /><Run Text="{Binding NativeRefreshHz, Mode=OneWay}" /><Run Text=" Hz" />
-                                                </TextBlock>
-                                                <TextBlock Style="{StaticResource SubStat}" Margin="0,2,0,0" TextWrapping="Wrap">
-                                                    <Run Text="Feature bits: " /><Run Text="{Binding FeatureBitsSummary, Mode=OneWay}" />
-                                                </TextBlock>
-                                            </StackPanel>
-                                        </Expander>
-                                    </StackPanel>
-                                </Border>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                </StackPanel>
-            </Border>
-
-            <!-- #690: display connect/disconnect/mode-change history - WM_DISPLAYCHANGE events
-                 recorded live in-app (Source "App") plus a Kernel-PnP System-log scan (Source
-                 "Kernel-PnP"), persisted across sessions. Repeated disconnects at a regular
-                 interval point at a cable or a DisplayPort link-training failure. -->
-            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
-                <StackPanel>
-                    <TextBlock Text="Display connect/disconnect history" Style="{StaticResource CardTitle}" />
-                    <TextBlock Style="{StaticResource SubStat}" Margin="0,-2,0,10" TextWrapping="Wrap"
-                               Text="Monitor arrival/removal and display-configuration changes, last 30 days plus anything recorded this session. Repeated disconnects at a regular interval point at a cable or a DisplayPort link-training problem." />
-                    <ItemsControl ItemsSource="{Binding DisplayChangeHistory}" MaxHeight="240">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <Grid Margin="0,0,0,8">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,8,0">
-                                        <Run Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}" />
-                                        <Run Text=" — " /><Run Text="{Binding Description, Mode=OneWay}" />
-                                    </TextBlock>
-                                    <Border Grid.Column="1" Background="{DynamicResource AccentMutedBrush}" CornerRadius="3" Padding="5,1" VerticalAlignment="Top">
-                                        <TextBlock Text="{Binding Source}" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource AccentBrush}" />
-                                    </Border>
-                                </Grid>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                    <TextBlock Text="No display connect/disconnect events recorded yet.">
-                        <TextBlock.Style>
-                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
-                                <Setter Property="Visibility" Value="Collapsed" />
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding DisplayChangeHistory.Count}" Value="0">
-                                        <Setter Property="Visibility" Value="Visible" />
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </TextBlock.Style>
-                    </TextBlock>
-                </StackPanel>
-            </Border>
-
-            <!-- #59: installed .NET runtime versions, from the shared-framework directory layout
-                 dotnet.exe itself uses. -->
-            <Border Style="{StaticResource CardStyle}">
-                <StackPanel>
-                    <TextBlock Text="Installed .NET runtimes" Style="{StaticResource CardTitle}" />
-                    <ItemsControl ItemsSource="{Binding DotNetRuntimes}" Margin="0,8,0,0">
-                        <ItemsControl.ItemsPanel>
-                            <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
-                        </ItemsControl.ItemsPanel>
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="4" Padding="8,4" Margin="0,0,8,8">
-                                    <TextBlock Text="{Binding}" FontSize="12" />
-                                </Border>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                    <TextBlock Text="No .NET shared-framework installation found on this PC.">
-                        <TextBlock.Style>
-                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
-                                <Setter Property="Visibility" Value="Collapsed" />
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding DotNetRuntimes.Count}" Value="0">
-                                        <Setter Property="Visibility" Value="Visible" />
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </TextBlock.Style>
-                    </TextBlock>
-                </StackPanel>
-            </Border>
-
-            <!-- #63: Windows Defender exclusion list, read-only - "Unknown/inaccessible" (Tamper
-                 Protection can deny this even elevated) is shown distinctly from a confirmed empty
-                 list. -->
-            <Border Style="{StaticResource CardStyle}">
-                <StackPanel>
-                    <TextBlock Text="Windows Defender exclusions" Style="{StaticResource CardTitle}" />
-                    <TextBlock Text="{Binding DefenderExclusionsStatusText}" Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
-                    <ItemsControl ItemsSource="{Binding DefenderExclusions}">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <TextBlock Text="{Binding}" FontSize="12.5" Margin="0,0,0,6" TextTrimming="CharacterEllipsis" />
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                </StackPanel>
-            </Border>
-
-            <!-- USB devices (#69): flags a Windows-reported enumeration/driver problem - helps
-                 catch a misbehaving peripheral or a failing USB controller/hub. Per-device power
-                 draw isn't shown - see UsbDeviceInfo's remarks for why. -->
-            <Border Style="{StaticResource CardStyle}">
-                <StackPanel>
-                    <TextBlock Text="USB devices" Style="{StaticResource CardTitle}" />
-                    <ItemsControl ItemsSource="{Binding UsbDevices}" ItemTemplate="{StaticResource SpecRowTemplate}" />
-                    <TextBlock Text="No USB devices detected.">
-                        <TextBlock.Style>
-                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
-                                <Setter Property="Visibility" Value="Collapsed" />
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding UsbDevices.Count}" Value="0">
-                                        <Setter Property="Visibility" Value="Visible" />
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </TextBlock.Style>
-                    </TextBlock>
-                </StackPanel>
-            </Border>
-
-            <!-- Volumes: per-drive-letter free space, color-coded so a nearly-full volume - a
-                 common, easy-to-miss slowdown/crash cause - stands out at a glance. -->
-            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,16">
-                <StackPanel>
-                    <TextBlock Text="Volumes" Style="{StaticResource CardTitle}" />
-                    <ItemsControl ItemsSource="{Binding Volumes}" ItemTemplate="{StaticResource VolumeRowTemplate}" />
-                    <TextBlock Text="No volumes detected.">
-                        <TextBlock.Style>
-                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
-                                <Setter Property="Visibility" Value="Collapsed" />
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding Volumes.Count}" Value="0">
-                                        <Setter Property="Visibility" Value="Visible" />
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </TextBlock.Style>
-                    </TextBlock>
-                </StackPanel>
-            </Border>
-
-            <!-- Security posture: Secure Boot / TPM / VBS - each individually nullable (see
-                 SecurityInfo's remarks), rendered as a warning color only on a confirmed "off"/
-                 "not present", never on "Unknown" (a permission gap isn't the same as a real
-                 finding). -->
-            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
-                <StackPanel>
-                    <TextBlock Text="Security" Style="{StaticResource CardTitle}" />
-                    <UniformGrid Columns="3">
-                        <StackPanel Margin="0,0,8,0">
-                            <TextBlock Text="Secure Boot" Style="{StaticResource SpecLabel}" />
-                            <TextBlock Text="{Binding SecureBootText}">
-                                <TextBlock.Style>
-                                    <Style TargetType="TextBlock" BasedOn="{StaticResource SpecValue}">
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding SecureBootWarning}" Value="True">
-                                                <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </TextBlock.Style>
-                            </TextBlock>
-                        </StackPanel>
-                        <StackPanel Margin="8,0,8,0">
-                            <TextBlock Text="TPM" Style="{StaticResource SpecLabel}" />
-                            <TextBlock Text="{Binding TpmText}">
-                                <TextBlock.Style>
-                                    <Style TargetType="TextBlock" BasedOn="{StaticResource SpecValue}">
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding TpmWarning}" Value="True">
-                                                <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </TextBlock.Style>
-                            </TextBlock>
-                        </StackPanel>
-                        <StackPanel Margin="8,0,0,0">
-                            <TextBlock Text="Virtualization-based security" Style="{StaticResource SpecLabel}" />
-                            <TextBlock Text="{Binding VbsText}" Style="{StaticResource SpecValue}" TextWrapping="Wrap" />
-                        </StackPanel>
-                        <!-- Round 11, #73: Windows Update/servicing reboot-pending flag - see
-                             SystemSpecsService.ReadRebootPending. -->
-                        <StackPanel Margin="0,10,8,0">
-                            <TextBlock Text="Reboot pending" Style="{StaticResource SpecLabel}" />
-                            <TextBlock>
-                                <TextBlock.Style>
-                                    <Style TargetType="TextBlock" BasedOn="{StaticResource SpecValue}">
-                                        <Setter Property="Text" Value="No" />
-                                        <Style.Triggers>
-                            <DataTrigger Binding="{Binding RebootPending}" Value="True">
-                                                <Setter Property="Text" Value="Yes" />
-                                                <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </TextBlock.Style>
-                            </TextBlock>
-                        </StackPanel>
-
-                        <!-- #732: VBS/HVCI/hypervisor launch state - combines bcdedit's
-                             hypervisorlaunchtype, the two DeviceGuard policy registry locations,
-                             and the actually-running state above - see SystemSpecsViewModel.Apply. -->
-                        <StackPanel Margin="8,10,8,0">
-                            <TextBlock Text="Hypervisor launch type" Style="{StaticResource SpecLabel}" />
-                            <TextBlock Text="{Binding HypervisorLaunchTypeText}" Style="{StaticResource SpecValue}" TextWrapping="Wrap" />
-                        </StackPanel>
-                        <StackPanel Margin="8,10,0,0">
-                            <TextBlock Text="HVCI (Memory Integrity)" Style="{StaticResource SpecLabel}" />
-                            <TextBlock Text="{Binding HvciText}" TextWrapping="Wrap">
-                                <TextBlock.Style>
-                                    <Style TargetType="TextBlock" BasedOn="{StaticResource SpecValue}">
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding HvciWarning}" Value="True">
-                                                <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </TextBlock.Style>
-                            </TextBlock>
-                        </StackPanel>
-
-                        <!-- #733: firmware boot mode + system disk partition style - a legacy/MBR
-                             system disk is a hard blocker for Windows 11 and Secure Boot, flagged
-                             plainly below rather than left for the user to infer. -->
-                        <StackPanel Margin="0,10,8,0">
-                            <TextBlock Text="Firmware boot mode" Style="{StaticResource SpecLabel}" />
-                            <TextBlock Text="{Binding FirmwareTypeText}" Style="{StaticResource SpecValue}" TextWrapping="Wrap" />
-                        </StackPanel>
-                        <StackPanel Margin="8,10,8,0">
-                            <TextBlock Text="System disk partition style" Style="{StaticResource SpecLabel}" />
-                            <TextBlock Text="{Binding DiskPartitionStyleText}" TextWrapping="Wrap">
-                                <TextBlock.Style>
-                                    <Style TargetType="TextBlock" BasedOn="{StaticResource SpecValue}">
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding LegacyDiskBlockerWarning}" Value="True">
-                                                <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </TextBlock.Style>
-                            </TextBlock>
-                        </StackPanel>
-                    </UniformGrid>
-                    <!-- Round 18, #878/#879: pointer to the richer HVCI/VBS-prerequisite/LSA-
-                         protection/Secure-Boot-setup-mode/TPM-detail reads on the Security tab's
-                         Platform security section - plain text, not a live navigation link (this
-                         app has no cross-tab navigation plumbing yet), so this stays a small,
-                         honest deviation from a literal clickable "link" per the item's own text. -->
-                    <TextBlock Margin="0,10,0,0" TextWrapping="Wrap" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}"
-                               Text="More detail - HVCI/VBS prerequisites, LSA protection, Secure Boot setup mode, extended TPM info, and more - is on the Security tab's Platform security section." />
-
-                    <Border Background="{DynamicResource DangerMutedBrush}" BorderBrush="{DynamicResource DangerBrush}"
-                            BorderThickness="1" CornerRadius="8" Padding="10,8" Margin="0,12,0,0">
+                    <!-- #451: RAM health rollup - mismatched DIMMs, ECC corrected errors, memory
+                         diagnostic results, XMP state, channel population and memory-related bugchecks,
+                         combined into one verdict card at the top of the memory section. "Quick flag, not
+                         a verdict" - see MemoryDiagnosticsService.BuildRamHealth. -->
+                    <Border Margin="0,0,0,16">
                         <Border.Style>
-                            <Style TargetType="Border">
-                                <Setter Property="Visibility" Value="Collapsed" />
+                            <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
                                 <Style.Triggers>
-                                    <DataTrigger Binding="{Binding LegacyDiskBlockerWarning}" Value="True">
-                                        <Setter Property="Visibility" Value="Visible" />
+                                    <DataTrigger Binding="{Binding RamHealthIsWarning}" Value="True">
+                                        <Setter Property="BorderBrush" Value="{DynamicResource WarningBrush}" />
                                     </DataTrigger>
                                 </Style.Triggers>
                             </Style>
                         </Border.Style>
-                        <TextBlock Foreground="{DynamicResource DangerBrush}" FontSize="11.5" TextWrapping="Wrap"
-                                   Text="This system disk uses the legacy MBR partition style - that's a hard blocker for both Windows 11 and Secure Boot, which both require a GPT system disk. Converting in place requires a disk-to-GPT conversion (e.g. mbr2gpt.exe) before either will work." />
+                        <StackPanel>
+                            <Grid Margin="0,0,0,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="RAM health" Style="{StaticResource CardTitle}" Margin="0" />
+                                <TextBlock Grid.Column="1" Text="{Binding RamHealthVerdictText}" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" VerticalAlignment="Center">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding RamHealthIsWarning}" Value="True">
+                                                    <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </Grid>
+                            <TextBlock Text="A rolled-up, automated check across mismatched modules, ECC-corrected errors, the last Windows Memory Diagnostic result, XMP/EXPO state, channel population and memory-related crash history - informational, not a certified hardware diagnosis."
+                                       Style="{StaticResource SubStat}" Margin="0,0,0,10" TextWrapping="Wrap" />
+                            <ItemsControl ItemsSource="{Binding RamHealthFindings}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,4" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </Border>
+                    <!-- Memory modules: richer per-module grid (#440) - part number/serial/rank/voltage/
+                         form factor/memory technology come from raw SMBIOS Type 17 parsing
+                         (SmbiosMemoryService) where WMI drops those fields entirely; blank/hidden per row
+                         when no SMBIOS match was found for that module. -->
+                    <Border Style="{StaticResource CardStyle}">
+                        <StackPanel>
+                            <TextBlock Text="Memory modules" Style="{StaticResource CardTitle}" />
+                            <ItemsControl ItemsSource="{Binding MemoryModules}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,0,0,1" Margin="0,0,0,12" Padding="0,0,0,12">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel Grid.Column="0" Margin="0,0,12,0">
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <TextBlock Text="{Binding Location}" FontWeight="SemiBold" />
+                                                        <TextBlock Text="{Binding ChannelText}" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" Margin="8,0,0,0" VerticalAlignment="Center" />
+                                                        <!-- #443: mismatch badge - "quick flag, not a verdict". -->
+                                                        <Border Background="{DynamicResource WarningBrush}" CornerRadius="4" Padding="4,0" Margin="8,0,0,0" VerticalAlignment="Center">
+                                                            <Border.Style>
+                                                                <Style TargetType="Border">
+                                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding IsMismatched}" Value="True">
+                                                                            <Setter Property="Visibility" Value="Visible" />
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </Border.Style>
+                                                            <TextBlock Text="Mismatch" FontSize="{StaticResource FontCaption}" FontWeight="SemiBold" Foreground="White" />
+                                                        </Border>
+                                                    </StackPanel>
+                                                    <TextBlock Style="{StaticResource SecondaryLine}">
+                                                        <Run Text="{Binding SpeedText, Mode=OneWay}" /><Run Text="  " /><Run Text="{Binding ManufacturerText, Mode=OneWay}" />
+                                                    </TextBlock>
+                                                    <TextBlock Style="{StaticResource SecondaryLine}" Text="{Binding FormFactorAndTechnologyText}" />
+                                                    <TextBlock Style="{StaticResource SecondaryLine}">
+                                                        <Run Text="{Binding PartNumberText, Mode=OneWay}" /><Run Text="  " /><Run Text="{Binding SerialNumberText, Mode=OneWay}" />
+                                                    </TextBlock>
+                                                    <TextBlock Style="{StaticResource SecondaryLine}" Text="{Binding RankAndVoltageText}" />
+                                                    <!-- #442: XMP/EXPO hint - hidden when the module already runs at rated speed. -->
+                                                    <TextBlock Text="{Binding XmpHintText}" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" Margin="0,4,0,0">
+                                                        <TextBlock.Style>
+                                                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                                                <Setter Property="FontSize" Value="{StaticResource FontBody}" />
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding XmpHintText}" Value="">
+                                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </TextBlock.Style>
+                                                    </TextBlock>
+                                                    <!-- #443: mismatch reason text. -->
+                                                    <TextBlock Text="{Binding MismatchText}" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" Margin="0,4,0,0">
+                                                        <TextBlock.Style>
+                                                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                                                <Setter Property="FontSize" Value="{StaticResource FontBody}" />
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding IsMismatched}" Value="False">
+                                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </TextBlock.Style>
+                                                    </TextBlock>
+                                                </StackPanel>
+                                                <TextBlock Grid.Column="1" Text="{Binding SizeText}" VerticalAlignment="Top"
+                                                           Foreground="{DynamicResource TextSecondaryBrush}" FontWeight="SemiBold" />
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <TextBlock Text="No memory modules detected.">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding MemoryModules.Count}" Value="0">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </StackPanel>
+                    </Border>
+                    <!-- #445: slot map - populated (solid) vs. empty (outline) slots, plus the array's
+                         documented maximum capacity for upgrade headroom. -->
+                    <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                        <StackPanel>
+                            <Grid Margin="0,0,0,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Slot map" Style="{StaticResource CardTitle}" Margin="0" />
+                                <TextBlock Grid.Column="1" Text="{Binding MemoryArrayMaxCapacityText}" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" />
+                            </Grid>
+                            <ItemsControl ItemsSource="{Binding MemorySlots}" Margin="0,8,0,0">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border CornerRadius="6" Padding="10,8" Margin="0,0,8,8" Width="120">
+                                            <Border.Style>
+                                                <Style TargetType="Border">
+                                                    <Setter Property="Background" Value="{DynamicResource BgElevatedBrush}" />
+                                                    <Setter Property="BorderThickness" Value="1" />
+                                                    <Setter Property="BorderBrush" Value="{DynamicResource BorderSubtleBrush}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsPopulated}" Value="True">
+                                                            <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Border.Style>
+                                            <StackPanel>
+                                                <TextBlock Text="{Binding SlotNumber, StringFormat=Slot {0}}" FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                                <TextBlock Text="{Binding SummaryText}" FontSize="{StaticResource FontBody}" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,2,0,0">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock">
+                                                            <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding IsPopulated}" Value="False">
+                                                                    <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                                                    <Setter Property="Opacity" Value="0.6" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+                                            </StackPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </Border>
+                    <!-- #444/#446: channel population + ECC status. -->
+                    <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                        <StackPanel>
+                            <TextBlock Text="Channel layout &amp; ECC" Style="{StaticResource CardTitle}" />
+                            <UniformGrid Columns="2" Margin="0,8,0,0">
+                                <StackPanel Margin="0,0,8,0">
+                                    <TextBlock Text="Channel population" Style="{StaticResource SpecLabel}" />
+                                    <TextBlock Text="{Binding MemoryChannelText}" TextWrapping="Wrap">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock" BasedOn="{StaticResource SpecValue}">
+                                                <Setter Property="FontSize" Value="{StaticResource FontStrong}" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding MemoryChannelWarning}" Value="True">
+                                                        <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </StackPanel>
+                                <StackPanel Margin="8,0,0,0">
+                                    <TextBlock Text="ECC" Style="{StaticResource SpecLabel}" />
+                                    <TextBlock Text="{Binding MemoryEccStatusText}" Style="{StaticResource SpecValue}" FontSize="{StaticResource FontStrong}" TextWrapping="Wrap" />
+                                </StackPanel>
+                            </UniformGrid>
+                        </StackPanel>
+                    </Border>
+                    <!-- #447: corrected memory errors (WHEA) - same figure the Stability tab shows. -->
+                    <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                        <StackPanel>
+                            <TextBlock Text="Corrected memory errors (WHEA)" Style="{StaticResource CardTitle}" />
+                            <Grid Margin="0,4,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="{Binding CorrectedMemoryErrorCount, StringFormat={}{0} in the last 30 days}" Style="{StaticResource SpecValue}" />
+                                <TextBlock Grid.Column="1" Text="{Binding LastCorrectedMemoryErrorText}" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" />
+                            </Grid>
+                            <TextBlock Text="Occasional corrected errors happen on healthy ECC systems - a high or climbing count is worth a closer look. See the Stability tab for per-event DIMM/address hints."
+                                       Style="{StaticResource SubStat}" Margin="0,4,0,0" TextWrapping="Wrap" />
+                        </StackPanel>
+                    </Border>
+                    <!-- #448/#449: Windows Memory Diagnostic launcher + last-run result. -->
+                    <Border Style="{StaticResource CardStyle}" Margin="0,16,0,16">
+                        <StackPanel>
+                            <Grid Margin="0,0,0,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Windows Memory Diagnostic" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                                <Button Grid.Column="1" Content="Run Windows Memory Diagnostic…" Command="{Binding RunMemoryDiagnosticCommand}" />
+                            </Grid>
+                            <TextBlock Text="Opens Windows' own boot-time memory tester - choose to restart now or on next boot. The test takes 10-40 minutes and runs entirely offline, before Windows loads; this app has no part in running it."
+                                       Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" />
+                            <TextBlock Text="{Binding MemoryDiagnosticLaunchStatusText}" TextWrapping="Wrap" Margin="0,0,0,8">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding MemoryDiagnosticLaunchStatusText}" Value="{x:Null}">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Last result" Style="{StaticResource SpecLabel}" VerticalAlignment="Center" />
+                                <TextBlock Grid.Column="1" Text="{Binding MemoryDiagnosticResultText}">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock" BasedOn="{StaticResource SpecValue}">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding MemoryDiagnosticFailed}" Value="True">
+                                                    <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </Grid>
+                        </StackPanel>
                     </Border>
                 </StackPanel>
-            </Border>
-
-            <!-- Security software (#63): registered AV/security products, via the
-                 SecurityCenter2 WMI namespace. A best-effort "looks enabled" heuristic, not a
-                 verified fact - see SystemSpecsService.ReadAntivirusProducts. Warning-colored
-                 when more than one product looks active at once (conflicting real-time scanners
-                 are a classic, often-invisible perf killer). -->
-            <Border Margin="0,0,0,16">
-                <Border.Style>
-                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
-                        <Style.Triggers>
-                            <DataTrigger Binding="{Binding MultipleActiveAvWarning}" Value="True">
-                                <Setter Property="BorderBrush" Value="{DynamicResource WarningBrush}" />
-                            </DataTrigger>
-                        </Style.Triggers>
-                    </Style>
-                </Border.Style>
+            </ScrollViewer>
+        </TabItem>
+        <TabItem Header="Graphics">
+            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
                 <StackPanel>
-                    <TextBlock Text="Security software" Style="{StaticResource CardTitle}" />
-                    <TextBlock Text="More than one product looks actively enabled - conflicting real-time scanners commonly hurt performance."
-                               Foreground="{DynamicResource WarningBrush}" Margin="0,4,0,12" TextWrapping="Wrap">
-                        <TextBlock.Style>
-                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
-                                <Setter Property="Visibility" Value="Collapsed" />
+                    <!-- Graphics -->
+                    <Border Style="{StaticResource CardStyle}">
+                        <StackPanel>
+                            <TextBlock Text="Graphics" Style="{StaticResource CardTitle}" />
+                            <ItemsControl ItemsSource="{Binding Gpus}" ItemTemplate="{StaticResource SpecRowTemplate}" />
+                            <TextBlock Text="No graphics adapters detected.">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding Gpus.Count}" Value="0">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </StackPanel>
+                    </Border>
+                    <!-- #60: active display inventory - resolution/refresh rate from the GPU's current
+                         output mode, connection type (best-effort) from root\wmi's monitor classes. HDR
+                         support is deliberately not shown - see MonitorInfo's remarks for why. -->
+                    <Border Style="{StaticResource CardStyle}">
+                        <StackPanel>
+                            <TextBlock Text="Displays" Style="{StaticResource CardTitle}" />
+                            <ItemsControl ItemsSource="{Binding Monitors}" ItemTemplate="{StaticResource SpecRowTemplate}" />
+                            <TextBlock Text="No displays detected.">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding Monitors.Count}" Value="0">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </StackPanel>
+                    </Border>
+                    <!-- #685-689: rich per-monitor detail - raw-EDID identity, refresh-rate-vs-EDID
+                         mismatch, cable bandwidth sufficiency, HDR/advanced color, and scaling/DPI/
+                         rotation. All quick flags/estimates from best-effort sources (see MonitorInfo's
+                         and SystemSpecsService.ReadMonitors' remarks), never a guaranteed-accurate reading -
+                         collapsed entirely when there are no displays to show. -->
+                    <Border Margin="0,0,0,16">
+                        <Border.Style>
+                            <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding MonitorDetails.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                        <StackPanel>
+                            <TextBlock Text="Display details" Style="{StaticResource CardTitle}" />
+                            <ItemsControl ItemsSource="{Binding MonitorDetails}" Margin="0,8,0,0">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Background="{DynamicResource BgElevatedBrush}" BorderBrush="{DynamicResource BorderSubtleBrush}"
+                                                BorderThickness="1" CornerRadius="8" Padding="12,10" Margin="0,0,0,10">
+                                            <StackPanel>
+                                                <StackPanel Orientation="Horizontal">
+                                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                                    <TextBlock Text="{Binding ConnectionType}" FontSize="{StaticResource FontCaption}" Margin="8,0,0,0" VerticalAlignment="Center"
+                                                               Foreground="{DynamicResource TextTertiaryBrush}" />
+                                                </StackPanel>
+                                                <TextBlock Style="{StaticResource SubStat}" Margin="0,2,0,8">
+                                                    <Run Text="{Binding WidthPx, Mode=OneWay}" />×<Run Text="{Binding HeightPx, Mode=OneWay}" />
+                                                    <Run Text=" @ " /><Run Text="{Binding RefreshHz, Mode=OneWay}" /><Run Text=" Hz" />
+                                                    <Run Text=" · Scaling: " /><Run Text="{Binding ScalingModeText, Mode=OneWay}" />
+                                                    <Run Text=" · Rotation: " /><Run Text="{Binding RotationText, Mode=OneWay}" />
+                                                    <Run Text=" · DPI: " /><Run Text="{Binding DpiScalePercent, TargetNullValue=Unknown, StringFormat={}{0:0}%, Mode=OneWay}" />
+                                                </TextBlock>
+
+                                                <!-- #686: refresh-rate-vs-EDID mismatch. -->
+                                                <TextBlock Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Margin="0,0,0,6">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding RefreshMismatch}" Value="True">
+                                                                    <Setter Property="Visibility" Value="Visible" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                    <Run Text="Running at " /><Run Text="{Binding RefreshHz, Mode=OneWay}" /><Run Text=" Hz, but this panel's EDID advertises up to " />
+                                                    <Run Text="{Binding EdidMaxRefreshHz, Mode=OneWay}" /><Run Text=" Hz at this resolution - check Display settings for a higher refresh-rate option." />
+                                                </TextBlock>
+
+                                                <!-- #687: cable bandwidth sufficiency. -->
+                                                <TextBlock Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Margin="0,0,0,6"
+                                                           Text="{Binding BandwidthWarningText}">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding BandwidthWarningText}" Value="{x:Null}">
+                                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+
+                                                <!-- #688: HDR / advanced color state. -->
+                                                <TextBlock Margin="0,0,0,6">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding HdrSupported}" Value="{x:Null}">
+                                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                    <Run Text="HDR: " />
+                                                    <Run Text="{Binding HdrSupported, Converter={StaticResource NullableBoolToYesNoConverter}, Mode=OneWay}" /><Run Text=" supported" />
+                                                    <Run Text=", " /><Run Text="{Binding HdrEnabled, Converter={StaticResource NullableBoolToYesNoConverter}, Mode=OneWay}" /><Run Text=" enabled" />
+                                                    <Run Text=" · Wide color gamut: " /><Run Text="{Binding WideColorEnabled, Converter={StaticResource NullableBoolToYesNoConverter}, Mode=OneWay}" />
+                                                </TextBlock>
+
+                                                <!-- #685: raw-EDID identity panel. -->
+                                                <Expander Header="EDID details" Foreground="{DynamicResource TextSecondaryBrush}" Background="Transparent" FontSize="{StaticResource FontBody}">
+                                                    <Expander.Style>
+                                                        <Style TargetType="Expander">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding Edid}" Value="{x:Null}">
+                                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Expander.Style>
+                                                    <StackPanel Margin="4,8,0,0" DataContext="{Binding Edid}">
+                                                        <TextBlock Style="{StaticResource SubStat}">
+                                                            <Run Text="Manufacturer: " /><Run Text="{Binding ManufacturerId, Mode=OneWay}" />
+                                                            <Run Text=" · Product code: " /><Run Text="{Binding ProductCode, Mode=OneWay}" />
+                                                        </TextBlock>
+                                                        <TextBlock Style="{StaticResource SubStat}" Margin="0,2,0,0">
+                                                            <Run Text="Model: " /><Run Text="{Binding ModelName, TargetNullValue=Unknown, Mode=OneWay}" />
+                                                            <Run Text=" · Serial: " /><Run Text="{Binding SerialNumber, TargetNullValue=Unknown, Mode=OneWay}" />
+                                                        </TextBlock>
+                                                        <TextBlock Style="{StaticResource SubStat}" Margin="0,2,0,0">
+                                                            <Run Text="Manufactured: week " /><Run Text="{Binding ManufactureWeek, Mode=OneWay}" />
+                                                            <Run Text=" of " /><Run Text="{Binding ManufactureYear, Mode=OneWay}" />
+                                                        </TextBlock>
+                                                        <TextBlock Style="{StaticResource SubStat}" Margin="0,2,0,0">
+                                                            <Run Text="Physical size: " /><Run Text="{Binding PhysicalWidthCm, Mode=OneWay}" />×<Run Text="{Binding PhysicalHeightCm, Mode=OneWay}" /><Run Text=" cm" />
+                                                        </TextBlock>
+                                                        <TextBlock Style="{StaticResource SubStat}" Margin="0,2,0,0">
+                                                            <Run Text="Native (EDID preferred) timing: " /><Run Text="{Binding NativeWidthPx, Mode=OneWay}" />×<Run Text="{Binding NativeHeightPx, Mode=OneWay}" />
+                                                            <Run Text=" @ " /><Run Text="{Binding NativeRefreshHz, Mode=OneWay}" /><Run Text=" Hz" />
+                                                        </TextBlock>
+                                                        <TextBlock Style="{StaticResource SubStat}" Margin="0,2,0,0" TextWrapping="Wrap">
+                                                            <Run Text="Feature bits: " /><Run Text="{Binding FeatureBitsSummary, Mode=OneWay}" />
+                                                        </TextBlock>
+                                                    </StackPanel>
+                                                </Expander>
+                                            </StackPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </Border>
+                    <!-- #690: display connect/disconnect/mode-change history - WM_DISPLAYCHANGE events
+                         recorded live in-app (Source "App") plus a Kernel-PnP System-log scan (Source
+                         "Kernel-PnP"), persisted across sessions. Repeated disconnects at a regular
+                         interval point at a cable or a DisplayPort link-training failure. -->
+                    <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                        <StackPanel>
+                            <TextBlock Text="Display connect/disconnect history" Style="{StaticResource CardTitle}" />
+                            <TextBlock Style="{StaticResource SubStat}" Margin="0,-2,0,10" TextWrapping="Wrap"
+                                       Text="Monitor arrival/removal and display-configuration changes, last 30 days plus anything recorded this session. Repeated disconnects at a regular interval point at a cable or a DisplayPort link-training problem." />
+                            <ItemsControl ItemsSource="{Binding DisplayChangeHistory}" MaxHeight="240">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid Margin="0,0,0,8">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,8,0">
+                                                <Run Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}" />
+                                                <Run Text=" — " /><Run Text="{Binding Description, Mode=OneWay}" />
+                                            </TextBlock>
+                                            <Border Grid.Column="1" Background="{DynamicResource AccentMutedBrush}" CornerRadius="4" Padding="4,0" VerticalAlignment="Top">
+                                                <TextBlock Text="{Binding Source}" FontSize="{StaticResource FontCaption}" FontWeight="SemiBold" Foreground="{DynamicResource AccentBrush}" />
+                                            </Border>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <TextBlock Text="No display connect/disconnect events recorded yet.">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding DisplayChangeHistory.Count}" Value="0">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </ScrollViewer>
+        </TabItem>
+        <TabItem Header="Storage">
+            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+                <StackPanel>
+                    <!-- Storage -->
+                    <Border Style="{StaticResource CardStyle}">
+                        <StackPanel>
+                            <TextBlock Text="Storage" Style="{StaticResource CardTitle}" />
+                            <ItemsControl ItemsSource="{Binding Disks}" ItemTemplate="{StaticResource SpecRowTemplate}" />
+                            <TextBlock Text="No disks detected.">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding Disks.Count}" Value="0">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                            <!-- #70: page file location vs. the boot drive's media type - a page file left
+                                 on a slower secondary HDD (or the reverse) is a common, silent slowdown
+                                 cause on multi-drive systems, easy to miss since this tab otherwise only
+                                 shows aggregate disk activity. -->
+                            <Border BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,1,0,0" Margin="0,12,0,0" Padding="0,10,0,0">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="Page file: " Style="{StaticResource SpecLabel}" Margin="0" />
+                                    <TextBlock Text="{Binding PageFileLocationText}">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock" BasedOn="{StaticResource SpecValue}">
+                                                <Setter Property="FontSize" Value="{StaticResource FontBody}" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding PageFileLocationWarning}" Value="True">
+                                                        <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </Border>
+                    <!-- Volumes: per-drive-letter free space, color-coded so a nearly-full volume - a
+                         common, easy-to-miss slowdown/crash cause - stands out at a glance. -->
+                    <Border Style="{StaticResource CardStyle}" Margin="0,16,0,16">
+                        <StackPanel>
+                            <TextBlock Text="Volumes" Style="{StaticResource CardTitle}" />
+                            <ItemsControl ItemsSource="{Binding Volumes}" ItemTemplate="{StaticResource VolumeRowTemplate}" />
+                            <TextBlock Text="No volumes detected.">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding Volumes.Count}" Value="0">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </ScrollViewer>
+        </TabItem>
+        <TabItem Header="Devices">
+            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+                <StackPanel>
+                    <!-- USB devices (#69): flags a Windows-reported enumeration/driver problem - helps
+                         catch a misbehaving peripheral or a failing USB controller/hub. Per-device power
+                         draw isn't shown - see UsbDeviceInfo's remarks for why. -->
+                    <Border Style="{StaticResource CardStyle}">
+                        <StackPanel>
+                            <TextBlock Text="USB devices" Style="{StaticResource CardTitle}" />
+                            <ItemsControl ItemsSource="{Binding UsbDevices}" ItemTemplate="{StaticResource SpecRowTemplate}" />
+                            <TextBlock Text="No USB devices detected.">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding UsbDevices.Count}" Value="0">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </StackPanel>
+                    </Border>
+                    <!-- Outdated third-party drivers: a curated, conservative list - see
+                         SystemSpecsService.ReadOutdatedDrivers for the filtering rules. Collapsed entirely
+                         when empty rather than showing a "no drivers detected" line, since an empty list
+                         here (unlike Memory/Graphics/Storage) is the expected common case. -->
+                    <Border>
+                        <Border.Style>
+                            <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding OutdatedDrivers.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                        <StackPanel>
+                            <TextBlock Text="Drivers that may be worth updating" Style="{StaticResource CardTitle}" />
+                            <TextBlock Text="Third-party drivers older than 2 years, in device categories where a stale driver commonly causes problems (display, network, storage, audio/video peripherals)."
+                                       Style="{StaticResource SubStat}" Margin="0,-8,0,12" TextWrapping="Wrap" />
+                            <ItemsControl ItemsSource="{Binding OutdatedDrivers}" ItemTemplate="{StaticResource SpecRowTemplate}" />
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </ScrollViewer>
+        </TabItem>
+        <TabItem Header="Software">
+            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+                <StackPanel>
+                    <!-- #59: installed .NET runtime versions, from the shared-framework directory layout
+                         dotnet.exe itself uses. -->
+                    <Border Style="{StaticResource CardStyle}">
+                        <StackPanel>
+                            <TextBlock Text="Installed .NET runtimes" Style="{StaticResource CardTitle}" />
+                            <ItemsControl ItemsSource="{Binding DotNetRuntimes}" Margin="0,8,0,0">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="4" Padding="8,4" Margin="0,0,8,8">
+                                            <TextBlock Text="{Binding}" FontSize="{StaticResource FontBody}" />
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <TextBlock Text="No .NET shared-framework installation found on this PC.">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding DotNetRuntimes.Count}" Value="0">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </StackPanel>
+                    </Border>
+                    <!-- #68: recently installed third-party software - correlates with "when did the
+                         problem start". Collapsed entirely when empty (same as Outdated Drivers/Recent
+                         Windows updates) - install-only, see InstalledSoftwareInfo's remarks. -->
+                    <Border Margin="0,16,0,0">
+                        <Border.Style>
+                            <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding RecentlyInstalledSoftware.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                        <StackPanel>
+                            <TextBlock Text="Recently installed software" Style="{StaticResource CardTitle}" />
+                            <TextBlock Text="Third-party software installed in the last 6 months, oldest at the bottom - Windows keeps no equivalent log of uninstalls."
+                                       Style="{StaticResource SubStat}" Margin="0,-8,0,12" TextWrapping="Wrap" />
+                            <ItemsControl ItemsSource="{Binding RecentlyInstalledSoftware}" ItemTemplate="{StaticResource SpecRowTemplate}" />
+                        </StackPanel>
+                    </Border>
+                    <!-- Recent Windows updates (#57): a common "PC got slow/broke after X" correlation
+                         aid. Collapsed entirely when empty (same as Outdated Drivers) - Win32_QuickFixEngineering
+                         can legitimately return nothing on some builds even with updates installed. -->
+                    <Border Margin="0,16,0,0">
+                        <Border.Style>
+                            <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding RecentUpdates.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                        <StackPanel>
+                            <TextBlock Text="Recent Windows updates" Style="{StaticResource CardTitle}" />
+                            <ItemsControl ItemsSource="{Binding RecentUpdates}" ItemTemplate="{StaticResource SpecRowTemplate}" Margin="0,12,0,0" />
+                        </StackPanel>
+                    </Border>
+                    <!-- #63: Windows Defender exclusion list, read-only - "Unknown/inaccessible" (Tamper
+                         Protection can deny this even elevated) is shown distinctly from a confirmed empty
+                         list. -->
+                    <Border Style="{StaticResource CardStyle}">
+                        <StackPanel>
+                            <TextBlock Text="Windows Defender exclusions" Style="{StaticResource CardTitle}" />
+                            <TextBlock Text="{Binding DefenderExclusionsStatusText}" Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+                            <ItemsControl ItemsSource="{Binding DefenderExclusions}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding}" FontSize="{StaticResource FontStrong}" Margin="0,0,0,6" TextTrimming="CharacterEllipsis" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </ScrollViewer>
+        </TabItem>
+        <TabItem Header="Security">
+            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+                <StackPanel>
+                    <!-- Security posture: Secure Boot / TPM / VBS - each individually nullable (see
+                         SecurityInfo's remarks), rendered as a warning color only on a confirmed "off"/
+                         "not present", never on "Unknown" (a permission gap isn't the same as a real
+                         finding). -->
+                    <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                        <StackPanel>
+                            <TextBlock Text="Security" Style="{StaticResource CardTitle}" />
+                            <UniformGrid Columns="3">
+                                <StackPanel Margin="0,0,8,0">
+                                    <TextBlock Text="Secure Boot" Style="{StaticResource SpecLabel}" />
+                                    <TextBlock Text="{Binding SecureBootText}">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock" BasedOn="{StaticResource SpecValue}">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding SecureBootWarning}" Value="True">
+                                                        <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </StackPanel>
+                                <StackPanel Margin="8,0,8,0">
+                                    <TextBlock Text="TPM" Style="{StaticResource SpecLabel}" />
+                                    <TextBlock Text="{Binding TpmText}">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock" BasedOn="{StaticResource SpecValue}">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding TpmWarning}" Value="True">
+                                                        <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </StackPanel>
+                                <StackPanel Margin="8,0,0,0">
+                                    <TextBlock Text="Virtualization-based security" Style="{StaticResource SpecLabel}" />
+                                    <TextBlock Text="{Binding VbsText}" Style="{StaticResource SpecValue}" TextWrapping="Wrap" />
+                                </StackPanel>
+                                <!-- Round 11, #73: Windows Update/servicing reboot-pending flag - see
+                                     SystemSpecsService.ReadRebootPending. -->
+                                <StackPanel Margin="0,10,8,0">
+                                    <TextBlock Text="Reboot pending" Style="{StaticResource SpecLabel}" />
+                                    <TextBlock>
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock" BasedOn="{StaticResource SpecValue}">
+                                                <Setter Property="Text" Value="No" />
+                                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding RebootPending}" Value="True">
+                                                        <Setter Property="Text" Value="Yes" />
+                                                        <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </StackPanel>
+
+                                <!-- #732: VBS/HVCI/hypervisor launch state - combines bcdedit's
+                                     hypervisorlaunchtype, the two DeviceGuard policy registry locations,
+                                     and the actually-running state above - see SystemSpecsViewModel.Apply. -->
+                                <StackPanel Margin="8,10,8,0">
+                                    <TextBlock Text="Hypervisor launch type" Style="{StaticResource SpecLabel}" />
+                                    <TextBlock Text="{Binding HypervisorLaunchTypeText}" Style="{StaticResource SpecValue}" TextWrapping="Wrap" />
+                                </StackPanel>
+                                <StackPanel Margin="8,10,0,0">
+                                    <TextBlock Text="HVCI (Memory Integrity)" Style="{StaticResource SpecLabel}" />
+                                    <TextBlock Text="{Binding HvciText}" TextWrapping="Wrap">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock" BasedOn="{StaticResource SpecValue}">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding HvciWarning}" Value="True">
+                                                        <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </StackPanel>
+
+                                <!-- #733: firmware boot mode + system disk partition style - a legacy/MBR
+                                     system disk is a hard blocker for Windows 11 and Secure Boot, flagged
+                                     plainly below rather than left for the user to infer. -->
+                                <StackPanel Margin="0,10,8,0">
+                                    <TextBlock Text="Firmware boot mode" Style="{StaticResource SpecLabel}" />
+                                    <TextBlock Text="{Binding FirmwareTypeText}" Style="{StaticResource SpecValue}" TextWrapping="Wrap" />
+                                </StackPanel>
+                                <StackPanel Margin="8,10,8,0">
+                                    <TextBlock Text="System disk partition style" Style="{StaticResource SpecLabel}" />
+                                    <TextBlock Text="{Binding DiskPartitionStyleText}" TextWrapping="Wrap">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock" BasedOn="{StaticResource SpecValue}">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding LegacyDiskBlockerWarning}" Value="True">
+                                                        <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </StackPanel>
+                            </UniformGrid>
+                            <!-- Round 18, #878/#879: pointer to the richer HVCI/VBS-prerequisite/LSA-
+                                 protection/Secure-Boot-setup-mode/TPM-detail reads on the Security tab's
+                                 Platform security section - plain text, not a live navigation link (this
+                                 app has no cross-tab navigation plumbing yet), so this stays a small,
+                                 honest deviation from a literal clickable "link" per the item's own text. -->
+                            <TextBlock Margin="0,10,0,0" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}"
+                                       Text="More detail - HVCI/VBS prerequisites, LSA protection, Secure Boot setup mode, extended TPM info, and more - is on the Security tab's Platform security section." />
+
+                            <Border Background="{DynamicResource DangerMutedBrush}" BorderBrush="{DynamicResource DangerBrush}"
+                                    BorderThickness="1" CornerRadius="8" Padding="10,8" Margin="0,12,0,0">
+                                <Border.Style>
+                                    <Style TargetType="Border">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding LegacyDiskBlockerWarning}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Border.Style>
+                                <TextBlock Foreground="{DynamicResource DangerBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap"
+                                           Text="This system disk uses the legacy MBR partition style - that's a hard blocker for both Windows 11 and Secure Boot, which both require a GPT system disk. Converting in place requires a disk-to-GPT conversion (e.g. mbr2gpt.exe) before either will work." />
+                            </Border>
+                        </StackPanel>
+                    </Border>
+                    <!-- Security software (#63): registered AV/security products, via the
+                         SecurityCenter2 WMI namespace. A best-effort "looks enabled" heuristic, not a
+                         verified fact - see SystemSpecsService.ReadAntivirusProducts. Warning-colored
+                         when more than one product looks active at once (conflicting real-time scanners
+                         are a classic, often-invisible perf killer). -->
+                    <Border Margin="0,0,0,16">
+                        <Border.Style>
+                            <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
                                 <Style.Triggers>
                                     <DataTrigger Binding="{Binding MultipleActiveAvWarning}" Value="True">
-                                        <Setter Property="Visibility" Value="Visible" />
+                                        <Setter Property="BorderBrush" Value="{DynamicResource WarningBrush}" />
                                     </DataTrigger>
                                 </Style.Triggers>
                             </Style>
-                        </TextBlock.Style>
-                    </TextBlock>
-                    <ItemsControl ItemsSource="{Binding AntivirusProducts}" ItemTemplate="{StaticResource SpecRowTemplate}" />
-                    <TextBlock Text="No antivirus product reported (or the check isn't supported on this system).">
-                        <TextBlock.Style>
-                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
-                                <Setter Property="Visibility" Value="Collapsed" />
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding AntivirusProducts.Count}" Value="0">
-                                        <Setter Property="Visibility" Value="Visible" />
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </TextBlock.Style>
-                    </TextBlock>
+                        </Border.Style>
+                        <StackPanel>
+                            <TextBlock Text="Security software" Style="{StaticResource CardTitle}" />
+                            <TextBlock Text="More than one product looks actively enabled - conflicting real-time scanners commonly hurt performance."
+                                       Foreground="{DynamicResource WarningBrush}" Margin="0,4,0,12" TextWrapping="Wrap">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding MultipleActiveAvWarning}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                            <ItemsControl ItemsSource="{Binding AntivirusProducts}" ItemTemplate="{StaticResource SpecRowTemplate}" />
+                            <TextBlock Text="No antivirus product reported (or the check isn't supported on this system).">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding AntivirusProducts.Count}" Value="0">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </StackPanel>
+                    </Border>
                 </StackPanel>
-            </Border>
-
-            <!-- Outdated third-party drivers: a curated, conservative list - see
-                 SystemSpecsService.ReadOutdatedDrivers for the filtering rules. Collapsed entirely
-                 when empty rather than showing a "no drivers detected" line, since an empty list
-                 here (unlike Memory/Graphics/Storage) is the expected common case. -->
-            <Border>
-                <Border.Style>
-                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
-                        <Style.Triggers>
-                            <DataTrigger Binding="{Binding OutdatedDrivers.Count}" Value="0">
-                                <Setter Property="Visibility" Value="Collapsed" />
-                            </DataTrigger>
-                        </Style.Triggers>
-                    </Style>
-                </Border.Style>
-                <StackPanel>
-                    <TextBlock Text="Drivers that may be worth updating" Style="{StaticResource CardTitle}" />
-                    <TextBlock Text="Third-party drivers older than 2 years, in device categories where a stale driver commonly causes problems (display, network, storage, audio/video peripherals)."
-                               Style="{StaticResource SubStat}" Margin="0,-8,0,12" TextWrapping="Wrap" />
-                    <ItemsControl ItemsSource="{Binding OutdatedDrivers}" ItemTemplate="{StaticResource SpecRowTemplate}" />
-                </StackPanel>
-            </Border>
-
-            <!-- Recent Windows updates (#57): a common "PC got slow/broke after X" correlation
-                 aid. Collapsed entirely when empty (same as Outdated Drivers) - Win32_QuickFixEngineering
-                 can legitimately return nothing on some builds even with updates installed. -->
-            <Border Margin="0,16,0,0">
-                <Border.Style>
-                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
-                        <Style.Triggers>
-                            <DataTrigger Binding="{Binding RecentUpdates.Count}" Value="0">
-                                <Setter Property="Visibility" Value="Collapsed" />
-                            </DataTrigger>
-                        </Style.Triggers>
-                    </Style>
-                </Border.Style>
-                <StackPanel>
-                    <TextBlock Text="Recent Windows updates" Style="{StaticResource CardTitle}" />
-                    <ItemsControl ItemsSource="{Binding RecentUpdates}" ItemTemplate="{StaticResource SpecRowTemplate}" Margin="0,12,0,0" />
-                </StackPanel>
-            </Border>
-
-            <!-- #68: recently installed third-party software - correlates with "when did the
-                 problem start". Collapsed entirely when empty (same as Outdated Drivers/Recent
-                 Windows updates) - install-only, see InstalledSoftwareInfo's remarks. -->
-            <Border Margin="0,16,0,0">
-                <Border.Style>
-                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
-                        <Style.Triggers>
-                            <DataTrigger Binding="{Binding RecentlyInstalledSoftware.Count}" Value="0">
-                                <Setter Property="Visibility" Value="Collapsed" />
-                            </DataTrigger>
-                        </Style.Triggers>
-                    </Style>
-                </Border.Style>
-                <StackPanel>
-                    <TextBlock Text="Recently installed software" Style="{StaticResource CardTitle}" />
-                    <TextBlock Text="Third-party software installed in the last 6 months, oldest at the bottom - Windows keeps no equivalent log of uninstalls."
-                               Style="{StaticResource SubStat}" Margin="0,-8,0,12" TextWrapping="Wrap" />
-                    <ItemsControl ItemsSource="{Binding RecentlyInstalledSoftware}" ItemTemplate="{StaticResource SpecRowTemplate}" />
-                </StackPanel>
-            </Border>
-
-        </StackPanel>
-    </ScrollViewer>
+            </ScrollViewer>
+        </TabItem>
+    </TabControl>
 </UserControl>

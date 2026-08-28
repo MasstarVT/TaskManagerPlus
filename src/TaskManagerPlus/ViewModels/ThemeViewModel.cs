@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Media;
 using TaskManagerPlus.Common;
 using TaskManagerPlus.Models;
@@ -46,42 +46,42 @@ public sealed class ThemeViewModel : ObservableObject
         ["Dark"] = new PaletteDefinition(
             Bg: C("#17171A"), BgPanel: C("#1E1E22"), BgElevated: C("#26262B"), BgHover: C("#303038"),
             Border: C("#33333A"), BorderSubtle: C("#26262B"),
-            TextPrimary: C("#F2F2F3"), TextSecondary: C("#9A9AA2"), TextTertiary: C("#6B6B72"),
+            TextPrimary: C("#F2F2F3"), TextSecondary: C("#A7A7AE"), TextTertiary: C("#8E8E95"),
             Success: C("#3DD68C"), Warning: C("#F5B942"),
-            Danger: C("#F0546A"), DangerHover: C("#FF6E82"), DangerMuted: C("#3D2530")),
+            Danger: C("#F15A6F"), DangerHover: C("#FF6E82"), DangerMuted: C("#3D2530")),
 
         ["Light"] = new PaletteDefinition(
             Bg: C("#F5F5F7"), BgPanel: C("#FFFFFF"), BgElevated: C("#ECECEF"), BgHover: C("#E2E2E7"),
             Border: C("#D6D6DC"), BorderSubtle: C("#E8E8EC"),
-            TextPrimary: C("#1A1A1D"), TextSecondary: C("#5B5B63"), TextTertiary: C("#8A8A92"),
-            Success: C("#1FA85C"), Warning: C("#B9790A"),
-            Danger: C("#D93A52"), DangerHover: C("#C22D44"), DangerMuted: C("#FBE3E7")),
+            TextPrimary: C("#1A1A1D"), TextSecondary: C("#55555D"), TextTertiary: C("#696971"),
+            Success: C("#167942"), Warning: C("#925F08"),
+            Danger: C("#C9273F"), DangerHover: C("#C22D44"), DangerMuted: C("#FBE3E7")),
 
         ["Green"] = new PaletteDefinition(
             Bg: C("#050B06"), BgPanel: C("#0A140B"), BgElevated: C("#10200F"), BgHover: C("#173016"),
             Border: C("#1E3A1C"), BorderSubtle: C("#122414"),
-            TextPrimary: C("#B8FFB0"), TextSecondary: C("#6FCB63"), TextTertiary: C("#3E8A3A"),
+            TextPrimary: C("#B8FFB0"), TextSecondary: C("#6FCB63"), TextTertiary: C("#44973F"),
             Success: C("#7CFF6E"), Warning: C("#D9FF3D"),
             Danger: C("#FF5C4D"), DangerHover: C("#FF7A6C"), DangerMuted: C("#331A14")),
 
         ["Amber"] = new PaletteDefinition(
             Bg: C("#0B0704"), BgPanel: C("#150E08"), BgElevated: C("#211610"), BgHover: C("#2E1E14"),
             Border: C("#3C2A18"), BorderSubtle: C("#1C130C"),
-            TextPrimary: C("#FFD9A0"), TextSecondary: C("#D89B4E"), TextTertiary: C("#8F6530"),
+            TextPrimary: C("#FFD9A0"), TextSecondary: C("#D89B4E"), TextTertiary: C("#AB7939"),
             Success: C("#8CFF6E"), Warning: C("#FFC93D"),
             Danger: C("#FF5C4D"), DangerHover: C("#FF7A6C"), DangerMuted: C("#331A14")),
 
         ["Blue"] = new PaletteDefinition(
             Bg: C("#0A0E17"), BgPanel: C("#101725"), BgElevated: C("#182233"), BgHover: C("#212E42"),
             Border: C("#2A3A54"), BorderSubtle: C("#162032"),
-            TextPrimary: C("#D6E7FF"), TextSecondary: C("#8FA9CC"), TextTertiary: C("#5A7191"),
+            TextPrimary: C("#D6E7FF"), TextSecondary: C("#8FA9CC"), TextTertiary: C("#768CAA"),
             Success: C("#3DD68C"), Warning: C("#F5B942"),
             Danger: C("#F0546A"), DangerHover: C("#FF6E82"), DangerMuted: C("#2A1E30")),
 
         ["Monochrome"] = new PaletteDefinition(
             Bg: C("#141414"), BgPanel: C("#1B1B1B"), BgElevated: C("#242424"), BgHover: C("#2E2E2E"),
             Border: C("#383838"), BorderSubtle: C("#242424"),
-            TextPrimary: C("#F2F2F2"), TextSecondary: C("#9E9E9E"), TextTertiary: C("#6E6E6E"),
+            TextPrimary: C("#F2F2F2"), TextSecondary: C("#9E9E9E"), TextTertiary: C("#8C8C8C"),
             Success: C("#C6C6C6"), Warning: C("#DCDCDC"),
             Danger: C("#EAEAEA"), DangerHover: C("#FFFFFF"), DangerMuted: C("#3A3A3A")),
 
@@ -160,14 +160,33 @@ public sealed class ThemeViewModel : ObservableObject
         }
     }
 
-    // #76: color-blind-safe status colors (blue/yellow/orange instead of green/amber/red) - a
-    // deuteranopia/protanopia-safe triple, applied on top of whichever theme family/saturation is
-    // active, since red/green are exactly the colors this app's diagnostic UI leans on throughout.
-    private static readonly Color CbSafeSuccess = Color.FromRgb(0x00, 0x72, 0xB2); // blue
-    private static readonly Color CbSafeWarning = Color.FromRgb(0xF0, 0xE4, 0x42); // yellow
-    private static readonly Color CbSafeDanger = Color.FromRgb(0xE6, 0x9F, 0x00);  // orange
-    private static readonly Color CbSafeDangerHover = Color.FromRgb(0xFF, 0xB6, 0x33);
-    private static readonly Color CbSafeDangerMuted = Color.FromArgb(0x46, 0xE6, 0x9F, 0x00);
+    // #76: color-blind-safe status colors (blue/yellow/orange instead of green/amber/red) - an
+    // Okabe-Ito deuteranopia/protanopia-safe triple, applied on top of whichever theme family and
+    // saturation is active, since red/green are exactly the colors this app's diagnostic UI leans
+    // on throughout.
+    //
+    // There are two sets because one fixed triple cannot serve both surface families, and using
+    // the dark-surface one everywhere is what the single original set did: its blue sat at 2.90:1
+    // on an elevated dark surface, and on the Light family its yellow and orange came out at
+    // 1.32:1 and 2.25:1 - i.e. the accessibility option was the least readable mode in the app.
+    // Both sets keep the Okabe-Ito hues and are only moved in lightness, so what makes them
+    // color-blind-safe is untouched; each now clears WCAG AA against its own surfaces.
+    //
+    // The light set's warning/danger pair is the weak spot: no Okabe-Ito triple has three hues
+    // that stay both AA-dark on white and far apart, so those two separate mostly by lightness
+    // (4.6:1 vs 8.3:1) on top of a 20-degree hue gap. Status here is always accompanied by text,
+    // never color alone.
+    private static readonly Color CbSafeSuccessOnDark = Color.FromRgb(0x00, 0x95, 0xE8); // blue
+    private static readonly Color CbSafeWarningOnDark = Color.FromRgb(0xF0, 0xE4, 0x42); // yellow
+    private static readonly Color CbSafeDangerOnDark = Color.FromRgb(0xE6, 0x9F, 0x00);  // orange
+    private static readonly Color CbSafeDangerHoverOnDark = Color.FromRgb(0xFF, 0xB6, 0x33);
+    private static readonly Color CbSafeDangerMutedOnDark = Color.FromArgb(0x46, 0xE6, 0x9F, 0x00);
+
+    private static readonly Color CbSafeSuccessOnLight = Color.FromRgb(0x00, 0x6C, 0xA8); // blue
+    private static readonly Color CbSafeWarningOnLight = Color.FromRgb(0x8D, 0x61, 0x00); // amber
+    private static readonly Color CbSafeDangerOnLight = Color.FromRgb(0x7A, 0x2A, 0x00);  // vermillion
+    private static readonly Color CbSafeDangerHoverOnLight = Color.FromRgb(0x5C, 0x20, 0x00);
+    private static readonly Color CbSafeDangerMutedOnLight = Color.FromArgb(0x30, 0x7A, 0x2A, 0x00);
 
     private bool _colorBlindSafeAlerts;
     public bool ColorBlindSafeAlerts
@@ -478,11 +497,14 @@ public sealed class ThemeViewModel : ObservableObject
             // #76: deliberately NOT saturation-adjusted - these three are chosen specifically for
             // their distinguishability under deuteranopia/protanopia, and running them through the
             // same saturation slider as the rest of the palette could undermine that.
-            _appResources["SuccessBrush"] = Frozen(CbSafeSuccess);
-            _appResources["WarningBrush"] = Frozen(CbSafeWarning);
-            _appResources["DangerBrush"] = Frozen(CbSafeDanger);
-            _appResources["DangerHoverBrush"] = Frozen(CbSafeDangerHover);
-            _appResources["DangerMutedBrush"] = Frozen(CbSafeDangerMuted);
+            // Which set applies is decided from the family's own background luminance rather than
+            // by name-checking "Light", so a future light family gets the right one for free.
+            bool onLight = ColorMath.RelativeLuminance(p.Bg) > 0.5;
+            _appResources["SuccessBrush"] = Frozen(onLight ? CbSafeSuccessOnLight : CbSafeSuccessOnDark);
+            _appResources["WarningBrush"] = Frozen(onLight ? CbSafeWarningOnLight : CbSafeWarningOnDark);
+            _appResources["DangerBrush"] = Frozen(onLight ? CbSafeDangerOnLight : CbSafeDangerOnDark);
+            _appResources["DangerHoverBrush"] = Frozen(onLight ? CbSafeDangerHoverOnLight : CbSafeDangerHoverOnDark);
+            _appResources["DangerMutedBrush"] = Frozen(onLight ? CbSafeDangerMutedOnLight : CbSafeDangerMutedOnDark);
         }
         else
         {

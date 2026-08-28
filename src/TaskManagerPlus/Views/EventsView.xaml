@@ -20,28 +20,28 @@
         <Border Grid.Row="0" Style="{StaticResource CardStyle}" Margin="0,0,0,10" Padding="12,10">
             <StackPanel>
                 <WrapPanel>
-                    <TextBlock Text="Level:" VerticalAlignment="Center" Margin="0,0,6,0" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5" />
+                    <TextBlock Text="Level:" VerticalAlignment="Center" Margin="0,0,6,0" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" />
                     <CheckBox Content="Critical" IsChecked="{Binding LevelCritical}" Margin="0,0,10,0" />
                     <CheckBox Content="Error" IsChecked="{Binding LevelError}" Margin="0,0,10,0" />
                     <CheckBox Content="Warning" IsChecked="{Binding LevelWarning}" Margin="0,0,10,0" />
                     <CheckBox Content="Information" IsChecked="{Binding LevelInformation}" Margin="0,0,10,0" />
-                    <CheckBox Content="Verbose" IsChecked="{Binding LevelVerbose}" Margin="0,0,18,0" />
+                    <CheckBox Content="Verbose" IsChecked="{Binding LevelVerbose}" Margin="0,0,16,0" />
 
-                    <TextBlock Text="Providers:" VerticalAlignment="Center" Margin="0,0,6,0" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5" />
-                    <TextBox Text="{Binding ProviderFilterText, UpdateSourceTrigger=PropertyChanged}" Width="160" Margin="0,0,18,0"
+                    <TextBlock Text="Providers:" VerticalAlignment="Center" Margin="0,0,6,0" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" />
+                    <TextBox Text="{Binding ProviderFilterText, UpdateSourceTrigger=PropertyChanged}" Width="160" Margin="0,0,16,0"
                               ToolTip="Comma-separated provider names" />
 
-                    <TextBlock Text="Event IDs:" VerticalAlignment="Center" Margin="0,0,6,0" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5" />
-                    <TextBox Text="{Binding EventIdsText, UpdateSourceTrigger=PropertyChanged}" Width="130" Margin="0,0,18,0"
+                    <TextBlock Text="Event IDs:" VerticalAlignment="Center" Margin="0,0,6,0" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" />
+                    <TextBox Text="{Binding EventIdsText, UpdateSourceTrigger=PropertyChanged}" Width="130" Margin="0,0,16,0"
                               ToolTip="e.g. 1000, 4624, 7000-7010" />
 
-                    <TextBlock Text="Lookback (days):" VerticalAlignment="Center" Margin="0,0,6,0" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5" />
-                    <TextBox Text="{Binding LookbackDays, UpdateSourceTrigger=PropertyChanged}" Width="50" Margin="0,0,18,0" />
+                    <TextBlock Text="Lookback (days):" VerticalAlignment="Center" Margin="0,0,6,0" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" />
+                    <TextBox Text="{Binding LookbackDays, UpdateSourceTrigger=PropertyChanged}" Width="50" Margin="0,0,16,0" />
 
-                    <TextBlock Text="User SID:" VerticalAlignment="Center" Margin="0,0,6,0" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5" />
-                    <TextBox Text="{Binding UserSidText, UpdateSourceTrigger=PropertyChanged}" Width="140" Margin="0,0,18,0" />
+                    <TextBlock Text="User SID:" VerticalAlignment="Center" Margin="0,0,6,0" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" />
+                    <TextBox Text="{Binding UserSidText, UpdateSourceTrigger=PropertyChanged}" Width="140" Margin="0,0,16,0" />
 
-                    <TextBlock Text="Keyword:" VerticalAlignment="Center" Margin="0,0,6,0" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5" />
+                    <TextBlock Text="Keyword:" VerticalAlignment="Center" Margin="0,0,6,0" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" />
                     <TextBox Text="{Binding KeywordText, UpdateSourceTrigger=PropertyChanged}" Width="140"
                               ToolTip="Client-side match against each event's description text" />
                 </WrapPanel>
@@ -52,7 +52,7 @@
                      leaving them as ordinary rows. -->
                 <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
                     <CheckBox Content="Hide known-noise" IsChecked="{Binding HideKnownNoise}" VerticalAlignment="Center" Margin="0,0,10,0" />
-                    <TextBlock Text="{Binding HiddenNoiseText}" TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}"
+                    <TextBlock Text="{Binding HiddenNoiseText}" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}"
                                 VerticalAlignment="Center" MaxWidth="520"
                                 Visibility="{Binding HiddenNoiseText, Converter={StaticResource NullToVisibilityConverter}}" />
                 </StackPanel>
@@ -65,7 +65,7 @@
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     <TextBox Grid.Column="0" Text="{Binding RawXPathText, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,8,0"
-                              FontFamily="Consolas" FontSize="11.5" VerticalAlignment="Center"
+                              FontFamily="Consolas" FontSize="{StaticResource FontBody}" VerticalAlignment="Center"
                               ToolTip="The XPath query actually used by Load / Follow - edit directly for power-user queries." />
                     <Button Grid.Column="1" Content="Build query" Command="{Binding BuildXPathCommand}" Padding="10,4" Margin="0,0,8,0" />
                     <Button Grid.Column="2" Content="Load" Command="{Binding LoadCommand}" Padding="14,4" Margin="0,0,8,0" />
@@ -76,7 +76,7 @@
                 <!-- #108: saved filter presets, including the built-in ones (Crash triage / Storage
                      errors / Service failures / Boot problems). -->
                 <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
-                    <TextBlock Text="Saved filters:" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5" />
+                    <TextBlock Text="Saved filters:" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" />
                     <ItemsControl ItemsSource="{Binding SavedFilters}">
                         <ItemsControl.ItemsPanel>
                             <ItemsPanelTemplate>
@@ -87,15 +87,15 @@
                             <DataTemplate DataType="{x:Type models:SavedEventFilter}">
                                 <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="10" Margin="0,0,6,0" Padding="8,3">
                                     <StackPanel Orientation="Horizontal">
-                                        <Button Content="{Binding Name}" FontSize="11.5" Padding="0"
+                                        <Button Content="{Binding Name}" FontSize="{StaticResource FontBody}" Padding="0"
                                                  Background="Transparent" BorderThickness="0"
                                                  Command="{Binding DataContext.ApplyFilterCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                                  CommandParameter="{Binding}" />
-                                        <Button Content=" ⇩" FontSize="10.5" Padding="0" Margin="4,0,0,0"
+                                        <Button Content=" ⇩" FontSize="{StaticResource FontCaption}" Padding="0" Margin="4,0,0,0"
                                                  Background="Transparent" BorderThickness="0" Foreground="{DynamicResource TextSecondaryBrush}"
                                                  Command="{Binding DataContext.ExportFilterCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                                  CommandParameter="{Binding}" ToolTip="Export as an Event Viewer custom view (#109)" />
-                                        <Button Content=" ✕" FontSize="10.5" Padding="0" Margin="4,0,0,0"
+                                        <Button Content=" ✕" FontSize="{StaticResource FontCaption}" Padding="0" Margin="4,0,0,0"
                                                  Background="Transparent" BorderThickness="0" Foreground="{DynamicResource TextSecondaryBrush}"
                                                  Command="{Binding DataContext.DeleteFilterCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                                  CommandParameter="{Binding}" ToolTip="Delete this saved filter" />
@@ -113,18 +113,18 @@
                      the multi-channel structured query, the provider catalog, "copy current view",
                      and the grid's grouping/correlation-column toggles. Collapsed by default so the
                      always-visible filter bar above stays uncluttered. -->
-                <Expander Header="More tools" Margin="0,10,0,0" FontSize="11.5">
+                <Expander Header="More tools" Margin="0,10,0,0" FontSize="{StaticResource FontBody}">
                     <StackPanel Margin="0,10,0,0">
 
                         <!-- #116: grouping + correlation columns -->
                         <WrapPanel Margin="0,0,0,10">
                             <TextBlock Text="Group by:" VerticalAlignment="Center" Margin="0,0,6,0" Foreground="{DynamicResource TextSecondaryBrush}" />
-                            <ComboBox Width="100" SelectedValuePath="Content" SelectedValue="{Binding GroupBy}" Margin="0,0,18,0">
+                            <ComboBox Width="100" SelectedValuePath="Content" SelectedValue="{Binding GroupBy}" Margin="0,0,16,0">
                                 <ComboBoxItem Content="None" />
                                 <ComboBoxItem Content="Provider" />
                                 <ComboBoxItem Content="EventId" />
                             </ComboBox>
-                            <CheckBox Content="Show correlation ID columns" IsChecked="{Binding ShowCorrelationColumns}" VerticalAlignment="Center" Margin="0,0,18,0" />
+                            <CheckBox Content="Show correlation ID columns" IsChecked="{Binding ShowCorrelationColumns}" VerticalAlignment="Center" Margin="0,0,16,0" />
                             <TextBlock Text="{Binding EvidenceBundle.Count, StringFormat='Evidence bundle: {0} item(s)'}" VerticalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}" />
                         </WrapPanel>
 
@@ -133,9 +133,9 @@
                              distinct events browsed so far have no KB entry at all, with an export
                              to feed event-kb-overrides.json. -->
                         <WrapPanel Margin="0,0,0,10">
-                            <TextBlock Text="{Binding KbStatusText}" VerticalAlignment="Center" Margin="0,0,18,0" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" />
-                            <TextBlock Text="{Binding UnknownEventCount, StringFormat='Events with no KB entry seen so far: {0}'}" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" />
-                            <Button Content="Export unknown events..." Command="{Binding ExportUnknownEventsCommand}" Padding="8,3" FontSize="11"
+                            <TextBlock Text="{Binding KbStatusText}" VerticalAlignment="Center" Margin="0,0,16,0" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" />
+                            <TextBlock Text="{Binding UnknownEventCount, StringFormat='Events with no KB entry seen so far: {0}'}" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" />
+                            <Button Content="Export unknown events..." Command="{Binding ExportUnknownEventsCommand}" Padding="8,3" FontSize="{StaticResource FontBody}"
                                      ToolTip="Exports the distinct provider / event ID / sample message list for every event browsed so far with no local knowledge-base entry (#126)." />
                         </WrapPanel>
 
@@ -155,7 +155,7 @@
                                 </ItemsControl.ItemsPanel>
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate DataType="{x:Type models:RecentArchiveEntry}">
-                                        <Button Content="{Binding FileName}" FontSize="11" Padding="6,2" Margin="0,0,6,0"
+                                        <Button Content="{Binding FileName}" FontSize="{StaticResource FontBody}" Padding="6,2" Margin="0,0,6,0"
                                                  Command="{Binding DataContext.OpenArchiveCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                                  CommandParameter="{Binding}" ToolTip="{Binding Path}" />
                                     </DataTemplate>
@@ -241,7 +241,7 @@
                                 </ItemsControl.ItemsPanel>
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate DataType="{x:Type models:ImportableCustomView}">
-                                        <Button FontSize="11" Padding="6,2" Margin="0,0,6,4"
+                                        <Button FontSize="{StaticResource FontBody}" Padding="6,2" Margin="0,0,6,4"
                                                  Command="{Binding DataContext.ImportCustomViewCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                                  CommandParameter="{Binding}" ToolTip="{Binding SourceFilePath}">
                                             <TextBlock Text="{Binding Name, StringFormat='Import &quot;{0}&quot;'}" />
@@ -260,9 +260,9 @@
                      (#136). #128/#130 have their own landing spot on the Stability tab per their
                      own spec, but #128's first-occurrence flags are shown here too since this
                      panel's 90-day scan already computes them as a side effect of the same read. -->
-                <Expander Header="Anomaly detection" Margin="0,10,0,0" FontSize="11.5">
+                <Expander Header="Anomaly detection" Margin="0,10,0,0" FontSize="{StaticResource FontBody}">
                     <StackPanel Margin="0,10,0,0">
-                        <TextBlock TextWrapping="Wrap" FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8">
+                        <TextBlock TextWrapping="Wrap" FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8">
                             <Run Text="Quick flag, not a verdict — " FontWeight="SemiBold" />
                             <Run Text="everything below is a statistical/pattern heuristic over whatever channels and lookback window you scan, not a diagnosis. A PC's normal log noise is highly individual." />
                         </TextBlock>
@@ -275,15 +275,15 @@
                             <TextBox Text="{Binding AnomalyLookbackDays, UpdateSourceTrigger=PropertyChanged}" Width="45" Margin="0,0,8,0" />
                             <ProgressBar Width="110" Height="6" IsIndeterminate="{Binding IsAnomalyScanRunning}" VerticalAlignment="Center" Margin="0,0,8,0" />
                         </WrapPanel>
-                        <TextBlock Text="{Binding AnomalyScanStatusText}" TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,12" />
+                        <TextBlock Text="{Binding AnomalyScanStatusText}" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,12" />
 
                         <!-- #127: per-event-ID baseline spikes -->
-                        <TextBlock Text="Unusual for this PC (#127)" FontWeight="SemiBold" FontSize="11.5" Margin="0,0,0,4" />
+                        <TextBlock Text="Unusual for this PC (#127)" FontWeight="SemiBold" FontSize="{StaticResource FontBody}" Margin="0,0,0,4" />
                         <ItemsControl ItemsSource="{Binding BaselineFlags}" Margin="0,0,0,4">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate DataType="{x:Type models:EventIdBaselineFlag}">
-                                    <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="8,5" Margin="0,0,0,4">
-                                        <TextBlock FontSize="11" TextWrapping="Wrap">
+                                    <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="8,4" Margin="0,0,0,4">
+                                        <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap">
                                             <Run Text="{Binding Provider, Mode=OneWay}" FontWeight="SemiBold" /><Run Text=" " /><Run Text="{Binding EventId, Mode=OneWay}" />
                                             <Run Text=" — " /><Run Text="{Binding Last24HourCount, Mode=OneWay}" /><Run Text=" in the last 24h vs. a median of " />
                                             <Run Text="{Binding MedianDailyCount, StringFormat={}{0:0.0}, Mode=OneWay}" /><Run Text="/day over " />
@@ -295,12 +295,12 @@
                         </ItemsControl>
 
                         <!-- #128: new-signature flags (see also the Stability tab's own weekly card) -->
-                        <TextBlock Text="First-ever in this scan's window (#128)" FontWeight="SemiBold" FontSize="11.5" Margin="0,0,0,4" />
+                        <TextBlock Text="First-ever in this scan's window (#128)" FontWeight="SemiBold" FontSize="{StaticResource FontBody}" Margin="0,0,0,4" />
                         <ItemsControl ItemsSource="{Binding AnomalyFirstOccurrences}" Margin="0,0,0,10">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate DataType="{x:Type models:FirstOccurrenceFlag}">
-                                    <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="8,5" Margin="0,0,0,4">
-                                        <TextBlock FontSize="11" TextWrapping="Wrap">
+                                    <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="8,4" Margin="0,0,0,4">
+                                        <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap">
                                             <Run Text="{Binding Provider, Mode=OneWay}" FontWeight="SemiBold" /><Run Text=" " /><Run Text="{Binding EventId, Mode=OneWay}" />
                                             <Run Text=" — first seen " /><Run Text="{Binding FirstSeen, StringFormat={}{0:g}, Mode=OneWay}" />
                                             <Run Text=", " /><Run Text="{Binding OccurrenceCount, Mode=OneWay}" /><Run Text=" occurrence(s) since." />
@@ -311,7 +311,7 @@
                         </ItemsControl>
 
                         <!-- #129: burst groups from this scan -->
-                        <TextBlock Text="Burst / incident clusters (#129)" FontWeight="SemiBold" FontSize="11.5" Margin="0,0,0,4" />
+                        <TextBlock Text="Burst / incident clusters (#129)" FontWeight="SemiBold" FontSize="{StaticResource FontBody}" Margin="0,0,0,4" />
                         <DataGrid ItemsSource="{Binding AnomalyBurstGroups}" IsReadOnly="True" AutoGenerateColumns="False" MaxHeight="160" Margin="0,0,0,10">
                             <DataGrid.Columns>
                                 <DataGridTextColumn Header="Provider" Binding="{Binding Provider}" Width="2*" />
@@ -324,7 +324,7 @@
                         </DataGrid>
 
                         <!-- #132: periodic / retry loops -->
-                        <TextBlock Text="Periodic / retry loops (#132)" FontWeight="SemiBold" FontSize="11.5" Margin="0,0,0,4" />
+                        <TextBlock Text="Periodic / retry loops (#132)" FontWeight="SemiBold" FontSize="{StaticResource FontBody}" Margin="0,0,0,4" />
                         <DataGrid ItemsSource="{Binding PeriodicLoopFlags}" IsReadOnly="True" AutoGenerateColumns="False" MaxHeight="160" Margin="0,0,0,10">
                             <DataGrid.Columns>
                                 <DataGridTextColumn Header="Provider" Binding="{Binding Provider}" Width="2*" />
@@ -336,7 +336,7 @@
                         </DataGrid>
 
                         <!-- #133: post-boot vs. steady-state -->
-                        <TextBlock Text="Boot-only vs. steady-state (#133)" FontWeight="SemiBold" FontSize="11.5" Margin="0,0,0,4" />
+                        <TextBlock Text="Boot-only vs. steady-state (#133)" FontWeight="SemiBold" FontSize="{StaticResource FontBody}" Margin="0,0,0,4" />
                         <DataGrid ItemsSource="{Binding BootProfileRows}" IsReadOnly="True" AutoGenerateColumns="False" MaxHeight="160" Margin="0,0,0,10">
                             <DataGrid.Columns>
                                 <DataGridTextColumn Header="Provider" Binding="{Binding Provider}" Width="2*" />
@@ -349,11 +349,11 @@
                         <!-- #131: log churn attribution - a separate lightweight scan, since it
                              needs every level (mostly Information), not just the anomaly scan's
                              Critical/Error/Warning above. -->
-                        <TextBlock Text="Log churn attribution (#131)" FontWeight="SemiBold" FontSize="11.5" Margin="0,0,0,4" />
+                        <TextBlock Text="Log churn attribution (#131)" FontWeight="SemiBold" FontSize="{StaticResource FontBody}" Margin="0,0,0,4" />
                         <WrapPanel Margin="0,0,0,4">
                             <Button Content="Scan log churn (selected channel)" Command="{Binding ScanLogChurnCommand}" Padding="8,3" Margin="0,0,8,0"
                                      ToolTip="Ranks providers by how many records they wrote into the currently-selected channel (falls back to System) within the lookback window - who's actually consuming the log's finite size." />
-                            <TextBlock Text="{Binding ChurnStatusText}" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" FontSize="11" />
+                            <TextBlock Text="{Binding ChurnStatusText}" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" FontSize="{StaticResource FontBody}" />
                         </WrapPanel>
                         <DataGrid ItemsSource="{Binding ProviderChurn}" IsReadOnly="True" AutoGenerateColumns="False" MaxHeight="160" Margin="0,0,0,10">
                             <DataGrid.Columns>
@@ -365,14 +365,14 @@
 
                         <!-- #134: "since it was working" diff - reuses the anomaly scan's cached
                              dataset above rather than reading the log again. -->
-                        <TextBlock Text="&quot;Since it was working&quot; diff (#134)" FontWeight="SemiBold" FontSize="11.5" Margin="0,0,0,4" />
+                        <TextBlock Text="&quot;Since it was working&quot; diff (#134)" FontWeight="SemiBold" FontSize="{StaticResource FontBody}" Margin="0,0,0,4" />
                         <WrapPanel Margin="0,0,0,4">
                             <TextBlock Text="Known-good date:" VerticalAlignment="Center" Margin="0,0,6,0" Foreground="{DynamicResource TextSecondaryBrush}" />
                             <TextBox Text="{Binding DiffCutoffDate, StringFormat=d, UpdateSourceTrigger=PropertyChanged}" Width="100" Margin="0,0,8,0" />
                             <Button Content="Diff" Command="{Binding RunSinceWorkingDiffCommand}" Padding="8,3" Margin="0,0,8,0"
                                      ToolTip="Reuses the last anomaly scan's data (run the scan above first) - splits it at this date and lists signatures new vs. stopped." />
                         </WrapPanel>
-                        <TextBlock Text="{Binding DiffStatusText}" TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4" />
+                        <TextBlock Text="{Binding DiffStatusText}" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4" />
                         <Grid Margin="0,0,0,10">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
@@ -380,7 +380,7 @@
                                 <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
                             <StackPanel Grid.Column="0">
-                                <TextBlock Text="New since cutoff" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,2" />
+                                <TextBlock Text="New since cutoff" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,2" />
                                 <DataGrid ItemsSource="{Binding DiffNewSignatures}" IsReadOnly="True" AutoGenerateColumns="False" MaxHeight="140">
                                     <DataGrid.Columns>
                                         <DataGridTextColumn Header="Provider" Binding="{Binding Provider}" Width="2*" />
@@ -390,7 +390,7 @@
                                 </DataGrid>
                             </StackPanel>
                             <StackPanel Grid.Column="2">
-                                <TextBlock Text="Stopped after cutoff" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,2" />
+                                <TextBlock Text="Stopped after cutoff" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,2" />
                                 <DataGrid ItemsSource="{Binding DiffStoppedSignatures}" IsReadOnly="True" AutoGenerateColumns="False" MaxHeight="140">
                                     <DataGrid.Columns>
                                         <DataGridTextColumn Header="Provider" Binding="{Binding Provider}" Width="2*" />
@@ -402,7 +402,7 @@
                         </Grid>
 
                         <!-- #136: live watchlist alerts -->
-                        <TextBlock Text="Live watchlist alerts (#136)" FontWeight="SemiBold" FontSize="11.5" Margin="0,0,0,4" />
+                        <TextBlock Text="Live watchlist alerts (#136)" FontWeight="SemiBold" FontSize="{StaticResource FontBody}" Margin="0,0,0,4" />
                         <WrapPanel Margin="0,0,0,6">
                             <ToggleButton Content="Enable watchlist alerts" IsChecked="{Binding IsWatchlistActive}" Padding="8,3" Margin="0,0,8,0"
                                            ToolTip="Subscribes to every pinned signature below via a live EventLogWatcher and shows a toast when one fires. Right-click any event row and choose 'Pin to watchlist' to add one. Not persisted active/inactive - re-enable each session." />
@@ -415,8 +415,8 @@
                                 <DataTemplate DataType="{x:Type models:WatchlistEntry}">
                                     <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="10" Margin="0,0,6,6" Padding="8,3">
                                         <StackPanel Orientation="Horizontal">
-                                            <TextBlock Text="{Binding DisplayName}" FontSize="11" ToolTip="{Binding Channel}" />
-                                            <Button Content=" ✕" FontSize="10.5" Padding="0" Margin="4,0,0,0"
+                                            <TextBlock Text="{Binding DisplayName}" FontSize="{StaticResource FontBody}" ToolTip="{Binding Channel}" />
+                                            <Button Content=" ✕" FontSize="{StaticResource FontCaption}" Padding="0" Margin="4,0,0,0"
                                                      Background="Transparent" BorderThickness="0" Foreground="{DynamicResource TextSecondaryBrush}"
                                                      Command="{Binding DataContext.RemoveFromWatchlistCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                                      CommandParameter="{Binding}" ToolTip="Unpin" />
@@ -440,7 +440,7 @@
                     </StackPanel>
                 </Expander>
 
-                <TextBlock Text="{Binding StatusText}" Margin="0,8,0,0" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}">
+                <TextBlock Text="{Binding StatusText}" Margin="0,8,0,0" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}">
                     <TextBlock.Style>
                         <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
                             <Setter Property="Visibility" Value="Collapsed" />
@@ -473,8 +473,8 @@
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="Channels" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" FontSize="13" />
-                        <Button Grid.Column="1" Content="Refresh" Command="{Binding RefreshChannelsCommand}" Padding="8,3" FontSize="11" />
+                        <TextBlock Grid.Column="0" Text="Channels" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" FontSize="{StaticResource FontStrong}" />
+                        <Button Grid.Column="1" Content="Refresh" Command="{Binding RefreshChannelsCommand}" Padding="8,3" FontSize="{StaticResource FontBody}" />
                     </Grid>
 
                     <!-- #197/#198/#199: the selected channel's health detail - extends the existing
@@ -497,30 +497,30 @@
                         </Border.Style>
                         <ScrollViewer VerticalScrollBarVisibility="Auto">
                             <StackPanel>
-                                <TextBlock Text="Channel health" FontSize="11.5" FontWeight="SemiBold" Margin="0,0,0,4" />
-                                <TextBlock FontSize="10.5" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}">
+                                <TextBlock Text="Channel health" FontSize="{StaticResource FontBody}" FontWeight="SemiBold" Margin="0,0,0,4" />
+                                <TextBlock FontSize="{StaticResource FontCaption}" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}">
                                     <Run Text="Enabled: " /><Run Text="{Binding SelectedChannelHealth.IsEnabled, Mode=OneWay}" />
                                     <Run Text=" · Mode: " /><Run Text="{Binding SelectedChannelHealth.LogModeText, Mode=OneWay}" />
                                     <Run Text=" · Max size: " /><Run Text="{Binding SelectedChannelHealth.MaxSizeBytes, Converter={StaticResource BytesToReadableConverter}, Mode=OneWay}" />
                                 </TextBlock>
-                                <TextBlock FontSize="10.5" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,2,0,0">
+                                <TextBlock FontSize="{StaticResource FontCaption}" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,2,0,0">
                                     <Run Text="Records: " /><Run Text="{Binding SelectedChannelHealth.RecordCount, Mode=OneWay}" />
                                     <Run Text=" · File size: " /><Run Text="{Binding SelectedChannelHealth.FileSizeBytes, Converter={StaticResource BytesToReadableConverter}, Mode=OneWay}" />
                                     <Run Text=" · Full: " /><Run Text="{Binding SelectedChannelHealth.IsLogFull, Mode=OneWay}" />
                                 </TextBlock>
-                                <TextBlock FontSize="10.5" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,2,0,0">
+                                <TextBlock FontSize="{StaticResource FontCaption}" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,2,0,0">
                                     <Run Text="Holds about " /><Run Text="{Binding SelectedChannelHealth.EffectiveRetentionDays, StringFormat={}{0:0.#}, TargetNullValue='unknown', Mode=OneWay}" />
                                     <Run Text=" day(s) of history (oldest record " />
                                     <Run Text="{Binding SelectedChannelHealth.OldestRecordTime, StringFormat={}{0:g}, TargetNullValue='none', Mode=OneWay}" /><Run Text=")." />
                                 </TextBlock>
-                                <TextBlock FontSize="9.5" FontFamily="Consolas" TextWrapping="Wrap" Foreground="{DynamicResource TextTertiaryBrush}"
+                                <TextBlock FontSize="{StaticResource FontCaption}" FontFamily="Consolas" TextWrapping="Wrap" Foreground="{DynamicResource TextTertiaryBrush}"
                                             Margin="0,2,0,0" Text="{Binding SelectedChannelHealth.FilePath}" />
-                                <TextBlock FontSize="10" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,2,0,0">
+                                <TextBlock FontSize="{StaticResource FontCaption}" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,2,0,0">
                                     <Run Text="Providers: " /><Run Text="{Binding SelectedChannelHealth.ProviderNames, Converter={StaticResource StringListJoinConverter}, Mode=OneWay}" />
                                 </TextBlock>
 
                                 <!-- #198: retention/enable recommendation + confirmed apply/revert. -->
-                                <Border BorderBrush="{DynamicResource WarningBrush}" BorderThickness="1" CornerRadius="4" Padding="6,5" Margin="0,6,0,0">
+                                <Border BorderBrush="{DynamicResource WarningBrush}" BorderThickness="1" CornerRadius="4" Padding="6,4" Margin="0,6,0,0">
                                     <Border.Style>
                                         <Style TargetType="Border">
                                             <Setter Property="Visibility" Value="Visible" />
@@ -532,16 +532,16 @@
                                         </Style>
                                     </Border.Style>
                                     <StackPanel>
-                                        <TextBlock FontSize="10.5" TextWrapping="Wrap" Foreground="{DynamicResource WarningBrush}">
+                                        <TextBlock FontSize="{StaticResource FontCaption}" TextWrapping="Wrap" Foreground="{DynamicResource WarningBrush}">
                                             <Run Text="Retention shorter than this app's 30-day lookback (~" />
                                             <Run Text="{Binding ChannelRetentionRecommendation.CurrentRetentionDays, StringFormat={}{0:0.#}, Mode=OneWay}" />
                                             <Run Text=" days), or a diagnostic channel this app reads is disabled." />
                                         </TextBlock>
                                         <WrapPanel Margin="0,4,0,0">
-                                            <Button Content="Raise size" Command="{Binding ApplyRetentionCommand}" Padding="6,2" FontSize="10" Margin="0,0,6,4" />
-                                            <Button Content="Enable channel" Command="{Binding EnableSelectedChannelCommand}" Padding="6,2" FontSize="10" Margin="0,0,6,4" />
-                                            <Button Content="Revert size" Command="{Binding RevertChannelMaxSizeCommand}" Padding="6,2" FontSize="10" Margin="0,0,6,4" />
-                                            <Button Content="Revert enable" Command="{Binding RevertChannelEnabledCommand}" Padding="6,2" FontSize="10" Margin="0,0,0,4" />
+                                            <Button Content="Raise size" Command="{Binding ApplyRetentionCommand}" Padding="6,2" FontSize="{StaticResource FontCaption}" Margin="0,0,6,4" />
+                                            <Button Content="Enable channel" Command="{Binding EnableSelectedChannelCommand}" Padding="6,2" FontSize="{StaticResource FontCaption}" Margin="0,0,6,4" />
+                                            <Button Content="Revert size" Command="{Binding RevertChannelMaxSizeCommand}" Padding="6,2" FontSize="{StaticResource FontCaption}" Margin="0,0,6,4" />
+                                            <Button Content="Revert enable" Command="{Binding RevertChannelEnabledCommand}" Padding="6,2" FontSize="{StaticResource FontCaption}" Margin="0,0,0,4" />
                                         </WrapPanel>
                                     </StackPanel>
                                 </Border>
@@ -551,11 +551,11 @@
                                 <ItemsControl ItemsSource="{Binding ChannelGapFlags}" Margin="0,6,0,0">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
-                                            <TextBlock FontSize="10" Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" Margin="0,0,0,3" Text="{Binding Description}" />
+                                            <TextBlock FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" Margin="0,0,0,3" Text="{Binding Description}" />
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
                                 </ItemsControl>
-                                <TextBlock Text="{Binding ChannelHealthStatusText}" FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,0" TextWrapping="Wrap"
+                                <TextBlock Text="{Binding ChannelHealthStatusText}" FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,0" TextWrapping="Wrap"
                                             Visibility="{Binding ChannelHealthStatusText, Converter={StaticResource NullToVisibilityConverter}}" />
                             </StackPanel>
                         </ScrollViewer>
@@ -576,7 +576,7 @@
                         </TreeView.ItemContainerStyle>
                         <TreeView.ItemTemplate>
                             <HierarchicalDataTemplate ItemsSource="{Binding Children}">
-                                <StackPanel Orientation="Horizontal" Margin="0,1">
+                                <StackPanel Orientation="Horizontal" Margin="0,0">
                                     <!-- #112: multi-select checkbox feeding "Multi-channel query" -
                                          hidden for group headings and inaccessible leaves. -->
                                     <CheckBox IsChecked="{Binding IsSelectedForMulti, Mode=TwoWay}" VerticalAlignment="Center" Margin="0,0,4,0"
@@ -595,8 +595,8 @@
                                             </Style>
                                         </CheckBox.Style>
                                     </CheckBox>
-                                    <TextBlock Text="{Binding DisplayName}" FontSize="12" TextTrimming="CharacterEllipsis" MaxWidth="150" />
-                                    <TextBlock Text=" (no access)" FontSize="10.5" Foreground="{DynamicResource DangerBrush}">
+                                    <TextBlock Text="{Binding DisplayName}" FontSize="{StaticResource FontBody}" TextTrimming="CharacterEllipsis" MaxWidth="150" />
+                                    <TextBlock Text=" (no access)" FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource DangerBrush}">
                                         <TextBlock.Style>
                                             <Style TargetType="TextBlock">
                                                 <Setter Property="Visibility" Value="Collapsed" />
@@ -611,7 +611,7 @@
                                     <!-- #135: enabled, has a real configured max size, but has written
                                          zero records in a long time (or ever) - usually a broken
                                          provider registration or a corrupt .evtx. -->
-                                    <TextBlock Text=" (silent)" FontSize="10.5" Foreground="{DynamicResource WarningBrush}"
+                                    <TextBlock Text=" (silent)" FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource WarningBrush}"
                                                 ToolTip="Enabled with a non-trivial max size, but hasn't written a record in 14+ days (or ever) - worth checking whether its provider is registered correctly.">
                                         <TextBlock.Style>
                                             <Style TargetType="TextBlock">
@@ -624,7 +624,7 @@
                                             </Style>
                                         </TextBlock.Style>
                                     </TextBlock>
-                                    <TextBlock Text="{Binding RecordCount, StringFormat=' ({0})'}" FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}">
+                                    <TextBlock Text="{Binding RecordCount, StringFormat=' ({0})'}" FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextSecondaryBrush}">
                                         <TextBlock.Style>
                                             <Style TargetType="TextBlock">
                                                 <Setter Property="Visibility" Value="Collapsed" />
@@ -657,7 +657,7 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" Text="{Binding Events.Count, StringFormat='{}{0} event(s) in view'}"
-                                    VerticalAlignment="Center" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                    VerticalAlignment="Center" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
                         <!-- #129: burst collapsing - runs of the same signature within a configurable
                              window (e.g. 20+ within 5 minutes) collapse into one incident row. -->
                         <ToggleButton Grid.Column="1" Content="Collapse bursts" IsChecked="{Binding ShowBurstCollapsedView}" Padding="8,4" Margin="0,0,8,0"
@@ -689,11 +689,11 @@
                                 </Style.Triggers>
                             </Style>
                         </WrapPanel.Style>
-                        <TextBlock Text="Window (min):" VerticalAlignment="Center" Margin="0,0,4,0" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
-                        <TextBox Text="{Binding BurstWindowMinutes, UpdateSourceTrigger=PropertyChanged}" Width="40" Margin="0,0,12,0" FontSize="11" />
-                        <TextBlock Text="Min count:" VerticalAlignment="Center" Margin="0,0,4,0" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
-                        <TextBox Text="{Binding BurstMinCount, UpdateSourceTrigger=PropertyChanged}" Width="40" Margin="0,0,12,0" FontSize="11" />
-                        <Button Content="Recompute" Command="{Binding RecomputeCollapsedBurstsCommand}" Padding="6,2" FontSize="11" />
+                        <TextBlock Text="Window (min):" VerticalAlignment="Center" Margin="0,0,4,0" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        <TextBox Text="{Binding BurstWindowMinutes, UpdateSourceTrigger=PropertyChanged}" Width="40" Margin="0,0,12,0" FontSize="{StaticResource FontBody}" />
+                        <TextBlock Text="Min count:" VerticalAlignment="Center" Margin="0,0,4,0" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        <TextBox Text="{Binding BurstMinCount, UpdateSourceTrigger=PropertyChanged}" Width="40" Margin="0,0,12,0" FontSize="{StaticResource FontBody}" />
+                        <Button Content="Recompute" Command="{Binding RecomputeCollapsedBurstsCommand}" Padding="6,2" FontSize="{StaticResource FontBody}" />
                     </WrapPanel>
 
                     <!-- Both grids below share this one fill cell (only one visible at a time via
@@ -727,8 +727,8 @@
                         <DataGrid.RowDetailsTemplate>
                             <DataTemplate>
                                 <StackPanel Margin="20,4,4,8">
-                                    <TextBlock Text="{Binding SampleMessage}" TextWrapping="Wrap" FontSize="11" Margin="0,0,0,6" />
-                                    <TextBlock FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}">
+                                    <TextBlock Text="{Binding SampleMessage}" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Margin="0,0,0,6" />
+                                    <TextBlock FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextSecondaryBrush}">
                                         <Run Text="{Binding Rows.Count, Mode=OneWay}" /><Run Text=" member event(s) - first " />
                                         <Run Text="{Binding FirstTime, StringFormat={}{0:g}, Mode=OneWay}" /><Run Text=", last " />
                                         <Run Text="{Binding LastTime, StringFormat={}{0:g}, Mode=OneWay}" />
@@ -763,7 +763,7 @@
                             <GroupStyle>
                                 <GroupStyle.HeaderTemplate>
                                     <DataTemplate>
-                                        <TextBlock FontWeight="SemiBold" FontSize="11.5" Margin="2,8,0,2"
+                                        <TextBlock FontWeight="SemiBold" FontSize="{StaticResource FontBody}" Margin="2,8,0,2"
                                                     Foreground="{DynamicResource TextPrimaryBrush}">
                                             <Run Text="{Binding Name, Mode=OneWay}" /><Run Text=" (" /><Run Text="{Binding ItemCount, Mode=OneWay}" /><Run Text=")" />
                                         </TextBlock>
@@ -904,7 +904,7 @@
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="Event detail" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" FontSize="13" />
+                        <TextBlock Grid.Column="0" Text="Event detail" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" FontSize="{StaticResource FontStrong}" />
                         <CheckBox Grid.Column="1" Content="Raw XML" IsChecked="{Binding ShowRawXml}" VerticalAlignment="Center" />
                     </Grid>
 
@@ -924,14 +924,14 @@
                                         </Style>
                                     </StackPanel.Style>
 
-                                    <TextBlock Text="{Binding SelectedEvent.ProviderName}" FontWeight="SemiBold" FontSize="13" TextWrapping="Wrap" />
+                                    <TextBlock Text="{Binding SelectedEvent.ProviderName}" FontWeight="SemiBold" FontSize="{StaticResource FontStrong}" TextWrapping="Wrap" />
                                     <TextBlock Style="{StaticResource SubStat}" Margin="0,2,0,10">
                                         <Run Text="Event " /><Run Text="{Binding SelectedEvent.EventId, Mode=OneWay}" />
                                         <Run Text=" · " /><Run Text="{Binding SelectedEvent.TimeCreated, StringFormat={}{0:g}, Mode=OneWay}" />
                                     </TextBlock>
-                                    <TextBlock Text="{Binding SelectedEvent.Message}" TextWrapping="Wrap" FontSize="12" Margin="0,0,0,12" />
+                                    <TextBlock Text="{Binding SelectedEvent.Message}" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Margin="0,0,0,12" />
                                     <TextBlock Text="Provider message file not registered - see the raw XML for full detail." TextWrapping="Wrap"
-                                                Foreground="{DynamicResource WarningBrush}" FontSize="11" Margin="0,-8,0,12">
+                                                Foreground="{DynamicResource WarningBrush}" FontSize="{StaticResource FontBody}" Margin="0,-8,0,12">
                                         <TextBlock.Style>
                                             <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
                                                 <Setter Property="Visibility" Value="Collapsed" />
@@ -944,7 +944,7 @@
                                         </TextBlock.Style>
                                     </TextBlock>
 
-                                    <TextBlock Text="Properties" Style="{StaticResource CardTitle}" FontSize="12" />
+                                    <TextBlock Text="Properties" Style="{StaticResource CardTitle}" FontSize="{StaticResource FontBody}" />
                                     <ItemsControl ItemsSource="{Binding DetailProperties}" Margin="0,4,0,0">
                                         <ItemsControl.ItemTemplate>
                                             <DataTemplate DataType="{x:Type models:EventPropertyDisplay}">
@@ -953,8 +953,8 @@
                                                         <ColumnDefinition Width="110" />
                                                         <ColumnDefinition Width="*" />
                                                     </Grid.ColumnDefinitions>
-                                                    <TextBlock Grid.Column="0" Text="{Binding Name}" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" />
-                                                    <TextBlock Grid.Column="1" Text="{Binding Value}" FontSize="11" TextWrapping="Wrap" />
+                                                    <TextBlock Grid.Column="0" Text="{Binding Name}" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" />
+                                                    <TextBlock Grid.Column="1" Text="{Binding Value}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" />
                                                 </Grid>
                                             </DataTemplate>
                                         </ItemsControl.ItemTemplate>
@@ -965,29 +965,29 @@
                                          troubleshooting, never a diagnosis (CLAUDE.md's heuristic-feature
                                          convention, applied to the event knowledge base). -->
                                     <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="8,6" Margin="0,14,0,8">
-                                        <TextBlock TextWrapping="Wrap" FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}">
+                                        <TextBlock TextWrapping="Wrap" FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextSecondaryBrush}">
                                             <Run Text="Quick flag, not a verdict — " FontWeight="SemiBold" />
                                             <Run Text="the section below is what this event usually means, separate from what Windows literally logged above; treat it as a troubleshooting starting point, not a confirmed diagnosis." />
                                         </TextBlock>
                                     </Border>
 
-                                    <TextBlock Text="What this usually means" Style="{StaticResource CardTitle}" FontSize="12" />
+                                    <TextBlock Text="What this usually means" Style="{StaticResource CardTitle}" FontSize="{StaticResource FontBody}" />
                                     <StackPanel Margin="0,4,0,0">
                                         <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
                                             <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="8" Padding="6,2" Margin="0,0,6,0">
-                                                <TextBlock Text="{Binding ExplainSourceLabel}" FontSize="10" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                                <TextBlock Text="{Binding ExplainSourceLabel}" FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextSecondaryBrush}" />
                                             </Border>
                                             <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="8" Padding="6,2" Margin="0,0,6,0"
                                                      Visibility="{Binding ExplainConfidenceLabel, Converter={StaticResource NullToVisibilityConverter}}">
-                                                <TextBlock Text="{Binding ExplainConfidenceLabel}" FontSize="10" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                                <TextBlock Text="{Binding ExplainConfidenceLabel}" FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextSecondaryBrush}" />
                                             </Border>
                                             <Border Background="{DynamicResource AccentMutedBrush}" CornerRadius="8" Padding="6,2"
                                                      Visibility="{Binding ExplainIsBenign, Converter={StaticResource BoolToVisibilityConverter}}">
-                                                <TextBlock Text="Usually benign / noise" FontSize="10" Foreground="{DynamicResource AccentBrush}" />
+                                                <TextBlock Text="Usually benign / noise" FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource AccentBrush}" />
                                             </Border>
                                         </StackPanel>
 
-                                        <TextBlock Text="{Binding ExplainMeaning}" TextWrapping="Wrap" FontSize="12" Margin="0,0,0,8"
+                                        <TextBlock Text="{Binding ExplainMeaning}" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Margin="0,0,0,8"
                                                     Visibility="{Binding ExplainMeaning, Converter={StaticResource NullToVisibilityConverter}}" />
 
                                         <ItemsControl ItemsSource="{Binding ExplainLikelyCauses}" Margin="0,0,0,8">
@@ -1003,7 +1003,7 @@
                                             </ItemsControl.Style>
                                             <ItemsControl.ItemTemplate>
                                                 <DataTemplate>
-                                                    <TextBlock FontSize="11" TextWrapping="Wrap" Margin="0,0,0,2">
+                                                    <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,2">
                                                         <Run Text="• " /><Run Text="{Binding Mode=OneWay}" />
                                                     </TextBlock>
                                                 </DataTemplate>
@@ -1016,8 +1016,8 @@
                                         <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="8,6" Margin="0,0,0,8"
                                                  Visibility="{Binding ExplainNextStep, Converter={StaticResource NullToVisibilityConverter}}">
                                             <StackPanel>
-                                                <TextBlock Text="Suggested next step" FontSize="10.5" FontWeight="SemiBold" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,3" />
-                                                <TextBlock Text="{Binding ExplainNextStep}" TextWrapping="Wrap" FontSize="11.5" />
+                                                <TextBlock Text="Suggested next step" FontSize="{StaticResource FontCaption}" FontWeight="SemiBold" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,3" />
+                                                <TextBlock Text="{Binding ExplainNextStep}" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" />
                                                 <Button Content="{Binding ExplainActionLabel}" Command="{Binding RunKbActionCommand}" Padding="8,3" Margin="0,6,0,0" HorizontalAlignment="Left"
                                                          Visibility="{Binding ExplainActionLabel, Converter={StaticResource NullToVisibilityConverter}}" />
                                             </StackPanel>
@@ -1029,7 +1029,7 @@
                                             <ItemsControl.ItemTemplate>
                                                 <DataTemplate DataType="{x:Type models:StatusCodeExplain}">
                                                     <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="6,4" Margin="0,0,0,4" ToolTip="{Binding ResolvedText}">
-                                                        <TextBlock FontSize="11" TextWrapping="Wrap">
+                                                        <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap">
                                                             <Run Text="{Binding Code, Mode=OneWay}" FontFamily="Consolas" FontWeight="SemiBold" /><Run Text=" — " /><Run Text="{Binding ResolvedText, Mode=OneWay}" />
                                                         </TextBlock>
                                                     </Border>
@@ -1042,7 +1042,7 @@
                                              in the message text, plus a prominent "don't 'fix' this
                                              by editing registry permissions" note. Only present for
                                              a DistributedCOM event - see EventsViewModel.BuildExplain. -->
-                                        <TextBlock Text="{Binding ExplainDcomNote}" TextWrapping="Wrap" FontSize="10.5" Foreground="{DynamicResource WarningBrush}" Margin="0,4,0,6"
+                                        <TextBlock Text="{Binding ExplainDcomNote}" TextWrapping="Wrap" FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource WarningBrush}" Margin="0,4,0,6"
                                                     Visibility="{Binding ExplainDcomNote, Converter={StaticResource NullToVisibilityConverter}}" />
                                         <ItemsControl ItemsSource="{Binding ExplainDcomComponents}">
                                             <ItemsControl.ItemsPanel>
@@ -1050,9 +1050,9 @@
                                             </ItemsControl.ItemsPanel>
                                             <ItemsControl.ItemTemplate>
                                                 <DataTemplate DataType="{x:Type models:DcomComponentResolution}">
-                                                    <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="10" Padding="7,3" Margin="0,0,6,6"
+                                                    <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="10" Padding="6,3" Margin="0,0,6,6"
                                                              ToolTip="{Binding Guid}">
-                                                        <TextBlock FontSize="10.5">
+                                                        <TextBlock FontSize="{StaticResource FontCaption}">
                                                             <Run Text="{Binding Kind, Mode=OneWay}" FontWeight="SemiBold" Foreground="{DynamicResource TextSecondaryBrush}" />
                                                             <Run Text=": " Foreground="{DynamicResource TextSecondaryBrush}" />
                                                             <Run Text="{Binding FriendlyName, TargetNullValue='(not registered locally)', Mode=OneWay}" />
@@ -1065,7 +1065,7 @@
                                 </StackPanel>
 
                                 <TextBox Text="{Binding SelectedEvent.RawXml, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap"
-                                          FontFamily="Consolas" FontSize="10.5" BorderThickness="0" Background="Transparent"
+                                          FontFamily="Consolas" FontSize="{StaticResource FontCaption}" BorderThickness="0" Background="Transparent"
                                           VerticalScrollBarVisibility="Disabled" AcceptsReturn="True">
                                     <TextBox.Style>
                                         <Style TargetType="TextBox">
@@ -1124,7 +1124,7 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <StackPanel Grid.Column="0">
-                            <TextBlock Text="Provider catalog" Style="{StaticResource CardTitle}" FontSize="14" Margin="0" />
+                            <TextBlock Text="Provider catalog" Style="{StaticResource CardTitle}" FontSize="{StaticResource FontSection}" Margin="0" />
                             <TextBlock Text="Every event ID a provider's own manifest declares it can emit - read straight from the machine, never a bundled lookup table." Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,2,0,0" />
                         </StackPanel>
                         <ToggleButton Grid.Column="1" Content="Close" IsChecked="{Binding IsProviderCatalogOpen}" Padding="10,4" VerticalAlignment="Top" />
@@ -1141,7 +1141,7 @@
                             <TextBox DockPanel.Dock="Top" Text="{Binding ProviderSearchText, UpdateSourceTrigger=PropertyChanged}"
                                       Margin="0,0,0,6" ToolTip="Filter the provider list by name" />
                             <ListBox ItemsSource="{Binding ProviderNamesView}" SelectedItem="{Binding SelectedProvider}"
-                                      BorderThickness="0" Background="Transparent" FontSize="11.5" />
+                                      BorderThickness="0" Background="Transparent" FontSize="{StaticResource FontBody}" />
                         </DockPanel>
 
                         <DataGrid Grid.Column="2" ItemsSource="{Binding ProviderEvents}" IsReadOnly="True" AutoGenerateColumns="False">
@@ -1225,7 +1225,7 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <StackPanel Grid.Column="0">
-                            <TextBlock Text="Export evidence bundle" Style="{StaticResource CardTitle}" FontSize="14" Margin="0" />
+                            <TextBlock Text="Export evidence bundle" Style="{StaticResource CardTitle}" FontSize="{StaticResource FontSection}" Margin="0" />
                             <TextBlock TextWrapping="Wrap" Style="{StaticResource SubStat}" Margin="0,2,0,0">
                                 <Run Text="Packages filtered .evtx exports, matching WER reports, minidumps, systeminfo/msinfo32/dxdiag output, and a SUMMARY.md timeline into one timestamped folder." />
                             </TextBlock>
@@ -1234,24 +1234,24 @@
                     </Grid>
 
                     <WrapPanel Grid.Row="1" Margin="0,0,0,10">
-                        <TextBlock Text="Time window (last N days):" VerticalAlignment="Center" Margin="0,0,6,0" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5" />
+                        <TextBlock Text="Time window (last N days):" VerticalAlignment="Center" Margin="0,0,6,0" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" />
                         <TextBox Text="{Binding LookbackDays, UpdateSourceTrigger=PropertyChanged}" Width="50" Margin="0,0,16,0" />
                         <Button Content="Export" Command="{Binding ExportCommand}" Padding="10,4" Margin="0,0,8,0" />
                         <Button Content="Open export folder" Command="{Binding RevealFolderCommand}" Padding="10,4" Margin="0,0,8,0" />
                         <ProgressBar Width="140" Height="6" IsIndeterminate="{Binding IsExporting}" VerticalAlignment="Center" />
                     </WrapPanel>
-                    <TextBlock Grid.Row="2" Text="{Binding StatusText}" TextWrapping="Wrap" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,10" />
+                    <TextBlock Grid.Row="2" Text="{Binding StatusText}" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,10" />
 
                     <ItemsControl Grid.Row="3" ItemsSource="{Binding Steps}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate DataType="{x:Type models:EvidenceBundleStepResult}">
-                                <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="8,5" Margin="0,0,0,4">
+                                <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="8,4" Margin="0,0,0,4">
                                     <Grid>
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="Auto" />
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0" FontSize="11" FontWeight="Bold" Margin="0,0,8,0" Width="16">
+                                        <TextBlock Grid.Column="0" FontSize="{StaticResource FontBody}" FontWeight="Bold" Margin="0,0,8,0" Width="16">
                                             <TextBlock.Style>
                                                 <Style TargetType="TextBlock">
                                                     <Setter Property="Text" Value="✓" />
@@ -1266,8 +1266,8 @@
                                             </TextBlock.Style>
                                         </TextBlock>
                                         <StackPanel Grid.Column="1">
-                                            <TextBlock Text="{Binding StepName}" FontSize="11.5" FontWeight="SemiBold" />
-                                            <TextBlock Text="{Binding Detail}" FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,1,0,0" />
+                                            <TextBlock Text="{Binding StepName}" FontSize="{StaticResource FontBody}" FontWeight="SemiBold" />
+                                            <TextBlock Text="{Binding Detail}" FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,0,0,0" />
                                         </StackPanel>
                                     </Grid>
                                 </Border>

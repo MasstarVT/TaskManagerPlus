@@ -12,8 +12,8 @@
         <DataTemplate x:Key="GlossaryTermTemplate" DataType="{x:Type models:GlossaryTerm}">
             <Border Style="{StaticResource CardStyle}" Margin="0,0,0,8" Padding="12,10">
                 <StackPanel>
-                    <TextBlock Text="{Binding Term}" FontSize="13" FontWeight="SemiBold" />
-                    <TextBlock Text="{Binding Definition}" FontSize="12" TextWrapping="Wrap" Margin="0,3,0,0"
+                    <TextBlock Text="{Binding Term}" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding Definition}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,3,0,0"
                                Foreground="{DynamicResource TextSecondaryBrush}" />
                 </StackPanel>
             </Border>
@@ -34,7 +34,7 @@
                         Padding="10,4" Margin="0,0,14,0" VerticalAlignment="Center"
                         AutomationProperties.Name="Back to Troubleshoot landing page" />
                 <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                    <TextBlock Text="Glossary" FontSize="17" FontWeight="SemiBold" />
+                    <TextBlock Text="Glossary" FontSize="{StaticResource FontTitle}" FontWeight="SemiBold" />
                     <TextBlock Text="Plain-English definitions for the technical terms this app's own findings and checks use."
                                Style="{StaticResource SubStat}" TextWrapping="Wrap" />
                 </StackPanel>

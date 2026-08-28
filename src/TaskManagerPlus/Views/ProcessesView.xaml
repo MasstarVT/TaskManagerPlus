@@ -215,7 +215,7 @@
                             <StackPanel Orientation="Horizontal" VerticalAlignment="Center" ToolTip="{Binding ResponsivenessScoreTooltip}">
                                 <Ellipse Width="9" Height="9" Margin="0,0,6,0" VerticalAlignment="Center"
                                          Fill="{Binding ResponsivenessScore, Converter={StaticResource ResponsivenessScoreToBrushConverter}}" />
-                                <TextBlock Text="{Binding ResponsivenessScoreText}" FontSize="11.5" />
+                                <TextBlock Text="{Binding ResponsivenessScoreText}" FontSize="{StaticResource FontBody}" />
                             </StackPanel>
                         </DataTemplate>
                     </DataGridTemplateColumn.CellTemplate>
@@ -262,7 +262,7 @@
                 <DataGridTemplateColumn Header="Mem trend" Width="90" SortMemberPath="IsLeakSuspect">
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate>
-                            <TextBlock Text="Possible leak" Foreground="{DynamicResource WarningBrush}" FontSize="11" VerticalAlignment="Center">
+                            <TextBlock Text="Possible leak" Foreground="{DynamicResource WarningBrush}" FontSize="{StaticResource FontBody}" VerticalAlignment="Center">
                                 <TextBlock.Style>
                                     <Style TargetType="TextBlock">
                                         <Setter Property="Visibility" Value="Collapsed" />
@@ -310,7 +310,7 @@
                 <DataGridTemplateColumn Header="Handle leak" Width="90" SortMemberPath="IsHandleLeakSuspect">
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate>
-                            <TextBlock Text="Handle leak" Foreground="{DynamicResource WarningBrush}" FontSize="11" VerticalAlignment="Center"
+                            <TextBlock Text="Handle leak" Foreground="{DynamicResource WarningBrush}" FontSize="{StaticResource FontBody}" VerticalAlignment="Center"
                                        ToolTip="Handle count has grown steadily while private bytes stayed roughly flat - a quick flag, not a verdict.">
                                 <TextBlock.Style>
                                     <Style TargetType="TextBlock">
@@ -331,7 +331,7 @@
                 <DataGridTemplateColumn Header="Thread runaway" Width="105" SortMemberPath="IsThreadRunawaySuspect">
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate>
-                            <TextBlock Text="Thread runaway" Foreground="{DynamicResource WarningBrush}" FontSize="11" VerticalAlignment="Center"
+                            <TextBlock Text="Thread runaway" Foreground="{DynamicResource WarningBrush}" FontSize="{StaticResource FontBody}" VerticalAlignment="Center"
                                        ToolTip="Thread count has grown steadily with no plateau - a quick flag, not a verdict.">
                                 <TextBlock.Style>
                                     <Style TargetType="TextBlock">
@@ -396,7 +396,7 @@
                 <DataGridTemplateColumn Header="Power" Width="110" SortMemberPath="PowerThrottleText">
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate>
-                            <TextBlock Text="{Binding PowerThrottleText}" VerticalAlignment="Center" FontSize="11.5">
+                            <TextBlock Text="{Binding PowerThrottleText}" VerticalAlignment="Center" FontSize="{StaticResource FontBody}">
                                 <TextBlock.Style>
                                     <Style TargetType="TextBlock">
                                         <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
@@ -434,7 +434,7 @@
                 <DataGridTemplateColumn Header="I/O priority" Width="100" SortMemberPath="IoPriorityText">
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate>
-                            <TextBlock Text="{Binding IoPriorityText}" VerticalAlignment="Center" FontSize="11.5">
+                            <TextBlock Text="{Binding IoPriorityText}" VerticalAlignment="Center" FontSize="{StaticResource FontBody}">
                                 <TextBlock.Style>
                                     <Style TargetType="TextBlock">
                                         <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
@@ -470,7 +470,7 @@
                 <DataGridTemplateColumn Header="TP hint" Width="90" SortMemberPath="IsThreadPoolStarvationSuspect">
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate>
-                            <TextBlock Text="Starving?" Foreground="{DynamicResource WarningBrush}" FontSize="11" VerticalAlignment="Center"
+                            <TextBlock Text="Starving?" Foreground="{DynamicResource WarningBrush}" FontSize="{StaticResource FontBody}" VerticalAlignment="Center"
                                        ToolTip="Thread-pool-starvation hint: the .NET CLR logical-thread count has climbed steadily over the last several samples while the queue/contention signal stayed elevated - the outward signature of blocking calls starving the thread pool. A sampled hint, not a diagnosis.">
                                 <TextBlock.Style>
                                     <Style TargetType="TextBlock">
@@ -502,8 +502,8 @@
                                         </Style.Triggers>
                                     </Style>
                                 </StackPanel.Style>
-                                <TextBlock Text="Possibly stuck" Foreground="{DynamicResource DangerBrush}" FontSize="11" VerticalAlignment="Center" Margin="0,0,6,0" />
-                                <Button Content="Analyze" FontSize="10" Padding="6,1"
+                                <TextBlock Text="Possibly stuck" Foreground="{DynamicResource DangerBrush}" FontSize="{StaticResource FontBody}" VerticalAlignment="Center" Margin="0,0,6,0" />
+                                <Button Content="Analyze" FontSize="{StaticResource FontCaption}" Padding="6,0"
                                         Command="{Binding DataContext.AnalyzeWaitChainDetailedCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                         CommandParameter="{Binding}" />
                             </StackPanel>
@@ -514,7 +514,7 @@
                 <DataGridTemplateColumn Header="Group" Width="70" SortMemberPath="SpawnGroupSize">
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate>
-                            <TextBlock VerticalAlignment="Center" FontSize="11"
+                            <TextBlock VerticalAlignment="Center" FontSize="{StaticResource FontBody}"
                                        ToolTip="Processes sharing the same parent and executable, spawned within a few seconds of each other - a best-effort proxy for job-object/process-group membership.">
                                 <TextBlock.Style>
                                     <Style TargetType="TextBlock">
@@ -595,7 +595,7 @@
                         <DataTemplate>
                             <TextBlock VerticalAlignment="Center" TextTrimming="CharacterEllipsis">
                                 <Run Text="{Binding Publisher, Mode=OneWay}" />
-                                <Run Text=" (self-signed)" Foreground="{DynamicResource WarningBrush}" FontSize="11">
+                                <Run Text=" (self-signed)" Foreground="{DynamicResource WarningBrush}" FontSize="{StaticResource FontBody}">
                                     <Run.Style>
                                         <Style TargetType="Run">
                                             <Setter Property="Text" Value="" />
@@ -616,7 +616,7 @@
                 <DataGridTemplateColumn Header="Trust" Width="90" SortMemberPath="TrustWarning">
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate>
-                            <TextBlock Text="Check this" Foreground="{DynamicResource DangerBrush}" FontSize="11" FontWeight="SemiBold"
+                            <TextBlock Text="Check this" Foreground="{DynamicResource DangerBrush}" FontSize="{StaticResource FontBody}" FontWeight="SemiBold"
                                        VerticalAlignment="Center" ToolTip="{Binding TrustWarning}">
                                 <TextBlock.Style>
                                     <Style TargetType="TextBlock">
@@ -638,7 +638,7 @@
                 <DataGridTemplateColumn Header="Security" Width="90" SortMemberPath="SecurityFlagReason">
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate>
-                            <TextBlock Text="Check this" Foreground="{DynamicResource DangerBrush}" FontSize="11" FontWeight="SemiBold"
+                            <TextBlock Text="Check this" Foreground="{DynamicResource DangerBrush}" FontSize="{StaticResource FontBody}" FontWeight="SemiBold"
                                        VerticalAlignment="Center" ToolTip="{Binding SecurityFlagReason}">
                                 <TextBlock.Style>
                                     <Style TargetType="TextBlock">
@@ -768,7 +768,7 @@
                             <Run Text="{Binding Row.MemoryBytes, Mode=OneWay, Converter={StaticResource BytesToReadableConverter}}" />
                         </TextBlock>
                         <TextBlock Text="{Binding Row.SpawnGroupSize, StringFormat= · group of {0}}" Foreground="{DynamicResource WarningBrush}"
-                                   FontSize="11" VerticalAlignment="Center">
+                                   FontSize="{StaticResource FontBody}" VerticalAlignment="Center">
                             <TextBlock.Style>
                                 <Style TargetType="TextBlock">
                                     <Setter Property="Visibility" Value="Visible" />
@@ -807,7 +807,7 @@
                     <TextBlock Text="Loaded modules" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
                     <!-- Round 15, #850: the process's own application directory being user-writable. -->
                     <TextBlock Text="{Binding SelectedProcessAppDirWarning}" Foreground="{DynamicResource WarningBrush}"
-                               FontSize="11.5" TextWrapping="Wrap" Margin="0,0,0,6">
+                               FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,6">
                         <TextBlock.Style>
                             <Style TargetType="TextBlock">
                                 <Setter Property="Visibility" Value="Visible" />
@@ -845,7 +845,7 @@
                             <DataGridTemplateColumn Header="Writable loc." Width="90" SortMemberPath="IsUserWritableLocation">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
-                                        <TextBlock Text="User-writable" Foreground="{DynamicResource WarningBrush}" FontSize="11" VerticalAlignment="Center">
+                                        <TextBlock Text="User-writable" Foreground="{DynamicResource WarningBrush}" FontSize="{StaticResource FontBody}" VerticalAlignment="Center">
                                             <TextBlock.Style>
                                                 <Style TargetType="TextBlock">
                                                     <Setter Property="Visibility" Value="Collapsed" />
@@ -863,7 +863,7 @@
                             <DataGridTemplateColumn Header="Side-load risk" Width="90" SortMemberPath="IsSideLoadSuspect">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
-                                        <TextBlock Text="Check this" Foreground="{DynamicResource DangerBrush}" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center">
+                                        <TextBlock Text="Check this" Foreground="{DynamicResource DangerBrush}" FontSize="{StaticResource FontBody}" FontWeight="SemiBold" VerticalAlignment="Center">
                                             <TextBlock.Style>
                                                 <Style TargetType="TextBlock">
                                                     <Setter Property="Visibility" Value="Collapsed" />
@@ -903,14 +903,14 @@
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
                                 <StackPanel Margin="0,0,0,6">
-                                    <TextBlock FontSize="11.5" FontWeight="SemiBold" Foreground="{DynamicResource DangerBrush}">
+                                    <TextBlock FontSize="{StaticResource FontBody}" FontWeight="SemiBold" Foreground="{DynamicResource DangerBrush}">
                                         <Run Text="{Binding ModuleName, Mode=OneWay}" />
                                         <Run Text=" - a same-named file exists in System32 but this wasn't loaded from there" />
                                     </TextBlock>
-                                    <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}">
+                                    <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}">
                                         <Run Text="System32: " /><Run Text="{Binding System32CounterpartPath, Mode=OneWay}" />
                                     </TextBlock>
-                                    <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}">
+                                    <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}">
                                         <Run Text="Actually loaded from: " /><Run Text="{Binding FilePath, Mode=OneWay}" />
                                     </TextBlock>
                                 </StackPanel>
@@ -937,7 +937,7 @@
                     <ItemsControl ItemsSource="{Binding SelectedProcessUnbackedMemory}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <TextBlock Text="{Binding}" FontSize="11.5" TextWrapping="Wrap" Margin="0,0,0,2" />
+                                <TextBlock Text="{Binding}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,2" />
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
@@ -961,7 +961,7 @@
                     <ItemsControl ItemsSource="{Binding SelectedProcessHollowingCheck}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <TextBlock Text="{Binding}" FontSize="11.5" TextWrapping="Wrap" Margin="0,0,0,2" />
+                                <TextBlock Text="{Binding}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,2" />
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
@@ -985,7 +985,7 @@
                     <ItemsControl ItemsSource="{Binding SelectedProcessForeignThreads}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <TextBlock Text="{Binding}" FontSize="11.5" TextWrapping="Wrap" Margin="0,0,0,2" />
+                                <TextBlock Text="{Binding}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,2" />
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
@@ -1015,7 +1015,7 @@
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
                                 <Border Background="{DynamicResource BgBrush}" CornerRadius="4" Padding="8,4" Margin="0,0,8,6">
-                                    <TextBlock FontSize="11.5">
+                                    <TextBlock FontSize="{StaticResource FontBody}">
                                         <Run Text="{Binding Name, Mode=OneWay}" />
                                         <Run Text=": " />
                                         <Run Text="{Binding StateText, Mode=OneWay}" FontWeight="SemiBold">
@@ -1052,7 +1052,7 @@
                 </Border.Style>
                 <StackPanel>
                     <TextBlock Text="Token privileges" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
-                    <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,6"
+                    <TextBlock TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,6"
                                Text="Highlighted entries are on the dangerous-if-unexpected watch list, currently enabled, and held by a process that isn't Microsoft-signed. Quick flag, not a verdict - plenty of legitimate system processes hold these." />
                     <ItemsControl ItemsSource="{Binding SelectedProcessPrivileges}">
                         <ItemsControl.ItemsPanel>
@@ -1063,7 +1063,7 @@
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
                                 <Border Background="{DynamicResource BgBrush}" CornerRadius="4" Padding="8,4" Margin="0,0,8,6">
-                                    <TextBlock FontSize="11.5">
+                                    <TextBlock FontSize="{StaticResource FontBody}">
                                         <Run Text="{Binding Name, Mode=OneWay}" />
                                         <Run Text=": " />
                                         <Run Text="{Binding StateText, Mode=OneWay}" FontWeight="SemiBold">
@@ -1101,7 +1101,7 @@
                 <StackPanel>
                     <TextBlock Text="Decoded -EncodedCommand" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
                     <ScrollViewer MaxHeight="140" VerticalScrollBarVisibility="Auto">
-                        <TextBlock FontFamily="Consolas" FontSize="11.5" TextWrapping="Wrap" Text="{Binding DecodedCommandLineText}" />
+                        <TextBlock FontFamily="Consolas" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Text="{Binding DecodedCommandLineText}" />
                     </ScrollViewer>
                 </StackPanel>
             </Border>
@@ -1124,7 +1124,7 @@
                         <ItemsControl ItemsSource="{Binding SelectedProcessEnvironment}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <TextBlock Text="{Binding}" FontSize="11.5" FontFamily="Consolas" TextTrimming="CharacterEllipsis" Margin="0,0,0,2" />
+                                    <TextBlock Text="{Binding}" FontSize="{StaticResource FontBody}" FontFamily="Consolas" TextTrimming="CharacterEllipsis" Margin="0,0,0,2" />
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
@@ -1132,7 +1132,7 @@
 
                     <!-- #799: whether this process's own PATH/TEMP has drifted from the current
                          machine+user environment - computed alongside the dump above, no extra query. -->
-                    <Border CornerRadius="6" Padding="8,5" Margin="0,8,0,0"
+                    <Border CornerRadius="6" Padding="8,4" Margin="0,8,0,0"
                             Visibility="{Binding SelectedProcessEnvironmentDrift, Converter={StaticResource NullToVisibilityConverter}}">
                         <Border.Style>
                             <Style TargetType="Border">
@@ -1144,7 +1144,7 @@
                                 </Style.Triggers>
                             </Style>
                         </Border.Style>
-                        <TextBlock FontSize="11.5" TextWrapping="Wrap" Text="{Binding SelectedProcessEnvironmentDrift.Detail}">
+                        <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Text="{Binding SelectedProcessEnvironmentDrift.Detail}">
                             <TextBlock.Style>
                                 <Style TargetType="TextBlock">
                                     <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
@@ -1182,7 +1182,7 @@
                         </ItemsControl.ItemsPanel>
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <TextBlock Text="{Binding}" FontSize="11.5" Margin="0,0,16,2" />
+                                <TextBlock Text="{Binding}" FontSize="{StaticResource FontBody}" Margin="0,0,16,2" />
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
@@ -1206,7 +1206,7 @@
                     <ItemsControl ItemsSource="{Binding SelectedProcessHostedServices}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <TextBlock Text="{Binding}" FontSize="11.5" Margin="0,0,0,2" />
+                                <TextBlock Text="{Binding}" FontSize="{StaticResource FontBody}" Margin="0,0,0,2" />
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
@@ -1234,7 +1234,7 @@
                         </ItemsControl.ItemsPanel>
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <TextBlock FontSize="11.5" Margin="0,0,16,2">
+                                <TextBlock FontSize="{StaticResource FontBody}" Margin="0,0,16,2">
                                     <Run Text="{Binding BucketName, Mode=OneWay}" />
                                     <Run Text=": " />
                                     <Run Text="{Binding ThreadCount, Mode=OneWay}" FontWeight="SemiBold" />
@@ -1283,7 +1283,7 @@
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
                                 <Border Background="{DynamicResource BgPanelBrush}" CornerRadius="4" Padding="8,4" Margin="0,0,8,6">
-                                    <TextBlock FontSize="11.5">
+                                    <TextBlock FontSize="{StaticResource FontBody}">
                                         <Run Text="{Binding Category, Mode=OneWay}" FontWeight="SemiBold" />
                                         <Run Text=": " />
                                         <Run Text="{Binding TotalBytes, Converter={StaticResource BytesToReadableConverter}, Mode=OneWay}" />
@@ -1293,7 +1293,7 @@
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
-                    <TextBlock FontSize="11.5" Margin="0,4,0,0" Foreground="{DynamicResource TextSecondaryBrush}">
+                    <TextBlock FontSize="{StaticResource FontBody}" Margin="0,4,0,0" Foreground="{DynamicResource TextSecondaryBrush}">
                         <Run Text="Largest contiguous free block: " />
                         <Run Text="{Binding SelectedProcessAddressSpace.LargestFreeBlockBytes, Converter={StaticResource BytesToReadableConverter}, Mode=OneWay}" FontWeight="SemiBold" />
                         <Run Text=" — a small largest-block figure despite a large total free figure above points to fragmentation, not a leak." />
@@ -1349,7 +1349,7 @@
                     <ItemsControl ItemsSource="{Binding FileLockResults}" Margin="0,6,0,0">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <TextBlock Text="{Binding}" FontSize="11.5" Margin="0,0,0,2" />
+                                <TextBlock Text="{Binding}" FontSize="{StaticResource FontBody}" Margin="0,0,0,2" />
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
@@ -1382,12 +1382,12 @@
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0" FontSize="11.5">
+                                    <TextBlock Grid.Column="0" FontSize="{StaticResource FontBody}">
                                         <Run Text="{Binding Name, Mode=OneWay}" FontWeight="SemiBold" />
                                         <Run Text=" (PID " /><Run Text="{Binding Pid, Mode=OneWay}" /><Run Text=") — " />
                                         <Run Text="{Binding ExitCodeText, Mode=OneWay}" />
                                     </TextBlock>
-                                    <TextBlock Grid.Column="1" Text="{Binding ExitTime, StringFormat={}{0:T}}" FontSize="11"
+                                    <TextBlock Grid.Column="1" Text="{Binding ExitTime, StringFormat={}{0:T}}" FontSize="{StaticResource FontBody}"
                                                Foreground="{DynamicResource TextSecondaryBrush}" />
                                 </Grid>
                             </DataTemplate>

@@ -22,12 +22,12 @@
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" FontSize="12.5" FontWeight="SemiBold" TextWrapping="Wrap">
+                        <TextBlock Grid.Column="0" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" TextWrapping="Wrap">
                             <Run Text="{Binding CapturedAt, StringFormat={}{0:g}, Mode=OneWay}" />
                             <Run Text=" — " />
                             <Run Text="{Binding Label, TargetNullValue='routine baseline', Mode=OneWay}" />
                         </TextBlock>
-                        <TextBlock Grid.Column="1" FontSize="10.5" Foreground="{DynamicResource TextTertiaryBrush}" Text="Automatic">
+                        <TextBlock Grid.Column="1" FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextTertiaryBrush}" Text="Automatic">
                             <TextBlock.Style>
                                 <Style TargetType="TextBlock">
                                     <Setter Property="Visibility" Value="Collapsed" />
@@ -40,7 +40,7 @@
                             </TextBlock.Style>
                         </TextBlock>
                     </Grid>
-                    <TextBlock FontSize="11" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" Margin="0,2,0,0">
+                    <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" Margin="0,2,0,0">
                         <TextBlock.Style>
                             <Style TargetType="TextBlock">
                                 <Setter Property="Visibility" Value="Collapsed" />
@@ -53,13 +53,13 @@
                         </TextBlock.Style>
                         <Run Text="Captured under load - idle metrics not comparable." />
                     </TextBlock>
-                    <TextBlock FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,4,0,0">
+                    <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,4,0,0">
                         <Run Text="Boot: " /><Run Text="{Binding LastBootDurationMs, TargetNullValue='n/a', StringFormat={}{0:0}ms, Mode=OneWay}" />
                         <Run Text="  •  Idle CPU: " /><Run Text="{Binding IdleCpuPercent, TargetNullValue='n/a', StringFormat={}{0:0.#}%, Mode=OneWay}" />
                         <Run Text="  •  Idle RAM: " /><Run Text="{Binding IdleRamCommittedGb, TargetNullValue='n/a', StringFormat={}{0:0.#} GB, Mode=OneWay}" />
                         <Run Text="  •  Idle disk latency: " /><Run Text="{Binding IdleDiskLatencyMs, TargetNullValue='n/a', StringFormat={}{0:0.#}ms, Mode=OneWay}" />
                     </TextBlock>
-                    <TextBlock FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,2,0,0">
+                    <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,2,0,0">
                         <Run Text="WinSAT — CPU: " /><Run Text="{Binding WinSatCpuScore, TargetNullValue='n/a', Mode=OneWay}" />
                         <Run Text="  Mem: " /><Run Text="{Binding WinSatMemoryScore, TargetNullValue='n/a', Mode=OneWay}" />
                         <Run Text="  Disk: " /><Run Text="{Binding WinSatDiskScore, TargetNullValue='n/a', Mode=OneWay}" />
@@ -70,7 +70,7 @@
 
         <!-- #951: one metric comparison row. -->
         <DataTemplate x:Key="MetricComparisonTemplate" DataType="{x:Type models:BaselineMetricComparison}">
-            <TextBlock TextWrapping="Wrap" FontSize="12.5" Margin="0,0,0,4">
+            <TextBlock TextWrapping="Wrap" FontSize="{StaticResource FontStrong}" Margin="0,0,0,4">
                 <TextBlock.Style>
                     <Style TargetType="TextBlock">
                         <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
@@ -90,7 +90,7 @@
 
         <!-- #958: one rule-finding transition row. -->
         <DataTemplate x:Key="RuleTransitionTemplate" DataType="{x:Type vm:RuleFindingTransition}">
-            <TextBlock TextWrapping="Wrap" FontSize="12.5" Margin="0,0,0,4">
+            <TextBlock TextWrapping="Wrap" FontSize="{StaticResource FontStrong}" Margin="0,0,0,4">
                 <Run Text="{Binding Title, Mode=OneWay}" />
                 <Run Text=" — " />
                 <Run FontWeight="SemiBold" Text="{Binding Status, Mode=OneWay}" />
@@ -111,7 +111,7 @@
                 <Button Grid.Column="0" Content="&#8592; Back"
                         Command="{Binding DataContext.HideBaselinesCommand, RelativeSource={RelativeSource AncestorType=UserControl, AncestorLevel=2}}"
                         Padding="10,4" Margin="0,0,14,0" VerticalAlignment="Center" />
-                <TextBlock Grid.Column="1" Text="Baselines" FontSize="17" FontWeight="SemiBold" VerticalAlignment="Center" />
+                <TextBlock Grid.Column="1" Text="Baselines" FontSize="{StaticResource FontTitle}" FontWeight="SemiBold" VerticalAlignment="Center" />
             </Grid>
 
             <TextBlock Text="Captures a fuller performance baseline than the Summary tab's quick snapshot - WinSAT scores, last boot duration, and idle CPU/RAM/disk-latency readings - then tracks it over time and flags a slowdown against your oldest saved baseline."
@@ -128,7 +128,7 @@
                         <Button Content="Capture full baseline (includes WinSAT, ~1 min)" Padding="10,4"
                                 Command="{Binding CaptureBaselineCommand}" />
                     </StackPanel>
-                    <TextBlock TextWrapping="Wrap" FontSize="11.5" Text="Idle status: not idle right now - a capture will still save, just flagged as not comparable for idle metrics.">
+                    <TextBlock TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Text="Idle status: not idle right now - a capture will still save, just flagged as not comparable for idle metrics.">
                         <TextBlock.Style>
                             <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
                                 <Style.Triggers>
@@ -193,7 +193,7 @@
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <StackPanel Grid.Column="0">
-                                <TextBlock FontSize="12.5" FontWeight="SemiBold" TextWrapping="Wrap">
+                                <TextBlock FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" TextWrapping="Wrap">
                                     <Run Text="Change in progress: " /><Run Text="{Binding ActiveChangeLabel, Mode=OneWay}" />
                                 </TextBlock>
                                 <TextBlock Style="{StaticResource SubStat}">
@@ -230,16 +230,16 @@
                                     </Style.Triggers>
                                 </Style>
                             </Border.Style>
-                            <TextBlock TextWrapping="Wrap" FontSize="12.5" Foreground="{DynamicResource DangerBrush}" FontWeight="SemiBold"
+                            <TextBlock TextWrapping="Wrap" FontSize="{StaticResource FontStrong}" Foreground="{DynamicResource DangerBrush}" FontWeight="SemiBold"
                                        Text="Hardware changed between the before and after capture (CPU, RAM, disk, or GPU differ) - this comparison may not be meaningful." />
                         </Border>
 
-                        <TextBlock Text="{Binding ChangeSummaryText}" TextWrapping="Wrap" FontSize="12.5" Margin="0,0,0,8" />
+                        <TextBlock Text="{Binding ChangeSummaryText}" TextWrapping="Wrap" FontSize="{StaticResource FontStrong}" Margin="0,0,0,8" />
 
-                        <TextBlock Text="Performance" Style="{StaticResource CardTitle}" FontSize="12.5" Margin="0,0,0,4" />
+                        <TextBlock Text="Performance" Style="{StaticResource CardTitle}" FontSize="{StaticResource FontStrong}" Margin="0,0,0,4" />
                         <ItemsControl ItemsSource="{Binding ChangePerformanceDiff}" ItemTemplate="{StaticResource MetricComparisonTemplate}" Margin="0,0,0,8" />
 
-                        <TextBlock Text="Findings since &quot;Start change&quot;" Style="{StaticResource CardTitle}" FontSize="12.5" Margin="0,0,0,4" />
+                        <TextBlock Text="Findings since &quot;Start change&quot;" Style="{StaticResource CardTitle}" FontSize="{StaticResource FontStrong}" Margin="0,0,0,4" />
                         <ItemsControl ItemsSource="{Binding ChangeRuleTransitions}" ItemTemplate="{StaticResource RuleTransitionTemplate}" Margin="0,0,0,8" />
 
                         <Button Content="Export before/after report..." HorizontalAlignment="Left" Padding="10,4"
@@ -280,7 +280,7 @@
                                 </Style.Triggers>
                             </Style>
                         </Border.Style>
-                        <TextBlock Text="{Binding RegressionFingerprintWarningText}" TextWrapping="Wrap" FontSize="12.5"
+                        <TextBlock Text="{Binding RegressionFingerprintWarningText}" TextWrapping="Wrap" FontSize="{StaticResource FontStrong}"
                                    Foreground="{DynamicResource DangerBrush}" FontWeight="SemiBold" />
                     </Border>
 
@@ -355,26 +355,26 @@
                                 <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
                             <StackPanel Grid.Column="0" Margin="0,0,8,0">
-                                <TextBlock Text="Reference machine" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource TextTertiaryBrush}" Margin="0,0,0,3" />
-                                <TextBlock Text="{Binding ReferenceProfile.Fingerprint.CpuName}" FontSize="11.5" TextWrapping="Wrap" />
-                                <TextBlock Text="{Binding ReferenceProfile.Fingerprint.RamTotalGb, StringFormat={}{0:0.#} GB RAM}" FontSize="11.5" />
-                                <TextBlock Text="{Binding ReferenceProfile.Fingerprint.DiskModels, Converter={StaticResource StringListJoinConverter}}" FontSize="11" TextWrapping="Wrap" Foreground="{DynamicResource TextTertiaryBrush}" />
-                                <TextBlock Text="{Binding ReferenceProfile.Fingerprint.GpuNames, Converter={StaticResource StringListJoinConverter}}" FontSize="11" TextWrapping="Wrap" Foreground="{DynamicResource TextTertiaryBrush}" />
+                                <TextBlock Text="Reference machine" FontSize="{StaticResource FontBody}" FontWeight="SemiBold" Foreground="{DynamicResource TextTertiaryBrush}" Margin="0,0,0,3" />
+                                <TextBlock Text="{Binding ReferenceProfile.Fingerprint.CpuName}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" />
+                                <TextBlock Text="{Binding ReferenceProfile.Fingerprint.RamTotalGb, StringFormat={}{0:0.#} GB RAM}" FontSize="{StaticResource FontBody}" />
+                                <TextBlock Text="{Binding ReferenceProfile.Fingerprint.DiskModels, Converter={StaticResource StringListJoinConverter}}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Foreground="{DynamicResource TextTertiaryBrush}" />
+                                <TextBlock Text="{Binding ReferenceProfile.Fingerprint.GpuNames, Converter={StaticResource StringListJoinConverter}}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Foreground="{DynamicResource TextTertiaryBrush}" />
                             </StackPanel>
                             <StackPanel Grid.Column="1" Margin="8,0,0,0">
-                                <TextBlock Text="This machine" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource TextTertiaryBrush}" Margin="0,0,0,3" />
-                                <TextBlock Text="{Binding CurrentFingerprint.CpuName}" FontSize="11.5" TextWrapping="Wrap" />
-                                <TextBlock Text="{Binding CurrentFingerprint.RamTotalGb, StringFormat={}{0:0.#} GB RAM}" FontSize="11.5" />
-                                <TextBlock Text="{Binding CurrentFingerprint.DiskModels, Converter={StaticResource StringListJoinConverter}}" FontSize="11" TextWrapping="Wrap" Foreground="{DynamicResource TextTertiaryBrush}" />
-                                <TextBlock Text="{Binding CurrentFingerprint.GpuNames, Converter={StaticResource StringListJoinConverter}}" FontSize="11" TextWrapping="Wrap" Foreground="{DynamicResource TextTertiaryBrush}" />
+                                <TextBlock Text="This machine" FontSize="{StaticResource FontBody}" FontWeight="SemiBold" Foreground="{DynamicResource TextTertiaryBrush}" Margin="0,0,0,3" />
+                                <TextBlock Text="{Binding CurrentFingerprint.CpuName}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" />
+                                <TextBlock Text="{Binding CurrentFingerprint.RamTotalGb, StringFormat={}{0:0.#} GB RAM}" FontSize="{StaticResource FontBody}" />
+                                <TextBlock Text="{Binding CurrentFingerprint.DiskModels, Converter={StaticResource StringListJoinConverter}}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Foreground="{DynamicResource TextTertiaryBrush}" />
+                                <TextBlock Text="{Binding CurrentFingerprint.GpuNames, Converter={StaticResource StringListJoinConverter}}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Foreground="{DynamicResource TextTertiaryBrush}" />
                             </StackPanel>
                         </Grid>
-                        <TextBlock Text="Different hardware - figures below reflect that, not necessarily a problem." FontSize="11" FontStyle="Italic"
+                        <TextBlock Text="Different hardware - figures below reflect that, not necessarily a problem." FontSize="{StaticResource FontBody}" FontStyle="Italic"
                                    Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" Margin="0,0,0,10"
                                    Visibility="{Binding ReferenceFingerprintMismatch, Converter={StaticResource BoolToVisibilityConverter}}" />
 
                         <!-- Performance figures, only when this machine also has at least one local baseline. -->
-                        <TextBlock Text="Performance" FontSize="12.5" Margin="0,0,0,4">
+                        <TextBlock Text="Performance" FontSize="{StaticResource FontStrong}" Margin="0,0,0,4">
                             <TextBlock.Style>
                                 <Style TargetType="TextBlock" BasedOn="{StaticResource CardTitle}">
                                     <Setter Property="Visibility" Value="Visible" />
@@ -391,7 +391,7 @@
                         <!-- Installed software / services / startup - neutral wording ("only on
                              reference" / "only on this machine"), not +/- added/removed, since
                              neither side is the ground truth here. -->
-                        <TextBlock Text="Software, services, and startup items" Style="{StaticResource CardTitle}" FontSize="12.5" Margin="0,0,0,4" />
+                        <TextBlock Text="Software, services, and startup items" Style="{StaticResource CardTitle}" FontSize="{StaticResource FontStrong}" Margin="0,0,0,4" />
                         <StackPanel Visibility="{Binding ReferenceDiff, Converter={StaticResource NullToVisibilityConverter}}">
                             <TextBlock Text="No differences found.">
                                 <TextBlock.Style>
@@ -408,42 +408,42 @@
                             <ItemsControl ItemsSource="{Binding ReferenceDiff.SoftwareAdded}">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
-                                        <TextBlock FontSize="11.5" Text="{Binding StringFormat='Software, only on this machine: {0}'}" />
+                                        <TextBlock FontSize="{StaticResource FontBody}" Text="{Binding StringFormat='Software, only on this machine: {0}'}" />
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
                             <ItemsControl ItemsSource="{Binding ReferenceDiff.SoftwareRemoved}">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
-                                        <TextBlock FontSize="11.5" Text="{Binding StringFormat='Software, only on the reference: {0}'}" />
+                                        <TextBlock FontSize="{StaticResource FontBody}" Text="{Binding StringFormat='Software, only on the reference: {0}'}" />
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
                             <ItemsControl ItemsSource="{Binding ReferenceDiff.ServicesAdded}">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
-                                        <TextBlock FontSize="11.5" Text="{Binding StringFormat='Service, only on this machine: {0}'}" />
+                                        <TextBlock FontSize="{StaticResource FontBody}" Text="{Binding StringFormat='Service, only on this machine: {0}'}" />
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
                             <ItemsControl ItemsSource="{Binding ReferenceDiff.ServicesRemoved}">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
-                                        <TextBlock FontSize="11.5" Text="{Binding StringFormat='Service, only on the reference: {0}'}" />
+                                        <TextBlock FontSize="{StaticResource FontBody}" Text="{Binding StringFormat='Service, only on the reference: {0}'}" />
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
                             <ItemsControl ItemsSource="{Binding ReferenceDiff.StartupAdded}">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
-                                        <TextBlock FontSize="11.5" Text="{Binding StringFormat='Startup item, only on this machine: {0}'}" />
+                                        <TextBlock FontSize="{StaticResource FontBody}" Text="{Binding StringFormat='Startup item, only on this machine: {0}'}" />
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
                             <ItemsControl ItemsSource="{Binding ReferenceDiff.StartupRemoved}">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
-                                        <TextBlock FontSize="11.5" Text="{Binding StringFormat='Startup item, only on the reference: {0}'}" />
+                                        <TextBlock FontSize="{StaticResource FontBody}" Text="{Binding StringFormat='Startup item, only on the reference: {0}'}" />
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>

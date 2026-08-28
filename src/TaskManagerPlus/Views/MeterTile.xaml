@@ -20,12 +20,12 @@
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
-                    <Border Width="9" Height="9" CornerRadius="4.5" Margin="0,0,8,0"
+                    <Border Width="9" Height="9" CornerRadius="4" Margin="0,0,8,0"
                             Background="{Binding AccentBrush, ElementName=Root}" />
                     <TextBlock Text="{Binding Title, ElementName=Root}" Style="{StaticResource CardTitle}" Margin="0" />
                 </StackPanel>
                 <TextBlock Grid.Column="1" Text="{Binding ValueText, ElementName=Root}"
-                           FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center" />
+                           FontSize="{StaticResource FontSection}" FontWeight="SemiBold" VerticalAlignment="Center" />
             </Grid>
             <ProgressBar Value="{Binding Percent, ElementName=Root}" Maximum="100" Height="8"
                          Foreground="{Binding AccentBrush, ElementName=Root}" />

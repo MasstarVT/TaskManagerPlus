@@ -5,15 +5,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 Task Manager Plus — a Windows Task Manager replacement written in C# / WPF
-(.NET 8). Eighteen top-level tabs (Summary, CPU, Memory, Storage, Network,
-GPU, Energy & Thermals, Responsiveness, Processes, Services, Startup,
-System, Stability, Security, Windows Health, Events, Devices &
-Drivers, Troubleshoot — note the twelfth tab's header is the single word
-"System", though its ViewModel/view are named SystemSpecs*; `--tab` and
-SelectTabByName match header text, so "System Specs" finds nothing), live
-color-theming (six palette families + saturation +
-high-contrast + color-blind-safe alerts), a CSV/HTML/Markdown logging &
-reporting system, a system tray icon with a global hotkey, and an optional
+(.NET 8). Eighteen tabs, grouped into six top-level groups — Summary;
+Hardware (CPU, Memory, Storage, Network, GPU, Energy & Thermals); Activity
+(Processes, Services, Startup); System (System, Devices & Drivers, Windows
+Health); Diagnostics (Troubleshoot, Responsiveness, Stability, Events);
+Security. Note the System group's first leaf is also headed by the single
+word "System", though its ViewModel/view are named SystemSpecs* — `--tab`
+and SelectTabByName match header text, so "System Specs" finds nothing.
+Also live color-theming (six palette families + saturation + high-contrast
++ color-blind-safe alerts), a CSV/HTML/Markdown logging & reporting
+system, a system tray icon with a global hotkey, and an optional
 LAN-visible remote monitor endpoint. Navigation is a TMOG-style top
 horizontal tab strip (`TabStripPlacement="Top"`), matching the visual/IA style of
 [tmog.org](https://tmog.org), not a left sidebar rail.
@@ -111,9 +112,12 @@ container — everything is `new`'d directly). Layers:
   (driver inventory, device tree, resources/power, driver store, filter
   drivers, Driver Verifier) behind a handful of `Is*ViewActive` bool
   properties that switch which section's XAML is visible, rather than a
-  real `TabControl`/enum — a pragmatic pattern that has scaled to four
-  sections but would be worth promoting to an enum or nested TabControl if
-  a fifth is added. Its own Driver Verifier controls call
+  real `TabControl`/enum — a pragmatic pattern that predates the section
+  chip bar (see "Three levels of navigation") and is now the one tab that
+  switches sections differently from every other. Its buttons at least use
+  `SectionChipButton` so they look identical to real chips; a new section
+  here is the point at which to convert it to a `SectionTabControl` rather
+  than adding a fifth bool. Its own Driver Verifier controls call
   `DriverVerifierControlService`, a separate, independently-built service
   from the Stability tab's `DriverVerifierService` guided wizard — see
   that class's own remarks for why the two coexist rather than share one
@@ -209,6 +213,41 @@ BCD-adjacent writes, etc.) still write directly. When you touch one of
 those other write paths, prefer routing it through the journal too rather
 than leaving it as a silent direct write — but don't treat the absence of
 journaling elsewhere as a bug to fix in an unrelated change.
+
+### Three levels of navigation
+
+Navigation is three nested levels, each a `TabControl` with a deliberately
+different shape so a glance tells you which one you are looking at:
+
+1. **Groups** — the strip at the top of the window. Icon + label, filled
+   pill. Six of them. Uses the *implicit* `TabControl`/`TabItem` styles.
+2. **Tabs** — the row inside a group (Hardware → CPU / Memory / ...). Text
+   only, underline indicator, page-coloured. `GroupTabControl`, whose
+   `ItemContainerStyle` supplies `GroupTabItem`, so leaf tabs stay plain
+   `<TabItem Header="...">`. A group with one leaf (Summary, Security)
+   hosts its view directly instead of rendering a one-item row — and takes
+   that leaf's own name, since the name is what `--tab` addresses.
+3. **Sections** — a chip bar at the top of a tab's content.
+   `SectionTabControl` + `SectionTabItem`, same `ItemContainerStyle` trick.
+
+Level 3 exists because tabs grew by appending one card per backlog item to
+a single `ScrollViewer > StackPanel`: Stability reached 91 stacked cards in
+one unbroken scroll, Energy & Thermals 63, Responsiveness 64, Storage 43.
+Wrapping runs of cards in section `TabItem`s needs **no ViewModel change** —
+no `IsXxxViewActive` bool, no new commands — and WPF handles selection,
+keyboard nav and automation. Prefer this over adding another bool-per-section
+switch. `DevicesDriversView` is the one tab that still switches sections with
+ViewModel bools (it predates the chip bar); its buttons use
+`SectionChipButton` so it at least looks the same.
+
+**Every leaf tab keeps its original header text**, because that text is the
+address used by `--tab`, Ctrl+1..9, the Ctrl+K palette and every cross-tab
+jump. `SelectTabByName` walks the group tree breadth-first (so a group beats
+a same-named leaf) and selects the whole ancestor path, outermost first. It
+walks `TabItem.Content`, not the visual tree, because a `TabControl` only
+realizes the selected tab's content — the nested `TabControl`s are
+XAML-declared objects and are reachable whether or not their group has ever
+been shown. If you add a group, do not rename the leaves inside it.
 
 ### UI shell (top tab strip, icons, footer, tray)
 
@@ -410,6 +449,34 @@ per file:
   user (or a future update mechanism) can replace it without a rebuild.
   Both existing lists are explicitly labelled in-code and in the UI as a
   curated/partial subset, never a complete authority.
+- **Palette colors must clear WCAG AA (4.5:1) against their own family's
+  three surfaces.** `ThemeViewModel.Palettes` is the authority at runtime —
+  `Dark.xaml`'s literal palette only mirrors the Dark entry for the moment
+  before `ApplyPalette` first runs, so a color changed in one and not the
+  other silently does nothing. Ten values across six families used to fail
+  (`TextTertiary` in every family but High Contrast, worst 2.85:1 — and it
+  is what the `FontCaption` step is colored with), as did the
+  color-blind-safe triple, which used one fixed set on both light and dark
+  surfaces and so was the *least* readable mode in the app. All were lifted
+  in lightness with hue preserved; the color-blind set is now two
+  Okabe-Ito-hued sets chosen by background luminance. Check new colors
+  before adding them, and keep the primary/secondary/tertiary ramp visibly
+  stepped rather than just individually compliant.
+
+- **Type and spacing come from tokens in `Dark.xaml`, not literals.** The
+  views once carried 1,889 hardcoded `FontSize` values across 18 distinct
+  sizes (the most common body size was 11.5px), 179 distinct `Margin`
+  values and 11 `CornerRadius` values. Those are collapsed onto a 7-step
+  type scale (`FontCaption` 12 / `FontBody` 13 / `FontStrong` 13.5 /
+  `FontSection` 15 / `FontTitle` 17 / `FontDisplay` 22 / `FontHero` 30), a
+  4px spacing grid and three radii, with matching `Text*` styles. There are
+  now **zero** literal font sizes in `Views/`. Use
+  `FontSize="{StaticResource FontBody}"` or `Style="{StaticResource
+  TextBody}"`; a literal `FontSize="11.5"` is exactly what the scale exists
+  to stop coming back. Unlike the palette these are plain
+  `StaticResource`-consumed doubles — they never change at runtime, so they
+  don't need the `DynamicResource` treatment the color keys do.
+
 - **XAML: `<Run Text="{Binding ...}">` must carry `Mode=OneWay`.** Unlike
   `TextBlock.Text`, `Run.Text` sets `BindsTwoWayByDefault`, so a Run bound to
   a get-only property throws *"A TwoWay or OneWayToSource binding cannot work

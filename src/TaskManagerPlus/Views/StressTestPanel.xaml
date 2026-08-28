@@ -75,8 +75,8 @@
                 </UniformGrid>
 
                 <TextBlock Margin="0,0,0,10" TextWrapping="Wrap">
-                    <Run Text="Effective safety-abort temperature ceiling: " Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" />
-                    <Run Text="{Binding EffectiveTempCeilingText, Mode=OneWay}" FontSize="12.5" FontWeight="SemiBold" />
+                    <Run Text="Effective safety-abort temperature ceiling: " Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" />
+                    <Run Text="{Binding EffectiveTempCeilingText, Mode=OneWay}" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" />
                 </TextBlock>
 
                 <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
@@ -87,7 +87,7 @@
                 <StackPanel Orientation="Horizontal">
                     <Button Content="Start" Padding="16,6" Margin="0,0,10,0" Command="{Binding StartCommand}" />
                     <Button Content="Stop" Padding="16,6" Margin="0,0,16,0" Command="{Binding StopCommand}" />
-                    <TextBlock Text="{Binding StatusText, Mode=OneWay}" VerticalAlignment="Center" FontSize="12.5" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding StatusText, Mode=OneWay}" VerticalAlignment="Center" FontSize="{StaticResource FontStrong}" TextWrapping="Wrap" />
                 </StackPanel>
             </StackPanel>
         </Border>
@@ -159,20 +159,20 @@
                     <Grid.RowDefinitions>
                         <RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition />
                     </Grid.RowDefinitions>
-                    <TextBlock Grid.Row="0" Grid.Column="0" Text="Computation correct (no checksum mismatch)" FontSize="12" Margin="0,0,0,4" />
-                    <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding LastResult.Criteria.ComputationResultText}" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,4" />
-                    <TextBlock Grid.Row="1" Grid.Column="0" Text="No WHEA corrected-error delta" FontSize="12" Margin="0,0,0,4" />
-                    <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding LastResult.Criteria.WheaResultText}" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,4" />
-                    <TextBlock Grid.Row="2" Grid.Column="0" Text="No display-driver reset (TDR)" FontSize="12" Margin="0,0,0,4" />
-                    <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding LastResult.Criteria.TdrResultText}" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,4" />
-                    <TextBlock Grid.Row="3" Grid.Column="0" Text="Sustained clock at/above rated base" FontSize="12" Margin="0,0,0,4" />
-                    <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding LastResult.Criteria.ClockResultText}" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,4" />
-                    <TextBlock Grid.Row="4" Grid.Column="0" Text="Peak temperature below throttle point" FontSize="12" />
-                    <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding LastResult.Criteria.TempResultText}" FontSize="12" FontWeight="SemiBold" />
+                    <TextBlock Grid.Row="0" Grid.Column="0" Text="Computation correct (no checksum mismatch)" FontSize="{StaticResource FontBody}" Margin="0,0,0,4" />
+                    <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding LastResult.Criteria.ComputationResultText}" FontSize="{StaticResource FontBody}" FontWeight="SemiBold" Margin="0,0,0,4" />
+                    <TextBlock Grid.Row="1" Grid.Column="0" Text="No WHEA corrected-error delta" FontSize="{StaticResource FontBody}" Margin="0,0,0,4" />
+                    <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding LastResult.Criteria.WheaResultText}" FontSize="{StaticResource FontBody}" FontWeight="SemiBold" Margin="0,0,0,4" />
+                    <TextBlock Grid.Row="2" Grid.Column="0" Text="No display-driver reset (TDR)" FontSize="{StaticResource FontBody}" Margin="0,0,0,4" />
+                    <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding LastResult.Criteria.TdrResultText}" FontSize="{StaticResource FontBody}" FontWeight="SemiBold" Margin="0,0,0,4" />
+                    <TextBlock Grid.Row="3" Grid.Column="0" Text="Sustained clock at/above rated base" FontSize="{StaticResource FontBody}" Margin="0,0,0,4" />
+                    <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding LastResult.Criteria.ClockResultText}" FontSize="{StaticResource FontBody}" FontWeight="SemiBold" Margin="0,0,0,4" />
+                    <TextBlock Grid.Row="4" Grid.Column="0" Text="Peak temperature below throttle point" FontSize="{StaticResource FontBody}" />
+                    <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding LastResult.Criteria.TempResultText}" FontSize="{StaticResource FontBody}" FontWeight="SemiBold" />
                 </Grid>
 
-                <TextBlock TextWrapping="Wrap" FontSize="13" Margin="0,0,0,3">
-                    <Run Text="Result: " Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12.5" />
+                <TextBlock TextWrapping="Wrap" FontSize="{StaticResource FontStrong}" Margin="0,0,0,3">
+                    <Run Text="Result: " Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontStrong}" />
                     <Run FontWeight="Bold">
                         <Run.Style>
                             <Style TargetType="Run">
@@ -188,12 +188,12 @@
                         </Run.Style>
                     </Run>
                 </TextBlock>
-                <TextBlock Text="{Binding LastComparisonText, Mode=OneWay}" TextWrapping="Wrap" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,10" />
+                <TextBlock Text="{Binding LastComparisonText, Mode=OneWay}" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,10" />
 
                 <StackPanel Orientation="Horizontal">
-                    <Button Content="Export Markdown" Padding="10,5" Margin="0,0,8,0" Command="{Binding ExportMarkdownCommand}" />
-                    <Button Content="Export HTML" Padding="10,5" Margin="0,0,8,0" Command="{Binding ExportHtmlCommand}" />
-                    <Button Content="Export trace CSV" Padding="10,5" Margin="0,0,8,0" Command="{Binding ExportCsvCommand}" />
+                    <Button Content="Export Markdown" Padding="10,4" Margin="0,0,8,0" Command="{Binding ExportMarkdownCommand}" />
+                    <Button Content="Export HTML" Padding="10,4" Margin="0,0,8,0" Command="{Binding ExportHtmlCommand}" />
+                    <Button Content="Export trace CSV" Padding="10,4" Margin="0,0,8,0" Command="{Binding ExportCsvCommand}" />
                 </StackPanel>
                 <TextBlock Text="{Binding ReportStatusText, Mode=OneWay}" Style="{StaticResource SubStat}" Margin="0,6,0,0" TextWrapping="Wrap" />
             </StackPanel>
@@ -223,15 +223,15 @@
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0" Text="{Binding Timestamp, StringFormat={}{0:g}}" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" />
-                                <TextBlock Grid.Column="1" FontSize="12" VerticalAlignment="Center">
+                                <TextBlock Grid.Column="0" Text="{Binding Timestamp, StringFormat={}{0:g}}" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" />
+                                <TextBlock Grid.Column="1" FontSize="{StaticResource FontBody}" VerticalAlignment="Center">
                                     <Run Text="{Binding TestType, Converter={StaticResource StressTestTypeDisplayNameConverter}, Mode=OneWay}" />
                                     <Run Text=" — " />
                                     <Run Text="{Binding PeakTempC, StringFormat={}{0:0.#}°C, TargetNullValue=Unknown, Mode=OneWay}" />
                                     <Run Text=", " />
                                     <Run Text="{Binding AvgClockGhz, StringFormat={}{0:0.00}GHz, TargetNullValue=Unknown, Mode=OneWay}" />
                                 </TextBlock>
-                                <TextBlock Grid.Column="2" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center">
+                                <TextBlock Grid.Column="2" FontSize="{StaticResource FontBody}" FontWeight="SemiBold" VerticalAlignment="Center">
                                     <TextBlock.Style>
                                         <Style TargetType="TextBlock">
                                             <Setter Property="Text" Value="FAIL" />

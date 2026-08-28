@@ -6,12 +6,12 @@
         mc:Ignorable="d"
         Title="Keyboard shortcuts" Height="420" Width="440"
         WindowStartupLocation="CenterOwner" ShowInTaskbar="False" ResizeMode="NoResize">
-    <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="18">
+    <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16">
         <StackPanel>
-            <TextBlock Text="Keyboard shortcuts" FontSize="17" FontWeight="SemiBold" Margin="0,0,0,14" />
+            <TextBlock Text="Keyboard shortcuts" FontSize="{StaticResource FontTitle}" FontWeight="SemiBold" Margin="0,0,0,14" />
 
-            <TextBlock Text="NAVIGATION" FontSize="10.5" FontWeight="Bold" Foreground="{DynamicResource TextTertiaryBrush}" Margin="0,0,0,8" />
-            <Grid Margin="0,0,0,18">
+            <TextBlock Text="NAVIGATION" FontSize="{StaticResource FontCaption}" FontWeight="Bold" Foreground="{DynamicResource TextTertiaryBrush}" Margin="0,0,0,8" />
+            <Grid Margin="0,0,0,16">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="120" />
                     <ColumnDefinition Width="*" />
@@ -19,16 +19,16 @@
                 <Grid.RowDefinitions>
                     <RowDefinition /><RowDefinition /><RowDefinition />
                 </Grid.RowDefinitions>
-                <TextBlock Grid.Row="0" Grid.Column="0" Text="Ctrl+1 .. Ctrl+9" FontFamily="Consolas" FontSize="12.5" />
-                <TextBlock Grid.Row="0" Grid.Column="1" Text="Jump straight to a tab (customizable order in ui-preferences.json)" FontSize="12.5" TextWrapping="Wrap" Margin="0,0,0,8" />
-                <TextBlock Grid.Row="1" Grid.Column="0" Text="Ctrl+K" FontFamily="Consolas" FontSize="12.5" />
-                <TextBlock Grid.Row="1" Grid.Column="1" Text="Open the command palette - search tabs, findings, rules, remediation actions, glossary terms, timeline events, and more" FontSize="12.5" TextWrapping="Wrap" Margin="0,0,0,8" />
-                <TextBlock Grid.Row="2" Grid.Column="0" Text="Ctrl+Alt+T" FontFamily="Consolas" FontSize="12.5" />
-                <TextBlock Grid.Row="2" Grid.Column="1" Text="Global hotkey (works even when this window isn't focused) - brings the window to the front" FontSize="12.5" TextWrapping="Wrap" Margin="0,0,0,8" />
+                <TextBlock Grid.Row="0" Grid.Column="0" Text="Ctrl+1 .. Ctrl+9" FontFamily="Consolas" FontSize="{StaticResource FontStrong}" />
+                <TextBlock Grid.Row="0" Grid.Column="1" Text="Jump straight to a tab (customizable order in ui-preferences.json)" FontSize="{StaticResource FontStrong}" TextWrapping="Wrap" Margin="0,0,0,8" />
+                <TextBlock Grid.Row="1" Grid.Column="0" Text="Ctrl+K" FontFamily="Consolas" FontSize="{StaticResource FontStrong}" />
+                <TextBlock Grid.Row="1" Grid.Column="1" Text="Open the command palette - search tabs, findings, rules, remediation actions, glossary terms, timeline events, and more" FontSize="{StaticResource FontStrong}" TextWrapping="Wrap" Margin="0,0,0,8" />
+                <TextBlock Grid.Row="2" Grid.Column="0" Text="Ctrl+Alt+T" FontFamily="Consolas" FontSize="{StaticResource FontStrong}" />
+                <TextBlock Grid.Row="2" Grid.Column="1" Text="Global hotkey (works even when this window isn't focused) - brings the window to the front" FontSize="{StaticResource FontStrong}" TextWrapping="Wrap" Margin="0,0,0,8" />
             </Grid>
 
-            <TextBlock Text="ACTIONS" FontSize="10.5" FontWeight="Bold" Foreground="{DynamicResource TextTertiaryBrush}" Margin="0,0,0,8" />
-            <Grid Margin="0,0,0,18">
+            <TextBlock Text="ACTIONS" FontSize="{StaticResource FontCaption}" FontWeight="Bold" Foreground="{DynamicResource TextTertiaryBrush}" Margin="0,0,0,8" />
+            <Grid Margin="0,0,0,16">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="120" />
                     <ColumnDefinition Width="*" />
@@ -36,8 +36,8 @@
                 <Grid.RowDefinitions>
                     <RowDefinition />
                 </Grid.RowDefinitions>
-                <TextBlock Grid.Row="0" Grid.Column="0" Text="Ctrl+Shift+C" FontFamily="Consolas" FontSize="12.5" />
-                <TextBlock Grid.Row="0" Grid.Column="1" Text="Copy the current card/panel as Markdown - Health Check, Timeline, and Baselines all support this" FontSize="12.5" TextWrapping="Wrap" Margin="0,0,0,8" />
+                <TextBlock Grid.Row="0" Grid.Column="0" Text="Ctrl+Shift+C" FontFamily="Consolas" FontSize="{StaticResource FontStrong}" />
+                <TextBlock Grid.Row="0" Grid.Column="1" Text="Copy the current card/panel as Markdown - Health Check, Timeline, and Baselines all support this" FontSize="{StaticResource FontStrong}" TextWrapping="Wrap" Margin="0,0,0,8" />
             </Grid>
 
             <TextBlock Text="Both Ctrl+Alt+T and minimize-to-tray can be turned off in the Settings drawer if you'd rather this app not claim a global hotkey or a tray icon."

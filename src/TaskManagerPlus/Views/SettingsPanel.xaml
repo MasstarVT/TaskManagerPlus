@@ -38,7 +38,7 @@
 
         <Style x:Key="HexBox" TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
             <Setter Property="FontFamily" Value="Consolas" />
-            <Setter Property="FontSize" Value="12" />
+            <Setter Property="FontSize" Value="{StaticResource FontBody}" />
             <Setter Property="Width" Value="96" />
             <Setter Property="HorizontalAlignment" Value="Left" />
             <Setter Property="Padding" Value="10,5" />
@@ -47,15 +47,15 @@
         <Style x:Key="ThemeModeButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
             <Setter Property="Margin" Value="0,0,7,7" />
             <Setter Property="Padding" Value="12,7" />
-            <Setter Property="FontSize" Value="12" />
+            <Setter Property="FontSize" Value="{StaticResource FontBody}" />
         </Style>
     </UserControl.Resources>
 
     <Border Background="{DynamicResource BgPanelBrush}" BorderBrush="{DynamicResource BorderBrush2}" BorderThickness="1,0,0,0">
         <ScrollViewer VerticalScrollBarVisibility="Auto">
-            <StackPanel Margin="18">
+            <StackPanel Margin="16">
 
-                <TextBlock Text="Colors" FontSize="17" FontWeight="SemiBold" Margin="0,0,0,2" />
+                <TextBlock Text="Colors" FontSize="{StaticResource FontTitle}" FontWeight="SemiBold" Margin="0,0,0,2" />
                 <TextBlock Text="Pick a swatch or type a hex code. Changes apply instantly and are remembered."
                            Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,20" />
 
@@ -83,12 +83,12 @@
 
                 <TextBlock Text="Saturation" Style="{StaticResource ColorRowLabel}" Margin="0,4,0,8" />
                 <Slider Minimum="0" Maximum="2" TickFrequency="0.1" IsSnapToTickEnabled="False"
-                        Value="{Binding Saturation}" Margin="0,0,0,22" />
+                        Value="{Binding Saturation}" Margin="0,0,0,20" />
 
                 <!-- #76: swaps the Success/Warning/Danger status colors for a color-blind-safe
                      set - a separate toggle from the theme family above, since it targets
                      specifically the status/alert colors this app's diagnostic UI leans on. -->
-                <CheckBox Content="Color-blind-safe alert colors" IsChecked="{Binding ColorBlindSafeAlerts}" Margin="0,0,0,22" />
+                <CheckBox Content="Color-blind-safe alert colors" IsChecked="{Binding ColorBlindSafeAlerts}" Margin="0,0,0,20" />
 
                 <!-- Accent -->
                 <TextBlock Text="Accent" Style="{StaticResource ColorRowLabel}" />
@@ -104,10 +104,10 @@
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>
-                <TextBox Style="{StaticResource HexBox}" Margin="0,0,0,22"
+                <TextBox Style="{StaticResource HexBox}" Margin="0,0,0,20"
                          Text="{Binding Accent, Converter={StaticResource ColorToHexConverter}, UpdateSourceTrigger=LostFocus}" />
 
-                <TextBlock Text="PERFORMANCE CHARTS" FontSize="10.5" FontWeight="Bold" Foreground="{DynamicResource TextTertiaryBrush}"
+                <TextBlock Text="PERFORMANCE CHARTS" FontSize="{StaticResource FontCaption}" FontWeight="Bold" Foreground="{DynamicResource TextTertiaryBrush}"
                            Margin="0,0,0,14" />
 
                 <!-- CPU -->
@@ -124,7 +124,7 @@
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>
-                <TextBox Style="{StaticResource HexBox}" Margin="0,0,0,22"
+                <TextBox Style="{StaticResource HexBox}" Margin="0,0,0,20"
                          Text="{Binding Cpu, Converter={StaticResource ColorToHexConverter}, UpdateSourceTrigger=LostFocus}" />
 
                 <!-- RAM -->
@@ -141,7 +141,7 @@
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>
-                <TextBox Style="{StaticResource HexBox}" Margin="0,0,0,22"
+                <TextBox Style="{StaticResource HexBox}" Margin="0,0,0,20"
                          Text="{Binding Ram, Converter={StaticResource ColorToHexConverter}, UpdateSourceTrigger=LostFocus}" />
 
                 <!-- Disk -->
@@ -158,7 +158,7 @@
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>
-                <TextBox Style="{StaticResource HexBox}" Margin="0,0,0,22"
+                <TextBox Style="{StaticResource HexBox}" Margin="0,0,0,20"
                          Text="{Binding Disk, Converter={StaticResource ColorToHexConverter}, UpdateSourceTrigger=LostFocus}" />
 
                 <!-- Network receive -->
@@ -175,7 +175,7 @@
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>
-                <TextBox Style="{StaticResource HexBox}" Margin="0,0,0,22"
+                <TextBox Style="{StaticResource HexBox}" Margin="0,0,0,20"
                          Text="{Binding NetworkReceive, Converter={StaticResource ColorToHexConverter}, UpdateSourceTrigger=LostFocus}" />
 
                 <!-- Network send -->
@@ -192,7 +192,7 @@
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>
-                <TextBox Style="{StaticResource HexBox}" Margin="0,0,0,22"
+                <TextBox Style="{StaticResource HexBox}" Margin="0,0,0,20"
                          Text="{Binding NetworkSend, Converter={StaticResource ColorToHexConverter}, UpdateSourceTrigger=LostFocus}" />
 
                 <Button Content="Reset to defaults" Command="{Binding ResetCommand}" HorizontalAlignment="Left" Margin="0,0,0,10" />
@@ -203,7 +203,7 @@
                     <Button Content="Export palette..." Command="{Binding ExportPaletteCommand}" Margin="0,0,8,0" />
                     <Button Content="Import palette..." Command="{Binding ImportPaletteCommand}" />
                 </StackPanel>
-                <TextBlock Text="{Binding PaletteStatusText}" TextWrapping="Wrap" Margin="0,0,0,22">
+                <TextBlock Text="{Binding PaletteStatusText}" TextWrapping="Wrap" Margin="0,0,0,20">
                     <TextBlock.Style>
                         <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
                             <Setter Property="Visibility" Value="Visible" />
@@ -216,7 +216,7 @@
                     </TextBlock.Style>
                 </TextBlock>
 
-                <TextBlock Text="SAFETY" FontSize="10.5" FontWeight="Bold" Foreground="{DynamicResource TextTertiaryBrush}"
+                <TextBlock Text="SAFETY" FontSize="{StaticResource FontCaption}" FontWeight="Bold" Foreground="{DynamicResource TextTertiaryBrush}"
                            Margin="0,0,0,14" />
 
                 <!-- #980: app-wide read-only switch - disables every mutating command (end
@@ -225,9 +225,9 @@
                      changes). Preview/dry-run and every read-only lookup still work. -->
                 <CheckBox Content="Read-only mode" IsChecked="{Binding IsReadOnlyMode}" Margin="0,0,0,6" />
                 <TextBlock Text="Disables every action that changes something on this PC - end process, service/startup/scheduled-task toggles, remediation fixes, priority/affinity/suspend/trim, power plan changes. Useful for diagnosing someone else's machine, or a technician's initial assessment pass. Previewing/dry-running a fix still works."
-                           Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,22" />
+                           Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,20" />
 
-                <TextBlock Text="DISPLAY" FontSize="10.5" FontWeight="Bold" Foreground="{DynamicResource TextTertiaryBrush}"
+                <TextBlock Text="DISPLAY" FontSize="{StaticResource FontCaption}" FontWeight="Bold" Foreground="{DynamicResource TextTertiaryBrush}"
                            Margin="0,0,0,14" />
 
                 <!-- #78: dense/compact DataGrid rows - fit more rows on screen at once. -->
@@ -243,16 +243,16 @@
                 <!-- #81: pins the main window above every other window - the same Topmost
                      behavior the mini dashboard/toast windows already use. -->
                 <CheckBox Content="Always on top"
-                          IsChecked="{Binding DataContext.AlwaysOnTop, RelativeSource={RelativeSource AncestorType=Window}}" Margin="0,0,0,22" />
+                          IsChecked="{Binding DataContext.AlwaysOnTop, RelativeSource={RelativeSource AncestorType=Window}}" Margin="0,0,0,20" />
 
                 <!-- #80: Ctrl+1..Ctrl+9 jump straight to a tab - the mapping defaults to this
                      app's first nine tabs and is configurable via ui-preferences.json's
                      TabShortcuts list (no in-app remapping UI, same tradeoff a couple of this
                      app's other advanced options already take). -->
                 <TextBlock Text="Ctrl+1 through Ctrl+9 jump to a tab (first nine, by default). Customize the order in %AppData%\TaskManagerPlus\ui-preferences.json."
-                           Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,22" />
+                           Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,20" />
 
-                <TextBlock Text="LOGGING" FontSize="10.5" FontWeight="Bold" Foreground="{DynamicResource TextTertiaryBrush}"
+                <TextBlock Text="LOGGING" FontSize="{StaticResource FontCaption}" FontWeight="Bold" Foreground="{DynamicResource TextTertiaryBrush}"
                            Margin="0,0,0,14" />
                 <!-- #95: auto-start a rolling in-memory buffer on launch, so a crash can be
                      diagnosed retroactively even if "Start Logging" was never clicked. Runs only
@@ -280,13 +280,13 @@
                      never touches the file currently being written to. -->
                 <CheckBox Content="Automatically delete old rotated log parts"
                           IsChecked="{Binding DataContext.Logging.AutoCleanupEnabled, RelativeSource={RelativeSource AncestorType=Window}}" Margin="0,0,0,6" />
-                <StackPanel Orientation="Horizontal" Margin="0,0,0,22">
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,20">
                     <TextBlock Text="Older than" VerticalAlignment="Center" Margin="0,0,6,0" Style="{StaticResource SubStat}" />
                     <TextBox Width="50" Text="{Binding DataContext.Logging.AutoCleanupDays, RelativeSource={RelativeSource AncestorType=Window}, UpdateSourceTrigger=LostFocus}" />
                     <TextBlock Text="days" VerticalAlignment="Center" Margin="6,0,0,0" Style="{StaticResource SubStat}" />
                 </StackPanel>
 
-                <TextBlock Text="PERFORMANCE BASELINES" FontSize="10.5" FontWeight="Bold" Foreground="{DynamicResource TextTertiaryBrush}"
+                <TextBlock Text="PERFORMANCE BASELINES" FontSize="{StaticResource FontCaption}" FontWeight="Bold" Foreground="{DynamicResource TextTertiaryBrush}"
                            Margin="0,0,0,14" />
                 <!-- #952: opt-in automatic weekly baseline capture (WinSAT scores, boot duration,
                      idle CPU/RAM/disk-latency) - only fires once this PC has been idle for a few
@@ -299,9 +299,9 @@
                     <TextBlock Text="baselines" VerticalAlignment="Center" Margin="6,0,0,0" Style="{StaticResource SubStat}" />
                 </StackPanel>
                 <TextBlock Text="{Binding DataContext.Troubleshoot.Baselines.AutoCaptureStatusText, RelativeSource={RelativeSource AncestorType=Window}}"
-                           Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,22" />
+                           Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,20" />
 
-                <TextBlock Text="REMOTE MONITORING" FontSize="10.5" FontWeight="Bold" Foreground="{DynamicResource TextTertiaryBrush}"
+                <TextBlock Text="REMOTE MONITORING" FontSize="{StaticResource FontCaption}" FontWeight="Bold" Foreground="{DynamicResource TextTertiaryBrush}"
                            Margin="0,0,0,14" />
                 <!-- #101: read-only metrics endpoint for a second device on the LAN - see
                      RemoteMonitorService's remarks. Off by default; the warning below is
@@ -320,9 +320,9 @@
                 <TextBlock Text="When set, every request needs a matching ?token=... in the URL or gets rejected - still not real security (visible in the URL, no encryption), just a minimal step up from fully open."
                            Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,4,0,8" />
                 <TextBlock Text="{Binding DataContext.RemoteMonitorStatusText, RelativeSource={RelativeSource AncestorType=Window}}"
-                           Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,22" />
+                           Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,20" />
 
-                <TextBlock Text="APP" FontSize="10.5" FontWeight="Bold" Foreground="{DynamicResource TextTertiaryBrush}"
+                <TextBlock Text="APP" FontSize="{StaticResource FontCaption}" FontWeight="Bold" Foreground="{DynamicResource TextTertiaryBrush}"
                            Margin="0,0,0,14" />
 
                 <!-- #85: minimize-to-tray - see UiPreferences.MinimizeToTray's remarks. -->
@@ -348,12 +348,12 @@
                      a portable.marker file next to the exe), not a live toggle - shown here as a
                      read-only status line so it's at least visible where settings are currently
                      being written. -->
-                <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,22">
+                <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,20">
                     <Run Text="Settings storage: " />
                     <Run Text="{Binding DataContext.AppPathsModeText, RelativeSource={RelativeSource AncestorType=Window}, Mode=OneTime}" FontWeight="SemiBold" />
                 </TextBlock>
 
-                <TextBlock Text="LEAK ALERTS" FontSize="10.5" FontWeight="Bold" Foreground="{DynamicResource TextTertiaryBrush}"
+                <TextBlock Text="LEAK ALERTS" FontSize="{StaticResource FontCaption}" FontWeight="Bold" Foreground="{DynamicResource TextTertiaryBrush}"
                            Margin="0,0,0,14" />
                 <TextBlock Text="Fires a toast the first time a process crosses one of these, edge-triggered the same way the CPU/Memory/temperature thresholds on the Summary tab work. Both are 'quick flag, not a verdict' - see the Memory tab's Leak growth summary and Processes tab's Leak slope/Handles columns for the underlying figures."
                            Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,14" />
@@ -372,7 +372,7 @@
                 <!-- #414: "any process exceeds N handles" -->
                 <CheckBox Content="Alert on high handle count"
                           IsChecked="{Binding DataContext.Summary.LeakHandleCountAlertEnabled, RelativeSource={RelativeSource AncestorType=Window}}" Margin="0,0,0,8" />
-                <StackPanel Orientation="Horizontal" Margin="0,0,0,22">
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,20">
                     <TextBlock Text="More than" VerticalAlignment="Center" Margin="0,0,6,0" Style="{StaticResource SubStat}" />
                     <TextBox Width="70" Text="{Binding DataContext.Summary.LeakHandleCountAlertThreshold, RelativeSource={RelativeSource AncestorType=Window}, UpdateSourceTrigger=LostFocus}" />
                     <TextBlock Text="handles" VerticalAlignment="Center" Margin="6,0,0,0" Style="{StaticResource SubStat}" />
@@ -382,7 +382,7 @@
                      partitioning. Hidden entirely outside portable mode, since AppPaths.
                      SwitchMachine is a no-op there anyway. -->
                 <StackPanel Visibility="{Binding DataContext.IsPortableMode, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVisibilityConverter}}">
-                    <TextBlock Text="TECHNICIAN MODE" FontSize="10.5" FontWeight="Bold" Foreground="{DynamicResource TextTertiaryBrush}" Margin="0,0,0,14" />
+                    <TextBlock Text="TECHNICIAN MODE" FontSize="{StaticResource FontCaption}" FontWeight="Bold" Foreground="{DynamicResource TextTertiaryBrush}" Margin="0,0,0,14" />
                     <TextBlock TextWrapping="Wrap" Style="{StaticResource SubStat}" Margin="0,0,0,8">
                         <Run Text="Portable-mode-only: keeps baselines, findings history, the change journal, and other saved data separated per physical machine when this build is carried between several clients on a USB drive. Fingerprint scheme: sanitized computer name (currently " />
                         <Run Text="{Binding DataContext.CurrentMachineFingerprint, RelativeSource={RelativeSource AncestorType=Window}, Mode=OneTime}" FontWeight="SemiBold" />
@@ -396,10 +396,10 @@
                             Command="{Binding DataContext.AddCurrentMachineCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                             AutomationProperties.Name="Register this physical machine's own data folder" />
                     <TextBlock Text="Switching or adding a machine here takes effect after restarting the app - most settings/data services already cache their own file path the moment they're constructed."
-                               Style="{StaticResource SubStat}" TextWrapping="Wrap" Foreground="{DynamicResource WarningBrush}" Margin="0,0,0,22" />
+                               Style="{StaticResource SubStat}" TextWrapping="Wrap" Foreground="{DynamicResource WarningBrush}" Margin="0,0,0,20" />
                 </StackPanel>
 
-                <TextBlock Text="PLAIN ENGLISH &amp; OFFLINE" FontSize="10.5" FontWeight="Bold" Foreground="{DynamicResource TextTertiaryBrush}"
+                <TextBlock Text="PLAIN ENGLISH &amp; OFFLINE" FontSize="{StaticResource FontCaption}" FontWeight="Bold" Foreground="{DynamicResource TextTertiaryBrush}"
                            Margin="0,0,0,14" />
                 <!-- suggestions.md #991: swaps a Health Check finding's technical wording for a
                      plain-language alternative wherever the firing rule provides one. -->
@@ -413,9 +413,9 @@
                           IsChecked="{Binding DataContext.OfflineMode, RelativeSource={RelativeSource AncestorType=Window}}" Margin="0,0,0,6"
                           AutomationProperties.Name="Offline mode toggle" />
                 <TextBlock Text="See the Troubleshoot tab's &quot;Network Activity&quot; panel for the full, itemized list of what this does and doesn't affect."
-                           Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,22" />
+                           Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,20" />
 
-                <TextBlock Text="UNATTENDED DIAGNOSTIC SCAN" FontSize="10.5" FontWeight="Bold" Foreground="{DynamicResource TextTertiaryBrush}"
+                <TextBlock Text="UNATTENDED DIAGNOSTIC SCAN" FontSize="{StaticResource FontCaption}" FontWeight="Bold" Foreground="{DynamicResource TextTertiaryBrush}"
                            Margin="0,0,0,14" />
                 <!-- suggestions.md #997: schedules a quiet, headless "scan" launch of this exe via
                      schtasks.exe, writing each run's findings into its own dated subfolder
@@ -444,9 +444,9 @@
                             Command="{Binding DataContext.RemoveUnattendedScanCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
                 </StackPanel>
                 <TextBlock Text="{Binding DataContext.UnattendedScanStatusText, RelativeSource={RelativeSource AncestorType=Window}}"
-                           Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,22" />
+                           Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,20" />
 
-                <TextBlock Text="POLLING INTERVALS" FontSize="10.5" FontWeight="Bold" Foreground="{DynamicResource TextTertiaryBrush}"
+                <TextBlock Text="POLLING INTERVALS" FontSize="{StaticResource FontCaption}" FontWeight="Bold" Foreground="{DynamicResource TextTertiaryBrush}"
                            Margin="0,0,0,14" />
                 <TextBlock Text="Lower = more responsive, higher = lighter background load (useful on battery). Defaults match every prior release."
                            Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,14" />
@@ -469,7 +469,7 @@
 
                 <!-- Round 14, item 25: crash-analysis settings - symbol cache folder/path, used by
                      the Stability tab's "Analyse (!analyze -v)" button (DebuggerToolsService). -->
-                <TextBlock Text="CRASH ANALYSIS" FontSize="10.5" FontWeight="Bold" Foreground="{DynamicResource TextTertiaryBrush}"
+                <TextBlock Text="CRASH ANALYSIS" FontSize="{StaticResource FontCaption}" FontWeight="Bold" Foreground="{DynamicResource TextTertiaryBrush}"
                            Margin="0,0,0,14" />
                 <TextBlock Text="Used by the Stability tab's dump analysis (cdb.exe/!analyze -v). A bad or unreachable symbol path is a common reason analysis stalls."
                            Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,10" />
@@ -496,15 +496,15 @@
                      sliders above already use, since this drawer's own DataContext is
                      ThemeViewModel. Undo only here (no export - this drawer is 280px wide; use the
                      Windows Health tab's card for the full view/export). -->
-                <TextBlock Text="CHANGES MADE BY THIS APP" FontSize="10.5" FontWeight="Bold" Foreground="{DynamicResource TextTertiaryBrush}" Margin="0,0,0,10" />
+                <TextBlock Text="CHANGES MADE BY THIS APP" FontSize="{StaticResource FontCaption}" FontWeight="Bold" Foreground="{DynamicResource TextTertiaryBrush}" Margin="0,0,0,10" />
                 <ItemsControl ItemsSource="{Binding DataContext.WindowsHealth.RegistryChanges, RelativeSource={RelativeSource AncestorType=Window}}" Margin="0,0,0,4">
                     <ItemsControl.ItemTemplate>
                         <DataTemplate>
-                            <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="8,5" Margin="0,0,0,6">
+                            <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="8,4" Margin="0,0,0,6">
                                 <StackPanel>
-                                    <TextBlock FontSize="11" FontWeight="SemiBold" TextWrapping="Wrap" Text="{Binding Description}" />
-                                    <TextBlock FontSize="10" Foreground="{DynamicResource TextTertiaryBrush}" Text="{Binding Timestamp, StringFormat={}{0:g}}" Margin="0,1,0,4" />
-                                    <Button Content="Undo" FontSize="10" Padding="6,2" HorizontalAlignment="Left"
+                                    <TextBlock FontSize="{StaticResource FontBody}" FontWeight="SemiBold" TextWrapping="Wrap" Text="{Binding Description}" />
+                                    <TextBlock FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextTertiaryBrush}" Text="{Binding Timestamp, StringFormat={}{0:g}}" Margin="0,0,0,4" />
+                                    <Button Content="Undo" FontSize="{StaticResource FontCaption}" Padding="6,2" HorizontalAlignment="Left"
                                             Command="{Binding DataContext.UndoRegistryChangeCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                                             CommandParameter="{Binding}" />
                                 </StackPanel>
@@ -531,7 +531,7 @@
                      pack (#922), and import/export with a review step plus a metric-bag test
                      fixture flow (#925/#926). Suppression (#924) lives on the Health Check card
                      itself, where findings actually render. -->
-                <TextBlock Text="RULES ENGINE" FontSize="10.5" FontWeight="Bold" Foreground="{DynamicResource TextTertiaryBrush}"
+                <TextBlock Text="RULES ENGINE" FontSize="{StaticResource FontCaption}" FontWeight="Bold" Foreground="{DynamicResource TextTertiaryBrush}"
                            Margin="0,0,0,14" />
                 <TextBlock Text="Health Check findings come from JSON rule definitions under %AppData%\TaskManagerPlus\Rules\, hot-reloaded whenever a pack file changes. Edits here never touch the built-in pack - they write to your own user-overrides.json."
                            Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,14" />
@@ -554,7 +554,7 @@
                                             </Style>
                                         </Border.Style>
                                     </Border>
-                                    <TextBlock FontSize="12">
+                                    <TextBlock FontSize="{StaticResource FontBody}">
                                         <Run Text="{Binding FileName, Mode=OneWay}" FontWeight="SemiBold" />
                                         <Run Text=" — " /><Run Text="{Binding RuleCount, Mode=OneWay}" /><Run Text=" rule(s)" />
                                     </TextBlock>
@@ -562,7 +562,7 @@
                                 <ItemsControl ItemsSource="{Binding Warnings}" Margin="14,2,0,0">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
-                                            <TextBlock Text="{Binding}" FontSize="11" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" Margin="0,0,0,2" />
+                                            <TextBlock Text="{Binding}" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" Margin="0,0,0,2" />
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
                                 </ItemsControl>
@@ -589,24 +589,24 @@
                                 <CheckBox Grid.Column="0" IsChecked="{Binding Enabled}" VerticalAlignment="Top" Margin="0,3,8,0" ToolTip="Enable/disable this rule (#923)" />
                                 <StackPanel Grid.Column="1">
                                     <StackPanel Orientation="Horizontal">
-                                        <TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="12.5" />
-                                        <TextBlock Text="BUILT-IN" FontSize="9" Foreground="{DynamicResource TextTertiaryBrush}" Margin="6,2,0,0"
+                                        <TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="{StaticResource FontStrong}" />
+                                        <TextBlock Text="BUILT-IN" FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextTertiaryBrush}" Margin="6,2,0,0"
                                                    Visibility="{Binding IsBuiltIn, Converter={StaticResource BoolToVisibilityConverter}}" />
-                                        <TextBlock FontSize="9" Foreground="{DynamicResource WarningBrush}" Margin="6,2,0,0"
+                                        <TextBlock FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource WarningBrush}" Margin="6,2,0,0"
                                                    Visibility="{Binding IsImported, Converter={StaticResource BoolToVisibilityConverter}}">
                                             <Run Text="IMPORTED FROM " /><Run Text="{Binding ImportSourceFileName, Mode=OneWay}" />
                                             <Run Text=" - NOT VERIFIED" />
                                         </TextBlock>
                                     </StackPanel>
-                                    <TextBlock Text="{Binding ConditionSummary}" FontSize="11" FontFamily="Consolas"
+                                    <TextBlock Text="{Binding ConditionSummary}" FontSize="{StaticResource FontBody}" FontFamily="Consolas"
                                                Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" />
-                                    <TextBlock FontSize="10.5" Foreground="{DynamicResource TextTertiaryBrush}" Margin="0,2,0,0">
+                                    <TextBlock FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextTertiaryBrush}" Margin="0,2,0,0">
                                         <Run Text="{Binding Category, Mode=OneWay}" /><Run Text=" · confidence " /><Run Text="{Binding Confidence, Mode=OneWay}" /><Run Text="%" />
                                     </TextBlock>
                                 </StackPanel>
                                 <ComboBox Grid.Column="2" ItemsSource="{Binding Source={x:Static vm:RulesEditorViewModel.SeverityValues}}"
-                                          SelectedItem="{Binding EffectiveSeverity}" Width="86" FontSize="11" VerticalAlignment="Top" Margin="8,0,8,0" />
-                                <Border Grid.Column="3" Width="10" Height="10" CornerRadius="5" VerticalAlignment="Top" Margin="0,4,0,0">
+                                          SelectedItem="{Binding EffectiveSeverity}" Width="86" FontSize="{StaticResource FontBody}" VerticalAlignment="Top" Margin="8,0,8,0" />
+                                <Border Grid.Column="3" Width="10" Height="10" CornerRadius="6" VerticalAlignment="Top" Margin="0,4,0,0">
                                     <Border.Style>
                                         <Style TargetType="Border">
                                             <Setter Property="Background" Value="{DynamicResource BorderBrush2}" />
@@ -669,13 +669,13 @@
                     <TextBox Text="{Binding DataContext.RulesEditor.EditDocsUrl, RelativeSource={RelativeSource AncestorType=Window}, UpdateSourceTrigger=PropertyChanged}" Margin="0,2,0,8" />
                     <TextBlock Text="Condition JSON - {&quot;metric&quot;,&quot;op&quot;,&quot;value&quot;} or all/any/not (#918)" Style="{StaticResource SubStat}" />
                     <TextBox Text="{Binding DataContext.RulesEditor.EditConditionJson, RelativeSource={RelativeSource AncestorType=Window}, UpdateSourceTrigger=PropertyChanged}"
-                             FontFamily="Consolas" FontSize="11" TextWrapping="Wrap" AcceptsReturn="True" MinLines="3" MaxLines="8"
+                             FontFamily="Consolas" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" AcceptsReturn="True" MinLines="3" MaxLines="8"
                              VerticalScrollBarVisibility="Auto" Margin="0,2,0,4" />
                     <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
                         <Button Content="Preview condition" Margin="0,0,8,0"
                                 Command="{Binding DataContext.RulesEditor.PreviewConditionCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
                         <TextBlock Text="{Binding DataContext.RulesEditor.EditConditionPreview, RelativeSource={RelativeSource AncestorType=Window}}"
-                                   FontFamily="Consolas" FontSize="11" VerticalAlignment="Center" TextWrapping="Wrap" />
+                                   FontFamily="Consolas" FontSize="{StaticResource FontBody}" VerticalAlignment="Center" TextWrapping="Wrap" />
                     </StackPanel>
                     <Button Content="Save rule" HorizontalAlignment="Left"
                             Command="{Binding DataContext.RulesEditor.SaveEditCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
@@ -700,7 +700,7 @@
                     <ItemsControl ItemsSource="{Binding DataContext.RulesEditor.PendingImportRules, RelativeSource={RelativeSource AncestorType=Window}}" MaxHeight="160" Margin="0,0,0,8">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <TextBlock FontSize="11.5" TextWrapping="Wrap" Margin="0,0,0,2">
+                                <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,2">
                                     <Run Text="{Binding Title, Mode=OneWay}" FontWeight="SemiBold" />
                                     <Run Text=" (" /><Run Text="{Binding Id, Mode=OneWay}" /><Run Text=")" />
                                 </TextBlock>
@@ -739,14 +739,14 @@
                                         </Style>
                                     </Border.Style>
                                 </Border>
-                                <TextBlock Text="{Binding Title}" FontSize="11.5" />
+                                <TextBlock Text="{Binding Title}" FontSize="{StaticResource FontBody}" />
                             </StackPanel>
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>
 
                 <TextBlock Text="{Binding DataContext.RulesEditor.StatusText, RelativeSource={RelativeSource AncestorType=Window}}"
-                           TextWrapping="Wrap" Margin="0,0,0,22">
+                           TextWrapping="Wrap" Margin="0,0,0,20">
                     <TextBlock.Style>
                         <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
                             <Setter Property="Visibility" Value="Visible" />

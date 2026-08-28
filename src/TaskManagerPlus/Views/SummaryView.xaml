@@ -36,7 +36,7 @@
                             <TextBlock Text="CPU Overview" Style="{StaticResource CardTitle}" Margin="0" />
                         </StackPanel>
                         <TextBlock Grid.Column="1" Text="{Binding DataContext.Performance.CpuCurrentPercent, RelativeSource={RelativeSource AncestorType=UserControl}, StringFormat={}{0:0.0}%}"
-                                   FontSize="20" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                   FontSize="{StaticResource FontDisplay}" FontWeight="SemiBold" VerticalAlignment="Center" />
                     </Grid>
                     <lvc:CartesianChart Series="{Binding DataContext.Performance.CpuSeries, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                          XAxes="{Binding DataContext.Performance.HiddenXAxes, RelativeSource={RelativeSource AncestorType=UserControl}}"
@@ -58,11 +58,11 @@
                             <Border Style="{StaticResource ColorDot}" Background="{Binding DataContext.Performance.RamColor, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource ColorToBrushConverter}}" />
                             <TextBlock Text="Memory Utilization" Style="{StaticResource CardTitle}" Margin="0" />
                         </StackPanel>
-                        <TextBlock Grid.Column="1" VerticalAlignment="Center" FontSize="20" FontWeight="SemiBold">
+                        <TextBlock Grid.Column="1" VerticalAlignment="Center" FontSize="{StaticResource FontDisplay}" FontWeight="SemiBold">
                             <Run Text="{Binding DataContext.Performance.RamUsedGb, RelativeSource={RelativeSource AncestorType=UserControl}, StringFormat={}{0:0.0}, Mode=OneWay}" />
-                            <Run Text=" / " FontSize="13" FontWeight="Normal" />
-                            <Run Text="{Binding DataContext.Performance.RamTotalGb, RelativeSource={RelativeSource AncestorType=UserControl}, StringFormat={}{0:0.0}, Mode=OneWay}" FontSize="13" FontWeight="Normal" />
-                            <Run Text=" GB" FontSize="13" FontWeight="Normal" />
+                            <Run Text=" / " FontSize="{StaticResource FontStrong}" FontWeight="Normal" />
+                            <Run Text="{Binding DataContext.Performance.RamTotalGb, RelativeSource={RelativeSource AncestorType=UserControl}, StringFormat={}{0:0.0}, Mode=OneWay}" FontSize="{StaticResource FontStrong}" FontWeight="Normal" />
+                            <Run Text=" GB" FontSize="{StaticResource FontStrong}" FontWeight="Normal" />
                         </TextBlock>
                     </Grid>
                     <lvc:CartesianChart Series="{Binding DataContext.Performance.RamSeries, RelativeSource={RelativeSource AncestorType=UserControl}}"
@@ -93,14 +93,14 @@
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <StackPanel Grid.Column="0" Margin="0,0,8,0">
-                                        <TextBlock Text="{Binding Name}" FontSize="12.5" TextTrimming="CharacterEllipsis" />
-                                        <TextBlock Style="{StaticResource SubStat}" FontSize="10.5">
+                                        <TextBlock Text="{Binding Name}" FontSize="{StaticResource FontStrong}" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Style="{StaticResource SubStat}" FontSize="{StaticResource FontCaption}">
                                             <Run Text="PID " /><Run Text="{Binding Pid, Mode=OneWay}" />
                                             <Run Text=" · " /><Run Text="{Binding MemoryMb, StringFormat={}{0:0} MB, Mode=OneWay}" />
                                         </TextBlock>
                                     </StackPanel>
                                     <TextBlock Grid.Column="1" Text="{Binding CpuPercent, StringFormat={}{0:0.0}%}"
-                                               FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center"
+                                               FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" VerticalAlignment="Center"
                                                Foreground="{Binding CpuPercent, Converter={StaticResource PercentToBrushConverter}}" />
                                 </Grid>
                             </DataTemplate>
@@ -124,9 +124,9 @@
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0" Text="{Binding Name}" FontSize="12.5" TextTrimming="CharacterEllipsis" Margin="0,0,8,0" />
+                                    <TextBlock Grid.Column="0" Text="{Binding Name}" FontSize="{StaticResource FontStrong}" TextTrimming="CharacterEllipsis" Margin="0,0,8,0" />
                                     <TextBlock Grid.Column="1" Text="{Binding CpuPercent10sAvg, StringFormat={}{0:0.0}%}"
-                                               FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center"
+                                               FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" VerticalAlignment="Center"
                                                Foreground="{Binding CpuPercent10sAvg, Converter={StaticResource PercentToBrushConverter}}" />
                                 </Grid>
                             </DataTemplate>
@@ -156,7 +156,7 @@
                     <TextBlock Text="{Binding DataContext.StorageHealthSummaryText, RelativeSource={RelativeSource AncestorType=UserControl}}">
                         <TextBlock.Style>
                             <Style TargetType="TextBlock" BasedOn="{StaticResource BigStat}">
-                                <Setter Property="FontSize" Value="18" />
+                                <Setter Property="FontSize" Value="{StaticResource FontTitle}" />
                                 <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
                                 <Style.Triggers>
                                     <DataTrigger Binding="{Binding DataContext.StorageHealthHasWatch, RelativeSource={RelativeSource AncestorType=UserControl}}" Value="True">
@@ -194,30 +194,30 @@
                     <UniformGrid Columns="2" Rows="3">
                         <StackPanel Margin="0,0,8,10">
                             <TextBlock Text="Processes" Style="{StaticResource SubStat}" />
-                            <TextBlock Text="{Binding DataContext.Performance.ProcessCount, RelativeSource={RelativeSource AncestorType=UserControl}}" FontSize="16" />
+                            <TextBlock Text="{Binding DataContext.Performance.ProcessCount, RelativeSource={RelativeSource AncestorType=UserControl}}" FontSize="{StaticResource FontTitle}" />
                         </StackPanel>
                         <StackPanel Margin="8,0,0,10">
                             <TextBlock Text="Threads" Style="{StaticResource SubStat}" />
-                            <TextBlock Text="{Binding DataContext.Performance.ThreadCount, RelativeSource={RelativeSource AncestorType=UserControl}}" FontSize="16" />
+                            <TextBlock Text="{Binding DataContext.Performance.ThreadCount, RelativeSource={RelativeSource AncestorType=UserControl}}" FontSize="{StaticResource FontTitle}" />
                         </StackPanel>
                         <StackPanel Margin="0,0,8,10">
                             <TextBlock Text="Handles" Style="{StaticResource SubStat}" />
-                            <TextBlock Text="{Binding DataContext.Performance.HandleCount, RelativeSource={RelativeSource AncestorType=UserControl}}" FontSize="16" />
+                            <TextBlock Text="{Binding DataContext.Performance.HandleCount, RelativeSource={RelativeSource AncestorType=UserControl}}" FontSize="{StaticResource FontTitle}" />
                         </StackPanel>
                         <StackPanel Margin="8,0,0,10">
                             <TextBlock Text="Uptime" Style="{StaticResource SubStat}" />
-                            <TextBlock Text="{Binding DataContext.Performance.Uptime, RelativeSource={RelativeSource AncestorType=UserControl}}" FontSize="16" />
+                            <TextBlock Text="{Binding DataContext.Performance.Uptime, RelativeSource={RelativeSource AncestorType=UserControl}}" FontSize="{StaticResource FontTitle}" />
                         </StackPanel>
                         <!-- #67: "time since last crash" headline stat, pulled from the
                              Stability tab's already-computed figure - no new event-log query. -->
                         <StackPanel Margin="0,0,8,0">
                             <TextBlock Text="Since last crash" Style="{StaticResource SubStat}" />
-                            <TextBlock Text="{Binding DataContext.Stability.TimeSinceLastCrashText, RelativeSource={RelativeSource AncestorType=UserControl}}" FontSize="16" TextWrapping="Wrap" />
+                            <TextBlock Text="{Binding DataContext.Stability.TimeSinceLastCrashText, RelativeSource={RelativeSource AncestorType=UserControl}}" FontSize="{StaticResource FontTitle}" TextWrapping="Wrap" />
                         </StackPanel>
                         <!-- #68: single 0-10 stability index - see StabilityViewModel.ComputeStabilityIndex. -->
                         <StackPanel Margin="8,0,0,0">
                             <TextBlock Text="Stability index" Style="{StaticResource SubStat}" />
-                            <TextBlock FontSize="16" FontWeight="SemiBold"
+                            <TextBlock FontSize="{StaticResource FontTitle}" FontWeight="SemiBold"
                                        Text="{Binding DataContext.Stability.StabilityIndex, RelativeSource={RelativeSource AncestorType=UserControl}, StringFormat={}{0:0.0} / 10}"
                                        Foreground="{Binding DataContext.Stability.StabilityIndex, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource StabilityIndexToBrushConverter}}" />
                         </StackPanel>
@@ -242,9 +242,9 @@
                              DataTrigger Value="Low" string match) since Severity is a real enum,
                              the same pattern ServiceStatusToBrushConverter uses for
                              ServiceControllerStatus elsewhere in this app. -->
-                        <Border Width="8" Height="8" CornerRadius="4" Margin="0,0,5,0" VerticalAlignment="Center"
+                        <Border Width="8" Height="8" CornerRadius="4" Margin="0,0,4,0" VerticalAlignment="Center"
                                 Background="{Binding Severity, Converter={StaticResource RuleSeverityToBrushConverter}}" />
-                        <TextBlock Text="{Binding Severity}" FontSize="9.5" FontWeight="Bold" VerticalAlignment="Center"
+                        <TextBlock Text="{Binding Severity}" FontSize="{StaticResource FontCaption}" FontWeight="Bold" VerticalAlignment="Center"
                                    Foreground="{Binding Severity, Converter={StaticResource RuleSeverityToBrushConverter}}" />
                     </StackPanel>
                     <StackPanel Grid.Column="1">
@@ -253,7 +253,7 @@
                                  PlainEnglishMessage based on the "Plain English mode" toggle
                                  (MainViewModel.PlainEnglishMode). #990: GlossaryText.Text then
                                  wraps any recognized jargon term in a dotted-underline/tooltip Run. -->
-                            <TextBlock FontSize="12.5" TextWrapping="Wrap" VerticalAlignment="Center">
+                            <TextBlock FontSize="{StaticResource FontStrong}" TextWrapping="Wrap" VerticalAlignment="Center">
                                 <conv:GlossaryText.Text>
                                     <MultiBinding Converter="{StaticResource PlainEnglishMessageConverter}">
                                         <Binding Path="Message" />
@@ -263,21 +263,21 @@
                                 </conv:GlossaryText.Text>
                             </TextBlock>
                             <!-- #928: confidence word - "likely"/"possible"/"uncertain". -->
-                            <TextBlock Text="{Binding ConfidenceWord, StringFormat=({0})}" FontSize="10.5" FontStyle="Italic"
+                            <TextBlock Text="{Binding ConfidenceWord, StringFormat=({0})}" FontSize="{StaticResource FontCaption}" FontStyle="Italic"
                                        Foreground="{DynamicResource TextTertiaryBrush}" VerticalAlignment="Center" Margin="6,0,0,0" />
                         </StackPanel>
 
                         <!-- #931: counter-evidence - "what else could explain this". -->
-                        <TextBlock FontSize="11" FontStyle="Italic" Foreground="{DynamicResource TextTertiaryBrush}"
+                        <TextBlock FontSize="{StaticResource FontBody}" FontStyle="Italic" Foreground="{DynamicResource TextTertiaryBrush}"
                                    TextWrapping="Wrap" Margin="0,3,0,0"
                                    Visibility="{Binding CounterEvidence, Converter={StaticResource NullToVisibilityConverter}}">
                             <Run Text="Could also be: " /><Run Text="{Binding CounterEvidence, Mode=OneWay}" />
                         </TextBlock>
 
                         <!-- #932: honest impact figure, in units the user feels. -->
-                        <Border Background="{DynamicResource BgHoverBrush}" CornerRadius="3" Padding="6,2" Margin="0,4,0,0" HorizontalAlignment="Left"
+                        <Border Background="{DynamicResource BgHoverBrush}" CornerRadius="4" Padding="6,2" Margin="0,4,0,0" HorizontalAlignment="Left"
                                 Visibility="{Binding ImpactText, Converter={StaticResource NullToVisibilityConverter}}">
-                            <TextBlock Text="{Binding ImpactText}" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource AccentBrush}" />
+                            <TextBlock Text="{Binding ImpactText}" FontSize="{StaticResource FontBody}" FontWeight="SemiBold" Foreground="{DynamicResource AccentBrush}" />
                         </Border>
 
                         <!-- #992/#993: "Learn more" (an online docs link) and "Read more (offline)"
@@ -285,7 +285,7 @@
                              ExternalLinkService; neither is affected by Offline mode (see
                              NetworkActivityCatalogService's remarks on that boundary). Each is only
                              shown when this finding's rule actually provides one. -->
-                        <StackPanel Orientation="Horizontal" Margin="0,5,0,0">
+                        <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
                             <TextBlock Margin="0,0,14,0" Cursor="Hand">
                                 <TextBlock.Style>
                                     <Style TargetType="TextBlock">
@@ -298,7 +298,7 @@
                                     </Style>
                                 </TextBlock.Style>
                                 <Hyperlink Command="{Binding DataContext.OpenDocsUrlCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                                           CommandParameter="{Binding DocsUrl}" FontSize="11">
+                                           CommandParameter="{Binding DocsUrl}" FontSize="{StaticResource FontBody}">
                                     <Run Text="Learn more" />
                                 </Hyperlink>
                             </TextBlock>
@@ -314,7 +314,7 @@
                                     </Style>
                                 </TextBlock.Style>
                                 <Hyperlink Command="{Binding DataContext.OpenExplainerCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                                           CommandParameter="{Binding ExplainerId}" FontSize="11">
+                                           CommandParameter="{Binding ExplainerId}" FontSize="{StaticResource FontBody}">
                                     <Run Text="Read more (offline)" />
                                 </Hyperlink>
                             </TextBlock>
@@ -322,17 +322,17 @@
 
                         <!-- #929/#930: "why am I seeing this?" drill-down - only a rule-engine
                              finding (RuleId set) has a condition tree to show. -->
-                        <Expander Header="Why am I seeing this?" FontSize="11" Margin="0,6,0,0"
+                        <Expander Header="Why am I seeing this?" FontSize="{StaticResource FontBody}" Margin="0,6,0,0"
                                   Visibility="{Binding RuleId, Converter={StaticResource NullToVisibilityConverter}}">
                             <StackPanel Margin="14,4,0,4">
-                                <TextBlock FontSize="11" Margin="0,0,0,4">
+                                <TextBlock FontSize="{StaticResource FontBody}" Margin="0,0,0,4">
                                     <Run Text="Rule: " Foreground="{DynamicResource TextTertiaryBrush}" />
                                     <Run Text="{Binding RuleId, Mode=OneWay}" FontFamily="Consolas" />
                                 </TextBlock>
                                 <ItemsControl ItemsSource="{Binding ConditionReadings}" Margin="0,0,0,4">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
-                                            <TextBlock FontSize="10.5" FontFamily="Consolas" TextWrapping="Wrap" Margin="0,0,0,1">
+                                            <TextBlock FontSize="{StaticResource FontCaption}" FontFamily="Consolas" TextWrapping="Wrap" Margin="0,0,0,0">
                                                 <Run Text="{Binding Metric, Mode=OneWay}" />
                                                 <Run Text=" = " />
                                                 <Run Text="{Binding ActualValueText, Mode=OneWay}" FontWeight="SemiBold" />
@@ -347,16 +347,16 @@
                                 </ItemsControl>
                                 <!-- #930: evidence - for the built-in pack this is the same
                                      metric readings above, restated as label/value pairs. -->
-                                <Expander FontSize="10.5">
+                                <Expander FontSize="{StaticResource FontCaption}">
                                     <Expander.Header>
-                                        <TextBlock FontSize="10.5">
+                                        <TextBlock FontSize="{StaticResource FontCaption}">
                                             <Run Text="Evidence (" /><Run Text="{Binding Evidence.Count, Mode=OneWay}" /><Run Text=" items)" />
                                         </TextBlock>
                                     </Expander.Header>
                                     <ItemsControl ItemsSource="{Binding Evidence}" Margin="14,4,0,0">
                                         <ItemsControl.ItemTemplate>
                                             <DataTemplate>
-                                                <TextBlock FontSize="10.5" FontFamily="Consolas" TextWrapping="Wrap" Margin="0,0,0,1">
+                                                <TextBlock FontSize="{StaticResource FontCaption}" FontFamily="Consolas" TextWrapping="Wrap" Margin="0,0,0,0">
                                                     <Run Text="{Binding Label, Mode=OneWay}" /><Run Text=": " /><Run Text="{Binding Value, Mode=OneWay}" />
                                                 </TextBlock>
                                             </DataTemplate>
@@ -374,7 +374,7 @@
                                  least one applicable RemediationAction id (HealthIssue.HasFixAction).
                                  Opens a review dialog (RemediationReviewWindow), never runs anything
                                  directly from this button. -->
-                            <Button Content="Fix this" FontSize="10.5" Padding="6,1" Margin="0,0,4,0"
+                            <Button Content="Fix this" FontSize="{StaticResource FontCaption}" Padding="6,0" Margin="0,0,4,0"
                                     Background="{DynamicResource AccentMutedBrush}" BorderBrush="{DynamicResource AccentBrush}"
                                     Command="{Binding DataContext.FixFindingCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                     CommandParameter="{Binding}">
@@ -389,13 +389,13 @@
                                     </Style>
                                 </Button.Style>
                             </Button>
-                            <Button Content="Snooze 7d" FontSize="10.5" Padding="6,1" Margin="0,0,4,0"
+                            <Button Content="Snooze 7d" FontSize="{StaticResource FontCaption}" Padding="6,0" Margin="0,0,4,0"
                                     Command="{Binding DataContext.SnoozeFindingCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                     CommandParameter="{Binding}" />
-                            <Button Content="Ignore" FontSize="10.5" Padding="6,1" Margin="0,0,4,0"
+                            <Button Content="Ignore" FontSize="{StaticResource FontCaption}" Padding="6,0" Margin="0,0,4,0"
                                     Command="{Binding DataContext.IgnoreFindingCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                     CommandParameter="{Binding}" />
-                            <Button Content="Not a problem" FontSize="10.5" Padding="6,1"
+                            <Button Content="Not a problem" FontSize="{StaticResource FontCaption}" Padding="6,0"
                                     ToolTip="Records your feedback locally on this machine - stored locally, never sent anywhere."
                                     Command="{Binding DataContext.NotAProblemCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                     CommandParameter="{Binding}" />
@@ -410,7 +410,7 @@
              "N findings about X" parent instead. -->
         <DataTemplate x:Key="FindingGroupTemplate">
             <StackPanel>
-                <Expander Header="{Binding HeaderText}" FontSize="12.5" IsExpanded="True" Margin="0,0,0,10"
+                <Expander Header="{Binding HeaderText}" FontSize="{StaticResource FontStrong}" IsExpanded="True" Margin="0,0,0,10"
                           Visibility="{Binding IsGroup, Converter={StaticResource BoolToVisibilityConverter}}">
                     <ItemsControl ItemsSource="{Binding Findings}" ItemTemplate="{StaticResource FindingRowTemplate}" Margin="10,8,0,0" />
                 </Expander>
@@ -482,7 +482,7 @@
                                 </Style.Triggers>
                             </Style>
                         </Border.Style>
-                        <TextBlock Text="{Binding RebootBannerText}" FontSize="12.5" TextWrapping="Wrap" />
+                        <TextBlock Text="{Binding RebootBannerText}" FontSize="{StaticResource FontStrong}" TextWrapping="Wrap" />
                     </Border>
                     <TextBlock Text="{Binding CopySummaryStatusText}" Margin="0,4,0,0" TextWrapping="Wrap">
                         <TextBlock.Style>
@@ -496,7 +496,7 @@
                             </Style>
                         </TextBlock.Style>
                     </TextBlock>
-                    <TextBlock Foreground="{DynamicResource SuccessBrush}" Margin="0,8,0,0" FontSize="13">
+                    <TextBlock Foreground="{DynamicResource SuccessBrush}" Margin="0,8,0,0" FontSize="{StaticResource FontStrong}">
                         <TextBlock.Style>
                             <Style TargetType="TextBlock">
                                 <Setter Property="Visibility" Value="Collapsed" />
@@ -531,8 +531,8 @@
                          bundle's index.html (EvidenceBundleService.BuildIndexHtml reads the same
                          setting). -->
                     <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
-                        <TextBlock Text="Report theme" VerticalAlignment="Center" Margin="0,0,8,0" FontSize="12.5" />
-                        <ComboBox ItemsSource="{Binding ReportThemes}" SelectedItem="{Binding ReportTheme}" Width="120" FontSize="11" />
+                        <TextBlock Text="Report theme" VerticalAlignment="Center" Margin="0,0,8,0" FontSize="{StaticResource FontStrong}" />
+                        <ComboBox ItemsSource="{Binding ReportThemes}" SelectedItem="{Binding ReportTheme}" Width="120" FontSize="{StaticResource FontBody}" />
                     </StackPanel>
 
                     <!-- #933: sort order for the finding list below. -->
@@ -548,7 +548,7 @@
                             </Style>
                         </StackPanel.Style>
                         <TextBlock Text="Sort by" Style="{StaticResource SubStat}" VerticalAlignment="Center" Margin="0,0,6,0" />
-                        <ComboBox ItemsSource="{Binding FindingSortModes}" SelectedItem="{Binding FindingSortMode}" Width="110" FontSize="11" />
+                        <ComboBox ItemsSource="{Binding FindingSortModes}" SelectedItem="{Binding FindingSortMode}" Width="110" FontSize="{StaticResource FontBody}" />
                     </StackPanel>
 
                     <!-- #934: one row per finding, or per group of findings sharing a GroupKey. -->
@@ -570,7 +570,7 @@
                         </ItemsControl.Style>
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <TextBlock FontSize="11" Foreground="{DynamicResource TextTertiaryBrush}" TextWrapping="Wrap" Margin="0,0,0,2">
+                                <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextTertiaryBrush}" TextWrapping="Wrap" Margin="0,0,0,2">
                                     <Run Text="Could not check: " />
                                     <Run Text="{Binding Title, Mode=OneWay}" />
                                     <Run Text=" (" />
@@ -595,14 +595,14 @@
                             </Style>
                         </StackPanel.Style>
                         <TextBlock Text="{Binding FeedbackStatusText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" />
-                        <Button Content="Suppress this rule for 7 days" FontSize="10.5" Padding="6,1" Margin="0,4,0,0" HorizontalAlignment="Left"
+                        <Button Content="Suppress this rule for 7 days" FontSize="{StaticResource FontCaption}" Padding="6,0" Margin="0,4,0,0" HorizontalAlignment="Left"
                                 Command="{Binding SuppressLastFeedbackRuleCommand}" />
                     </StackPanel>
 
                     <!-- #936: rules that were firing recently but have since cleared - so "it
                          cleared up" is visible without checking findings-history.jsonl by hand. -->
                     <Expander Header="{Binding RecentlyResolvedFindings.Count, StringFormat={}{0} recently resolved}"
-                              Margin="0,10,0,0" FontSize="12">
+                              Margin="0,10,0,0" FontSize="{StaticResource FontBody}">
                         <Expander.Style>
                             <Style TargetType="Expander">
                                 <Setter Property="Visibility" Value="Visible" />
@@ -616,7 +616,7 @@
                         <ItemsControl ItemsSource="{Binding RecentlyResolvedFindings}" Margin="0,6,0,0">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <TextBlock FontSize="11" Foreground="{DynamicResource SuccessBrush}" Margin="0,0,0,3" TextWrapping="Wrap">
+                                    <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource SuccessBrush}" Margin="0,0,0,3" TextWrapping="Wrap">
                                         <Run Text="{Binding Title, Mode=OneWay}" />
                                         <Run Text=" cleared " />
                                         <Run Text="{Binding ResolvedAtLocalText, Mode=OneWay}" />
@@ -628,7 +628,7 @@
 
                     <!-- #924: suppressed findings stay listable/reversible rather than just vanishing. -->
                     <Expander Header="{Binding SuppressedFindings.Count, StringFormat={}{0} finding(s) suppressed}"
-                              IsExpanded="{Binding IsSuppressedListExpanded}" Margin="0,10,0,0" FontSize="12">
+                              IsExpanded="{Binding IsSuppressedListExpanded}" Margin="0,10,0,0" FontSize="{StaticResource FontBody}">
                         <Expander.Style>
                             <Style TargetType="Expander">
                                 <Setter Property="Visibility" Value="Visible" />
@@ -643,8 +643,8 @@
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
                                     <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
-                                        <TextBlock Text="{Binding Message}" FontSize="12" Opacity="0.65" VerticalAlignment="Center" />
-                                        <Button Content="Unsuppress" FontSize="10.5" Padding="6,1" Margin="10,0,0,0"
+                                        <TextBlock Text="{Binding Message}" FontSize="{StaticResource FontBody}" Opacity="0.65" VerticalAlignment="Center" />
+                                        <Button Content="Unsuppress" FontSize="{StaticResource FontCaption}" Padding="6,0" Margin="10,0,0,0"
                                                 Command="{Binding DataContext.UnsuppressFindingCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                                 CommandParameter="{Binding}" />
                                     </StackPanel>
@@ -680,7 +680,7 @@
                 <StackPanel>
                     <TextBlock Text="System Responsiveness" Style="{StaticResource CardTitle}" />
                     <StackPanel Orientation="Horizontal" Margin="0,8,0,4">
-                        <TextBlock Text="{Binding Responsiveness.SystemScore.Score, StringFormat={}{0:0}}" FontSize="34" FontWeight="Bold" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding Responsiveness.SystemScore.Score, StringFormat={}{0:0}}" FontSize="{StaticResource FontHero}" FontWeight="Bold" VerticalAlignment="Center">
                             <TextBlock.Style>
                                 <Style TargetType="TextBlock">
                                     <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
@@ -699,11 +699,11 @@
                             </TextBlock.Style>
                         </TextBlock>
                         <StackPanel Margin="10,0,0,0" VerticalAlignment="Center">
-                            <TextBlock Text="{Binding Responsiveness.SystemScore.Band}" FontWeight="SemiBold" FontSize="14" />
-                            <TextBlock Text="out of 100 — composite heuristic, not a diagnosis" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" />
+                            <TextBlock Text="{Binding Responsiveness.SystemScore.Band}" FontWeight="SemiBold" FontSize="{StaticResource FontSection}" />
+                            <TextBlock Text="out of 100 — composite heuristic, not a diagnosis" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" />
                         </StackPanel>
                     </StackPanel>
-                    <TextBlock Text="{Binding Responsiveness.SystemScore.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding Responsiveness.SystemScore.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" />
                 </StackPanel>
             </Border>
 
@@ -772,7 +772,7 @@
                          lined up without exporting both to a spreadsheet. -->
                     <WrapPanel Margin="0,0,0,6">
                         <CheckBox Content="Overlay event-log errors" IsChecked="{Binding DataContext.Logging.ShowReplayEventMarkers, RelativeSource={RelativeSource AncestorType=Window}}"
-                                   FontSize="10.5" VerticalAlignment="Center" Margin="0,0,10,0" />
+                                   FontSize="{StaticResource FontCaption}" VerticalAlignment="Center" Margin="0,0,10,0" />
                         <TextBlock Text="{Binding DataContext.Logging.ReplayMarkerStatusText, RelativeSource={RelativeSource AncestorType=Window}}"
                                     Style="{StaticResource SubStat}" VerticalAlignment="Center" TextWrapping="Wrap" />
                     </WrapPanel>
@@ -870,42 +870,42 @@
                         <ItemsControl ItemsSource="{Binding SnapshotDiff.SoftwareAdded}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <TextBlock FontSize="12" Foreground="{DynamicResource SuccessBrush}" Text="{Binding StringFormat=+ software: {0}}" />
+                                    <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource SuccessBrush}" Text="{Binding StringFormat=+ software: {0}}" />
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
                         <ItemsControl ItemsSource="{Binding SnapshotDiff.SoftwareRemoved}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <TextBlock FontSize="12" Foreground="{DynamicResource DangerBrush}" Text="{Binding StringFormat=- software: {0}}" />
+                                    <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource DangerBrush}" Text="{Binding StringFormat=- software: {0}}" />
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
                         <ItemsControl ItemsSource="{Binding SnapshotDiff.ServicesAdded}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <TextBlock FontSize="12" Foreground="{DynamicResource SuccessBrush}" Text="{Binding StringFormat=+ service: {0}}" />
+                                    <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource SuccessBrush}" Text="{Binding StringFormat=+ service: {0}}" />
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
                         <ItemsControl ItemsSource="{Binding SnapshotDiff.ServicesRemoved}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <TextBlock FontSize="12" Foreground="{DynamicResource DangerBrush}" Text="{Binding StringFormat=- service: {0}}" />
+                                    <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource DangerBrush}" Text="{Binding StringFormat=- service: {0}}" />
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
                         <ItemsControl ItemsSource="{Binding SnapshotDiff.StartupAdded}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <TextBlock FontSize="12" Foreground="{DynamicResource SuccessBrush}" Text="{Binding StringFormat=+ startup item: {0}}" />
+                                    <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource SuccessBrush}" Text="{Binding StringFormat=+ startup item: {0}}" />
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
                         <ItemsControl ItemsSource="{Binding SnapshotDiff.StartupRemoved}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <TextBlock FontSize="12" Foreground="{DynamicResource DangerBrush}" Text="{Binding StringFormat=- startup item: {0}}" />
+                                    <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource DangerBrush}" Text="{Binding StringFormat=- startup item: {0}}" />
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
@@ -914,28 +914,28 @@
                         <ItemsControl ItemsSource="{Binding SnapshotDiff.DriversAdded}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <TextBlock FontSize="12" Foreground="{DynamicResource SuccessBrush}" Text="{Binding StringFormat=+ driver: {0}}" />
+                                    <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource SuccessBrush}" Text="{Binding StringFormat=+ driver: {0}}" />
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
                         <ItemsControl ItemsSource="{Binding SnapshotDiff.DriversRemoved}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <TextBlock FontSize="12" Foreground="{DynamicResource DangerBrush}" Text="{Binding StringFormat=- driver: {0}}" />
+                                    <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource DangerBrush}" Text="{Binding StringFormat=- driver: {0}}" />
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
                         <ItemsControl ItemsSource="{Binding SnapshotDiff.DriverStorePackagesAdded}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <TextBlock FontSize="12" Foreground="{DynamicResource SuccessBrush}" Text="{Binding StringFormat=+ driver store package: {0}}" />
+                                    <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource SuccessBrush}" Text="{Binding StringFormat=+ driver store package: {0}}" />
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
                         <ItemsControl ItemsSource="{Binding SnapshotDiff.DriverStorePackagesRemoved}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <TextBlock FontSize="12" Foreground="{DynamicResource DangerBrush}" Text="{Binding StringFormat=- driver store package: {0}}" />
+                                    <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource DangerBrush}" Text="{Binding StringFormat=- driver store package: {0}}" />
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
@@ -956,7 +956,7 @@
                         <Button Content="Load snapshot B..." Command="{Binding LoadSnapshotBCommand}" Margin="0,0,8,0" />
                         <Button Content="Compare A → B" Command="{Binding CompareSnapshotsAbCommand}" />
                     </StackPanel>
-                    <TextBlock FontSize="12" Style="{StaticResource SubStat}" Margin="0,0,0,8">
+                    <TextBlock FontSize="{StaticResource FontBody}" Style="{StaticResource SubStat}" Margin="0,0,0,8">
                         <Run Text="A: " /><Run Text="{Binding SnapshotAName, Mode=OneWay}" />
                         <Run Text="   B: " /><Run Text="{Binding SnapshotBName, Mode=OneWay}" />
                     </TextBlock>
@@ -990,42 +990,42 @@
                         <ItemsControl ItemsSource="{Binding SnapshotAbDiff.SoftwareAdded}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <TextBlock FontSize="12" Foreground="{DynamicResource SuccessBrush}" Text="{Binding StringFormat=+ software: {0}}" />
+                                    <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource SuccessBrush}" Text="{Binding StringFormat=+ software: {0}}" />
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
                         <ItemsControl ItemsSource="{Binding SnapshotAbDiff.SoftwareRemoved}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <TextBlock FontSize="12" Foreground="{DynamicResource DangerBrush}" Text="{Binding StringFormat=- software: {0}}" />
+                                    <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource DangerBrush}" Text="{Binding StringFormat=- software: {0}}" />
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
                         <ItemsControl ItemsSource="{Binding SnapshotAbDiff.ServicesAdded}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <TextBlock FontSize="12" Foreground="{DynamicResource SuccessBrush}" Text="{Binding StringFormat=+ service: {0}}" />
+                                    <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource SuccessBrush}" Text="{Binding StringFormat=+ service: {0}}" />
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
                         <ItemsControl ItemsSource="{Binding SnapshotAbDiff.ServicesRemoved}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <TextBlock FontSize="12" Foreground="{DynamicResource DangerBrush}" Text="{Binding StringFormat=- service: {0}}" />
+                                    <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource DangerBrush}" Text="{Binding StringFormat=- service: {0}}" />
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
                         <ItemsControl ItemsSource="{Binding SnapshotAbDiff.StartupAdded}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <TextBlock FontSize="12" Foreground="{DynamicResource SuccessBrush}" Text="{Binding StringFormat=+ startup item: {0}}" />
+                                    <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource SuccessBrush}" Text="{Binding StringFormat=+ startup item: {0}}" />
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
                         <ItemsControl ItemsSource="{Binding SnapshotAbDiff.StartupRemoved}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <TextBlock FontSize="12" Foreground="{DynamicResource DangerBrush}" Text="{Binding StringFormat=- startup item: {0}}" />
+                                    <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource DangerBrush}" Text="{Binding StringFormat=- startup item: {0}}" />
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
@@ -1033,28 +1033,28 @@
                         <ItemsControl ItemsSource="{Binding SnapshotAbDiff.DriversAdded}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <TextBlock FontSize="12" Foreground="{DynamicResource SuccessBrush}" Text="{Binding StringFormat=+ driver: {0}}" />
+                                    <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource SuccessBrush}" Text="{Binding StringFormat=+ driver: {0}}" />
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
                         <ItemsControl ItemsSource="{Binding SnapshotAbDiff.DriversRemoved}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <TextBlock FontSize="12" Foreground="{DynamicResource DangerBrush}" Text="{Binding StringFormat=- driver: {0}}" />
+                                    <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource DangerBrush}" Text="{Binding StringFormat=- driver: {0}}" />
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
                         <ItemsControl ItemsSource="{Binding SnapshotAbDiff.DriverStorePackagesAdded}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <TextBlock FontSize="12" Foreground="{DynamicResource SuccessBrush}" Text="{Binding StringFormat=+ driver store package: {0}}" />
+                                    <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource SuccessBrush}" Text="{Binding StringFormat=+ driver store package: {0}}" />
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
                         <ItemsControl ItemsSource="{Binding SnapshotAbDiff.DriverStorePackagesRemoved}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <TextBlock FontSize="12" Foreground="{DynamicResource DangerBrush}" Text="{Binding StringFormat=- driver store package: {0}}" />
+                                    <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource DangerBrush}" Text="{Binding StringFormat=- driver store package: {0}}" />
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>

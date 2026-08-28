@@ -139,7 +139,7 @@
             <TextBlock Text="{Binding StartDurationStatus}" VerticalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4" />
         </WrapPanel>
         <TextBlock Grid.Row="1" Text="{Binding ServicesPipeTimeoutText}" VerticalAlignment="Bottom" HorizontalAlignment="Right"
-                    FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" MaxWidth="420"
+                    FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" MaxWidth="420"
                     Visibility="{Binding ServicesPipeTimeoutText, Converter={StaticResource NullToVisibilityConverter}}" />
 
         <!-- #192: crash-loop summary card - only the services the scan actually flagged, each with
@@ -171,18 +171,18 @@
                                             <ColumnDefinition Width="*" />
                                             <ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0" FontSize="12.5" FontWeight="SemiBold" Text="{Binding ServiceName}" />
-                                        <TextBlock Grid.Column="1" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}">
+                                        <TextBlock Grid.Column="0" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" Text="{Binding ServiceName}" />
+                                        <TextBlock Grid.Column="1" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}">
                                             <Run Text="Last event " /><Run Text="{Binding LastEventTime, StringFormat={}{0:g}, Mode=OneWay}" />
                                         </TextBlock>
                                     </Grid>
-                                    <TextBlock FontSize="11.5" TextWrapping="Wrap" Margin="0,2,0,0">
+                                    <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,2,0,0">
                                         <Run Text="{Binding TerminatedCount, Mode=OneWay}" /><Run Text=" termination(s), " />
                                         <Run Text="{Binding TimeoutCount, Mode=OneWay}" /><Run Text=" timeout(s), " />
                                         <Run Text="{Binding FailedToStartCount, Mode=OneWay}" /><Run Text=" failed start(s), " />
                                         <Run Text="{Binding ServiceSpecificExitCodeCount, Mode=OneWay}" /><Run Text=" service-specific exit code(s)." />
                                     </TextBlock>
-                                    <TextBlock FontSize="10.5" FontFamily="Consolas" Foreground="{DynamicResource TextSecondaryBrush}"
+                                    <TextBlock FontSize="{StaticResource FontCaption}" FontFamily="Consolas" Foreground="{DynamicResource TextSecondaryBrush}"
                                                 TextWrapping="Wrap" Margin="0,4,0,0" Text="{Binding RecoveryActionsText}" />
                                 </StackPanel>
                             </Border>
@@ -236,7 +236,7 @@
                             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                 <TextBlock Text="{Binding DisplayName}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
                                 <!-- #192: crash-loop badge. -->
-                                <Border Background="{DynamicResource DangerBrush}" CornerRadius="8" Padding="5,1" Margin="6,0,0,0"
+                                <Border Background="{DynamicResource DangerBrush}" CornerRadius="8" Padding="4,0" Margin="6,0,0,0"
                                         VerticalAlignment="Center" ToolTip="{Binding CrashLoopSummaryText}">
                                     <Border.Style>
                                         <Style TargetType="Border">
@@ -248,7 +248,7 @@
                                             </Style.Triggers>
                                         </Style>
                                     </Border.Style>
-                                    <TextBlock Text="CRASH LOOP" FontSize="9" FontWeight="Bold" Foreground="White" />
+                                    <TextBlock Text="CRASH LOOP" FontSize="{StaticResource FontCaption}" FontWeight="Bold" Foreground="White" />
                                 </Border>
                             </StackPanel>
                         </DataTemplate>
@@ -314,7 +314,7 @@
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate>
                             <StackPanel Orientation="Vertical" VerticalAlignment="Center">
-                                <TextBlock Text="Crash-looping" FontSize="10" FontWeight="SemiBold"
+                                <TextBlock Text="Crash-looping" FontSize="{StaticResource FontCaption}" FontWeight="SemiBold"
                                            Foreground="{DynamicResource DangerBrush}"
                                            ToolTip="{Binding CrashLoopCount24H, StringFormat='Terminated unexpectedly {0} time(s) in the last 24h'}">
                                     <TextBlock.Style>
@@ -328,7 +328,7 @@
                                         </Style>
                                     </TextBlock.Style>
                                 </TextBlock>
-                                <TextBlock Text="Orphaned" FontSize="10" FontWeight="SemiBold"
+                                <TextBlock Text="Orphaned" FontSize="{StaticResource FontCaption}" FontWeight="SemiBold"
                                            Foreground="{DynamicResource DangerBrush}"
                                            ToolTip="{Binding OrphanedImagePath, StringFormat='Points at a missing binary: {0}'}">
                                     <TextBlock.Style>
@@ -342,7 +342,7 @@
                                         </Style>
                                     </TextBlock.Style>
                                 </TextBlock>
-                                <TextBlock Text="Unquoted path" FontSize="10" FontWeight="SemiBold"
+                                <TextBlock Text="Unquoted path" FontSize="{StaticResource FontCaption}" FontWeight="SemiBold"
                                            Foreground="{DynamicResource WarningBrush}"
                                            ToolTip="{Binding UnquotedPathCorrected, StringFormat='Corrected: {0}'}">
                                     <TextBlock.Style>
@@ -356,7 +356,7 @@
                                         </Style>
                                     </TextBlock.Style>
                                 </TextBlock>
-                                <TextBlock Text="Broken dependency" FontSize="10" FontWeight="SemiBold"
+                                <TextBlock Text="Broken dependency" FontSize="{StaticResource FontCaption}" FontWeight="SemiBold"
                                            Foreground="{DynamicResource WarningBrush}"
                                            ToolTip="{Binding BrokenDependencyText}">
                                     <TextBlock.Style>
@@ -423,7 +423,7 @@
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
-            <TextBlock Grid.Row="0" Margin="0,0,0,8" TextWrapping="Wrap" FontSize="11.5"
+            <TextBlock Grid.Row="0" Margin="0,0,0,8" TextWrapping="Wrap" FontSize="{StaticResource FontBody}"
                        Foreground="{DynamicResource TextSecondaryBrush}"
                        Text="{Binding SvcHostSplitInfo.CaptionText}" />
             <DataGrid Grid.Row="1" ItemsSource="{Binding SvcHostGroups}" IsReadOnly="True">
@@ -458,12 +458,12 @@
                 <StackPanel Margin="0,0,24,8" MaxWidth="420">
                     <TextBlock Text="Depends on" Style="{StaticResource SubStat}" />
                     <TextBlock Text="{Binding SelectedService.DependsOn, Converter={StaticResource StringListJoinConverter}}"
-                               TextWrapping="Wrap" FontSize="12" Margin="0,2,0,0" />
+                               TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Margin="0,2,0,0" />
                 </StackPanel>
                 <StackPanel MaxWidth="420" Margin="0,0,24,8">
                     <TextBlock Text="Other services depend on this" Style="{StaticResource SubStat}" />
                     <TextBlock Text="{Binding SelectedService.DependentServices, Converter={StaticResource StringListJoinConverter}}"
-                               TextWrapping="Wrap" FontSize="12" Margin="0,2,0,0" />
+                               TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Margin="0,2,0,0" />
                 </StackPanel>
                 <!-- #71: on-demand recovery-actions text - empty (and collapsed) until the
                      "Recovery actions" button is clicked, see ServicesViewModel. -->
@@ -480,7 +480,7 @@
                     </StackPanel.Style>
                     <TextBlock Text="Recovery actions" Style="{StaticResource SubStat}" />
                     <TextBlock Text="{Binding SelectedService.FailureActionsText}"
-                               TextWrapping="Wrap" FontSize="11.5" FontFamily="Consolas" Margin="0,2,0,0" />
+                               TextWrapping="Wrap" FontSize="{StaticResource FontBody}" FontFamily="Consolas" Margin="0,2,0,0" />
                 </StackPanel>
 
                 <!-- #756: on-demand trigger-start conditions - empty (and collapsed) until the
@@ -498,7 +498,7 @@
                     </StackPanel.Style>
                     <TextBlock Text="Trigger-start conditions" Style="{StaticResource SubStat}" />
                     <TextBlock Text="{Binding SelectedService.TriggerInfoText}"
-                               TextWrapping="Wrap" FontSize="11.5" FontFamily="Consolas" Margin="0,2,0,0" />
+                               TextWrapping="Wrap" FontSize="{StaticResource FontBody}" FontFamily="Consolas" Margin="0,2,0,0" />
                 </StackPanel>
 
                 <!-- #752: broken DependOnService reference - visible only once "Run service audit"
@@ -516,7 +516,7 @@
                     </StackPanel.Style>
                     <TextBlock Text="Broken dependency" Style="{StaticResource SubStat}" Foreground="{DynamicResource WarningBrush}" />
                     <TextBlock Text="{Binding SelectedService.BrokenDependencyText}"
-                               TextWrapping="Wrap" FontSize="12" Margin="0,2,0,0" />
+                               TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Margin="0,2,0,0" />
                 </StackPanel>
 
                 <!-- #753: orphaned - ImagePath resolves to a binary that no longer exists, with a
@@ -533,7 +533,7 @@
                         </Style>
                     </StackPanel.Style>
                     <TextBlock Text="Orphaned - missing binary" Style="{StaticResource SubStat}" Foreground="{DynamicResource DangerBrush}" />
-                    <TextBlock Text="{Binding SelectedService.OrphanedImagePath}" TextWrapping="Wrap" FontSize="11.5" FontFamily="Consolas" Margin="0,2,0,4" />
+                    <TextBlock Text="{Binding SelectedService.OrphanedImagePath}" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" FontFamily="Consolas" Margin="0,2,0,4" />
                     <Button Content="Delete service…" HorizontalAlignment="Left" Style="{StaticResource DangerButton}"
                             Command="{Binding DeleteOrphanedServiceCommand}"
                             ToolTip="Runs sc delete after confirmation" />
@@ -552,9 +552,9 @@
                         </Style>
                     </StackPanel.Style>
                     <TextBlock Text="Unquoted service path" Style="{StaticResource SubStat}" Foreground="{DynamicResource WarningBrush}" />
-                    <TextBlock Text="{Binding SelectedService.UnquotedPathOriginal}" TextWrapping="Wrap" FontSize="11" FontFamily="Consolas"
+                    <TextBlock Text="{Binding SelectedService.UnquotedPathOriginal}" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" FontFamily="Consolas"
                                Margin="0,2,0,0" Foreground="{DynamicResource TextSecondaryBrush}" />
-                    <TextBlock Text="{Binding SelectedService.UnquotedPathCorrected}" TextWrapping="Wrap" FontSize="11" FontFamily="Consolas" Margin="0,2,0,0" />
+                    <TextBlock Text="{Binding SelectedService.UnquotedPathCorrected}" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" FontFamily="Consolas" Margin="0,2,0,0" />
                 </StackPanel>
 
                 <!-- #749/#750/#751: SCM failure history, crash-loop count, and dependency root
@@ -576,19 +576,19 @@
                         <ItemsControl ItemsSource="{Binding SelectedService.ScmEvents}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <TextBlock TextWrapping="Wrap" FontSize="11" Margin="0,0,0,5">
+                                    <TextBlock TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Margin="0,0,0,4">
                                         <Run Text="{Binding TimeCreated, StringFormat=g, Mode=OneWay}" Foreground="{DynamicResource TextSecondaryBrush}" />
                                         <Run Text=" - " />
                                         <Run Text="{Binding EventLabel, Mode=OneWay}" FontWeight="SemiBold" />
                                         <LineBreak />
-                                        <Run Text="{Binding Message, Mode=OneWay}" FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        <Run Text="{Binding Message, Mode=OneWay}" FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextSecondaryBrush}" />
                                     </TextBlock>
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
                     </ScrollViewer>
                     <TextBlock Text="Root cause" Style="{StaticResource SubStat}" Margin="0,6,0,0" />
-                    <TextBlock Text="{Binding SelectedService.DependencyRootCauseText}" TextWrapping="Wrap" FontSize="11.5" Margin="0,2,0,0" />
+                    <TextBlock Text="{Binding SelectedService.DependencyRootCauseText}" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Margin="0,2,0,0" />
                 </StackPanel>
 
                 <!-- #758: editable recovery actions - a small form rather than raw sc.exe syntax,
@@ -621,18 +621,18 @@
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
-                        <TextBlock Grid.Row="0" Grid.Column="0" Text="First failure:" VerticalAlignment="Center" FontSize="11" Margin="0,0,8,4" />
+                        <TextBlock Grid.Row="0" Grid.Column="0" Text="First failure:" VerticalAlignment="Center" FontSize="{StaticResource FontBody}" Margin="0,0,8,4" />
                         <ComboBox Grid.Row="0" Grid.Column="1" Margin="0,0,0,4" ItemsSource="{x:Static vm:ServicesViewModel.RecoveryActionOptions}"
                                   SelectedItem="{Binding RecoveryFirstFailureAction}" />
-                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Second failure:" VerticalAlignment="Center" FontSize="11" Margin="0,0,8,4" />
+                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Second failure:" VerticalAlignment="Center" FontSize="{StaticResource FontBody}" Margin="0,0,8,4" />
                         <ComboBox Grid.Row="1" Grid.Column="1" Margin="0,0,0,4" ItemsSource="{x:Static vm:ServicesViewModel.RecoveryActionOptions}"
                                   SelectedItem="{Binding RecoverySecondFailureAction}" />
-                        <TextBlock Grid.Row="2" Grid.Column="0" Text="Subsequent failures:" VerticalAlignment="Center" FontSize="11" Margin="0,0,8,4" />
+                        <TextBlock Grid.Row="2" Grid.Column="0" Text="Subsequent failures:" VerticalAlignment="Center" FontSize="{StaticResource FontBody}" Margin="0,0,8,4" />
                         <ComboBox Grid.Row="2" Grid.Column="1" Margin="0,0,0,4" ItemsSource="{x:Static vm:ServicesViewModel.RecoveryActionOptions}"
                                   SelectedItem="{Binding RecoverySubsequentFailureAction}" />
-                        <TextBlock Grid.Row="3" Grid.Column="0" Text="Reset period (days):" VerticalAlignment="Center" FontSize="11" Margin="0,0,8,4" />
+                        <TextBlock Grid.Row="3" Grid.Column="0" Text="Reset period (days):" VerticalAlignment="Center" FontSize="{StaticResource FontBody}" Margin="0,0,8,4" />
                         <TextBox Grid.Row="3" Grid.Column="1" Margin="0,0,0,4" Text="{Binding RecoveryResetPeriodDays, UpdateSourceTrigger=PropertyChanged}" />
-                        <TextBlock Grid.Row="4" Grid.Column="0" Text="Restart delay (s):" VerticalAlignment="Center" FontSize="11" Margin="0,0,8,4" />
+                        <TextBlock Grid.Row="4" Grid.Column="0" Text="Restart delay (s):" VerticalAlignment="Center" FontSize="{StaticResource FontBody}" Margin="0,0,8,4" />
                         <TextBox Grid.Row="4" Grid.Column="1" Margin="0,0,0,4" Text="{Binding RecoveryRestartDelaySeconds, UpdateSourceTrigger=PropertyChanged}" />
                     </Grid>
                     <Button Content="Save recovery actions…" HorizontalAlignment="Left" Margin="0,4,0,0" Style="{StaticResource PrimaryButton}"
@@ -653,7 +653,7 @@
                         </Style>
                     </StackPanel.Style>
                     <TextBlock Text="Hang diagnosis" Style="{StaticResource SubStat}" Foreground="{DynamicResource WarningBrush}" />
-                    <TextBlock Text="{Binding SelectedService.HangDiagnosisText}" TextWrapping="Wrap" FontSize="11.5" Margin="0,2,0,4" />
+                    <TextBlock Text="{Binding SelectedService.HangDiagnosisText}" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Margin="0,2,0,4" />
                     <Button Content="Force-end host process…" HorizontalAlignment="Left" Style="{StaticResource DangerButton}"
                             Command="{Binding ForceKillHostProcessCommand}"
                             ToolTip="Kills the process currently hosting this service - confirmed first" />
