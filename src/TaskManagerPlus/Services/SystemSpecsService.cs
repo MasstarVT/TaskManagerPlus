@@ -1454,9 +1454,10 @@ public sealed class SystemSpecsService
             {
                 using var sub = root.OpenSubKey(subKeyName);
                 if (sub is null) continue;
+                string label = DefenderExclusionCategoryLabel(subKeyName);
                 foreach (var valueName in sub.GetValueNames())
                     if (!string.IsNullOrWhiteSpace(valueName))
-                        result.Add($"{subKeyName.TrimEnd('s')}: {valueName}");
+                        result.Add($"{label}: {valueName}");
             }
             return result;
         }
@@ -1467,6 +1468,20 @@ public sealed class SystemSpecsService
             return null;
         }
     }
+
+    /// <summary>Singularized display label for a Defender exclusion registry subkey name. A plain
+    /// `TrimEnd('s')` only strips one trailing 's', which mishandles "Processes" -> "Processe" and
+    /// "IpAddresses" -> "IpAddresse" - so this is an explicit map for the four known categories,
+    /// falling back to the raw subkey name (never a wrong guess) for anything this app hasn't
+    /// seen before.</summary>
+    private static string DefenderExclusionCategoryLabel(string subKeyName) => subKeyName switch
+    {
+        "Paths" => "Path",
+        "Processes" => "Process",
+        "Extensions" => "Extension",
+        "IpAddresses" => "IP Address",
+        _ => subKeyName,
+    };
 
     /// <summary>#64: identifiers for a "copy hardware IDs" support-ticket helper - system product
     /// UUID (Win32_ComputerSystemProduct.UUID) and CPU ID (Win32_Processor.ProcessorId). Both are
