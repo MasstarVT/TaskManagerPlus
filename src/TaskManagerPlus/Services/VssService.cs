@@ -488,7 +488,19 @@ public static class VssService
     public static async Task<(bool Success, string Message)> CreateRestorePointAsync(string description)
     {
         string trimmed = string.IsNullOrWhiteSpace(description) ? "Task Manager Plus" : description.Trim();
-        string safeDescription = trimmed.Replace("'", "''");
+
+        // Two separate quoting layers, both of which have to be escaped - RestorePointService's
+        // own Checkpoint-Computer call already does exactly this, and this one previously escaped
+        // only the first. `description` here is free user text (StorageView's restore-point
+        // TextBox) and, via SecurityViewModel, interpolated firewall-rule/OEM target names, any of
+        // which may legitimately contain a double quote:
+        //   1. '' escapes a quote inside PowerShell's single-quoted -Description string;
+        //   2. \" escapes one inside the outer double-quoted -Command argument, which Windows'
+        //      own command-line parser splits before PowerShell ever sees it.
+        // Missing (2) let a description containing a double quote terminate -Command early, so the
+        // restore point silently failed to be created - which matters more than a cosmetic glitch,
+        // because callers create these as the rollback point *before* a destructive change.
+        string safeDescription = trimmed.Replace("'", "''").Replace("\"", "\\\"");
 
         var psi = new ProcessStartInfo("powershell.exe",
             $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"Checkpoint-Computer -Description '{safeDescription}' -RestorePointType MODIFY_SETTINGS\"")

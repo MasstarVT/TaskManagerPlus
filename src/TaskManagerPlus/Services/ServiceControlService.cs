@@ -362,12 +362,32 @@ public sealed class ServiceControlService
             using var proc = Process.Start(psi);
             if (proc is null) return (false, previous, "couldn't start sc.exe");
 
-            string output = proc.StandardOutput.ReadToEnd() + proc.StandardError.ReadToEnd();
+            // Both streams are redirected, so they must be drained *concurrently* with the wait -
+            // reading one to completion before the other is the classic .NET Process redirection
+            // deadlock (the OS pipe buffers are small and fixed-size: if sc.exe fills stderr while
+            // this thread is blocked in stdout's ReadToEnd, the child blocks writing and this
+            // blocks reading, forever - and the WaitForExit timeout below is never even reached).
+            // Same concurrent-read/bounded-wait/kill-on-timeout shape PowerPlanService.RunCapturedAsync
+            // and DiskFragmentationService already use; kept synchronous here because this method's
+            // callers already wrap it in Task.Run.
+            var outputTask = proc.StandardOutput.ReadToEndAsync();
+            var errorTask = proc.StandardError.ReadToEndAsync();
             if (!proc.WaitForExit(10000))
             {
                 try { proc.Kill(); } catch { /* best-effort */ }
                 return (false, previous, "sc.exe timed out");
             }
+
+            // The process has exited, so both pipes are at EOF and these complete promptly; the
+            // bounded wait is belt-and-braces so a wedged reader can't hang the caller either.
+            string output;
+            try
+            {
+                Task.WaitAll(new Task[] { outputTask, errorTask }, 5000);
+                output = (outputTask.IsCompletedSuccessfully ? outputTask.Result : string.Empty)
+                       + (errorTask.IsCompletedSuccessfully ? errorTask.Result : string.Empty);
+            }
+            catch { output = string.Empty; }
             return proc.ExitCode == 0 ? (true, previous, null) : (false, previous, output.Trim());
         }
         catch (Exception ex)

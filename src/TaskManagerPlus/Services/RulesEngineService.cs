@@ -307,11 +307,22 @@ public sealed class RulesEngineService : IDisposable
         // FileSystemWatcher fires multiple events per single logical write (a text editor's save,
         // or this app's own File.WriteAllText) - coalesce with a short debounce rather than
         // re-parsing every pack file two or three times per edit.
-        _debounceTimer?.Dispose();
-        _debounceTimer = new System.Threading.Timer(_ =>
+        //
+        // The swap is locked because FileSystemWatcher raises these callbacks on threadpool
+        // threads and several can be in flight at once: unsynchronized, two events could each
+        // read the old timer, dispose it, and then both assign - leaving the losing racer's timer
+        // neither cancelled nor disposed, so it still fires a redundant LoadPacks (and a duplicate
+        // Reloaded event) 300ms later, leaking one Timer per lost race. LoadPacks itself takes
+        // _lock, but only from inside the timer callback below - never while this lock is held -
+        // so this cannot deadlock against it.
+        lock (_lock)
         {
-            try { LoadPacks(); } catch { /* best-effort - next real change retries */ }
-        }, null, 300, System.Threading.Timeout.Infinite);
+            _debounceTimer?.Dispose();
+            _debounceTimer = new System.Threading.Timer(_ =>
+            {
+                try { LoadPacks(); } catch { /* best-effort - next real change retries */ }
+            }, null, 300, System.Threading.Timeout.Infinite);
+        }
     }
 
     // ----- metric bag (#917) --------------------------------------------------------------------
@@ -1064,7 +1075,13 @@ public sealed class RulesEngineService : IDisposable
     public void Dispose()
     {
         _watcher?.Dispose();
-        _debounceTimer?.Dispose();
+        // Same lock as OnWatcherEvent's swap - disposing concurrently with an in-flight watcher
+        // callback would otherwise race that callback's own dispose/assign pair.
+        lock (_lock)
+        {
+            _debounceTimer?.Dispose();
+            _debounceTimer = null;
+        }
     }
 
     // ----- built-in pack seed (#916) ------------------------------------------------------------

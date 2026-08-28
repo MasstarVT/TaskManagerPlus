@@ -73,7 +73,8 @@ public static class PsuService
 
                 double? wattage = null;
                 var match = WattageInTextRegex.Match(caption);
-                if (match.Success && double.TryParse(match.Groups[1].Value, out var w)) wattage = w;
+                if (match.Success && double.TryParse(match.Groups[1].Value, System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out var w)) wattage = w;
 
                 return new PsuInfo { Name = name, RatedWattageW = wattage, Source = "Win32_SystemEnclosure" };
             }
