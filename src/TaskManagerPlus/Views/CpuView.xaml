@@ -328,7 +328,13 @@
                 <StackPanel>
                     <TextBlock Text="Turbo-boost histogram (this session)" Style="{StaticResource CardTitle}" />
                     <TextBlock Text="What percent of this session's samples fell into each range vs. rated base clock."
-                               Style="{StaticResource SubStat}" Margin="0,-8,0,12" TextWrapping="Wrap" />
+                               Style="{StaticResource SubStat}" Margin="0,-8,0,4" TextWrapping="Wrap" />
+                    <!-- #634: explicit rated-clock reference line + heat-correlation interpretation
+                         for the "Below base" bucket below - long dwell below base without heat is a
+                         power-plan/firmware limit, long dwell below base with heat confirms thermal
+                         throttling. -->
+                    <TextBlock Text="{Binding BoostResidencyText}" Style="{StaticResource SubStat}"
+                               FontWeight="SemiBold" Margin="0,0,0,12" TextWrapping="Wrap" />
                     <ItemsControl ItemsSource="{Binding Performance.TurboHistogram}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
@@ -441,6 +447,188 @@
                             <TextBlock Text="{Binding Features.MitigationOverrideText}" Style="{StaticResource SpecValue}" TextWrapping="Wrap" FontSize="12" />
                         </StackPanel>
                     </Border>
+                </StackPanel>
+            </Border>
+
+            <!-- #627: PL1/PL2/tau inference from a package-power dwell histogram, accumulated only
+                 while under sustained load. Explicitly labeled "inferred, not read from MSRs" - the
+                 real registers need a kernel driver this app deliberately does not ship. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <TextBlock Text="Power dwell histogram (PL1/PL2 inference)" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="{Binding PowerPlateauText}" Style="{StaticResource SubStat}" Margin="0,-8,0,12" TextWrapping="Wrap" />
+                    <ItemsControl ItemsSource="{Binding PowerDwellHistogram}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="70" />
+                                        <ColumnDefinition Width="220" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="{Binding Label}" VerticalAlignment="Center" FontSize="11.5"
+                                               Foreground="{DynamicResource TextSecondaryBrush}" />
+                                    <Border Grid.Column="1" Height="12" CornerRadius="3" Background="{DynamicResource BgElevatedBrush}" HorizontalAlignment="Left" Width="220">
+                                        <Border CornerRadius="3" Background="{DynamicResource WarningBrush}" HorizontalAlignment="Left"
+                                                Width="{Binding Percent, Converter={StaticResource PercentToWidthConverter}, ConverterParameter=220}" />
+                                    </Border>
+                                    <TextBlock Grid.Column="2" Text="{Binding Percent, StringFormat={}{0:0.#}%}" Margin="8,0,0,0"
+                                               VerticalAlignment="Center" FontSize="11" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="No sustained-load samples recorded yet - run something CPU-heavy for a while."
+                               Opacity="0.7" Margin="0,4,0,0">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding PowerDwellHistogram.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- #629: clock-stretching detector - a tiny fixed-work microbenchmark on a slow timer,
+                 compared against the reported effective clock. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <TextBlock Text="Clock-stretching check" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="{Binding ClockStretchText}" Margin="0,-8,0,0" TextWrapping="Wrap">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding ClockStretchDetected}" Value="True">
+                                        <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                        <Setter Property="FontWeight" Value="SemiBold" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- #630: effective- vs. requested-frequency gap - session trend plus a per-NUMA-node
+                 breakdown, both hidden entirely when the underlying per-core counters aren't
+                 available on this Windows/CPU generation. -->
+            <Border Margin="0,16,0,0">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding Performance.CpuFrequencyGapAvailable}" Value="False">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Effective vs. requested frequency" Style="{StaticResource CardTitle}" Margin="0" />
+                        <TextBlock Grid.Column="1" Text="{Binding Performance.CpuFrequencyGapPercent, StringFormat={}{0:+0.#;-0.#;0}pp}" Style="{StaticResource SubStat}" VerticalAlignment="Center" />
+                    </Grid>
+                    <TextBlock Text="OS-requested clock minus silicon-delivered clock, as percentage points of rated max. A persistent positive gap means the OS is asking for more than the silicon delivers."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+                    <lvc:CartesianChart Series="{Binding Performance.CpuFrequencyGapSeries}" XAxes="{Binding Performance.HiddenXAxes}" YAxes="{Binding Performance.FrequencyGapYAxes}"
+                                         Height="140" TooltipPosition="Hidden" LegendPosition="Hidden" Background="Transparent" Margin="0,0,0,10" />
+                    <ItemsControl ItemsSource="{Binding FrequencyGapByGroup}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <views:VfdMeter Title="{Binding NumaNode, StringFormat=NUMA node {0}}" Glow="False" Width="150" Margin="0,0,8,8"
+                                                ValueText="{Binding GapPoints, StringFormat={}{0:+0.#;-0.#;0}, TargetNullValue=–}" Unit="pp"
+                                                AccentBrush="{DynamicResource WarningBrush}" />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #631: core parking and frequency-floor misconfiguration checklist - the first line
+                 (parked cores under load) is always live; the rest fill in from powercfg /qh once
+                 checked. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Processor power management" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Check power settings" Command="{Binding LoadProcessorPowerSettingsCommand}" />
+                    </Grid>
+                    <TextBlock Text="{Binding ProcessorPowerSettingsStatusText}" Margin="0,0,0,10" TextWrapping="Wrap">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding ProcessorPowerSettingsStatusText}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <ItemsControl ItemsSource="{Binding ProcessorPowerChecklist}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8" />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #635: on-demand steady-state snapshot for before/after comparison (BIOS update,
+                 repaste, undervolt change, ...). -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Silicon behavior snapshots" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Snapshot current behavior" Command="{Binding SnapshotCurrentBehaviorCommand}" />
+                    </Grid>
+                    <TextBlock Text="Captures steady-state clock, Vcore, package power, temperature, and throttle percentage as one row - compare before and after a BIOS update, a repaste, or an undervolt change."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,8" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding SiliconSnapshotStatusText}" Margin="0,0,0,8" TextWrapping="Wrap">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding SiliconSnapshotStatusText}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <DataGrid ItemsSource="{Binding SiliconSnapshots}" Height="200" IsReadOnly="True">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Captured" Binding="{Binding Timestamp, StringFormat={}{0:g}}" Width="140" />
+                            <DataGridTextColumn Header="Clock" Binding="{Binding ClockGhz, StringFormat={}{0:0.00} GHz}" Width="90" />
+                            <DataGridTextColumn Header="Vcore" Binding="{Binding VcoreV, StringFormat={}{0:0.###} V}" Width="90" />
+                            <DataGridTextColumn Header="Power" Binding="{Binding PackagePowerW, StringFormat={}{0:0.#} W}" Width="90" />
+                            <DataGridTextColumn Header="Temp" Binding="{Binding TempC, StringFormat={}{0:0.#}°C}" Width="80" />
+                            <DataGridTextColumn Header="Throttle" Binding="{Binding ThrottlePercent, StringFormat={}{0:0.#}%}" Width="*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
                 </StackPanel>
             </Border>
 

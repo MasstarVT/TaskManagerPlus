@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Text.RegularExpressions;
 using TaskManagerPlus.Models;
 
@@ -79,6 +80,50 @@ public static class PowerPlanService
         {
             return "Unknown";
         }
+    }
+
+    /// <summary>#631: parses `powercfg /qh` (query, including hidden settings, for the active
+    /// scheme) for the processor-power sub-group - minimum/maximum processor state and
+    /// core-parking minimum cores, AC and DC. Not a documented/versioned format (same caveat as
+    /// every other powercfg text-parse in this app) - each setting is matched by its bracketed
+    /// friendly name rather than a fixed line offset, and any setting not found in the output is
+    /// left null ("Unknown") rather than guessed.</summary>
+    public static async Task<ProcessorPowerSettings> ReadProcessorPowerSettingsAsync()
+    {
+        string output;
+        try { output = (await RunCapturedAsync("powercfg.exe", "/qh", 15000)).Output; }
+        catch { return new ProcessorPowerSettings(); }
+
+        return new ProcessorPowerSettings
+        {
+            MinProcessorStateAcPercent = ExtractSettingPercent(output, "Minimum processor state", ac: true),
+            MinProcessorStateDcPercent = ExtractSettingPercent(output, "Minimum processor state", ac: false),
+            MaxProcessorStateAcPercent = ExtractSettingPercent(output, "Maximum processor state", ac: true),
+            MaxProcessorStateDcPercent = ExtractSettingPercent(output, "Maximum processor state", ac: false),
+            CoreParkingMinCoresAcPercent = ExtractSettingPercent(output, "Processor performance core parking min cores", ac: true),
+            CoreParkingMinCoresDcPercent = ExtractSettingPercent(output, "Processor performance core parking min cores", ac: false),
+        };
+    }
+
+    /// <summary>Finds the block for one named setting (e.g. "(Minimum processor state)") and reads
+    /// its "Current AC/DC Power Setting Index" hex value - `powercfg /qh` reports processor-state
+    /// and core-parking settings as a raw hex value that IS already the percent (0x00000032 = 50).
+    /// Searches only within that one setting's own block (up to the next "Power Setting GUID:"
+    /// line) so an AC/DC value from an unrelated nearby setting can't be matched by mistake.</summary>
+    private static int? ExtractSettingPercent(string output, string settingFriendlyName, bool ac)
+    {
+        int nameIdx = output.IndexOf($"({settingFriendlyName})", StringComparison.OrdinalIgnoreCase);
+        if (nameIdx < 0) return null;
+
+        int blockEnd = output.IndexOf("Power Setting GUID:", nameIdx + 1, StringComparison.OrdinalIgnoreCase);
+        string block = blockEnd > nameIdx ? output[nameIdx..blockEnd] : output[nameIdx..];
+
+        string label = ac ? "Current AC Power Setting Index" : "Current DC Power Setting Index";
+        var match = Regex.Match(block, $@"{Regex.Escape(label)}:\s*0x([0-9A-Fa-f]+)", RegexOptions.IgnoreCase);
+        if (!match.Success) return null;
+
+        return int.TryParse(match.Groups[1].Value, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out int value)
+            ? value : null;
     }
 
     /// <summary>

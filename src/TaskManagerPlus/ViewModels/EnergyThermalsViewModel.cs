@@ -362,6 +362,54 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
     private bool _vrmHotWhilePackageNotFlag;
     public bool VrmHotWhilePackageNotFlag { get => _vrmHotWhilePackageNotFlag; private set => SetProperty(ref _vrmHotWhilePackageNotFlag, value); }
 
+    // ---- #632: AMD PPT/TDC/EDC limit approximation -----------------------------------------------
+    // Where LibreHardwareMonitorLib exposes a Ryzen SoC/package current sensor alongside the
+    // package power this tab already reads (TotalPackagePowerW), tracks sustained dwell at each
+    // apparent ceiling (power vs. current, both compared against their own session-high) under
+    // sustained load and labels whichever one is more consistently pinned at its ceiling as "the
+    // more consistently binding limit". Explicitly approximate: Ryzen's real limit-reason telemetry
+    // needs the vendor SMU access this app deliberately does not take. Gated on the CPU name
+    // looking like AMD/Ryzen so this framing never shows on Intel silicon, where PPT/TDC/EDC don't
+    // apply - degrades to a hidden card, never a fabricated reading, on any other CPU.
+    public bool IsAmdCpu => _performance.CpuName.Contains("AMD", StringComparison.OrdinalIgnoreCase) ||
+        _performance.CpuName.Contains("Ryzen", StringComparison.OrdinalIgnoreCase);
+
+    private static readonly string[] AmdCurrentNameHints = { "CPU Core", "SoC Current", "Core", "SoC", "CPU" };
+    private const double AmdCeilingFraction = 0.98; // "at its ceiling" = within ~2% of this session's own max
+
+    public ObservableCollection<SensorReading> Currents { get; } = new();
+
+    private double? _amdCurrentA;
+    public double? AmdCurrentA { get => _amdCurrentA; private set => SetProperty(ref _amdCurrentA, value); }
+
+    private double? _amdCurrentSessionMaxA;
+    public double? AmdCurrentSessionMaxA { get => _amdCurrentSessionMaxA; private set => SetProperty(ref _amdCurrentSessionMaxA, value); }
+
+    private double _amdPowerCeilingDwellSeconds;
+    private double _amdCurrentCeilingDwellSeconds;
+    private double _amdTotalDwellSeconds;
+    private DateTime? _lastAmdDwellTick;
+
+    private string _amdLimitVerdictText = string.Empty;
+    public string AmdLimitVerdictText { get => _amdLimitVerdictText; private set => SetProperty(ref _amdLimitVerdictText, value); }
+
+    // ---- #633: inferred non-stock Vcore-vs-frequency evidence ------------------------------------
+    // One of three independent, individually weak inputs to StabilityViewModel's combined
+    // undervolt/overclock instability flag - reuses the #622 Vcore-vs-package-power sampling above
+    // rather than reading Vcore a second time. No vendor "stock" reference curve is available, so
+    // this is a coarse sanity threshold (unusually low Vcore while boosting), not a real comparison
+    // against this CPU's actual stock curve.
+    private const double NonStockVcoreThresholdV = 1.0;
+
+    public bool NonStockVcoreLooksLikely =>
+        VcoreLoadPoints.Count > 0 &&
+        _performance.CpuVsBasePercent >= 0 &&
+        VcoreLoadPoints[^1].Y is { } lastVcore && lastVcore < NonStockVcoreThresholdV;
+
+    public string NonStockVcoreEvidenceText => NonStockVcoreLooksLikely
+        ? $"Vcore reads {VcoreLoadPoints[^1].Y:0.###} V while at/above rated base clock under load - unusually low for that state on typical silicon (inferred, not compared against this CPU's actual stock curve)."
+        : string.Empty;
+
     // ---- #624: PSU inventory + wattage sanity check ---------------------------------------------
     // Win32_PowerSupply/Win32_SystemEnclosure (PsuService) when an OEM populated them; otherwise
     // (the common case) a user-entered wattage persisted to psu.json (PsuSettingsService). Either
@@ -1347,6 +1395,10 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         // above-80% brownout-risk flag.
         TrackPsuLoad(TotalPackagePowerW, GpuPowerDrawW);
 
+        // #632: AMD PPT/TDC/EDC limit approximation - a no-op on non-AMD silicon.
+        var currentReadings = readings.Where(r => r.Type == SensorType.Current && HasNonZeroReading(r)).ToList();
+        TrackAmdLimitApproximation(currentReadings, TotalPackagePowerW);
+
         // #625/#638: coarse power-history log append, at most once a minute - see
         // PowerHistoryLogService's remarks for why this is a periodic append rather than a
         // per-tick write.
@@ -2246,6 +2298,58 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         double varY = points.Sum(p => (p.Y - meanY) * (p.Y - meanY));
         double denom = Math.Sqrt(varX * varY);
         return denom < 1e-9 ? 0 : covXY / denom;
+    }
+
+    // ================================================================================
+    // #632: AMD PPT/TDC/EDC limit approximation
+    // ================================================================================
+
+    /// <summary>See the property block's remarks above. Called every tick from RefreshCoreAsync -
+    /// a no-op (verdict text cleared) on non-AMD silicon.</summary>
+    private void TrackAmdLimitApproximation(List<SensorReading> currentReadings, double? packagePowerW)
+    {
+        if (!IsAmdCpu)
+        {
+            AmdLimitVerdictText = string.Empty;
+            return;
+        }
+
+        Replace(Currents, currentReadings);
+        AmdCurrentA = FindByNameContains(currentReadings, AmdCurrentNameHints);
+        if (AmdCurrentA is { } a)
+            AmdCurrentSessionMaxA = AmdCurrentSessionMaxA is { } max ? Math.Max(max, a) : a;
+
+        if (AmdCurrentA is null || packagePowerW is null)
+        {
+            AmdLimitVerdictText = "No AMD SoC/package current sensor reported by LibreHardwareMonitorLib on this system - can't approximate the PPT vs. TDC/EDC binding limit.";
+            return;
+        }
+
+        var now = DateTime.Now;
+        double elapsed = _lastAmdDwellTick is { } last ? Math.Max(0, (now - last).TotalSeconds) : 0;
+        _lastAmdDwellTick = now;
+
+        // #605's sustained-load stopwatch - reused rather than a second one, since "sustained
+        // load" means the same thing here as it does for the throttle-episode tracking above.
+        bool underLoad = _sustainedLoadStartedAt is not null;
+        if (underLoad)
+        {
+            _amdTotalDwellSeconds += elapsed;
+            if (packagePowerW >= (PowerSessionMaxW ?? 0) * AmdCeilingFraction) _amdPowerCeilingDwellSeconds += elapsed;
+            if (AmdCurrentA >= (AmdCurrentSessionMaxA ?? 0) * AmdCeilingFraction) _amdCurrentCeilingDwellSeconds += elapsed;
+        }
+
+        if (_amdTotalDwellSeconds < 20)
+        {
+            AmdLimitVerdictText = "Not enough sustained-load data yet to approximate the binding limit.";
+            return;
+        }
+
+        double powerShare = _amdPowerCeilingDwellSeconds / _amdTotalDwellSeconds * 100.0;
+        double currentShare = _amdCurrentCeilingDwellSeconds / _amdTotalDwellSeconds * 100.0;
+        string binding = powerShare >= currentShare ? "package power (PPT)" : "current draw (TDC/EDC proxy)";
+
+        AmdLimitVerdictText = $"Package power at its apparent ceiling {powerShare:0}% of sustained-load time, current draw at its apparent ceiling {currentShare:0}% - {binding} looks like the more consistently binding limit. Approximate: Ryzen's real limit-reason telemetry needs vendor SMU access this app doesn't take.";
     }
 
     // ================================================================================

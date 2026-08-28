@@ -20,6 +20,10 @@ public sealed class StabilityViewModel : ObservableObject
 {
     private readonly EventLogService _service = new();
 
+    // #633: needed for the inferred non-stock-Vcore evidence input to the combined
+    // undervolt/overclock instability flag below - see EnergyThermalsViewModel.NonStockVcoreLooksLikely.
+    private readonly EnergyThermalsViewModel _energyThermals;
+
     public ObservableCollection<StabilityEvent> RecentEvents { get; } = new();
     public ObservableCollection<MinidumpInfo> Minidumps { get; } = new();
 
@@ -125,8 +129,24 @@ public sealed class StabilityViewModel : ObservableObject
     private static readonly SKColor AxisTextColor = new(0x9A, 0x9A, 0xA2);
     private static readonly SKColor AxisSeparatorColor = new(0x33, 0x33, 0x3A, 160);
 
-    public StabilityViewModel()
+    // ---- #633: combined "possible unstable undervolt/overclock" flag ---------------------------
+    // Three independent, individually weak signals - WHEA corrected errors (#636), Application-log
+    // access-violation/illegal-instruction faults spread across more than one faulting module (no
+    // single app looks responsible), and an inferred non-stock-looking Vcore reading under load
+    // (EnergyThermalsViewModel's #622 Vcore-vs-power sampling) - become a meaningful "quick flag,
+    // not a verdict" only when at least two of the three line up. Recomputed whenever either of the
+    // two on-demand queries it depends on (RefreshAsync's event scan, LoadWheaEventsAsync's WHEA
+    // count) finishes, plus once more on this tab's own load.
+    private static readonly HashSet<string> UndervoltFaultCodes = new(StringComparer.OrdinalIgnoreCase) { "0xc0000005", "0xc000001d" };
+
+    public ObservableCollection<string> UndervoltInstabilityEvidence { get; } = new();
+
+    private bool _undervoltInstabilitySuspected;
+    public bool UndervoltInstabilitySuspected { get => _undervoltInstabilitySuspected; private set => SetProperty(ref _undervoltInstabilitySuspected, value); }
+
+    public StabilityViewModel(EnergyThermalsViewModel energyThermals)
     {
+        _energyThermals = energyThermals;
         RefreshCommand = new AsyncRelayCommand(RefreshAsync);
         LoadWheaEventsCommand = new AsyncRelayCommand(_ => LoadWheaEventsAsync());
 
@@ -290,6 +310,38 @@ public sealed class StabilityViewModel : ObservableObject
         // #625: cross-references the shutdown banner's own unexpected-shutdown timestamp against
         // the persisted power-history log.
         ComputePowerDrawAtRebootCorrelation(snapshot);
+
+        // #633: RecentEvents just changed - recompute the combined instability flag's
+        // fault-evidence input (the WHEA/Vcore inputs are refreshed from their own load paths).
+        RefreshUndervoltInstabilityFlag();
+    }
+
+    /// <summary>#633: see the property block's remarks above.</summary>
+    private void RefreshUndervoltInstabilityFlag()
+    {
+        UndervoltInstabilityEvidence.Clear();
+
+        bool wheaEvidence = WheaCorrectedCount >= 3;
+        if (wheaEvidence)
+            UndervoltInstabilityEvidence.Add($"{WheaCorrectedCount} corrected WHEA hardware errors recorded in the last 30 days.");
+
+        var faultEvents = RecentEvents.Where(e => e.ExceptionCode is { } code && UndervoltFaultCodes.Contains(code)).ToList();
+        var distinctModules = faultEvents
+            .Where(e => !string.IsNullOrWhiteSpace(e.FaultingModule))
+            .Select(e => e.FaultingModule!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        bool faultEvidence = faultEvents.Count >= 2 && distinctModules.Count >= 2;
+        if (faultEvidence)
+            UndervoltInstabilityEvidence.Add($"{faultEvents.Count} access-violation/illegal-instruction crashes (0xc0000005/0xc000001d) across {distinctModules.Count} different faulting modules - no single app looks responsible.");
+
+        bool vcoreEvidence = _energyThermals.NonStockVcoreLooksLikely;
+        if (vcoreEvidence)
+            UndervoltInstabilityEvidence.Add(_energyThermals.NonStockVcoreEvidenceText);
+
+        // Two or more independent pieces of evidence, out of the three above, before this reads as
+        // more than a single ambiguous signal - "quick flag, not a verdict".
+        UndervoltInstabilitySuspected = UndervoltInstabilityEvidence.Count >= 2;
     }
 
     /// <summary>#610: "N of M recorded hitches occurred while thermally throttled - quick flag,
@@ -384,6 +436,9 @@ public sealed class StabilityViewModel : ObservableObject
         WheaCorrectedCount = events.Count(e => !e.IsFatal);
 
         RefreshWheaCorrectedDailyChart(events);
+
+        // #633: WHEA count just changed - recompute the combined instability flag.
+        RefreshUndervoltInstabilityFlag();
     }
 
     /// <summary>#639: resolves a parsed PCIe bus/device/function against the shared location map -

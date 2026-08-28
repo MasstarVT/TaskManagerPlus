@@ -15,6 +15,14 @@ public sealed class StabilityEvent
     /// every Error/Critical entry is an app crash).</summary>
     public string? FaultingModule { get; init; }
 
+    /// <summary>#633: best-effort "Exception code: 0xNNNNNNNN" extraction from an Application-log
+    /// crash entry's own formatted message (the same Windows Error Reporting "Application Error"
+    /// shape FaultingModule above is pulled from) - null when the message doesn't contain that
+    /// shape. Lowercased for easy comparison against known fault codes (0xc0000005 access
+    /// violation, 0xc000001d illegal instruction) - see StabilityViewModel's undervolt/overclock
+    /// instability-hint remarks.</summary>
+    public string? ExceptionCode { get; init; }
+
     /// <summary>Bugcheck code, only ever populated for a Kernel-Power event 41 - see
     /// EventLogService.ExtractBugcheckCode for why this is best-effort (the insertion-string
     /// layout isn't a documented, versioned contract).</summary>

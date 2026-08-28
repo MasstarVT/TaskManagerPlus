@@ -631,6 +631,35 @@
                 </StackPanel>
             </Border>
 
+            <!-- #632: AMD PPT/TDC/EDC limit approximation - hidden entirely on non-AMD CPUs, since
+                 PPT/TDC/EDC don't apply there. Approximate: Ryzen's real limit-reason telemetry
+                 needs the vendor SMU access this app deliberately does not take. -->
+            <Border Margin="0,16,0,0">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsAmdCpu}" Value="False">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="AMD power/current limit approximation (PPT/TDC/EDC)" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="{Binding AmdLimitVerdictText}" Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+                    <UniformGrid Columns="2">
+                        <views:VfdMeter Title="Package power" Glow="False" Margin="0,0,6,0"
+                                        ValueText="{Binding TotalPackagePowerW, StringFormat={}{0:0.#}, TargetNullValue=–}" Unit="W"
+                                        SubText="{Binding PowerSessionMaxW, StringFormat={}session high {0:0.#} W}"
+                                        AccentBrush="{DynamicResource WarningBrush}" />
+                        <views:VfdMeter Title="SoC/package current" Glow="False" Margin="6,0,0,0"
+                                        ValueText="{Binding AmdCurrentA, StringFormat={}{0:0.#}, TargetNullValue=–}" Unit="A"
+                                        SubText="{Binding AmdCurrentSessionMaxA, StringFormat={}session high {0:0.#} A}"
+                                        AccentBrush="{DynamicResource WarningBrush}" />
+                    </UniformGrid>
+                </StackPanel>
+            </Border>
+
             <!-- #624: PSU inventory + wattage sanity check - a WMI-reported wattage (rare) or a
                  user-entered one, compared against estimated total draw (CPU package + GPU + a
                  fixed platform allowance). -->

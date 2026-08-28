@@ -31,6 +31,10 @@ public sealed class EventLogService
 
     private static readonly Regex FaultingModuleRegex = new(@"Faulting module name:\s*([^,\r\n]+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
+    // #633: "Exception code: 0xNNNNNNNN" from a Windows Error Reporting "Application Error" entry -
+    // the other half of the undervolt/overclock instability hint (alongside FaultingModule above).
+    private static readonly Regex ExceptionCodeRegex = new(@"Exception code:\s*(0x[0-9A-Fa-f]+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
     public StabilitySnapshot Query()
     {
         var events = new List<StabilityEvent>();
@@ -431,6 +435,7 @@ public sealed class EventLogService
                         Level = record.LevelDisplayName ?? string.Empty,
                         Message = Truncate(message, 300),
                         FaultingModule = ExtractFaultingModule(message),
+                        ExceptionCode = ExtractExceptionCode(message),
                         BugcheckCode = record.Id == KernelPowerEventId ? ExtractBugcheckCode(record) : null,
                     });
                 }
@@ -446,6 +451,12 @@ public sealed class EventLogService
     {
         var match = FaultingModuleRegex.Match(message);
         return match.Success ? match.Groups[1].Value.Trim() : null;
+    }
+
+    private static string? ExtractExceptionCode(string message)
+    {
+        var match = ExceptionCodeRegex.Match(message);
+        return match.Success ? match.Groups[1].Value.ToLowerInvariant() : null;
     }
 
     /// <summary>

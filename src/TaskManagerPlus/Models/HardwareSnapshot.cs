@@ -11,6 +11,19 @@ public sealed class HardwareSnapshot
     /// isn't available (older Windows versions don't expose core parking at all) - callers should
     /// treat that the same as "no cores parked" rather than an error.</summary>
     public bool[] CoreParkedFlags { get; init; } = Array.Empty<bool>();
+
+    /// <summary>#630: per-core "% Processor Performance" (the OS-requested clock, as a percent of
+    /// rated max, reflecting turbo multiplier over base) - lined up 1:1 with CpuPerCorePercent.
+    /// Empty when the per-core counter instance array couldn't be created (best-effort, same as
+    /// CoreParkedFlags above).</summary>
+    public double[] CpuPerCoreRequestedPercent { get; init; } = Array.Empty<double>();
+
+    /// <summary>#630: per-core "% of Maximum Frequency" (the silicon-delivered clock, accounting
+    /// for any throttling, as a percent of rated max) - lined up 1:1 with CpuPerCorePercent. A
+    /// persistent gap vs. CpuPerCoreRequestedPercent above means the OS is asking for more than
+    /// the silicon is actually delivering. Empty when unavailable, same as CpuPerCoreRequestedPercent.</summary>
+    public double[] CpuPerCoreDeliveredPercent { get; init; } = Array.Empty<double>();
+
     public double CpuCurrentClockGhz { get; init; }
     public double CpuBaseClockGhz { get; init; }
     public double CpuMaxClockGhz { get; init; }

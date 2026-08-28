@@ -70,6 +70,39 @@
                 </TextBlock>
             </Border>
 
+            <!-- #633: combined "possible unstable undervolt/overclock" flag - three independent,
+                 individually weak signals (WHEA corrected errors, Application-log access-violation/
+                 illegal-instruction faults spread across more than one module, and an inferred
+                 non-stock-looking Vcore reading) that only add up to this banner once at least two
+                 of them line up. Quick flag, not a verdict - its component evidence is itemized
+                 beneath it. -->
+            <Border Background="{DynamicResource BgElevatedBrush}" BorderBrush="{DynamicResource WarningBrush}"
+                    BorderThickness="1" CornerRadius="8" Padding="14,10" Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding UndervoltInstabilitySuspected}" Value="True">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" FontSize="12.5" FontWeight="SemiBold">
+                        <Run Text="Possible unstable undervolt/overclock — multiple independent signals line up. Quick flag, not a verdict." />
+                    </TextBlock>
+                    <ItemsControl ItemsSource="{Binding UndervoltInstabilityEvidence}" Margin="0,6,0,0">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding StringFormat={}• {0}}" Foreground="{DynamicResource WarningBrush}"
+                                           FontSize="11.5" TextWrapping="Wrap" Margin="0,0,0,4" Opacity="0.9" />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
             <!-- #610: throttle-to-stutter correlation - cross-references #604's persisted throttle
                  episodes against the same recorded-events timestamps below. Hidden until there's
                  both at least one throttle episode and one recorded event to compare. -->

@@ -22,6 +22,15 @@ public sealed class HardwareMonitorService : IDisposable
     // one struct) since it's allowed to fail independently: older Windows versions don't expose
     // "Parking Status" at all, in which case this stays empty and every core reports "unparked".
     private readonly PerformanceCounter[] _cpuParkingCounters;
+
+    // #630: per-core "% Processor Performance" (OS-requested clock, reflecting turbo multiplier
+    // over base) and "% of Maximum Frequency" (silicon-delivered clock, accounting for any
+    // throttling) - a persistent gap between the two means the OS is asking for more than the
+    // silicon delivers. Best-effort, same shape as _cpuParkingCounters above: if either counter
+    // name isn't exposed on this Windows version, its array just stays empty rather than failing
+    // the whole service.
+    private readonly PerformanceCounter[] _cpuPerformancePerCoreCounters;
+    private readonly PerformanceCounter[] _cpuMaxFreqPerCoreCounters;
     private readonly PerformanceCounter _cpuTotalPerformanceCounter;
     private readonly PerformanceCounter _diskTimeCounter;
     private readonly PerformanceCounter _diskReadCounter;
@@ -130,6 +139,29 @@ public sealed class HardwareMonitorService : IDisposable
             _cpuParkingCounters = Array.Empty<PerformanceCounter>();
         }
 
+        // #630: same best-effort-array shape as _cpuParkingCounters above.
+        try
+        {
+            _cpuPerformancePerCoreCounters = coreInstances
+                .Select(name => new PerformanceCounter("Processor Information", "% Processor Performance", name, readOnly: true))
+                .ToArray();
+        }
+        catch
+        {
+            _cpuPerformancePerCoreCounters = Array.Empty<PerformanceCounter>();
+        }
+
+        try
+        {
+            _cpuMaxFreqPerCoreCounters = coreInstances
+                .Select(name => new PerformanceCounter("Processor Information", "% of Maximum Frequency", name, readOnly: true))
+                .ToArray();
+        }
+        catch
+        {
+            _cpuMaxFreqPerCoreCounters = Array.Empty<PerformanceCounter>();
+        }
+
         _diskTimeCounter = new PerformanceCounter("PhysicalDisk", "% Disk Time", "_Total", readOnly: true);
         _diskReadCounter = new PerformanceCounter("PhysicalDisk", "Disk Read Bytes/sec", "_Total", readOnly: true);
         _diskWriteCounter = new PerformanceCounter("PhysicalDisk", "Disk Write Bytes/sec", "_Total", readOnly: true);
@@ -193,6 +225,8 @@ public sealed class HardwareMonitorService : IDisposable
         _ = _cpuTotalCounter.NextValue();
         _ = _cpuTotalPerformanceCounter.NextValue();
         foreach (var c in _cpuCoreUsageCounters) _ = c.NextValue();
+        foreach (var c in _cpuPerformancePerCoreCounters) { try { _ = c.NextValue(); } catch { /* best-effort */ } }
+        foreach (var c in _cpuMaxFreqPerCoreCounters) { try { _ = c.NextValue(); } catch { /* best-effort */ } }
         _ = _diskTimeCounter.NextValue();
         _ = _diskReadCounter.NextValue();
         _ = _diskWriteCounter.NextValue();
@@ -236,6 +270,21 @@ public sealed class HardwareMonitorService : IDisposable
             catch { coreParked[i] = false; }
         }
 
+        // #630: per-core requested (% Processor Performance) vs. delivered (% of Maximum
+        // Frequency) clock, as percents of rated max - see the fields' remarks.
+        var perCoreRequested = new double[_cpuPerformancePerCoreCounters.Length];
+        for (int i = 0; i < _cpuPerformancePerCoreCounters.Length; i++)
+        {
+            try { perCoreRequested[i] = Math.Max(0, _cpuPerformancePerCoreCounters[i].NextValue()); }
+            catch { perCoreRequested[i] = 0; }
+        }
+        var perCoreDelivered = new double[_cpuMaxFreqPerCoreCounters.Length];
+        for (int i = 0; i < _cpuMaxFreqPerCoreCounters.Length; i++)
+        {
+            try { perCoreDelivered[i] = Math.Max(0, _cpuMaxFreqPerCoreCounters[i].NextValue()); }
+            catch { perCoreDelivered[i] = 0; }
+        }
+
         double diskPercent = Clamp(_diskTimeCounter.NextValue());
         double diskRead = _diskReadCounter.NextValue();
         double diskWrite = _diskWriteCounter.NextValue();
@@ -265,6 +314,8 @@ public sealed class HardwareMonitorService : IDisposable
             CpuTotalPercent = Math.Round(cpuTotal, 1),
             CpuPerCorePercent = perCore.Select(v => Math.Round(v, 1)).ToArray(),
             CoreParkedFlags = coreParked,
+            CpuPerCoreRequestedPercent = perCoreRequested.Select(v => Math.Round(v, 1)).ToArray(),
+            CpuPerCoreDeliveredPercent = perCoreDelivered.Select(v => Math.Round(v, 1)).ToArray(),
             CpuCurrentClockGhz = currentClockGhz <= 0 ? _cpuBaseClockGhz : currentClockGhz,
             CpuBaseClockGhz = _cpuBaseClockGhz,
             CpuMaxClockGhz = _cpuBaseClockGhz,
@@ -464,6 +515,8 @@ public sealed class HardwareMonitorService : IDisposable
         _cpuTotalPerformanceCounter.Dispose();
         foreach (var c in _cpuCoreUsageCounters) c.Dispose();
         foreach (var c in _cpuParkingCounters) c.Dispose();
+        foreach (var c in _cpuPerformancePerCoreCounters) c.Dispose();
+        foreach (var c in _cpuMaxFreqPerCoreCounters) c.Dispose();
         _diskTimeCounter.Dispose();
         _diskReadCounter.Dispose();
         _diskWriteCounter.Dispose();

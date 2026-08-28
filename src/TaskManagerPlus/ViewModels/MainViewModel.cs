@@ -15,7 +15,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public ServicesViewModel Services { get; } = new();
     public StartupViewModel Startup { get; } = new();
     public SystemSpecsViewModel SystemSpecs { get; } = new();
-    public StabilityViewModel Stability { get; } = new();
+    public StabilityViewModel Stability { get; }
     public SummaryViewModel Summary { get; }
 
     // Thin wrappers over the shared Performance sampler (see CpuViewModel's remarks) - the
@@ -195,6 +195,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         // see each view-model's remarks) and before Summary as before (#64's Health Check card).
         EnergyThermals = new EnergyThermalsViewModel(Performance);
         Cpu = new CpuViewModel(Performance, EnergyThermals, Processes);
+        // #633: needs EnergyThermalsViewModel for the inferred non-stock-Vcore evidence input to
+        // its combined undervolt/overclock instability flag.
+        Stability = new StabilityViewModel(EnergyThermals);
         Memory = new MemoryViewModel(Performance, Processes);
         Storage = new StorageViewModel(Performance, EnergyThermals);
         Network = new NetworkViewModel(Performance);
