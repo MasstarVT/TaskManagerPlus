@@ -55,6 +55,13 @@ public static class TimerResolutionService
     [DllImport("kernel32.dll")]
     private static extern void GetSystemTimePreciseAsFileTime(out long lpSystemTimeAsFileTime);
 
+    /// <summary>#248: the QPC frequency (ticks/sec), read once and cached - reused by
+    /// DwmCompositionService/VBlankJitterService to convert their own QPC readings to milliseconds
+    /// without each redeclaring the same P/Invoke, per the task's own "TimerResolutionService
+    /// already has QPC-frequency-reading code you can reuse" framing. 0 if the syscall fails
+    /// (essentially never happens on any Windows version this app targets).</summary>
+    public static long QpcFrequency { get; } = QueryPerformanceFrequency(out long freq) ? freq : 0;
+
     /// <summary>#225/#234: a cheap syscall - safe to call every light-timer tick (rides
     /// ResponsivenessViewModel.SampleLight - see its own remarks).</summary>
     public static TimerResolutionInfo Read()

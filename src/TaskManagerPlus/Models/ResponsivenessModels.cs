@@ -443,3 +443,157 @@ public sealed class ShellResponsivenessRow
     public double? ResponseMs { get; init; }
     public string ResponseMsText => ResponseMs.HasValue ? $"{ResponseMs.Value:0} ms" : "—";
 }
+
+/// <summary>
+/// #247/#248/#254: one DwmGetCompositionTimingInfo sample - an in-box, no-ETW view of whether the
+/// compositor is keeping up, plus the per-second dropped/missed deltas since the previous sample
+/// (#248) - see DwmCompositionService.Sample's remarks. IsAvailable is false (StatusText explains
+/// why) when the API call itself fails - composition disabled, a remote-desktop session, or a
+/// cbSize mismatch against this Windows build's actual DWM_TIMING_INFO layout - never a guessed
+/// number in that case.
+/// </summary>
+public sealed class DwmCompositionInfo
+{
+    public bool IsAvailable { get; init; }
+    public string StatusText { get; init; } = string.Empty;
+
+    public double RefreshRateHz { get; init; }
+
+    /// <summary>The compositor's own effective frame time - qpcRefreshPeriod converted to
+    /// milliseconds via QueryPerformanceFrequency, falling back to 1000/RefreshRateHz when the QPC
+    /// period field isn't populated on this Windows build.</summary>
+    public double CompositionFrameTimeMs { get; init; }
+
+    public ulong FramesDisplayed { get; init; }
+    public ulong FramesDropped { get; init; }
+    public ulong FramesMissed { get; init; }
+    public uint FramesLate { get; init; }
+    public uint FramesOutstanding { get; init; }
+
+    /// <summary>#248: dropped+missed frames per second since the previous sample - 0 on the first
+    /// sample of a session (no previous counters to diff against yet).</summary>
+    public double DroppedMissedPerSec { get; init; }
+}
+
+/// <summary>#254: HKLM\SYSTEM\CurrentControlSet\Control\GraphicsDrivers HwSchMode/TdrDelay/TdrLevel
+/// - see DwmCompositionService.ReadHardwareScheduling. A missing HwSchMode value means "unsupported
+/// on this Windows build/driver", not "disabled" - shown as Unknown, never guessed as either state.</summary>
+public sealed class HardwareSchedulingInfo
+{
+    public int? HwSchModeRaw { get; init; }
+    public string HwSchModeText { get; init; } = "Unknown";
+    public int? TdrDelaySeconds { get; init; }
+    public string TdrDelayText => TdrDelaySeconds.HasValue ? $"{TdrDelaySeconds} sec" : "Unknown (using Windows' default, ~2 sec)";
+    public int? TdrLevel { get; init; }
+    public string TdrLevelText { get; init; } = "Unknown";
+    public string StatusText { get; init; } = string.Empty;
+}
+
+/// <summary>#249: p50/p99/max DwmFlush()-to-DwmFlush() interval (the vblank period, with jitter) -
+/// see VBlankJitterService. Empty (SampleCount == 0) until the Start/Stop probe has collected at
+/// least one interval.</summary>
+public sealed class VBlankJitterSnapshot
+{
+    public int SampleCount { get; init; }
+    public double P50Ms { get; init; }
+    public double P99Ms { get; init; }
+    public double MaxMs { get; init; }
+    public string StatusText { get; init; } = string.Empty;
+}
+
+/// <summary>
+/// #250/#251/#252: one app's aggregated present/frame-time stats from a PresentMonitorService
+/// capture window - FPS/frame-time (#250) plus 1%-low/0.1%-low/stddev/hitch-count (#251, the
+/// numbers that actually correspond to felt stutter, unlike average FPS) and a best-effort
+/// present-mode classification (#252, "Unknown" is a legitimate outcome - see
+/// PresentMonitorService.ClassifyPresentMode's remarks).
+/// </summary>
+public sealed class PresentAppRow
+{
+    public int Pid { get; init; }
+    public string ProcessName { get; init; } = string.Empty;
+    public int FrameCount { get; init; }
+    public double AvgFps { get; init; }
+    public double AvgFrameTimeMs { get; init; }
+
+    // #251
+    public double Low1PercentFps { get; init; }
+    public double Low01PercentFps { get; init; }
+    public double FrameTimeStdDevMs { get; init; }
+    public int HitchCount { get; init; }
+
+    // #252 - "Unknown" when the captured events didn't carry a recognizable present-mode field.
+    public string PresentModeText { get; init; } = "Unknown";
+    public string PresentModeNote { get; init; } = string.Empty;
+}
+
+/// <summary>#259: one long-running GPU queue packet or preemption event from the same DxgKrnl
+/// capture #250 uses, named to its owning process - see PresentMonitorService.IngestGpuPacket.
+/// "Quick flag, not a verdict": a long packet is a near-miss for a TDR, not a confirmed one - see
+/// the Stability tab for actual TDR (GPU driver reset) event history.</summary>
+public sealed class GpuStallRow
+{
+    public DateTime Timestamp { get; init; }
+    public string ProcessName { get; init; } = string.Empty;
+    public string Kind { get; init; } = string.Empty; // "Long GPU packet" or "Preemption"
+    public double? DurationUs { get; init; }
+    public string DurationText => DurationUs.HasValue ? $"{DurationUs.Value / 1000.0:0.##} ms" : "—";
+}
+
+/// <summary>#253: one monitor's current vs. maximum-supported refresh rate/colour depth, from
+/// EnumDisplayDevices + EnumDisplaySettingsEx - see DisplayModeService.ReadAudit. IsUnderRunning
+/// flags a high-refresh panel left running well below what it supports; "quick flag, not a
+/// verdict" - some users deliberately cap refresh rate for battery life.</summary>
+public sealed class DisplayModeRow
+{
+    public string MonitorName { get; init; } = string.Empty;
+    public int CurrentWidth { get; init; }
+    public int CurrentHeight { get; init; }
+    public int CurrentRefreshHz { get; init; }
+    public int MaxRefreshHz { get; init; }
+    public int CurrentColorDepthBits { get; init; }
+    public bool IsUnderRunning => MaxRefreshHz > 0 && CurrentRefreshHz > 0 && CurrentRefreshHz < MaxRefreshHz * 0.9;
+    public string SummaryText => $"{CurrentWidth}x{CurrentHeight} @ {CurrentRefreshHz} Hz (max {MaxRefreshHz} Hz), {CurrentColorDepthBits}-bit";
+}
+
+/// <summary>#253: all monitors' display-mode audit plus the mixed-refresh-rate flag across them -
+/// see DisplayModeService.ReadAudit.</summary>
+public sealed class DisplayModeAudit
+{
+    public List<DisplayModeRow> Monitors { get; init; } = new();
+    public bool MixedRefreshRates => Monitors.Select(m => m.CurrentRefreshHz).Distinct().Count() > 1;
+    public string StatusText { get; init; } = string.Empty;
+}
+
+/// <summary>#255: Game DVR / fullscreen-optimisation registry audit - GameConfigStore/policy/
+/// GameBar values plus any app under AppCompatFlags\Layers with the fullscreen-optimization-
+/// disabling compatibility token set. See DisplayModeService.ReadGameDvrAudit. Null fields mean
+/// "value not present" (using Windows' default), never a guessed true/false.</summary>
+public sealed class GameDvrAuditInfo
+{
+    public bool? GameDvrEnabled { get; init; }
+    public bool? GameDvrPolicyDisabled { get; init; }
+    public bool? GameBarAutoModeEnabled { get; init; }
+    public List<string> FullscreenOptForcedOffApps { get; init; } = new();
+    public string StatusText { get; init; } = string.Empty;
+}
+
+/// <summary>#256/#257: a live input-queue-delay snapshot (p99/max, from comparing each WM_INPUT's
+/// arrival against its own GetMessageTime() queue timestamp) plus the derived mouse/keyboard
+/// report rate (from the tightest back-to-back raw-input intervals actually observed) and the
+/// registry-configured input queue sizes - see InputLatencyService. SampleCount == 0 means the
+/// probe hasn't collected anything yet (not started, or no input arrived while running).</summary>
+public sealed class InputLatencySnapshot
+{
+    public int SampleCount { get; init; }
+    public double P99DelayMs { get; init; }
+    public double MaxDelayMs { get; init; }
+
+    // #257 - null until enough consecutive same-device events have arrived to estimate a rate.
+    public double? MouseReportHz { get; init; }
+    public double? KeyboardReportHz { get; init; }
+    public string MouseQueueSizeText { get; init; } = "Unknown";
+    public string KeyboardQueueSizeText { get; init; } = "Unknown";
+
+    public string StatusText { get; init; } = string.Empty;
+}

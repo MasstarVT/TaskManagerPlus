@@ -747,6 +747,292 @@
                 </StackPanel>
             </Border>
 
+            <!-- ============================================================================
+                 Display & frames (suggestions.md #247-259) - DWM composition timing, vblank
+                 jitter, a per-process present monitor (frame time/FPS/present mode/stutter),
+                 display-mode/HAGS/Game-DVR audits, and raw-input latency/polling-rate. -->
+            <Separator Margin="0,4,0,20" />
+            <TextBlock Text="Display &amp; frames" FontWeight="Bold" FontSize="18" Margin="0,0,0,12" />
+
+            <!-- #247/#248: DWM composition timing readout + dropped/missed-frames chart - an
+                 in-box, no-ETW view of whether the compositor is keeping up. Rides the cheap
+                 _lightTimer. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="DWM composition timing" FontWeight="SemiBold" Margin="0,0,0,6" />
+                    <TextBlock Text="{Binding DwmComposition.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,10" />
+                    <UniformGrid Columns="2" Margin="0,0,0,10">
+                        <views:VfdMeter Title="Refresh rate" Glow="True" Margin="0,0,8,0"
+                                        ValueText="{Binding DwmComposition.RefreshRateHz, StringFormat={}{0:0.##}}" Unit="Hz"
+                                        SubText="{Binding DwmComposition.CompositionFrameTimeMs, StringFormat={}{0:0.###} ms/frame}"
+                                        AccentBrush="{DynamicResource AccentBrush}" />
+                        <views:VfdMeter Title="Dropped + missed" Glow="True" Margin="8,0,0,0"
+                                        ValueText="{Binding DwmComposition.DroppedMissedPerSec, StringFormat={}{0:0.##}}" Unit="/sec"
+                                        SubText="{Binding DwmComposition.FramesDisplayed, StringFormat={}{0:N0} frame(s) displayed this session}"
+                                        AccentBrush="{DynamicResource WarningBrush}" />
+                    </UniformGrid>
+                    <TextBlock FontSize="12" Margin="0,0,0,8">
+                        <Run Text="Dropped: " FontWeight="SemiBold" /><Run Text="{Binding DwmComposition.FramesDropped, Mode=OneWay}" />
+                        <Run Text="    Missed: " FontWeight="SemiBold" /><Run Text="{Binding DwmComposition.FramesMissed, Mode=OneWay}" />
+                        <Run Text="    Late: " FontWeight="SemiBold" /><Run Text="{Binding DwmComposition.FramesLate, Mode=OneWay}" />
+                        <Run Text="    Outstanding: " FontWeight="SemiBold" /><Run Text="{Binding DwmComposition.FramesOutstanding, Mode=OneWay}" />
+                    </TextBlock>
+                    <lvc:CartesianChart Series="{Binding CompositionDropSeries}" XAxes="{Binding HiddenXAxes}" YAxes="{Binding CompositionDropYAxes}"
+                                         Height="140" TooltipPosition="Hidden" LegendPosition="Hidden" Background="Transparent" />
+                </StackPanel>
+            </Border>
+
+            <!-- #249: vblank jitter probe - Start/Stop-gated (a dedicated background thread
+                 blocking on DwmFlush()). p50/p99/max cover the item; a literal histogram is a
+                 nice-to-have this app skips for now. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="VBlank jitter probe" FontWeight="SemiBold" Margin="0,0,0,6" />
+                    <TextBlock Text="Loops on DwmFlush() and times the interval between vblanks - a healthy system shows a tight distribution around the refresh period; compositor stalls show up as a long tail."
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8" />
+                    <WrapPanel Margin="0,0,0,8">
+                        <Button Content="Start" Command="{Binding StartVBlankCommand}" Style="{StaticResource SuccessButton}" Margin="0,0,8,4" />
+                        <Button Content="Stop" Command="{Binding StopVBlankCommand}" Style="{StaticResource DangerButton}" Margin="0,0,8,4" />
+                    </WrapPanel>
+                    <UniformGrid Columns="3" Margin="0,0,0,8">
+                        <views:VfdMeter Title="p50" Glow="False" Margin="0,0,8,0"
+                                        ValueText="{Binding VBlankSnapshot.P50Ms, StringFormat={}{0:0.###}}" Unit="ms"
+                                        AccentBrush="{DynamicResource TextSecondaryBrush}" />
+                        <views:VfdMeter Title="p99" Glow="True" Margin="8,0,8,0"
+                                        ValueText="{Binding VBlankSnapshot.P99Ms, StringFormat={}{0:0.###}}" Unit="ms"
+                                        AccentBrush="{DynamicResource WarningBrush}" />
+                        <views:VfdMeter Title="Max" Glow="True" Margin="8,0,0,0"
+                                        ValueText="{Binding VBlankSnapshot.MaxMs, StringFormat={}{0:0.###}}" Unit="ms"
+                                        AccentBrush="{DynamicResource DangerBrush}" />
+                    </UniformGrid>
+                    <TextBlock Text="{Binding VBlankSnapshot.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+
+            <!-- #250/#251/#252/#258/#259: per-process present monitor ("PresentMon-lite") -
+                 ETW-based, Start/Stop-gated like the DPC measurement session above. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Present monitor (per-app frame time)" FontWeight="SemiBold" Margin="0,0,0,6" />
+                    <TextBlock Text="Real-time ETW capture of Microsoft-Windows-DxgKrnl/Dwm-Core present/flip/vsync/queue-packet events, correlated per process - actual frame times for whatever is rendering, not just an average FPS."
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8" />
+                    <Border Background="{DynamicResource DangerMutedBrush}" BorderBrush="{DynamicResource DangerBrush}"
+                            BorderThickness="1" CornerRadius="8" Padding="10,6" Margin="0,0,0,8">
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding PresentToolsAvailable}" Value="False">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                        <TextBlock Text="logman.exe/tracerpt.exe weren't found on this system." Foreground="{DynamicResource DangerBrush}" FontSize="12" />
+                    </Border>
+                    <WrapPanel Margin="0,0,0,8">
+                        <Button Content="Start" Command="{Binding StartPresentMonitorCommand}" Style="{StaticResource SuccessButton}" Margin="0,0,8,4" />
+                        <Button Content="Stop" Command="{Binding StopPresentMonitorCommand}" Style="{StaticResource DangerButton}" Margin="0,0,8,4" />
+                        <TextBlock Text="{Binding PresentStatusText}" VerticalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" Margin="0,0,0,4" />
+                    </WrapPanel>
+
+                    <!-- #251: headline stutter numbers for the busiest captured app. -->
+                    <TextBlock Text="{Binding HeadlinePresentRow.ProcessName, StringFormat=Headline app: {0}, TargetNullValue=No app captured yet - press Start and let it render.}"
+                               FontWeight="SemiBold" FontSize="12.5" Margin="0,0,0,6" />
+                    <UniformGrid Columns="4" Margin="0,0,0,4">
+                        <views:VfdMeter Title="Avg FPS" Glow="True" Margin="0,0,8,0"
+                                        ValueText="{Binding HeadlinePresentRow.AvgFps, StringFormat={}{0:0.#}}"
+                                        SubText="{Binding HeadlinePresentRow.AvgFrameTimeMs, StringFormat={}{0:0.##} ms avg}"
+                                        AccentBrush="{DynamicResource AccentBrush}" />
+                        <views:VfdMeter Title="1% low" Glow="False" Margin="8,0,8,0"
+                                        ValueText="{Binding HeadlinePresentRow.Low1PercentFps, StringFormat={}{0:0.#}}" Unit="fps"
+                                        AccentBrush="{DynamicResource WarningBrush}" />
+                        <views:VfdMeter Title="0.1% low" Glow="True" Margin="8,0,8,0"
+                                        ValueText="{Binding HeadlinePresentRow.Low01PercentFps, StringFormat={}{0:0.#}}" Unit="fps"
+                                        AccentBrush="{DynamicResource DangerBrush}" />
+                        <views:VfdMeter Title="Hitches" Glow="False" Margin="8,0,0,0"
+                                        ValueText="{Binding HeadlinePresentRow.HitchCount}"
+                                        SubText="{Binding HeadlinePresentRow.FrameTimeStdDevMs, StringFormat={}stddev {0:0.##} ms}"
+                                        AccentBrush="{DynamicResource TextSecondaryBrush}" />
+                    </UniformGrid>
+                    <TextBlock Text="1%-low/0.1%-low/hitch-count are the numbers that actually correspond to felt stutter, unlike a single average-FPS figure."
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" FontStyle="Italic" TextWrapping="Wrap" Margin="0,0,0,10" />
+
+                    <!-- #258: click-to-photon estimate - hidden whenever the present monitor isn't
+                         currently running, per the item's own framing. -->
+                    <StackPanel Visibility="{Binding IsMeasuringPresent, Converter={StaticResource BoolToVisibilityConverter}}" Margin="0,0,0,10">
+                        <views:VfdMeter Title="Input-to-present estimate" Glow="True" HorizontalAlignment="Left" MinWidth="220"
+                                        ValueText="{Binding InputToPresentMs, StringFormat={}{0:0.#}, TargetNullValue=—}" Unit="ms"
+                                        SubText="Click-to-photon estimate, excluding display panel latency"
+                                        AccentBrush="{DynamicResource AccentBrush}" />
+                        <TextBlock Text="Only available while both this present monitor and the input-latency probe below are running - an estimate, not a certified measurement."
+                                   Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" FontStyle="Italic" TextWrapping="Wrap" Margin="0,4,0,0" />
+                    </StackPanel>
+
+                    <!-- #251 (nice-to-have): frame-time-vs-index scatter for the headline app. -->
+                    <lvc:CartesianChart Series="{Binding FrameTimeScatterSeries}" XAxes="{Binding FrameTimeScatterXAxes}" YAxes="{Binding FrameTimeScatterYAxes}"
+                                         Height="140" TooltipPosition="Hidden" LegendPosition="Hidden" Background="Transparent" Margin="0,0,0,10" />
+
+                    <!-- #250/#252: per-app grid with best-effort present-mode classification. -->
+                    <DataGrid ItemsSource="{Binding PresentAppRows}" MaxHeight="220" IsReadOnly="True" Margin="0,0,0,14">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="App" Binding="{Binding ProcessName}" Width="1.2*" />
+                            <DataGridTextColumn Header="Frames" Binding="{Binding FrameCount}" Width="70" />
+                            <DataGridTextColumn Header="Avg FPS" Binding="{Binding AvgFps, StringFormat={}{0:0.#}}" Width="80" />
+                            <DataGridTextColumn Header="Avg frame (ms)" Binding="{Binding AvgFrameTimeMs, StringFormat={}{0:0.##}}" Width="110" />
+                            <DataGridTextColumn Header="1% low" Binding="{Binding Low1PercentFps, StringFormat={}{0:0.#}}" Width="70" />
+                            <DataGridTextColumn Header="0.1% low" Binding="{Binding Low01PercentFps, StringFormat={}{0:0.#}}" Width="70" />
+                            <DataGridTextColumn Header="Hitches" Binding="{Binding HitchCount}" Width="70" />
+                            <!-- #252: "Unknown" is a legitimate outcome here, not a bug - see
+                                 PresentMonitorService.ClassifyPresentMode's remarks. -->
+                            <DataGridTextColumn Header="Present mode" Binding="{Binding PresentModeText}" Width="1.4*" />
+                            <DataGridTextColumn Header="What it means" Binding="{Binding PresentModeNote}" Width="2.4*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+
+                    <!-- #259: long-running GPU packets / preemption events, named to their owning
+                         process - a plain-text cross-link to the Stability tab's own TDR history
+                         satisfies this item's ask without new cross-tab plumbing. -->
+                    <TextBlock Text="GPU packet &amp; preemption stalls" FontWeight="SemiBold" FontSize="12.5" Margin="0,0,0,4" />
+                    <DataGrid ItemsSource="{Binding GpuStallRows}" MaxHeight="180" IsReadOnly="True">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Time" Binding="{Binding Timestamp, StringFormat={}{0:T}}" Width="90" />
+                            <DataGridTextColumn Header="Process" Binding="{Binding ProcessName}" Width="1.4*" />
+                            <DataGridTextColumn Header="Kind" Binding="{Binding Kind}" Width="120" />
+                            <DataGridTextColumn Header="Duration" Binding="{Binding DurationText}" Width="90" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <TextBlock Text="Quick flag, not a verdict: a long GPU packet or a preemption event is a near-miss for a TDR (GPU driver reset), not a confirmed one - see the Stability tab's own TDR event history for actual driver-reset counts."
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" FontStyle="Italic" TextWrapping="Wrap" Margin="0,8,0,0" />
+                </StackPanel>
+            </Border>
+
+            <!-- #253/#254/#255: display-mode/refresh-rate audit, hardware-accelerated GPU
+                 scheduling + TDR settings, and the Game DVR/fullscreen-optimisation audit - all
+                 fast registry/API reads, loaded once at start-up plus this shared Refresh. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <Grid Margin="0,0,0,6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Display mode, GPU scheduling &amp; Game DVR audit" FontWeight="SemiBold" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Refresh" Command="{Binding LoadDisplayAuditCommand}" Padding="10,4" />
+                    </Grid>
+
+                    <!-- #253 -->
+                    <TextBlock Text="#253: refresh rate &amp; display mode" FontWeight="SemiBold" FontSize="12.5" Margin="0,4,0,4" />
+                    <TextBlock Text="{Binding DisplayModeAudit.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,6" />
+                    <TextBlock Text="Multiple monitors are running at different refresh rates." Foreground="{DynamicResource WarningBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,6">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding DisplayModeAudit.MixedRefreshRates}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <DataGrid ItemsSource="{Binding DisplayModeAudit.Monitors}" MaxHeight="160" IsReadOnly="True" Margin="0,0,0,14">
+                        <DataGrid.RowStyle>
+                            <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsUnderRunning}" Value="True">
+                                        <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </DataGrid.RowStyle>
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Monitor" Binding="{Binding MonitorName}" Width="1.6*" />
+                            <DataGridTextColumn Header="Current" Binding="{Binding SummaryText}" Width="2.2*" />
+                            <DataGridTextColumn Header="Under-running?" Binding="{Binding IsUnderRunning}" Width="110" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+
+                    <!-- #254 -->
+                    <TextBlock Text="#254: hardware-accelerated GPU scheduling" FontWeight="SemiBold" FontSize="12.5" Margin="0,0,0,4" />
+                    <TextBlock FontSize="12.5" Margin="0,0,0,2">
+                        <Run Text="HAGS: " FontWeight="SemiBold" /><Run Text="{Binding HardwareScheduling.HwSchModeText, Mode=OneWay}" />
+                    </TextBlock>
+                    <TextBlock FontSize="12.5" Margin="0,0,0,2">
+                        <Run Text="TDR delay: " FontWeight="SemiBold" /><Run Text="{Binding HardwareScheduling.TdrDelayText, Mode=OneWay}" />
+                    </TextBlock>
+                    <TextBlock FontSize="12.5" Margin="0,0,0,8">
+                        <Run Text="TDR level: " FontWeight="SemiBold" /><Run Text="{Binding HardwareScheduling.TdrLevelText, Mode=OneWay}" />
+                    </TextBlock>
+                    <TextBlock Text="{Binding HardwareScheduling.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" FontStyle="Italic" TextWrapping="Wrap" Margin="0,0,0,14" />
+
+                    <!-- #255 -->
+                    <TextBlock Text="#255: Game DVR &amp; fullscreen optimisation" FontWeight="SemiBold" FontSize="12.5" Margin="0,0,0,4" />
+                    <TextBlock Text="{Binding GameDvrAudit.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,6" />
+                    <TextBlock FontSize="12.5" Margin="0,0,0,2">
+                        <Run Text="Game Bar auto-mode: " FontWeight="SemiBold" /><Run Text="{Binding GameDvrAudit.GameBarAutoModeEnabled, Mode=OneWay, TargetNullValue=Unknown}" />
+                    </TextBlock>
+                    <TextBlock Text="Apps with fullscreen optimizations force-disabled (compatibility layer):" FontSize="12" Margin="0,4,0,2">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding GameDvrAudit.FullscreenOptForcedOffApps.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <ItemsControl ItemsSource="{Binding GameDvrAudit.FullscreenOptForcedOffApps}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding}" FontSize="11.5" FontFamily="Consolas" TextWrapping="Wrap" Margin="0,0,0,2" />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #256/#257: raw-input queue-delay probe + derived polling-rate readout -
+                 Start/Stop-gated (a live hidden window + message pump). -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Input latency &amp; polling rate" FontWeight="SemiBold" Margin="0,0,0,6" />
+                    <TextBlock Text="Registers for raw mouse/keyboard input on a hidden window and compares each event's arrival against its own OS-queue timestamp - how long input sat in the queue before this app saw it, system-wide."
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8" />
+                    <WrapPanel Margin="0,0,0,8">
+                        <Button Content="Start" Command="{Binding StartInputLatencyCommand}" Style="{StaticResource SuccessButton}" Margin="0,0,8,4" />
+                        <Button Content="Stop" Command="{Binding StopInputLatencyCommand}" Style="{StaticResource DangerButton}" Margin="0,0,8,4" />
+                    </WrapPanel>
+                    <UniformGrid Columns="2" Margin="0,0,0,10">
+                        <views:VfdMeter Title="Queue delay p99" Glow="True" Margin="0,0,8,0"
+                                        ValueText="{Binding InputLatencySnapshot.P99DelayMs, StringFormat={}{0:0.#}}" Unit="ms"
+                                        SubText="{Binding InputLatencySnapshot.MaxDelayMs, StringFormat={}max {0:0.#} ms}"
+                                        AccentBrush="{DynamicResource WarningBrush}" />
+                        <views:VfdMeter Title="Samples" Glow="False" Margin="8,0,0,0"
+                                        ValueText="{Binding InputLatencySnapshot.SampleCount}"
+                                        AccentBrush="{DynamicResource TextSecondaryBrush}" />
+                    </UniformGrid>
+                    <TextBlock Text="{Binding InputLatencySnapshot.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,10" />
+
+                    <Separator Margin="0,0,0,10" />
+                    <TextBlock Text="#257: polling rate &amp; input queue size" FontWeight="SemiBold" FontSize="12.5" Margin="0,0,0,4" />
+                    <TextBlock FontSize="12.5" Margin="0,0,0,2">
+                        <Run Text="Mouse: " FontWeight="SemiBold" />
+                        <Run Text="{Binding InputLatencySnapshot.MouseReportHz, StringFormat={}{0:0} Hz, TargetNullValue=Unknown - move the mouse while this is running}" />
+                        <Run Text="   (queue size: " /><Run Text="{Binding InputLatencySnapshot.MouseQueueSizeText, Mode=OneWay}" /><Run Text=")" />
+                    </TextBlock>
+                    <TextBlock FontSize="12.5" Margin="0,0,0,2">
+                        <Run Text="Keyboard: " FontWeight="SemiBold" />
+                        <Run Text="{Binding InputLatencySnapshot.KeyboardReportHz, StringFormat={}{0:0} Hz, TargetNullValue=Unknown - type while this is running}" />
+                        <Run Text="   (queue size: " /><Run Text="{Binding InputLatencySnapshot.KeyboardQueueSizeText, Mode=OneWay}" /><Run Text=")" />
+                    </TextBlock>
+                    <TextBlock Text="Report rate is derived from the tightest back-to-back intervals actually observed while running, not a direct hardware read - a &quot;1000Hz&quot; mouse genuinely reporting at 125Hz becomes visible here."
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" FontStyle="Italic" TextWrapping="Wrap" Margin="0,6,0,0" />
+                </StackPanel>
+            </Border>
+
         </StackPanel>
     </ScrollViewer>
 </UserControl>

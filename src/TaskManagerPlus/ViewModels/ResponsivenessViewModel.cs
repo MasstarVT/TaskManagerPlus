@@ -56,6 +56,25 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
     // the cheap _lightTimer above. Every 4s per CLAUDE's "every few seconds" guidance for this item.
     private readonly DispatcherTimer _probeTimer;
     private bool _isProbing;
+
+    // #247/#248/#254: DWM composition timing + hardware-scheduling/TDR registry read - see
+    // DwmCompositionService's remarks. #247/#248 ride the cheap _lightTimer; #254 is loaded once
+    // at start-up plus LoadDisplayAuditCommand's manual refresh, alongside #253/#255 below.
+    private readonly DwmCompositionService _dwm = new();
+
+    // #249: vblank jitter probe - a dedicated background thread, Start/Stop-gated (see the class's
+    // own remarks on why DwmFlush()-based polling can't run unconditionally).
+    private readonly VBlankJitterService _vblank = new();
+
+    // #250/#251/#252/#258/#259: ETW-based present monitor ("PresentMon-lite") - the expensive,
+    // Start/Stop-gated path this chunk's #251/#252/#258/#259 all build on top of.
+    private readonly PresentMonitorService _presentMonitor = new();
+    private CancellationTokenSource? _presentCts;
+    private Task? _presentLoopTask;
+
+    // #256/#257: raw-input queue-delay/polling-rate probe - a live hidden window + message pump,
+    // Start/Stop-gated like the vblank probe above.
+    private readonly InputLatencyService _inputLatency = new();
     private Dictionary<string, DriverIdentityInfo> _driverIdentities = new(StringComparer.OrdinalIgnoreCase);
 
     // #216: bare driver filename -> best-effort device friendly name(s), loaded once alongside
@@ -324,6 +343,96 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
     private string _shellExtensionNoteText = string.Empty;
     public string ShellExtensionNoteText { get => _shellExtensionNoteText; private set => SetProperty(ref _shellExtensionNoteText, value); }
 
+    // ----- #247-259: Display & frames -----------------------------------------------------------
+
+    // #247/#248: DWM composition timing, rides the cheap _lightTimer.
+    private DwmCompositionInfo _dwmComposition = new() { StatusText = "Loading..." };
+    public DwmCompositionInfo DwmComposition { get => _dwmComposition; private set => SetProperty(ref _dwmComposition, value); }
+
+    // #248: dropped+missed composition frames/sec, glow+core LineSeries pair over the shared
+    // HistoryLength window - the same pattern as DpcLatencyHistory above.
+    public ObservableCollection<double> CompositionDropHistory { get; } = NewHistory(0);
+    private readonly LineSeries<double> _compDropGlow;
+    private readonly LineSeries<double> _compDropCore;
+    public ISeries[] CompositionDropSeries { get; }
+    public Axis[] CompositionDropYAxes { get; }
+
+    // #253/#255: display-mode audit (refresh rate/colour depth per monitor) + Game DVR/fullscreen-
+    // optimisation audit - fast reads, loaded once at start-up plus a manual refresh; #254's
+    // hardware-scheduling/TDR read rides the same refresh since it's the same cost tier.
+    private DisplayModeAudit _displayModeAudit = new() { StatusText = "Loading..." };
+    public DisplayModeAudit DisplayModeAudit { get => _displayModeAudit; private set => SetProperty(ref _displayModeAudit, value); }
+
+    private GameDvrAuditInfo _gameDvrAudit = new() { StatusText = "Loading..." };
+    public GameDvrAuditInfo GameDvrAudit { get => _gameDvrAudit; private set => SetProperty(ref _gameDvrAudit, value); }
+
+    private HardwareSchedulingInfo _hardwareScheduling = new() { StatusText = "Loading..." };
+    public HardwareSchedulingInfo HardwareScheduling { get => _hardwareScheduling; private set => SetProperty(ref _hardwareScheduling, value); }
+
+    private bool _isLoadingDisplayAudit;
+    public bool IsLoadingDisplayAudit { get => _isLoadingDisplayAudit; private set => SetProperty(ref _isLoadingDisplayAudit, value); }
+
+    public AsyncRelayCommand LoadDisplayAuditCommand { get; }
+
+    // #249: vblank jitter probe - Start/Stop-gated.
+    private bool _isMeasuringVBlank;
+    public bool IsMeasuringVBlank { get => _isMeasuringVBlank; private set => SetProperty(ref _isMeasuringVBlank, value); }
+
+    private VBlankJitterSnapshot _vBlankSnapshot = new() { StatusText = "Not running - press Start." };
+    public VBlankJitterSnapshot VBlankSnapshot { get => _vBlankSnapshot; private set => SetProperty(ref _vBlankSnapshot, value); }
+
+    public RelayCommand StartVBlankCommand { get; }
+    public RelayCommand StopVBlankCommand { get; }
+
+    // #250/#251/#252/#258/#259: the present-monitor measurement session - Start/Stop-gated exactly
+    // like the DPC measurement session above.
+    public bool PresentToolsAvailable => _presentMonitor.ToolsAvailable;
+
+    private bool _isMeasuringPresent;
+    public bool IsMeasuringPresent { get => _isMeasuringPresent; private set => SetProperty(ref _isMeasuringPresent, value); }
+
+    private string _presentStatusText = "Not measuring — press Start to begin sampling present/frame-time events.";
+    public string PresentStatusText { get => _presentStatusText; private set => SetProperty(ref _presentStatusText, value); }
+
+    public ObservableCollection<PresentAppRow> PresentAppRows { get; } = new();
+
+    /// <summary>#251: the busiest (most frames captured) app this session - the headline card's
+    /// "the app" for the 1%-low/0.1%-low/stddev/hitch numbers.</summary>
+    public PresentAppRow? HeadlinePresentRow => PresentAppRows.Count > 0 ? PresentAppRows[0] : null;
+
+    // #251: frame-time-vs-index scatter for the headline app - a nice-to-have, matching
+    // EnergyThermalsViewModel's fan-curve ScatterSeries<ObservablePoint> pattern (no glow/core
+    // pairing - a point cloud, not a line).
+    public ObservableCollection<ObservablePoint> FrameTimeScatterPoints { get; } = new();
+    private readonly ScatterSeries<ObservablePoint> _frameTimeScatter;
+    public ISeries[] FrameTimeScatterSeries { get; }
+    public Axis[] FrameTimeScatterXAxes { get; }
+    public Axis[] FrameTimeScatterYAxes { get; }
+
+    // #259: long-running GPU packets / preemption events from the same capture, named to their
+    // owning process.
+    public ObservableCollection<GpuStallRow> GpuStallRows { get; } = new();
+
+    public AsyncRelayCommand StartPresentMonitorCommand { get; }
+    public RelayCommand StopPresentMonitorCommand { get; }
+
+    // #256/#257: raw-input queue-delay/polling-rate probe - Start/Stop-gated.
+    private bool _isMeasuringInput;
+    public bool IsMeasuringInput { get => _isMeasuringInput; private set => SetProperty(ref _isMeasuringInput, value); }
+
+    private InputLatencySnapshot _inputLatencySnapshot = new() { StatusText = "Not running - press Start." };
+    public InputLatencySnapshot InputLatencySnapshot { get => _inputLatencySnapshot; private set => SetProperty(ref _inputLatencySnapshot, value); }
+
+    public RelayCommand StartInputLatencyCommand { get; }
+    public RelayCommand StopInputLatencyCommand { get; }
+
+    // #258: click-to-photon estimate, pairing InputLatencyService's last raw-input arrival against
+    // PresentMonitorService's next captured frame for the headline app - see PresentLoopAsync.
+    // Degrades to hidden in XAML whenever IsMeasuringPresent is false (bound off the same bool
+    // #250 uses), per the item's own framing.
+    private double? _inputToPresentMs;
+    public double? InputToPresentMs { get => _inputToPresentMs; private set => SetProperty(ref _inputToPresentMs, value); }
+
     public ResponsivenessViewModel(ProcessesViewModel processes)
     {
         _processes = processes;
@@ -371,6 +480,49 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
         };
         LatencySeries = new ISeries[] { _latencyGlow, _latencyCore, _thresholdLine };
 
+        // #248: composition dropped+missed-frames/sec, same glow+core pairing as the DPC chart above.
+        CompositionDropYAxes = new[]
+        {
+            new Axis
+            {
+                MinLimit = 0,
+                Labeler = v => $"{v:0.#}/s",
+                LabelsPaint = new SolidColorPaint(AxisTextColor),
+                SeparatorsPaint = new SolidColorPaint(AxisSeparatorColor) { StrokeThickness = 1 },
+            },
+        };
+        var compColor = SKColors.MediumPurple;
+        _compDropGlow = new LineSeries<double>
+        {
+            Values = CompositionDropHistory,
+            Stroke = new SolidColorPaint(compColor.WithAlpha(70), GlowStrokeWidth),
+            Fill = null, GeometryStroke = null, GeometryFill = null,
+            LineSmoothness = 0.3, IsHoverable = false, IsVisibleAtLegend = false,
+        };
+        _compDropCore = new LineSeries<double>
+        {
+            Values = CompositionDropHistory,
+            Name = "Dropped + missed frames/sec",
+            Stroke = new SolidColorPaint(compColor, CoreStrokeWidth),
+            Fill = new LinearGradientPaint(compColor.WithAlpha(90), compColor.WithAlpha(0), new SKPoint(0, 0), new SKPoint(0, 1)),
+            GeometryStroke = null, GeometryFill = null, LineSmoothness = 0.3,
+        };
+        CompositionDropSeries = new ISeries[] { _compDropGlow, _compDropCore };
+
+        // #251: frame-time-vs-index scatter for the headline present-monitor app - no glow pair,
+        // matching EnergyThermalsViewModel's fan-curve scatter (a point cloud doesn't read well
+        // with one).
+        FrameTimeScatterXAxes = new[] { new Axis { Name = "Frame #", MinLimit = 0, LabelsPaint = new SolidColorPaint(AxisTextColor), SeparatorsPaint = new SolidColorPaint(AxisSeparatorColor) { StrokeThickness = 1 } } };
+        FrameTimeScatterYAxes = new[] { new Axis { Name = "Frame time (ms)", MinLimit = 0, LabelsPaint = new SolidColorPaint(AxisTextColor), SeparatorsPaint = new SolidColorPaint(AxisSeparatorColor) { StrokeThickness = 1 } } };
+        _frameTimeScatter = new ScatterSeries<ObservablePoint>
+        {
+            Values = FrameTimeScatterPoints,
+            Fill = new SolidColorPaint(SKColors.DeepSkyBlue.WithAlpha(140)),
+            Stroke = null,
+            GeometrySize = 6,
+        };
+        FrameTimeScatterSeries = new ISeries[] { _frameTimeScatter };
+
         StartMeasurementCommand = new AsyncRelayCommand(() => StartMeasurementAsync(), () => !IsMeasuring && DpcToolsAvailable);
         StopMeasurementCommand = new RelayCommand(() => StopMeasurement(), () => IsMeasuring);
         CopySummaryCommand = new RelayCommand(() => CopySummary(), () => !string.IsNullOrEmpty(SessionSummaryText));
@@ -391,6 +543,14 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
         OpenSleepStudyReportCommand = new RelayCommand(() => { if (_sleepStudyReportPath is not null) WprCaptureService.OpenInDefaultApp(_sleepStudyReportPath); }, () => _sleepStudyReportPath is not null);
 
         CreateDumpCommand = new AsyncRelayCommand(CreateDumpAsync, () => SelectedHungWindow is not null);
+
+        LoadDisplayAuditCommand = new AsyncRelayCommand(LoadDisplayAuditAsync, () => !IsLoadingDisplayAudit);
+        StartVBlankCommand = new RelayCommand(StartVBlank, () => !IsMeasuringVBlank);
+        StopVBlankCommand = new RelayCommand(StopVBlank, () => IsMeasuringVBlank);
+        StartPresentMonitorCommand = new AsyncRelayCommand(StartPresentMonitorAsync, () => !IsMeasuringPresent && PresentToolsAvailable);
+        StopPresentMonitorCommand = new RelayCommand(StopPresentMonitor, () => IsMeasuringPresent);
+        StartInputLatencyCommand = new RelayCommand(StartInputLatency, () => !IsMeasuringInput);
+        StopInputLatencyCommand = new RelayCommand(StopInputLatency, () => IsMeasuringInput);
 
         // #237: load the persisted hang log before the first sample so HangsToday/LongestHang read
         // correctly even before this session has produced a single new hang.
@@ -425,6 +585,10 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
         // #246: the shell-extension count is a registry-tree walk, not a per-tick cost - loaded
         // once at start-up like the driver-identity/device-topology blocks above.
         _ = LoadShellExtensionNoteAsync();
+
+        // #253/#254/#255: display-mode/HAGS/GameDVR audit - fast reads, loaded once at start-up
+        // plus LoadDisplayAuditCommand's manual refresh, same tier as the device-topology block.
+        _ = LoadDisplayAuditAsync();
     }
 
     /// <summary>#211/#216: driver metadata join plus the best-effort driver-file -> device-name
@@ -770,6 +934,21 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
             TotalUserHandles = totalUser,
             TotalGdiHandles = totalGdi,
         };
+
+        // #247/#248: DWM composition timing - a cheap dwmapi.dll call, fine on this tick.
+        DwmComposition = _dwm.Sample();
+        CompositionDropHistory.Add(DwmComposition.IsAvailable ? DwmComposition.DroppedMissedPerSec : 0);
+        if (CompositionDropHistory.Count > HistoryLength) CompositionDropHistory.RemoveAt(0);
+
+        // #249: vblank jitter snapshot - cheap (bounded-list percentile math), safe every tick
+        // regardless of whether the probe is currently running. The probe's own background thread
+        // can stop itself (composition unavailable) without going through StopVBlank, so reconcile
+        // IsMeasuringVBlank from the service's actual state here too.
+        VBlankSnapshot = _vblank.GetSnapshot();
+        if (IsMeasuringVBlank && !_vblank.IsRunning) IsMeasuringVBlank = false;
+
+        // #256/#257: input-latency snapshot - same "cheap to recompute every tick" reasoning.
+        InputLatencySnapshot = _inputLatency.GetSnapshot();
     }
 
     /// <summary>#213: Start button - resets the session, arms IsMeasuring, and kicks off a
@@ -971,6 +1150,160 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
         }
     }
 
+    /// <summary>#253/#254/#255: display-mode audit, hardware-scheduling/TDR registry read, and the
+    /// Game DVR/fullscreen-optimisation audit - three fast reads bundled into one on-demand load
+    /// (start-up plus LoadDisplayAuditCommand's manual refresh), matching LoadDeviceTopologyAsync's
+    /// own "several small facets of the same refresh" grouping.</summary>
+    private async Task LoadDisplayAuditAsync()
+    {
+        if (IsLoadingDisplayAudit) return;
+        IsLoadingDisplayAudit = true;
+        try
+        {
+            var displayTask = Task.Run(DisplayModeService.ReadAudit);
+            var gameDvrTask = Task.Run(DisplayModeService.ReadGameDvrAudit);
+            var hwSchedTask = Task.Run(DwmCompositionService.ReadHardwareScheduling);
+            await Task.WhenAll(displayTask, gameDvrTask, hwSchedTask);
+
+            DisplayModeAudit = displayTask.Result;
+            GameDvrAudit = gameDvrTask.Result;
+            HardwareScheduling = hwSchedTask.Result;
+        }
+        catch (Exception ex)
+        {
+            DisplayModeAudit = new DisplayModeAudit { StatusText = $"Load failed: {ex.Message}" };
+        }
+        finally
+        {
+            IsLoadingDisplayAudit = false;
+        }
+    }
+
+    /// <summary>#249: Start button - see VBlankJitterService's own remarks for why Stop has bounded
+    /// (not instant) latency.</summary>
+    private void StartVBlank()
+    {
+        if (IsMeasuringVBlank) return;
+        _vblank.Start();
+        IsMeasuringVBlank = true;
+        VBlankSnapshot = _vblank.GetSnapshot();
+    }
+
+    private void StopVBlank()
+    {
+        if (!IsMeasuringVBlank) return;
+        _vblank.Stop();
+        IsMeasuringVBlank = false;
+        VBlankSnapshot = _vblank.GetSnapshot();
+    }
+
+    /// <summary>#250: Start button - resets the session and kicks off a background loop of short
+    /// present/frame-time captures until Stop is pressed, mirroring StartMeasurementAsync/
+    /// MeasureLoopAsync above.</summary>
+    private async Task StartPresentMonitorAsync()
+    {
+        if (IsMeasuringPresent || !PresentToolsAvailable) return;
+
+        _presentMonitor.ResetSession();
+        PresentAppRows.Clear();
+        GpuStallRows.Clear();
+        FrameTimeScatterPoints.Clear();
+        InputToPresentMs = null;
+        PresentStatusText = "Starting present/frame-time capture...";
+        OnPropertyChanged(nameof(HeadlinePresentRow));
+
+        _presentCts = new CancellationTokenSource();
+        IsMeasuringPresent = true;
+        _presentLoopTask = PresentLoopAsync(_presentCts.Token);
+        await Task.CompletedTask;
+    }
+
+    private async Task PresentLoopAsync(CancellationToken ct)
+    {
+        var window = TimeSpan.FromSeconds(3);
+        try
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                // #258: snapshot the last raw-input arrival *before* this sample's window runs, so
+                // the pairing below only matches a frame that could plausibly follow it.
+                DateTime? lastInputUtc = _inputLatency.LastEventUtc;
+
+                var (ok, message, parsed) = await _presentMonitor.SampleOnceAsync(window, ct);
+                PresentStatusText = message;
+
+                if (ok)
+                {
+                    var rows = _presentMonitor.BuildAppRows();
+                    PresentAppRows.Clear();
+                    foreach (var r in rows) PresentAppRows.Add(r);
+                    OnPropertyChanged(nameof(HeadlinePresentRow));
+
+                    GpuStallRows.Clear();
+                    foreach (var g in _presentMonitor.GpuStalls) GpuStallRows.Add(g);
+
+                    var headline = rows.Count > 0 ? rows[0] : null;
+                    if (headline is not null)
+                    {
+                        var samples = _presentMonitor.GetFrameTimesMs(headline.Pid, 300);
+                        FrameTimeScatterPoints.Clear();
+                        for (int i = 0; i < samples.Count; i++) FrameTimeScatterPoints.Add(new ObservablePoint(i, samples[i]));
+
+                        // #258: only meaningful while the input-latency probe (#256) is also
+                        // running and has actually seen an event - null otherwise, which the view
+                        // hides regardless (bound off IsMeasuringPresent), so this just stays
+                        // unavailable rather than showing a stale number.
+                        InputToPresentMs = lastInputUtc is { } inputUtc
+                            ? _presentMonitor.EstimateInputToPresentMs(inputUtc, headline.Pid)
+                            : null;
+                    }
+                    else
+                    {
+                        FrameTimeScatterPoints.Clear();
+                        InputToPresentMs = null;
+                    }
+                }
+
+                if (parsed == 0 && !ok)
+                {
+                    // A hard failure (tools missing, access denied, provider unavailable) won't fix
+                    // itself by retrying - stop rather than spin forever on the same error.
+                    await Application.Current.Dispatcher.InvokeAsync(StopPresentMonitor);
+                    break;
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // expected on Stop
+        }
+    }
+
+    private void StopPresentMonitor()
+    {
+        if (!IsMeasuringPresent) return;
+        _presentCts?.Cancel();
+        IsMeasuringPresent = false;
+        PresentStatusText = "Stopped.";
+    }
+
+    /// <summary>#256: Start button.</summary>
+    private void StartInputLatency()
+    {
+        if (IsMeasuringInput) return;
+        _inputLatency.Start();
+        IsMeasuringInput = _inputLatency.IsRunning;
+        InputLatencySnapshot = _inputLatency.GetSnapshot();
+    }
+
+    private void StopInputLatency()
+    {
+        if (!IsMeasuringInput) return;
+        _inputLatency.Stop();
+        IsMeasuringInput = false;
+        InputLatencySnapshot = _inputLatency.GetSnapshot();
+    }
+
     private void RebuildDriverRows()
     {
         DriverDpcRows.Clear();
@@ -1029,6 +1362,9 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
         _lightTimer.Stop();
         _probeTimer.Stop();
         _measureCts?.Cancel();
+        _presentCts?.Cancel();
+        _vblank.Dispose();
+        _inputLatency.Dispose();
         _perCore.Dispose();
         _hungWindows.Dispose();
     }
