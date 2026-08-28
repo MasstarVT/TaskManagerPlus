@@ -29,4 +29,14 @@ public sealed class SensorReading
     /// SensorMonitorService (which just reports the instantaneous hardware value).</summary>
     public float? SessionMin { get; init; }
     public float? SessionMax { get; init; }
+
+    /// <summary>Round 12, #96: true when this is a recognized 12V/5V/3.3V rail reading more than
+    /// ~5% off its nominal value - a simple threshold check EnergyThermalsViewModel stamps onto
+    /// Voltage readings as it builds the Voltages collection (WithVoltageSpecCheck), the same
+    /// "set by the ViewModel, not SensorMonitorService" shape SessionMin/SessionMax already use.
+    /// Null (not just false) for any voltage sensor this app doesn't recognize as one of those
+    /// three common rails (many boards report several oddly-named auxiliary rails LibreHardwareMonitorLib
+    /// doesn't standardize any more than it standardizes CPU/battery sensor names) - the view
+    /// only tints a row red when this is explicitly true, never for null/false.</summary>
+    public bool? IsVoltageOutOfSpec { get; init; }
 }

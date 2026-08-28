@@ -8,10 +8,8 @@ namespace TaskManagerPlus.Services;
 /// same shape as ThemeService/AlertThresholdsService.</summary>
 public static class SummarySettingsService
 {
-    private static string SettingsPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "TaskManagerPlus",
-        "summary-settings.json");
+    // Round 12, #87: routed through AppPaths so portable mode redirects this next to the exe.
+    private static string SettingsPath => AppPaths.GetPath("summary-settings.json");
 
     public static SummarySettings Load()
     {

@@ -8,6 +8,16 @@ public sealed class RemoteMonitorSettings
     public bool Enabled { get; set; }
     public int Port { get; set; } = 5157;
 
+    /// <summary>Round 12, #97: optional shared-token query-string check - a minimal opt-in step
+    /// up from the endpoint's original fully-open-on-the-LAN design. Empty/null (the default)
+    /// means "unchanged from before this feature existed" - every request is served with no
+    /// check at all. When set, a request must carry a matching `?token=...` query-string
+    /// parameter or gets a 401 with no body - see RemoteMonitorService.HandleAsync. This is
+    /// still not real authentication (a token in a plain HTTP query string is visible to
+    /// anything on the LAN path, and HttpListener itself has no TLS here) - it's documented in
+    /// the UI as exactly that: a minimal step up, not a security boundary.</summary>
+    public string? Token { get; set; }
+
     public static RemoteMonitorSettings Defaults => new();
 }
 

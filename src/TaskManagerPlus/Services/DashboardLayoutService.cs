@@ -11,10 +11,8 @@ namespace TaskManagerPlus.Services;
 /// missing-field-degrades-gracefully discipline ThemeService/LoggingSettingsService already use.</summary>
 public static class DashboardLayoutService
 {
-    private static string SettingsPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "TaskManagerPlus",
-        "dashboard-layout.json");
+    // Round 12, #87: routed through AppPaths so portable mode redirects this next to the exe.
+    private static string SettingsPath => AppPaths.GetPath("dashboard-layout.json");
 
     public static List<DashboardTileConfig> Load()
     {

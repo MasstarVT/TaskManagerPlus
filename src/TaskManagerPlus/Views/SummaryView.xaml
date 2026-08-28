@@ -222,9 +222,25 @@
                             <Button Content="Markdown report" Command="{Binding GenerateReportCommand}" Margin="0,0,8,0" />
                             <!-- #97: same report, as one self-contained HTML file with inline SVG
                                  sparkline charts - opens directly in a browser. -->
-                            <Button Content="HTML report" Command="{Binding GenerateHtmlReportCommand}" />
+                            <Button Content="HTML report" Command="{Binding GenerateHtmlReportCommand}" Margin="0,0,8,0" />
+                            <!-- Round 12, #99: a handful of plain-text lines for pasting straight
+                                 into a chat message or support ticket - distinct from the full
+                                 Markdown/HTML report above. -->
+                            <Button Content="Copy summary" Command="{Binding CopySummaryCommand}" />
                         </StackPanel>
                     </Grid>
+                    <TextBlock Text="{Binding CopySummaryStatusText}" Margin="0,4,0,0" TextWrapping="Wrap">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding CopySummaryStatusText}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
                     <TextBlock Foreground="{DynamicResource SuccessBrush}" Margin="0,8,0,0" FontSize="13">
                         <TextBlock.Style>
                             <Style TargetType="TextBlock">
@@ -357,6 +373,21 @@
                             </Style>
                         </TextBlock.Style>
                     </TextBlock>
+                    <!-- Round 12, #94: idle-temperature trend vs. this baseline - a rough
+                         thermal-paste-age proxy, only shown once both snapshots actually
+                         recorded an idle CPU temperature (see SnapshotService.Capture's remarks). -->
+                    <TextBlock Text="{Binding IdleTempTrendText}" Margin="0,0,0,8" TextWrapping="Wrap">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IdleTempTrendText}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
 
                     <StackPanel Visibility="{Binding SnapshotDiff, Converter={StaticResource NullToVisibilityConverter}}">
                         <ItemsControl ItemsSource="{Binding SnapshotDiff.SoftwareAdded}">
@@ -428,6 +459,19 @@
                                 <Setter Property="Visibility" Value="Visible" />
                                 <Style.Triggers>
                                     <DataTrigger Binding="{Binding SnapshotAbStatusText}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <!-- Round 12, #94: same idle-temperature trend, for the A/B comparison. -->
+                    <TextBlock Text="{Binding IdleTempTrendAbText}" Margin="0,0,0,8" TextWrapping="Wrap">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IdleTempTrendAbText}" Value="">
                                         <Setter Property="Visibility" Value="Collapsed" />
                                     </DataTrigger>
                                 </Style.Triggers>

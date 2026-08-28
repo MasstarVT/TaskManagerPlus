@@ -49,8 +49,8 @@ public sealed class LoggingViewModel : ObservableObject, IDisposable
     private int _rollingCoreCountAtStart;
     private List<(string Identifier, SensorType Type)> _rollingSensorColumnsAtStart = new();
     private int _rollingFlushCountdown;
-    private static string RollingBufferPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TaskManagerPlus", "Logs", "rolling-buffer.csv");
+    // Round 12, #87: routed through AppPaths so portable mode redirects this next to the exe.
+    private static string RollingBufferPath => AppPaths.GetPath("Logs", "rolling-buffer.csv");
 
     public bool AutoStartRollingBufferEnabled
     {
@@ -175,7 +175,7 @@ public sealed class LoggingViewModel : ObservableObject, IDisposable
         // between app runs, so there's nothing to gain from repeating this check every session tick.
         if (_loggingSettings.AutoCleanupEnabled)
         {
-            var logsDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TaskManagerPlus", "Logs");
+            var logsDir = AppPaths.GetPath("Logs");
             Task.Run(() => LoggingService.CleanupOldRotatedParts(logsDir, _loggingSettings.AutoCleanupDays, activeFilePath: null));
         }
     }
@@ -250,7 +250,7 @@ public sealed class LoggingViewModel : ObservableObject, IDisposable
         {
             Title = "Load a log file to replay",
             Filter = "CSV files (*.csv)|*.csv|All files (*.*)|*.*",
-            InitialDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TaskManagerPlus", "Logs"),
+            InitialDirectory = AppPaths.GetPath("Logs"),
         };
         if (dialog.ShowDialog() != true) return;
 
@@ -301,7 +301,7 @@ public sealed class LoggingViewModel : ObservableObject, IDisposable
             return;
         }
 
-        var logsDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TaskManagerPlus", "Logs");
+        var logsDir = AppPaths.GetPath("Logs");
         try { Directory.CreateDirectory(logsDir); } catch { /* SaveFileDialog still works without a pre-created folder */ }
 
         var dialog = new SaveFileDialog

@@ -68,14 +68,42 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         {
             if (!RemoteMonitor.IsRunning) return "Not running.";
             var addresses = RemoteMonitorService.LocalIPv4Addresses();
+            // #97: append the configured token to the suggested URL so the status text itself is
+            // the copy-pasteable address someone would actually open on their phone/tablet.
+            string suffix = string.IsNullOrEmpty(_remoteMonitorSettings.Token) ? string.Empty : $"?token={_remoteMonitorSettings.Token}";
             return addresses.Count == 0
                 ? $"Running on port {RemoteMonitor.Port}, but no LAN address was found."
-                : $"Open one of these from another device: {string.Join(", ", addresses.Select(a => $"http://{a}:{RemoteMonitor.Port}/"))}";
+                : $"Open one of these from another device: {string.Join(", ", addresses.Select(a => $"http://{a}:{RemoteMonitor.Port}/{suffix}"))}";
+        }
+    }
+
+    /// <summary>Round 12, #97: optional shared token - see RemoteMonitorSettings.Token's remarks.
+    /// Applies live (no restart of the listener needed) since RemoteMonitorService.RequiredToken
+    /// is just read per-request.</summary>
+    public string? RemoteMonitorToken
+    {
+        get => _remoteMonitorSettings.Token;
+        set
+        {
+            string? normalized = string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+            if (_remoteMonitorSettings.Token == normalized) return;
+            _remoteMonitorSettings.Token = normalized;
+            RemoteMonitorSettingsService.Save(_remoteMonitorSettings);
+            RemoteMonitor.RequiredToken = normalized;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(RemoteMonitorStatusText));
         }
     }
 
     public bool IsElevated { get; } = new WindowsPrincipal(WindowsIdentity.GetCurrent())
         .IsInRole(WindowsBuiltInRole.Administrator);
+
+    /// <summary>Round 12, #87: read-only "where is this app currently storing settings" status
+    /// line for the Settings drawer - portable mode is a launch-time decision (AppPaths.Initialize,
+    /// from App.xaml.cs), not something this drawer can toggle live.</summary>
+    public string AppPathsModeText => AppPaths.IsPortable
+        ? $"Portable ({AppPaths.SettingsDirectory})"
+        : $"%AppData%\\TaskManagerPlus (normal mode - relaunch with --portable, or drop a portable.marker file next to the exe, for portable mode)";
 
     private bool _isSettingsOpen;
     public bool IsSettingsOpen
@@ -101,6 +129,48 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             OnPropertyChanged();
         }
     }
+
+    /// <summary>Round 12, #85: minimize-to-tray toggle - see UiPreferences.MinimizeToTray's remarks.</summary>
+    public bool MinimizeToTray
+    {
+        get => _uiPreferences.MinimizeToTray;
+        set
+        {
+            if (_uiPreferences.MinimizeToTray == value) return;
+            _uiPreferences.MinimizeToTray = value;
+            UiPreferencesService.Save(_uiPreferences);
+            OnPropertyChanged();
+        }
+    }
+
+    /// <summary>Round 12, #86: Ctrl+Alt+T global hotkey opt-out - see UiPreferences.GlobalHotkeyEnabled's remarks.</summary>
+    public bool GlobalHotkeyEnabled
+    {
+        get => _uiPreferences.GlobalHotkeyEnabled;
+        set
+        {
+            if (_uiPreferences.GlobalHotkeyEnabled == value) return;
+            _uiPreferences.GlobalHotkeyEnabled = value;
+            UiPreferencesService.Save(_uiPreferences);
+            OnPropertyChanged();
+        }
+    }
+
+    /// <summary>Round 12, #88: read-only GitHub Releases update check, notify-only - see
+    /// UpdateCheckService's remarks. Checked once on startup (Task.Run, no polling) rather than
+    /// repeated, since a new release doesn't appear mid-session.</summary>
+    private string? _updateAvailableText;
+    public string? UpdateAvailableText { get => _updateAvailableText; private set => SetProperty(ref _updateAvailableText, value); }
+
+    private string _updateUrl = "https://github.com/MasstarVT/TaskManagerPlus/releases/latest";
+    public string UpdateUrl { get => _updateUrl; private set => SetProperty(ref _updateUrl, value); }
+
+    public RelayCommand OpenUpdateUrlCommand { get; }
+
+    // Round 12, #85/#86: tray icon + global hotkey - both owned here (not MainWindow.xaml.cs
+    // directly) so MainWindow just wires window events to these, keeping the P/Invoke and
+    // WinForms-interop details out of the code-behind file.
+    public GlobalHotkeyService Hotkey { get; } = new();
 
     /// <summary>#80: the tab header each of Ctrl+1..Ctrl+9 jumps to, in order - falls back to this
     /// app's first nine tabs (in their normal strip order) when the user hasn't customized
@@ -133,12 +203,19 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Summary = new SummaryViewModel(Performance, Processes, Services, EnergyThermals, SystemSpecs, Network, Stability);
         Search = new GlobalSearchViewModel(Processes, Services, Startup, SystemSpecs);
 
-        RemoteMonitor = new RemoteMonitorService(BuildRemoteMetricsSnapshot);
+        RemoteMonitor = new RemoteMonitorService(BuildRemoteMetricsSnapshot) { RequiredToken = _remoteMonitorSettings.Token };
         ToggleRemoteMonitorCommand = new RelayCommand(_ => IsRemoteMonitorEnabled = !IsRemoteMonitorEnabled);
         ApplyRemoteMonitorState();
 
         ToggleSettingsCommand = new RelayCommand(_ => IsSettingsOpen = !IsSettingsOpen);
         ToggleMiniDashboardCommand = new RelayCommand(_ => ToggleMiniDashboard());
+
+        OpenUpdateUrlCommand = new RelayCommand(_ =>
+        {
+            try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(UpdateUrl) { UseShellExecute = true }); }
+            catch { /* best-effort - the banner text still shows the version either way */ }
+        });
+        _ = CheckForUpdateAsync();
 
         ApplyThemeToPerformance();
         Theme.ColorsChanged += ApplyThemeToPerformance;
@@ -243,6 +320,18 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(RemoteMonitorStatusText));
     }
 
+    /// <summary>#88: fires once at startup - see UpdateCheckService's remarks for why this is
+    /// safe to await inline (network I/O is already async; a slow/offline check just leaves
+    /// UpdateAvailableText null rather than blocking anything).</summary>
+    private async Task CheckForUpdateAsync()
+    {
+        var (tag, url) = await UpdateCheckService.CheckForNewerReleaseAsync();
+        if (tag is null) return;
+
+        UpdateAvailableText = $"A newer version is available: {tag}";
+        if (!string.IsNullOrWhiteSpace(url)) UpdateUrl = url!;
+    }
+
     private void ToggleMiniDashboard()
     {
         if (_miniDashboard is not null)
@@ -280,5 +369,6 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Summary.Dispose();
         _miniDashboard?.Close();
         RemoteMonitor.Dispose();
+        Hotkey.Dispose();
     }
 }

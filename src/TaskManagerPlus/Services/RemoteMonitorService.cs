@@ -27,6 +27,12 @@ public sealed class RemoteMonitorService : IDisposable
     public bool IsRunning => _listener?.IsListening == true;
     public int Port { get; private set; }
 
+    /// <summary>Round 12, #97: optional shared token - see RemoteMonitorSettings.Token's remarks.
+    /// Null/empty (the default) means every request is served exactly as before this feature
+    /// existed. Settable live so a token change in the Settings drawer applies without needing
+    /// to stop/restart the listener.</summary>
+    public string? RequiredToken { get; set; }
+
     public RemoteMonitorService(Func<RemoteMetricsSnapshot> sample)
     {
         _sample = sample;
@@ -111,6 +117,20 @@ public sealed class RemoteMonitorService : IDisposable
     {
         try
         {
+            // #97: optional shared-token check - see RemoteMonitorSettings.Token's remarks. A
+            // missing/mismatched token gets a bare 401 (no body, no page) rather than a "wrong
+            // token" message, so a scan doesn't get free confirmation the endpoint even exists.
+            if (!string.IsNullOrEmpty(RequiredToken))
+            {
+                string? providedToken = ctx.Request.QueryString["token"];
+                if (!string.Equals(providedToken, RequiredToken, StringComparison.Ordinal))
+                {
+                    ctx.Response.StatusCode = 401;
+                    ctx.Response.OutputStream.Close();
+                    return;
+                }
+            }
+
             string path = ctx.Request.Url?.AbsolutePath ?? "/";
             byte[] body;
 
@@ -162,7 +182,10 @@ public sealed class RemoteMonitorService : IDisposable
         function fmtRate(v){if(v>1048576)return (v/1048576).toFixed(1)+' MB/s';if(v>1024)return (v/1024).toFixed(1)+' KB/s';return v.toFixed(0)+' B/s';}
         async function poll(){
           try{
-            const r=await fetch('/metrics.json',{cache:'no-store'});
+            // #97: forwards this page's own query string (including ?token=... when the optional
+            // shared token is set) onto every /metrics.json poll, so the page keeps working once
+            // it's been opened once with the right token - no separate client-side token entry.
+            const r=await fetch('/metrics.json'+location.search,{cache:'no-store'});
             const m=await r.json();
             document.getElementById('machine').textContent=m.machineName;
             document.getElementById('ts').textContent='Updated '+new Date().toLocaleTimeString();

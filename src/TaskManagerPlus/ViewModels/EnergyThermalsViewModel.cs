@@ -108,6 +108,40 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
     public Axis[] FanCurveXAxes { get; }
     public Axis[] FanCurveYAxes { get; }
 
+    // Round 12, #95: fan RPM history, complementing the temp-vs-RPM scatter above - a scatter
+    // cloud shows the overall curve shape well but hides *when* a fan hunts/oscillates (RPM
+    // repeatedly ramping up and down at a near-constant temperature); a plain time-series line
+    // makes that oscillation directly visible the way the scatter plot can't. Same glow+core
+    // LineOf pattern as every other history chart on this tab, tracking the same "primary CPU
+    // fan" RefreshAsync already resolves for the fan curve.
+    public ObservableCollection<double> FanRpmHistory { get; } = NewHistory();
+    private readonly LineSeries<double> _fanRpmGlow;
+    private readonly LineSeries<double> _fanRpmCore;
+    public ISeries[] FanRpmSeries { get; }
+    public Axis[] FanRpmYAxes { get; }
+
+    // Round 12, #90: power scheme listing/switching (powercfg /list, /setactive) - on-demand
+    // (a "Load power info" button), the same "known Windows tool, shell out, don't poll" tradeoff
+    // ScheduledTaskService/ServiceControlService's recovery-action reader already take, since
+    // power plans essentially never change outside a direct user action.
+    public ObservableCollection<PowerPlanInfo> PowerPlans { get; } = new();
+    public RelayCommand LoadPowerInfoCommand { get; }
+    public RelayCommand SetPowerPlanCommand { get; }
+
+    private string _sleepStateSupportText = string.Empty;
+    /// <summary>Round 12, #91: Modern Standby (S0) vs. legacy S3 sleep support - see
+    /// PowerPlanService.ReadSleepStateSupport's remarks.</summary>
+    public string SleepStateSupportText { get => _sleepStateSupportText; private set => SetProperty(ref _sleepStateSupportText, value); }
+
+    private string _powerPlanStatusText = string.Empty;
+    public string PowerPlanStatusText { get => _powerPlanStatusText; private set => SetProperty(ref _powerPlanStatusText, value); }
+
+    // Round 12, #92: per-USB-device selective-suspend status - on-demand (can be a couple dozen
+    // devices, each looked up by a best-effort prefix match; see UsbPowerService's remarks for
+    // why SelectiveSuspendEnabled is "Unknown" far more often than a hard true/false).
+    public ObservableCollection<UsbDevicePowerInfo> UsbDevices { get; } = new();
+    public RelayCommand LoadUsbDevicesCommand { get; }
+
     private double? _cpuPackageTempC;
     public double? CpuPackageTempC { get => _cpuPackageTempC; private set => SetProperty(ref _cpuPackageTempC, value); }
 
@@ -128,6 +162,14 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
     /// this app can't read without that same proprietary access.</summary>
     private double? _powerSessionMaxW;
     public double? PowerSessionMaxW { get => _powerSessionMaxW; private set => SetProperty(ref _powerSessionMaxW, value); }
+
+    // Round 12, #93: GPU power-limit/TDP readout, alongside the existing wattage figure. Not
+    // every GPU/vendor backend in LibreHardwareMonitorLib exposes a distinct "power limit" sensor
+    // (most only report instantaneous draw) - null (and the tile hidden) is the common case,
+    // matching the same sparse-sensor honesty every other LHM-dependent readout in this app
+    // already documents (fan/voltage sections, GPU hotspot differential, etc.).
+    private double? _gpuPowerLimitW;
+    public double? GpuPowerLimitW { get => _gpuPowerLimitW; private set => SetProperty(ref _gpuPowerLimitW, value); }
 
     /// <summary>GPU hotspot-vs-edge temperature differential (#29) - a large, sustained gap is a
     /// common sign of degraded thermal paste/pads on a GPU cooler, distinct from either reading
@@ -229,6 +271,16 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
                 SeparatorsPaint = new SolidColorPaint(AxisSeparatorColor) { StrokeThickness = 1 },
             },
         };
+        FanRpmYAxes = new[]
+        {
+            new Axis
+            {
+                MinLimit = 0,
+                Labeler = v => $"{v:0}",
+                LabelsPaint = new SolidColorPaint(AxisTextColor),
+                SeparatorsPaint = new SolidColorPaint(AxisSeparatorColor) { StrokeThickness = 1 },
+            },
+        };
 
         var powerColor = SKColors.OrangeRed;
         _powerGlow = new LineSeries<double>
@@ -292,11 +344,86 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         };
         FanCurveSeries = new ISeries[] { _fanCurveScatter };
 
-        _timer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(1.5) };
+        var fanRpmColor = SKColors.Goldenrod;
+        _fanRpmGlow = new LineSeries<double>
+        {
+            Values = FanRpmHistory,
+            Stroke = new SolidColorPaint(fanRpmColor.WithAlpha(70), GlowStrokeWidth),
+            Fill = null, GeometryStroke = null, GeometryFill = null,
+            LineSmoothness = 0.3, IsHoverable = false, IsVisibleAtLegend = false,
+        };
+        _fanRpmCore = new LineSeries<double>
+        {
+            Values = FanRpmHistory,
+            Stroke = new SolidColorPaint(fanRpmColor, CoreStrokeWidth),
+            Fill = new LinearGradientPaint(fanRpmColor.WithAlpha(90), fanRpmColor.WithAlpha(0), new SKPoint(0, 0), new SKPoint(0, 1)),
+            GeometryStroke = null, GeometryFill = null, LineSmoothness = 0.3,
+        };
+        FanRpmSeries = new ISeries[] { _fanRpmGlow, _fanRpmCore };
+
+        LoadPowerInfoCommand = new RelayCommand(_ => LoadPowerInfo());
+        SetPowerPlanCommand = new RelayCommand(p =>
+        {
+            if (p is not string guid || string.IsNullOrWhiteSpace(guid)) return;
+            var (success, error) = PowerPlanService.SetActivePlan(guid);
+            PowerPlanStatusText = success ? "Power plan switched." : $"Couldn't switch power plan: {error}";
+            if (success) LoadPowerInfo();
+        });
+        LoadUsbDevicesCommand = new RelayCommand(_ => LoadUsbDevices());
+
+        // Round 12, #100: configurable poll interval - see PollIntervalSettingsService's remarks.
+        // Loaded fresh (not cached in a field) on every read/write so a slider change here can
+        // never clobber another tab's own interval setting saved to the same shared JSON file.
+        _timer = new DispatcherTimer(DispatcherPriority.Background)
+        {
+            Interval = TimeSpan.FromSeconds(PollIntervalSettingsService.Load().EnergyThermalsSeconds),
+        };
         _timer.Tick += async (_, _) => await RefreshAsync();
         _timer.Start();
 
         _ = RefreshAsync();
+    }
+
+    /// <summary>Round 12, #100: how often this tab's LibreHardwareMonitorLib sensor poll runs -
+    /// default unchanged (1.5s, CLAUDE.md's documented "sensor enumeration is heavier than a flat
+    /// PerformanceCounter read" reasoning), adjustable via the Settings drawer for battery/
+    /// low-power use.</summary>
+    public double PollIntervalSeconds
+    {
+        get => _timer.Interval.TotalSeconds;
+        set
+        {
+            double clamped = Math.Clamp(value, 0.5, 10.0);
+            if (Math.Abs(_timer.Interval.TotalSeconds - clamped) < 0.01) return;
+
+            _timer.Interval = TimeSpan.FromSeconds(clamped);
+            var settings = PollIntervalSettingsService.Load();
+            settings.EnergyThermalsSeconds = clamped;
+            PollIntervalSettingsService.Save(settings);
+            OnPropertyChanged();
+        }
+    }
+
+    /// <summary>Round 12, #90/#91: loads both the power-scheme list and the sleep-state support
+    /// text in one on-demand action - both are cheap powercfg shell-outs, so there's no reason to
+    /// split them into two separate buttons.</summary>
+    private void LoadPowerInfo()
+    {
+        var plans = PowerPlanService.ListPowerPlans();
+        PowerPlans.Clear();
+        foreach (var p in plans) PowerPlans.Add(p);
+
+        SleepStateSupportText = PowerPlanService.ReadSleepStateSupport();
+        PowerPlanStatusText = plans.Count == 0 ? "Couldn't read power plans (powercfg unavailable)." : string.Empty;
+    }
+
+    /// <summary>Round 12, #92: on-demand USB selective-suspend read - see UsbPowerService's
+    /// remarks for why this can take a moment and often reports "Unknown" per device.</summary>
+    private void LoadUsbDevices()
+    {
+        var devices = UsbPowerService.ReadUsbSelectiveSuspend();
+        UsbDevices.Clear();
+        foreach (var d in devices) UsbDevices.Add(d);
     }
 
     private static ObservableCollection<double> NewHistory()
@@ -322,6 +449,8 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         FanCurveXAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
         FanCurveYAxes[0].LabelsPaint = new SolidColorPaint(textSk);
         FanCurveYAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
+        FanRpmYAxes[0].LabelsPaint = new SolidColorPaint(textSk);
+        FanRpmYAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
     }
 
     private async Task RefreshAsync()
@@ -348,8 +477,10 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
 
         var fanReadings = readings.Where(r => r.Type == SensorType.Fan && r.Value.HasValue).ToList();
         Replace(Fans, fanReadings);
-        Replace(Voltages, readings.Where(r => r.Type == SensorType.Voltage && HasNonZeroReading(r)));
-        Replace(Wattages, readings.Where(r => r.Type == SensorType.Power && HasNonZeroReading(r)));
+        // #96: out-of-spec voltage-rail flagging - see WithVoltageSpecCheck's remarks.
+        Replace(Voltages, readings.Where(r => r.Type == SensorType.Voltage && HasNonZeroReading(r)).Select(WithVoltageSpecCheck));
+        var wattageReadings = readings.Where(r => r.Type == SensorType.Power && HasNonZeroReading(r)).ToList();
+        Replace(Wattages, wattageReadings);
         // Battery sensors mix several SensorTypes (Level for charge %/degradation %, Voltage,
         // Power for charge/discharge rate) - bucketed by HardwareType instead of SensorType, and
         // not zero-filtered like the others: 0% charge or 0W (fully idle, on AC) are both real,
@@ -398,6 +529,14 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         GpuHotspotDeltaC = gpuEdge.HasValue && gpuHotspot.HasValue && gpuHotspot > gpuEdge
             ? gpuHotspot - gpuEdge : null;
 
+        // #93: GPU power-limit/TDP readout - restricted to GPU hardware entries (same reasoning
+        // as the hotspot lookup above) since "Power Limit"/"TDP" style names could otherwise
+        // collide with a CPU or motherboard sensor. Most GPU backends in LibreHardwareMonitorLib
+        // only expose instantaneous draw, not a distinct limit/TDP sensor - null (tile hidden) is
+        // the expected common case, not a bug.
+        var gpuWattages = wattageReadings.Where(r => IsGpu(r.HardwareType)).ToList();
+        GpuPowerLimitW = FindByNameContains(gpuWattages, "Power Limit", "TDP Limit", "TDP");
+
         // #43: first Storage-hardware component that reports more than one temperature sensor -
         // the differential between its hottest and coolest reading (controller vs. flash die).
         var storageGroup = tempReadings
@@ -436,6 +575,15 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         {
             FanCurvePoints.Add(new ObservablePoint(fanCurveTemp, primaryFan.Value!.Value));
             while (FanCurvePoints.Count > FanCurveWindow) FanCurvePoints.RemoveAt(0);
+        }
+
+        // #95: same primary fan as the scatter above, plotted as a plain time series instead -
+        // makes hunting/oscillation (RPM repeatedly ramping at a near-constant temperature)
+        // directly visible in a way the scatter cloud doesn't.
+        if (primaryFan is not null)
+        {
+            FanRpmHistory.Add(primaryFan.Value!.Value);
+            if (FanRpmHistory.Count > HistoryLength) FanRpmHistory.RemoveAt(0);
         }
 
         if (CpuPackageTempC is { } cpuTemp)
@@ -482,6 +630,46 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
             SessionMin = min,
             SessionMax = max,
         };
+    }
+
+    /// <summary>Round 12, #96: flags a recognized 12V/5V/3.3V rail reading more than ~5% off its
+    /// nominal value - the same simple threshold check PSU monitoring utilities have used for
+    /// decades. Matched by sensor name (LibreHardwareMonitorLib doesn't standardize voltage
+    /// sensor names any more than it standardizes CPU/battery sensor names - "+12V"/"12V"/"12 V"
+    /// all show up depending on motherboard vendor), so an unrecognized rail name is left as
+    /// IsVoltageOutOfSpec = null ("not checked"), never a false accusation against a rail this
+    /// app doesn't confidently recognize.</summary>
+    private static readonly (string[] Hints, float Nominal)[] VoltageRailSpecs =
+    {
+        (new[] { "12V", "+12V", "12 V" }, 12.0f),
+        (new[] { "5V", "+5V", "5 V" }, 5.0f),
+        (new[] { "3.3V", "+3.3V", "3.3 V" }, 3.3f),
+    };
+
+    private static SensorReading WithVoltageSpecCheck(SensorReading reading)
+    {
+        if (reading.Value is not float value) return reading;
+
+        foreach (var (hints, nominal) in VoltageRailSpecs)
+        {
+            if (!hints.Any(h => reading.SensorName.Contains(h, StringComparison.OrdinalIgnoreCase))) continue;
+
+            bool outOfSpec = Math.Abs(value - nominal) / nominal > 0.05f;
+            return new SensorReading
+            {
+                HardwareName = reading.HardwareName,
+                HardwareType = reading.HardwareType,
+                SensorName = reading.SensorName,
+                Type = reading.Type,
+                Value = reading.Value,
+                Identifier = reading.Identifier,
+                SessionMin = reading.SessionMin,
+                SessionMax = reading.SessionMax,
+                IsVoltageOutOfSpec = outOfSpec,
+            };
+        }
+
+        return reading; // unrecognized rail name - IsVoltageOutOfSpec stays null, not flagged
     }
 
     private static void Replace(ObservableCollection<SensorReading> target, IEnumerable<SensorReading> source)

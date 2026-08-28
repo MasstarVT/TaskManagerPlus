@@ -6,9 +6,10 @@
         xmlns:local="clr-namespace:TaskManagerPlus"
         xmlns:vm="clr-namespace:TaskManagerPlus.ViewModels"
         xmlns:views="clr-namespace:TaskManagerPlus.Views"
+        xmlns:res="clr-namespace:TaskManagerPlus.Resources"
         d:DataContext="{d:DesignInstance Type=vm:MainViewModel}"
         mc:Ignorable="d"
-        Title="Task Manager Plus" Height="860" Width="1280" MinHeight="560" MinWidth="820"
+        Title="{x:Static res:Strings.AppTitle}" Height="860" Width="1280" MinHeight="560" MinWidth="820"
         WindowStartupLocation="CenterScreen"
         Topmost="{Binding AlwaysOnTop}">
     <Window.Resources>
@@ -33,6 +34,7 @@
 
         <!-- Header -->
         <Border Grid.Row="0" Background="{DynamicResource BgPanelBrush}" BorderBrush="{DynamicResource BorderBrush2}" BorderThickness="0,0,0,1">
+            <StackPanel>
             <Grid Margin="20,12">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
@@ -43,7 +45,7 @@
                 <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
                     <Border Width="10" Height="10" CornerRadius="5" Margin="0,0,10,0"
                             Background="{DynamicResource AccentBrush}" />
-                    <TextBlock Text="Task Manager Plus" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center" />
+                    <TextBlock Text="{x:Static res:Strings.AppTitle}" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center" />
                 </StackPanel>
 
                 <!-- #100: cross-tab search - "find anything mentioning 'nvidia'" across
@@ -98,10 +100,10 @@
                 <TextBlock Grid.Column="2" VerticalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}">
                     <TextBlock.Style>
                         <Style TargetType="TextBlock">
-                            <Setter Property="Text" Value="Running as administrator" />
+                            <Setter Property="Text" Value="{x:Static res:Strings.ElevatedStatus}" />
                             <Style.Triggers>
                                 <DataTrigger Binding="{Binding IsElevated}" Value="False">
-                                    <Setter Property="Text" Value="Not elevated — some actions may be blocked" />
+                                    <Setter Property="Text" Value="{x:Static res:Strings.NotElevatedStatus}" />
                                     <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
                                 </DataTrigger>
                             </Style.Triggers>
@@ -109,6 +111,19 @@
                     </TextBlock.Style>
                 </TextBlock>
             </Grid>
+
+            <!-- Round 12, #88: read-only GitHub Releases update check - notify-only, collapsed
+                 whenever no newer release was found (offline, rate-limited, or already current -
+                 see MainViewModel.CheckForUpdateAsync/UpdateCheckService's remarks). -->
+            <Border Background="{DynamicResource AccentMutedBrush}" BorderBrush="{DynamicResource BorderBrush2}" BorderThickness="0,1,0,0" Padding="20,7"
+                    Visibility="{Binding UpdateAvailableText, Converter={StaticResource NullToVisibilityConverter}}">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="{Binding UpdateAvailableText}" Foreground="{DynamicResource AccentBrush}" FontSize="12" VerticalAlignment="Center" />
+                    <Button Content="View release" Command="{Binding OpenUpdateUrlCommand}" Cursor="Hand" Margin="12,0,0,0"
+                            Padding="8,3" Background="Transparent" BorderThickness="1" BorderBrush="{DynamicResource AccentBrush}" Foreground="{DynamicResource AccentBrush}" FontSize="11.5" />
+                </StackPanel>
+            </Border>
+            </StackPanel>
         </Border>
 
         <!-- Body: nav rail + page content + optional settings drawer -->
@@ -138,7 +153,7 @@
                                     <StackPanel Orientation="Horizontal">
                                         <Path Width="15" Height="15" Stretch="Uniform" Fill="{DynamicResource TextSecondaryBrush}" Margin="0,0,8,0"
                                               Data="M12,2 A10,10 0 1 0 12.01,2 Z M12,7 A5,5 0 1 1 11.99,7 Z" />
-                                        <TextBlock Text="Colors" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" />
+                                        <TextBlock Text="{x:Static res:Strings.SettingsButton}" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" />
                                     </StackPanel>
                                 </Border>
                                 <ControlTemplate.Triggers>
@@ -381,7 +396,7 @@
                                     <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5" VerticalAlignment="Center">
                                         <TextBlock.Style>
                                             <Style TargetType="TextBlock">
-                                                <Setter Property="Text" Value="Start Logging" />
+                                                <Setter Property="Text" Value="{x:Static res:Strings.StartLoggingButton}" />
                                                 <Style.Triggers>
                                                     <DataTrigger Binding="{Binding Logging.IsLogging}" Value="True">
                                                         <Setter Property="Text" Value="{Binding Logging.LogFileName, StringFormat=Stop Logging ({0})}" />
@@ -428,10 +443,10 @@
                     <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5">
                         <TextBlock.Style>
                             <Style TargetType="TextBlock">
-                                <Setter Property="Text" Value="Mini dashboard" />
+                                <Setter Property="Text" Value="{x:Static res:Strings.MiniDashboardOpenButton}" />
                                 <Style.Triggers>
                                     <DataTrigger Binding="{Binding IsMiniDashboardOpen}" Value="True">
-                                        <Setter Property="Text" Value="Close mini dashboard" />
+                                        <Setter Property="Text" Value="{x:Static res:Strings.MiniDashboardCloseButton}" />
                                     </DataTrigger>
                                 </Style.Triggers>
                             </Style>

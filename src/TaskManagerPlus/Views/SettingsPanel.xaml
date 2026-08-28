@@ -285,10 +285,64 @@
                      deliberately blunt since HttpListener has no built-in authentication. -->
                 <CheckBox Content="Enable remote monitoring (LAN)"
                           IsChecked="{Binding DataContext.IsRemoteMonitorEnabled, RelativeSource={RelativeSource AncestorType=Window}}" />
-                <TextBlock Text="Unauthenticated - anyone on your network can view (read-only) CPU/RAM/Disk/Network/temp while this is on. Only enable on a trusted network."
+                <TextBlock Text="Unauthenticated by default - anyone on your network can view (read-only) CPU/RAM/Disk/Network/temp while this is on. Only enable on a trusted network."
                            Style="{StaticResource SubStat}" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" Margin="0,4,0,8" />
+
+                <!-- #97: optional shared-token step up from the fully-open default above - still
+                     not real authentication (a plain-text query-string token over unencrypted
+                     HTTP), just a minimal "not literally anyone who finds the port" bar. -->
+                <TextBlock Text="Optional access token" Style="{StaticResource ColorRowLabel}" Margin="0,4,0,4" />
+                <TextBox Width="180" HorizontalAlignment="Left"
+                         Text="{Binding DataContext.RemoteMonitorToken, RelativeSource={RelativeSource AncestorType=Window}, UpdateSourceTrigger=LostFocus}" />
+                <TextBlock Text="When set, every request needs a matching ?token=... in the URL or gets rejected - still not real security (visible in the URL, no encryption), just a minimal step up from fully open."
+                           Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,4,0,8" />
                 <TextBlock Text="{Binding DataContext.RemoteMonitorStatusText, RelativeSource={RelativeSource AncestorType=Window}}"
-                           Style="{StaticResource SubStat}" TextWrapping="Wrap" />
+                           Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,22" />
+
+                <TextBlock Text="APP" FontSize="10.5" FontWeight="Bold" Foreground="{DynamicResource TextTertiaryBrush}"
+                           Margin="0,0,0,14" />
+
+                <!-- #85: minimize-to-tray - see UiPreferences.MinimizeToTray's remarks. -->
+                <CheckBox Content="Minimize to system tray"
+                          IsChecked="{Binding DataContext.MinimizeToTray, RelativeSource={RelativeSource AncestorType=Window}}" Margin="0,0,0,16" />
+
+                <!-- #86: Ctrl+Alt+T global "bring to front" hotkey - see GlobalHotkeyService's
+                     remarks for why this isn't literally Ctrl+Shift+Esc. Takes effect on next
+                     launch (registration happens once at startup). -->
+                <CheckBox Content="Global hotkey: Ctrl+Alt+T brings this window to the front"
+                          IsChecked="{Binding DataContext.GlobalHotkeyEnabled, RelativeSource={RelativeSource AncestorType=Window}}" />
+                <TextBlock Text="Takes effect after restarting the app. Not the literal Ctrl+Shift+Esc combination - Windows itself intercepts that one for the real Task Manager before it would ever reach this app."
+                           Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,4,0,16" />
+
+                <!-- #87: portable mode is a launch-time decision (the "portable" launch flag or
+                     a portable.marker file next to the exe), not a live toggle - shown here as a
+                     read-only status line so it's at least visible where settings are currently
+                     being written. -->
+                <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,22">
+                    <Run Text="Settings storage: " />
+                    <Run Text="{Binding DataContext.AppPathsModeText, RelativeSource={RelativeSource AncestorType=Window}, Mode=OneTime}" FontWeight="SemiBold" />
+                </TextBlock>
+
+                <TextBlock Text="POLLING INTERVALS" FontSize="10.5" FontWeight="Bold" Foreground="{DynamicResource TextTertiaryBrush}"
+                           Margin="0,0,0,14" />
+                <TextBlock Text="Lower = more responsive, higher = lighter background load (useful on battery). Defaults match every prior release."
+                           Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,14" />
+
+                <TextBlock Text="{Binding DataContext.Processes.PollIntervalSeconds, RelativeSource={RelativeSource AncestorType=Window}, StringFormat=Processes — {0:0.0}s}" Style="{StaticResource ColorRowLabel}" Margin="0,0,0,4" />
+                <Slider Minimum="0.5" Maximum="5" TickFrequency="0.5" IsSnapToTickEnabled="True" Margin="0,0,0,14"
+                        Value="{Binding DataContext.Processes.PollIntervalSeconds, RelativeSource={RelativeSource AncestorType=Window}}" />
+
+                <TextBlock Text="{Binding DataContext.Performance.PollIntervalSeconds, RelativeSource={RelativeSource AncestorType=Window}, StringFormat=CPU / Memory / Storage / Network — {0:0.0}s}" Style="{StaticResource ColorRowLabel}" Margin="0,0,0,4" />
+                <Slider Minimum="0.5" Maximum="5" TickFrequency="0.5" IsSnapToTickEnabled="True" Margin="0,0,0,14"
+                        Value="{Binding DataContext.Performance.PollIntervalSeconds, RelativeSource={RelativeSource AncestorType=Window}}" />
+
+                <TextBlock Text="{Binding DataContext.Services.PollIntervalSeconds, RelativeSource={RelativeSource AncestorType=Window}, StringFormat=Services — {0:0.0}s}" Style="{StaticResource ColorRowLabel}" Margin="0,0,0,4" />
+                <Slider Minimum="0.5" Maximum="5" TickFrequency="0.5" IsSnapToTickEnabled="True" Margin="0,0,0,14"
+                        Value="{Binding DataContext.Services.PollIntervalSeconds, RelativeSource={RelativeSource AncestorType=Window}}" />
+
+                <TextBlock Text="{Binding DataContext.EnergyThermals.PollIntervalSeconds, RelativeSource={RelativeSource AncestorType=Window}, StringFormat=Energy &amp; Thermals — {0:0.0}s}" Style="{StaticResource ColorRowLabel}" Margin="0,0,0,4" />
+                <Slider Minimum="0.5" Maximum="5" TickFrequency="0.5" IsSnapToTickEnabled="True" Margin="0,0,0,4"
+                        Value="{Binding DataContext.EnergyThermals.PollIntervalSeconds, RelativeSource={RelativeSource AncestorType=Window}}" />
 
             </StackPanel>
         </ScrollViewer>

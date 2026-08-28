@@ -28,6 +28,7 @@
             <conv:StabilityIndexToBrushConverter x:Key="StabilityIndexToBrushConverter" />
             <conv:IntEqualsConverter x:Key="IntEqualsConverter" />
             <conv:BoolToVisibilityConverter x:Key="BoolToVisibilityConverter" />
+            <conv:ActivePlanSuffixConverter x:Key="ActivePlanSuffixConverter" />
         </ResourceDictionary>
     </Application.Resources>
 </Application>

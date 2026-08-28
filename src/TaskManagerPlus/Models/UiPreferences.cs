@@ -20,5 +20,16 @@ public sealed class UiPreferences
     /// tradeoff a couple of this app's other advanced options already take.</summary>
     public List<string> TabShortcuts { get; set; } = new();
 
+    /// <summary>Round 12, #85: minimizing the window hides it to the system tray icon instead of
+    /// the taskbar - restored by clicking/double-clicking the tray icon or its "Open" menu entry.
+    /// Defaults on, matching most other "lives in the tray" Windows monitoring tools; the Settings
+    /// drawer lets it be turned off for a plain always-in-the-taskbar minimize instead.</summary>
+    public bool MinimizeToTray { get; set; } = true;
+
+    /// <summary>Round 12, #86: opt-out for the Ctrl+Alt+T global "bring to front" hotkey - on by
+    /// default (registration itself already degrades gracefully if the combination is taken), but
+    /// some users legitimately don't want any background app claiming a global hotkey at all.</summary>
+    public bool GlobalHotkeyEnabled { get; set; } = true;
+
     public static UiPreferences Defaults => new();
 }

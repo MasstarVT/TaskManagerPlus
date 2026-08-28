@@ -155,14 +155,34 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
         ApplyAffinityCommand = new RelayCommand(_ => ApplyAffinity(), _ => SelectedProcess is not null && AffinityCores.Count > 0);
         SetPriorityCommand = new RelayCommand(_ => SetPriority(), _ => SelectedProcess is not null);
 
+        // Round 12, #100: configurable poll interval - see PollIntervalSettingsService's remarks.
         _timer = new DispatcherTimer(DispatcherPriority.Background)
         {
-            Interval = TimeSpan.FromSeconds(1),
+            Interval = TimeSpan.FromSeconds(PollIntervalSettingsService.Load().ProcessesSeconds),
         };
         _timer.Tick += async (_, _) => await RefreshAsync();
         _timer.Start();
 
         _ = RefreshAsync();
+    }
+
+    /// <summary>Round 12, #100: how often the Processes tab refreshes - default unchanged (1s).
+    /// Loaded fresh from disk on every change (never cached) so this tab's slider can't clobber
+    /// another tab's own saved interval in the same shared JSON file.</summary>
+    public double PollIntervalSeconds
+    {
+        get => _timer.Interval.TotalSeconds;
+        set
+        {
+            double clamped = Math.Clamp(value, 0.5, 10.0);
+            if (Math.Abs(_timer.Interval.TotalSeconds - clamped) < 0.01) return;
+
+            _timer.Interval = TimeSpan.FromSeconds(clamped);
+            var settings = PollIntervalSettingsService.Load();
+            settings.ProcessesSeconds = clamped;
+            PollIntervalSettingsService.Save(settings);
+            OnPropertyChanged();
+        }
     }
 
     /// <summary>How far back "Recently started" reaches - right after a slowdown or crash starts

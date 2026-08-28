@@ -102,11 +102,30 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
     public RelayCommand SaveSnapshotCommand { get; }
     public RelayCommand CompareSnapshotCommand { get; }
 
+    // Round 12, #99: clipboard-friendly one-line(ish) system summary - distinct from
+    // GenerateReport/GenerateHtmlReport above (a full multi-section file), this is a handful of
+    // lines meant to be pasted straight into a chat message or a forum/support-ticket reply
+    // without opening or attaching a file at all.
+    public RelayCommand CopySummaryCommand { get; }
+
+    private string _copySummaryStatusText = string.Empty;
+    public string CopySummaryStatusText { get => _copySummaryStatusText; private set => SetProperty(ref _copySummaryStatusText, value); }
+
     private SnapshotDiff? _snapshotDiff;
     public SnapshotDiff? SnapshotDiff { get => _snapshotDiff; private set => SetProperty(ref _snapshotDiff, value); }
 
     private string _snapshotStatusText = string.Empty;
     public string SnapshotStatusText { get => _snapshotStatusText; private set => SetProperty(ref _snapshotStatusText, value); }
+
+    // Round 12, #94: idle-temperature trend vs. the baseline snapshot - a rough thermal-paste-age
+    // proxy, computed alongside the existing baseline-vs-current diff (see SnapshotDiff above)
+    // rather than as a separate feature, since it reuses exactly the same "load baseline, compare
+    // to now" flow SaveSnapshot/CompareSnapshot already drive.
+    private string _idleTempTrendText = string.Empty;
+    public string IdleTempTrendText { get => _idleTempTrendText; private set => SetProperty(ref _idleTempTrendText, value); }
+
+    private string _idleTempTrendAbText = string.Empty;
+    public string IdleTempTrendAbText { get => _idleTempTrendAbText; private set => SetProperty(ref _idleTempTrendAbText, value); }
 
     // Round 11, #71: baseline-vs-baseline - diff two previously-saved snapshot files against each
     // other, rather than always comparing a saved baseline to the live system. Reuses
@@ -163,6 +182,7 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         GenerateHtmlReportCommand = new RelayCommand(_ => GenerateHtmlReport());
         SaveSnapshotCommand = new RelayCommand(_ => SaveSnapshot());
         CompareSnapshotCommand = new RelayCommand(_ => CompareSnapshot());
+        CopySummaryCommand = new RelayCommand(_ => CopySummary());
         LoadSnapshotACommand = new RelayCommand(_ => LoadSnapshotAb(isA: true));
         LoadSnapshotBCommand = new RelayCommand(_ => LoadSnapshotAb(isA: false));
         CompareSnapshotsAbCommand = new RelayCommand(_ => CompareSnapshotsAb(), _ => _snapshotA is not null && _snapshotB is not null);
@@ -429,11 +449,42 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
                $"<polyline points=\"{string.Join(' ', points)}\" fill=\"none\" stroke=\"{color}\" stroke-width=\"2\" /></svg>";
     }
 
+    /// <summary>Round 12, #99: a handful of plain-text lines - OS, CPU, RAM, GPU, uptime, and a
+    /// couple of headline health numbers - built for pasting directly into a chat message or a
+    /// forum/support-ticket reply, genuinely shorter than the full Markdown/HTML report rather
+    /// than that report's content simply reformatted as text.</summary>
+    private void CopySummary()
+    {
+        var sb = new StringBuilder();
+        sb.Append("Task Manager Plus summary — ").Append(DateTime.Now.ToString("g")).Append('\n');
+        sb.Append("OS: ").Append(_systemSpecs.OsName).Append('\n');
+        sb.Append("CPU: ").Append(_systemSpecs.CpuName).Append('\n');
+        sb.Append("RAM: ").Append(_systemSpecs.RamTotal).Append('\n');
+        if (_systemSpecs.Gpus.FirstOrDefault()?.Primary is { Length: > 0 } gpuName)
+            sb.Append("GPU: ").Append(gpuName).Append('\n');
+        sb.Append("Uptime: ").Append(Performance.Uptime).Append('\n');
+        sb.Append($"Current load: CPU {Performance.CpuCurrentPercent:0}%, RAM {Performance.RamPercent:0}%, Disk {Performance.DiskPercent:0}%\n");
+        if (_energyThermals.CpuPackageTempC is { } temp) sb.Append($"CPU temp: {temp:0.#}°C\n");
+        sb.Append(HealthIssues.Count == 0
+            ? "Health Check: no issues detected"
+            : $"Health Check: {HealthIssues.Count} issue{(HealthIssues.Count == 1 ? "" : "s")} ({string.Join("; ", HealthIssues.Take(3).Select(i => i.Message))}{(HealthIssues.Count > 3 ? "; ..." : string.Empty)})");
+
+        try
+        {
+            System.Windows.Clipboard.SetText(sb.ToString());
+            CopySummaryStatusText = "Copied to clipboard.";
+        }
+        catch (Exception ex)
+        {
+            CopySummaryStatusText = $"Couldn't copy: {ex.Message}";
+        }
+    }
+
     /// <summary>#93: "record how my PC looks when healthy" - captures installed software,
     /// services, and startup items to a JSON file the user picks.</summary>
     private void SaveSnapshot()
     {
-        var snapshotsDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TaskManagerPlus", "Snapshots");
+        var snapshotsDir = AppPaths.GetPath("Snapshots");
         try { Directory.CreateDirectory(snapshotsDir); } catch { /* SaveFileDialog still works without a pre-created folder */ }
 
         var dialog = new SaveFileDialog
@@ -448,13 +499,37 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
 
         try
         {
-            SnapshotService.Save(SnapshotService.Capture(), dialog.FileName);
+            SnapshotService.Save(SnapshotService.Capture(CaptureIdleCpuTempOrNull()), dialog.FileName);
             SnapshotStatusText = $"Snapshot saved: {Path.GetFileName(dialog.FileName)}";
         }
         catch (Exception ex)
         {
             SnapshotStatusText = $"Couldn't save snapshot: {ex.Message}";
         }
+    }
+
+    /// <summary>Round 12, #94: only records a CPU temperature into the snapshot when the system
+    /// looks genuinely idle at capture time (a low CPU% reading, the same rough signal the rest
+    /// of this app uses for "idle" - e.g. the throttle heuristic's own "under load" check) - a
+    /// baseline temperature captured mid-benchmark would make a meaningless trend comparison
+    /// later, so this deliberately leaves it null (and the trend text just doesn't appear) rather
+    /// than save a misleading number.</summary>
+    private const double IdleCpuPercentThreshold = 15.0;
+
+    private double? CaptureIdleCpuTempOrNull() =>
+        Performance.CpuCurrentPercent <= IdleCpuPercentThreshold ? _energyThermals.CpuPackageTempC : null;
+
+    /// <summary>Round 12, #94: renders the idle-temp comparison between two snapshots (baseline
+    /// vs. current, or A vs. B) - null on either side (not idle at capture, or no sensor) just
+    /// means no trend line shows, framed explicitly as a rough proxy, never a diagnosis.</summary>
+    private static string BuildIdleTempTrendText(double? before, double? after)
+    {
+        if (before is not { } b || after is not { } a) return string.Empty;
+
+        double delta = a - b;
+        string direction = delta > 0.5 ? "up" : delta < -0.5 ? "down" : "about the same as";
+        return $"Idle CPU temperature is {direction} {Math.Abs(delta):0.#}°C vs. the baseline ({b:0.#}°C → {a:0.#}°C) - " +
+               "a rough thermal-paste-age proxy, not a diagnosis; room temperature and dust also affect this.";
     }
 
     /// <summary>#94: "what changed" - loads a previously saved baseline and diffs it against the
@@ -465,7 +540,7 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         {
             Title = "Compare against a saved snapshot",
             Filter = "Snapshot files (*.json)|*.json|All files (*.*)|*.*",
-            InitialDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TaskManagerPlus", "Snapshots"),
+            InitialDirectory = AppPaths.GetPath("Snapshots"),
         };
         if (dialog.ShowDialog() != true) return;
 
@@ -477,11 +552,22 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
             return;
         }
 
-        var diff = SnapshotService.Diff(baseline, SnapshotService.Capture());
+        var current = SnapshotService.Capture(CaptureIdleCpuTempOrNull());
+        var diff = SnapshotService.Diff(baseline, current);
         SnapshotDiff = diff;
         SnapshotStatusText = diff.HasChanges
             ? $"Compared against {baseline.CapturedAt:g} - changes found."
             : $"Compared against {baseline.CapturedAt:g} - no changes found.";
+
+        IdleTempTrendText = BuildIdleTempTrendText(baseline.IdleCpuTempC, current.IdleCpuTempC);
+
+        // Round 12, #98: cross-references this same diff against the reboot-pending flag
+        // SystemSpecsService.ReadRebootPending already computes (Round 11) - a derived rollup,
+        // no new registry reads, just correlating two outputs SummaryViewModel already has. Lives
+        // as its own Health Check line (RefreshHealthIssues, below) rather than duplicated logic
+        // here, since that's the one place already re-evaluated on a timer whenever RebootPending
+        // could change (a Windows Update finishing installing in the background, for instance).
+        RefreshHealthIssues();
     }
 
     /// <summary>Round 11, #69: builds LeftTiles/RightTiles from TileCatalog, applying whatever
@@ -551,7 +637,7 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         {
             Title = isA ? "Load snapshot A" : "Load snapshot B",
             Filter = "Snapshot files (*.json)|*.json|All files (*.*)|*.*",
-            InitialDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TaskManagerPlus", "Snapshots"),
+            InitialDirectory = AppPaths.GetPath("Snapshots"),
         };
         if (dialog.ShowDialog() != true) return;
 
@@ -581,6 +667,10 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         SnapshotAbStatusText = diff.HasChanges
             ? $"{SnapshotAName} → {SnapshotBName}: changes found."
             : $"{SnapshotAName} → {SnapshotBName}: no changes found.";
+
+        // #94: same idle-temp trend as the baseline-vs-current flow above, just against whichever
+        // two snapshots were loaded into slots A/B.
+        IdleTempTrendAbText = BuildIdleTempTrendText(_snapshotA.IdleCpuTempC, _snapshotB.IdleCpuTempC);
     }
 
     /// <summary>Round 11, #70: called from MainWindow's Closing handler - a no-op unless the user
@@ -593,7 +683,7 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
 
         try
         {
-            var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TaskManagerPlus", "Reports");
+            var dir = AppPaths.GetPath("Reports");
             Directory.CreateDirectory(dir);
             var path = Path.Combine(dir, $"TaskManagerPlus-Report-{DateTime.Now:yyyy-MM-dd_HH-mm-ss}.md");
             File.WriteAllText(path, BuildReportMarkdown());
@@ -670,6 +760,25 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         // SystemSpecsService.ReadRebootPending for which registry keys are checked.
         if (_systemSpecs.RebootPending)
             issues.Add(new HealthIssue { Message = "A restart is pending to finish installing updates", IsCritical = false });
+
+        // Round 12, #98: "which of my changes since the baseline are still pending that reboot" -
+        // a derived rollup, no new registry reads: just correlates SnapshotDiff (already computed
+        // by CompareSnapshot, above) against the same RebootPending flag the rule right above this
+        // one already reads. Only fires once a baseline comparison has actually been run this
+        // session (SnapshotDiff is null until then) and only when it found real changes - a
+        // reboot-pending flag with no baseline comparison on hand says nothing about *which*
+        // change caused it, so this rule stays silent rather than implying a link it can't show.
+        if (_systemSpecs.RebootPending && SnapshotDiff is { HasChanges: true } diffForReboot)
+        {
+            int changedCount = diffForReboot.SoftwareAdded.Count + diffForReboot.SoftwareRemoved.Count +
+                diffForReboot.ServicesAdded.Count + diffForReboot.ServicesRemoved.Count +
+                diffForReboot.StartupAdded.Count + diffForReboot.StartupRemoved.Count;
+            issues.Add(new HealthIssue
+            {
+                Message = $"{changedCount} change{(changedCount == 1 ? "" : "s")} since your last baseline snapshot may be waiting on the pending restart to fully apply",
+                IsCritical = false,
+            });
+        }
 
         // #66: Windows Defender real-time scan activity heuristic - no new sampling needed, this
         // just reads the CPU% the Processes tab is already polling for MsMpEng.exe. Sustained high

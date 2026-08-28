@@ -7,10 +7,8 @@ namespace TaskManagerPlus.Services;
 /// <summary>Loads and saves the user's chosen colors to %AppData%\TaskManagerPlus\theme.json.</summary>
 public static class ThemeService
 {
-    private static string SettingsPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "TaskManagerPlus",
-        "theme.json");
+    // Round 12, #87: routed through AppPaths so portable mode redirects this next to the exe.
+    private static string SettingsPath => AppPaths.GetPath("theme.json");
 
     public static ThemeColors Load()
     {

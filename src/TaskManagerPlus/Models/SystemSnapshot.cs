@@ -18,6 +18,16 @@ public sealed class SystemSnapshot
     /// Used by the Services tab's config-drift check, distinct from the Summary tab's existing
     /// software/service/startup added-removed diff.</summary>
     public List<ServiceConfigSnapshot> ServiceConfigs { get; init; } = new();
+
+    /// <summary>Round 12, #94: CPU package temperature at capture time, only when the system was
+    /// genuinely idle (see SummaryViewModel.SaveSnapshot's idle-gating) - a rough thermal-paste-
+    /// age proxy: idle temp creeping up build-to-build (with cooling/dust/room-temperature roughly
+    /// unchanged) is a weak but real signal of degraded paste/pads, distinct from load temps which
+    /// are much more sensitive to what happened to be running at capture time. Null when the
+    /// system wasn't idle at capture (no misleading non-idle baseline saved) or no sensor was
+    /// available - an older snapshot file with no such field also just leaves this null, the same
+    /// missing-field-degrades-gracefully shape ServiceConfigs above already established.</summary>
+    public double? IdleCpuTempC { get; init; }
 }
 
 /// <summary>One service's StartType + logon account at the moment a baseline was captured (Round 7 #16).</summary>

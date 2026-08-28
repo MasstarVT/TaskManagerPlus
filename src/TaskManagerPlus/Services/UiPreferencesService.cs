@@ -8,10 +8,8 @@ namespace TaskManagerPlus.Services;
 /// shape as ThemeService/AlertThresholdsService.</summary>
 public static class UiPreferencesService
 {
-    private static string SettingsPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "TaskManagerPlus",
-        "ui-preferences.json");
+    // Round 12, #87: routed through AppPaths so portable mode redirects this next to the exe.
+    private static string SettingsPath => AppPaths.GetPath("ui-preferences.json");
 
     public static UiPreferences Load()
     {

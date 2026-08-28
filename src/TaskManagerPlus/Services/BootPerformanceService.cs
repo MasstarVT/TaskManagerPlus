@@ -23,8 +23,8 @@ public static class BootPerformanceService
     private const string LogName = "Microsoft-Windows-Diagnostics-Performance/Operational";
     private const int BootEventId = 100;
 
-    private static string HistoryPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TaskManagerPlus", "boot-history.json");
+    // Round 12, #87: routed through AppPaths so portable mode redirects this next to the exe.
+    private static string HistoryPath => AppPaths.GetPath("boot-history.json");
 
     private const int MaxHistoryEntries = 60;
 

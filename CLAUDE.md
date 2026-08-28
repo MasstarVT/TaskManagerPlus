@@ -1678,6 +1678,179 @@ same content the manual "Markdown report" button produces) but writes silently t
 timestamped path under `%AppData%\TaskManagerPlus\Reports\` rather than popping a `SaveFileDialog`
 during shutdown, which would block the app from actually closing until the user responded to it.
 
+### Round 12 (final): tray/hotkey/portable mode, power plan & sleep-state depth, remote monitor
+token, per-tab poll interval
+
+The twelfth and final batch of this cycle's `suggestions.md` backlog - 18 items across App-level/
+cross-cutting, Energy & Thermals, Remote monitoring, and Misc, closing out this round of
+`suggestions.md`'s 100-item backlog (the file's second full cycle - Round 6 closed out the
+original 100; this closes out the 100 items numbered 1-100 in the version of the file that
+followed it). Same "known tool / graceful degradation / no fabricated data" ethos as every prior
+round, with two items - USB selective suspend and GPU power-limit - deliberately scoped down per
+the assignment's own guidance, documented below.
+
+**Portable mode (`AppPaths`)**: every settings-persisting service in this app
+(`ThemeService`, `AlertThresholdsService`, `DashboardLayoutService`, `LoggingSettingsService`,
+`NetworkHistoryService`, `RemoteMonitorSettingsService`, `SummarySettingsService`,
+`UiPreferencesService`, `BootPerformanceService`, plus a few inline `SnapshotService`/
+`LoggingViewModel` paths for the Snapshots/Logs/Reports folders) previously hardcoded
+`Environment.GetFolderPath(SpecialFolder.ApplicationData)\TaskManagerPlus` independently - a new
+`Services/AppPaths.cs` centralizes this into one `Initialize(args)` call (from `App.xaml.cs`,
+before any other service runs) plus a `GetPath(...)` helper every one of those files now routes
+through. `--portable` (or a `portable.marker` file dropped next to the exe, so a portable USB copy
+"just works" without editing a shortcut) redirects `AppPaths.SettingsDirectory` to a `Settings`
+folder next to the exe instead of `%AppData%`; the Settings drawer shows a read-only "Settings
+storage" status line (portable mode is a launch-time decision, not a live toggle).
+
+**`--tab <name>` launch flag**: `App.xaml.cs` looks for `--tab` in `e.Args` alongside the existing
+`--dump-json` handling, and (once `MainWindow` is shown) calls a new
+`MainWindow.SelectTabByName(name)` - matches by `TabItem.Header` text, case-insensitively, the
+same header-based lookup `MainWindow_PreviewKeyDown`'s Ctrl+1..9 handler (Round 11) already uses,
+so it keeps working if tabs are ever reordered. Silently no-ops on an unrecognized name rather than
+erroring, since it's a convenience shortcut, not a required argument.
+
+**System tray icon + minimize-to-tray + global hotkey**: the csproj now sets
+`<UseWindowsForms>true</UseWindowsForms>` alongside the existing `<UseWPF>true</UseWPF>` - WPF has
+no tray-icon API of its own, so this pulls in `System.Windows.Forms.NotifyIcon` from the Windows
+Desktop targeting pack (not a NuGet package, the same "known built-in escape hatch" tier as
+`PerformanceCounter`/WMI elsewhere in this app). Combining `UseWPF`/`UseWindowsForms` means both
+frameworks' implicit global usings collide (`System.Drawing`/`System.Windows.Forms` both define
+`Color`/`Brush`/`UserControl`/`Application`/`KeyEventArgs`, colliding with WPF's own) - fixed with
+`<Using Remove="System.Drawing" />`/`<Using Remove="System.Windows.Forms" />` in the csproj, since
+only `MainWindow.xaml.cs` needs either, via an explicit `Forms = System.Windows.Forms` alias and
+fully-qualified `System.Drawing.Icon` calls rather than either implicit using. The tray icon is
+extracted from this app's own exe (no separate `.ico` asset needed), carries an Open/Exit context
+menu, and its tooltip is a live "CPU N% RAM N%" mini readout kept in sync off
+`PerformanceViewModel`'s existing `PropertyChanged` notifications - no new polling, the same
+"reuse an already-ticking ViewModel's notifications" trick the Health Check card and mini
+dashboard already lean on. Minimize-to-tray (`UiPreferences.MinimizeToTray`, on by default) hides
+the window on `StateChanged` instead of a normal taskbar minimize; the global hotkey
+(`Services/GlobalHotkeyService.cs`, `RegisterHotKey`/`UnregisterHotKey` via a `HwndSource` message
+hook - the same native-interop risk tier as `CpuTopologyService`'s own P/Invoke) is deliberately
+Ctrl+Alt+T, not the literal Ctrl+Shift+Esc: that combination is intercepted by the shell itself to
+launch the real Task Manager before it would ever reach this app's message loop, so claiming it
+here would be a no-op at best. Registration failure (another app already owns the combination)
+degrades to `GlobalHotkeyService.IsRegistered` staying false, never a crash.
+
+**Read-only GitHub Releases update check**: `Services/UpdateCheckService.cs` does one `HttpClient`
+GET to `api.github.com/repos/MasstarVT/TaskManagerPlus/releases/latest` (the repo's actual `origin`
+remote) on startup, comparing the release tag against this build's own assembly version -
+notify-only, a dismissible-free banner under the header with a "View release" button
+(`Process.Start` with `UseShellExecute = true`), never an auto-download/install. Offline,
+rate-limited (GitHub's unauthenticated 60/hour cap), or any other failure just means the banner
+never appears - the same graceful-degradation tier `PublicIpLookupService`/
+`NetworkDiagnosticsService`'s own outbound calls already established.
+
+**Localization scaffolding**: `Resources/Strings.resx` + a hand-written `Resources/Strings.cs`
+wrapper over a plain `ResourceManager` (deliberately not relying on Visual Studio's
+ResXFileCodeGenerator custom tool, which needs the IDE rather than just `dotnet build` to
+regenerate a Designer.cs) - a small, honestly-scoped first pass covering a handful of
+header/footer labels (`AppTitle`, the Colors/Start Logging/mini-dashboard button text, the
+elevation status line), wired into `MainWindow.xaml` via `{x:Static res:Strings.X}`. This is
+scaffolding, not a finished localization pass - every other user-visible string across this app's
+several dozen `.xaml` files is still a plain hardcoded literal; a future round extending this
+pattern app-wide is explicitly out of scope here, per the assignment's own guidance.
+
+**Power plan display/switch + Modern Standby (S0) vs. legacy S3 detection (Energy & Thermals)**:
+`Services/PowerPlanService.cs` shells out to `powercfg.exe` (`/list`, `/setactive <guid>`, `/a`) -
+the same "known Windows tool, not raw registry/COM interop" tradeoff `ScheduledTaskService`/
+`ServiceControlService`'s recovery-action reader already take, since the underlying power-policy
+API surface is COM-based and a meaningfully larger undertaking for what's ultimately "read and
+lightly reformat a command's own text output." Both are on-demand (a "Load power info" button on
+the Energy & Thermals tab, next to the new fan RPM chart) rather than polled, since a power scheme
+essentially never changes outside a direct user action. Sleep-state support looks for the
+well-known "S0 Low Power Idle"/"Standby (S3)" phrases in `powercfg /a`'s report text rather than
+trying to parse its full structure (which isn't a stable, versioned contract across Windows
+builds), degrading to "Unknown" when neither phrase is found.
+
+**USB selective-suspend status - honestly scoped down (Energy & Thermals)**: a correct per-device
+read needs SetupAPI device-property interop (walking device property sets by GUID) - a materially
+larger native-interop undertaking than anything else in this app, well past the tier
+`CpuTopologyService`/`NetworkConnectionsService`'s own P/Invoke already sits at. `Services/
+UsbPowerService.cs` instead takes one real best-effort shot via the legacy `root\WMI`
+`MSPower_DeviceEnable` class (present on many, not all, Windows builds/drivers), matched against
+each USB `Win32_PnPEntity` by normalized-prefix comparison - the same prefix-match technique
+`SystemSpecsService.ReadFailurePredictStatus` already uses for the SMART failure-prediction class,
+since neither class publishes a clean, exact join key. Expect "Unknown" for a fair number of
+devices on a fair number of systems, per the assignment's own explicit "reasonably degrade"
+guidance for this item - the on-demand "Load USB devices" card's own subtext says as much.
+
+**GPU power-limit/TDP - honestly scoped down (Energy & Thermals)**: `EnergyThermalsViewModel`
+tries the same `FindByNameContains` name-hint lookup ("Power Limit"/"TDP Limit"/"TDP") already
+used for `TotalPackagePowerW`, restricted to GPU hardware entries. Most GPU backends in
+LibreHardwareMonitorLib 0.9.6 only expose instantaneous draw, not a distinct limit/TDP sensor, so
+`GpuPowerLimitW` reads null (tile hidden) on the large majority of systems - the same sparse-sensor
+honesty every other LHM-dependent readout in this app already documents, not a bug.
+
+**Idle-temperature trend vs. baseline (Summary, ties into the existing snapshot mechanism)**:
+`SystemSnapshot.IdleCpuTempC` is a new, optional field - `SnapshotService.Capture` takes an
+optional `idleCpuTempC` parameter (the static service has no sensor access of its own;
+`SummaryViewModel.CaptureIdleCpuTempOrNull` supplies it, and only when `Performance.CpuCurrentPercent`
+is genuinely low at capture time, so a snapshot taken mid-benchmark never records a misleading
+"idle" baseline). `BuildIdleTempTrendText` renders the before/after comparison on both the
+baseline-vs-current flow (`CompareSnapshot`) and the Round 11 A/B flow (`CompareSnapshotsAb`),
+framed explicitly in its own text as "a rough thermal-paste-age proxy, not a diagnosis" - room
+temperature and dust affect this as much as paste age does, the same honesty tier the outdated-
+driver date filtering and BIOS-age hint already established for their own rough proxies.
+
+**Fan RPM history chart (Energy & Thermals)**: a second history buffer (`FanRpmHistory`) tracking
+the same "primary CPU fan" the Round 5 fan-curve scatter already resolves each tick, rendered with
+the exact glow+core `LineOf` pattern every other history chart on this tab uses. Deliberately a
+plain time series alongside the scatter, not a replacement for it - a fan that's "hunting"
+(repeatedly ramping RPM up and down at a near-constant temperature) reads as visible oscillation
+in a time series, something the scatter cloud's shape alone hides.
+
+**Out-of-spec voltage-rail flagging (Energy & Thermals)**: a simple ±5%-of-nominal threshold check
+against the three common rails (12V/5V/3.3V, matched by sensor-name hints since LibreHardwareMonitorLib
+doesn't standardize voltage sensor names any more than it standardizes CPU/battery sensor names) -
+`SensorReading.IsVoltageOutOfSpec` is stamped on by a new `EnergyThermalsViewModel.WithVoltageSpecCheck`
+as the Voltages collection is built, the same "set by the ViewModel, not SensorMonitorService"
+shape `SessionMin`/`SessionMax` already established. Null (not false) for any rail name this app
+doesn't confidently recognize, so an unrecognized auxiliary rail is never falsely flagged - the
+Voltages card tints only a confirmed `true` red.
+
+**Optional shared-token remote-monitor check**: `RemoteMonitorSettings.Token` (persisted like every
+other opt-in toggle) plus a settable `RemoteMonitorService.RequiredToken` - when set, every request
+needs a matching `?token=...` query-string parameter or gets a bare 401 (no body, so a scan gets no
+free confirmation the endpoint even exists); unset (the default) behaves exactly as the endpoint
+always has. The served dashboard page's own polling JS forwards `location.search` onto every
+`/metrics.json` fetch, so a page opened once with the right token keeps working with no separate
+client-side token entry. Explicitly documented in the Settings drawer (and the status line's
+suggested URL, which now includes the token) as still not real authentication - a plain-text
+query-string token over unencrypted `HttpListener` HTTP is visible to anything on the LAN path,
+just a minimal step up from the endpoint's original fully-open design.
+
+**"Pending reboot" baseline rollup (Summary)**: a pure derived correlation, no new registry reads -
+`RefreshHealthIssues` (the Health Check card's existing rule engine) now cross-references
+`SnapshotDiff` (already computed by `CompareSnapshot`) against `SystemSpecsService.ReadRebootPending`
+(already read by Round 11's own reboot-pending rule, right above this one) and, only when *both*
+are true, adds one more Health Check line naming how many changes since the last baseline comparison
+may still be waiting on that pending restart. Silent whenever no baseline comparison has been run
+this session (`SnapshotDiff` is null until then) - a reboot-pending flag with no diff on hand says
+nothing about *which* change caused it, so this rule doesn't imply a link it can't actually show.
+
+**Clipboard "copy summary" (Summary)**: `SummaryViewModel.CopySummaryCommand` builds a handful of
+plain-text lines (OS/CPU/RAM/GPU/uptime/current load/a short Health Check digest) and puts them on
+the clipboard via `System.Windows.Clipboard.SetText` - genuinely a few lines, not the full
+Markdown/HTML report's content reformatted as text, for pasting straight into a chat message or a
+forum/support-ticket reply without attaching or even generating a file.
+
+**Configurable per-tab poll interval**: a new `Models/PollIntervalSettings.cs` +
+`Services/PollIntervalSettingsService.cs` (`poll-intervals.json`, same shape as every other
+settings file) backs a `PollIntervalSeconds` property added to the four ViewModels that actually
+own a `DispatcherTimer` per CLAUDE.md's own Architecture section: `ProcessesViewModel`, the shared
+`PerformanceViewModel` (whose slider is therefore the single interval knob for the CPU/Memory/
+Storage/Network thin-wrapper tabs too, not four independent ones - consistent with the "one shared
+sampler" model those tabs are built around), `ServicesViewModel`, and `EnergyThermalsViewModel`.
+`StartupViewModel`/`SystemSpecsViewModel`/`StabilityViewModel` are deliberately excluded - they're
+on-demand (an initial load plus a manual Refresh, no timer at all, per their own existing remarks),
+so there's no interval to make configurable; the assignment's own guidance named `StartupViewModel`
+as a candidate, but this is a factual correction based on how the codebase actually works, not an
+oversight. Each setter reloads `PollIntervalSettingsService.Load()` fresh and saves back
+immediately after mutating only its own field (never keeping a long-lived cached copy), so two
+tabs' sliders changed in the same session can never clobber each other's saved value in the shared
+JSON file. Defaults are unchanged from every prior round's hardcoded interval.
+
 ### Notable implementation details
 
 - **CPU clock speed**: not directly exposed by Windows. Computed the same

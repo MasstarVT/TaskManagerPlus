@@ -385,14 +385,37 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
         NetworkSeries = new ISeries[] { _netRecvGlow, _netRecvCore, _netSendGlow, _netSendCore };
         CommittedSeries = new ISeries[] { _committedGlow, _committedCore };
 
+        // Round 12, #100: configurable poll interval - see PollIntervalSettingsService's remarks.
+        // This one timer also drives the CPU/Memory/Storage/Network thin-wrapper tabs (per
+        // CLAUDE.md's "one shared sampler" model), so its slider is the single interval knob for
+        // all four at once, not four independent ones.
         _timer = new DispatcherTimer(DispatcherPriority.Background)
         {
-            Interval = TimeSpan.FromSeconds(1),
+            Interval = TimeSpan.FromSeconds(PollIntervalSettingsService.Load().PerformanceSeconds),
         };
         _timer.Tick += async (_, _) => await RefreshAsync();
         _timer.Start();
 
         _ = RefreshAsync();
+    }
+
+    /// <summary>Round 12, #100: how often the shared CPU/Memory/Storage/Network sampler runs -
+    /// default unchanged (1s). Loaded fresh from disk on every change (never cached) so this
+    /// tab's slider can't clobber another tab's own saved interval in the same shared JSON file.</summary>
+    public double PollIntervalSeconds
+    {
+        get => _timer.Interval.TotalSeconds;
+        set
+        {
+            double clamped = Math.Clamp(value, 0.5, 10.0);
+            if (Math.Abs(_timer.Interval.TotalSeconds - clamped) < 0.01) return;
+
+            _timer.Interval = TimeSpan.FromSeconds(clamped);
+            var settings = PollIntervalSettingsService.Load();
+            settings.PerformanceSeconds = clamped;
+            PollIntervalSettingsService.Save(settings);
+            OnPropertyChanged();
+        }
     }
 
     private static ObservableCollection<double> NewHistory()

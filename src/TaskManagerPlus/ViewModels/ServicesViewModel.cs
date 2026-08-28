@@ -112,14 +112,34 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
         CaptureConfigBaselineCommand = new RelayCommand(_ => CaptureConfigBaseline());
         CheckConfigDriftCommand = new RelayCommand(_ => CheckConfigDrift());
 
+        // Round 12, #100: configurable poll interval - see PollIntervalSettingsService's remarks.
         _timer = new DispatcherTimer(DispatcherPriority.Background)
         {
-            Interval = TimeSpan.FromSeconds(2),
+            Interval = TimeSpan.FromSeconds(PollIntervalSettingsService.Load().ServicesSeconds),
         };
         _timer.Tick += async (_, _) => await RefreshAsync();
         _timer.Start();
 
         _ = RefreshAsync();
+    }
+
+    /// <summary>Round 12, #100: how often the Services tab refreshes - default unchanged (2s).
+    /// Loaded fresh from disk on every change (never cached) so this tab's slider can't clobber
+    /// another tab's own saved interval in the same shared JSON file.</summary>
+    public double PollIntervalSeconds
+    {
+        get => _timer.Interval.TotalSeconds;
+        set
+        {
+            double clamped = Math.Clamp(value, 0.5, 10.0);
+            if (Math.Abs(_timer.Interval.TotalSeconds - clamped) < 0.01) return;
+
+            _timer.Interval = TimeSpan.FromSeconds(clamped);
+            var settings = PollIntervalSettingsService.Load();
+            settings.ServicesSeconds = clamped;
+            PollIntervalSettingsService.Save(settings);
+            OnPropertyChanged();
+        }
     }
 
     private bool CanStart() => !IsBusy && SelectedService is { CanStart: true };
@@ -279,7 +299,7 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
     /// Summary tab's "Save snapshot" button (that capture now includes ServiceConfigs too).</summary>
     private void CaptureConfigBaseline()
     {
-        var snapshotsDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TaskManagerPlus", "Snapshots");
+        var snapshotsDir = AppPaths.GetPath("Snapshots");
         try { Directory.CreateDirectory(snapshotsDir); } catch { /* SaveFileDialog still works without a pre-created folder */ }
 
         var dialog = new SaveFileDialog
@@ -313,7 +333,7 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
         {
             Title = "Check service configuration drift against a saved baseline",
             Filter = "Snapshot files (*.json)|*.json|All files (*.*)|*.*",
-            InitialDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TaskManagerPlus", "Snapshots"),
+            InitialDirectory = AppPaths.GetPath("Snapshots"),
         };
         if (dialog.ShowDialog() != true) return;
 

@@ -6,6 +6,11 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
+    <!-- Round 12, #85: System tray icon (System.Windows.Forms.NotifyIcon) - WPF has no tray-icon
+         API of its own; UseWindowsForms pulls in the WinForms subset of the Windows Desktop
+         targeting pack (not a NuGet package) for exactly this one control, the same "known
+         built-in escape hatch" tradeoff this project already takes for PerformanceCounter/WMI. -->
+    <UseWindowsForms>true</UseWindowsForms>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AssemblyName>TaskManagerPlus</AssemblyName>
     <RootNamespace>TaskManagerPlus</RootNamespace>
@@ -17,6 +22,18 @@
     <PackageReference Include="System.Diagnostics.PerformanceCounter" Version="10.0.11" />
     <PackageReference Include="System.Management" Version="10.0.11" />
     <PackageReference Include="System.ServiceProcess.ServiceController" Version="10.0.11" />
+  </ItemGroup>
+
+  <!-- Round 12, #85: UseWindowsForms's own implicit global usings (System.Drawing,
+       System.Windows.Forms) collide with UseWPF's (System.Windows.Media, System.Windows.Controls,
+       ...) - both define Color/Brush/UserControl/Application/KeyEventArgs, so every file in this
+       WPF-first codebase would otherwise need an explicit disambiguation. Removed here instead,
+       since only MainWindow.xaml.cs actually needs the WinForms tray-icon types, and it already
+       reaches them through an explicit `Forms = System.Windows.Forms` alias / fully-qualified
+       `System.Drawing.Icon` rather than relying on either implicit using. -->
+  <ItemGroup>
+    <Using Remove="System.Drawing" />
+    <Using Remove="System.Windows.Forms" />
   </ItemGroup>
 
 </Project>

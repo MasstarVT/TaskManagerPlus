@@ -17,7 +17,11 @@ namespace TaskManagerPlus.Services;
 /// </summary>
 public static class SnapshotService
 {
-    public static SystemSnapshot Capture()
+    /// <summary>Round 12, #94: `idleCpuTempC` is optional and supplied by the caller (SummaryViewModel
+    /// already knows the live EnergyThermals/Performance state at the moment "Save snapshot" is
+    /// clicked; this static service has no sensor access of its own) - see SystemSnapshot.IdleCpuTempC's
+    /// remarks for the idle-gating this relies on the caller to have already applied.</summary>
+    public static SystemSnapshot Capture(double? idleCpuTempC = null)
     {
         return new SystemSnapshot
         {
@@ -29,6 +33,7 @@ public static class SnapshotService
             // list above - lets the Services tab's config-drift check reuse this same baseline
             // file instead of inventing a second one.
             ServiceConfigs = ServiceControlService.ReadServiceConfigs(),
+            IdleCpuTempC = idleCpuTempC,
         };
     }
 

@@ -28,8 +28,8 @@ public sealed class NetworkHistoryEntry
 /// </summary>
 public static class NetworkHistoryService
 {
-    private static string HistoryPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TaskManagerPlus", "network-history.json");
+    // Round 12, #87: routed through AppPaths so portable mode redirects this next to the exe.
+    private static string HistoryPath => AppPaths.GetPath("network-history.json");
 
     private const int MaxDays = 180;
 

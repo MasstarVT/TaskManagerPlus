@@ -8,8 +8,8 @@ namespace TaskManagerPlus.Services;
 /// - same shape as ThemeService/AlertThresholdsService's persistence.</summary>
 public static class RemoteMonitorSettingsService
 {
-    private static string SettingsPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TaskManagerPlus", "remote-monitor.json");
+    // Round 12, #87: routed through AppPaths so portable mode redirects this next to the exe.
+    private static string SettingsPath => AppPaths.GetPath("remote-monitor.json");
 
     public static RemoteMonitorSettings Load()
     {

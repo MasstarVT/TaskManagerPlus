@@ -63,6 +63,24 @@
                                 AccentBrush="{DynamicResource DangerBrush}" />
             </UniformGrid>
 
+            <!-- Round 12, #93: GPU power-limit/TDP readout, alongside the headline power draw
+                 tile above - hidden entirely when the GPU backend reports no distinct limit/TDP
+                 sensor (most only expose instantaneous draw; see GpuPowerLimitW's remarks). -->
+            <views:VfdMeter Title="GPU power limit" Glow="False" Margin="0,0,0,16"
+                            ValueText="{Binding GpuPowerLimitW, StringFormat={}{0:0.#}, TargetNullValue=–}" Unit="W"
+                            SubText="TDP / configured power limit"
+                            AccentBrush="{DynamicResource DangerBrush}">
+                <views:VfdMeter.Style>
+                    <Style TargetType="views:VfdMeter">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding GpuPowerLimitW}" Value="{x:Null}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </views:VfdMeter.Style>
+            </views:VfdMeter>
+
             <!-- #29: GPU hotspot-vs-edge differential - a large, sustained gap flags degraded
                  thermal paste/pads distinct from either reading alone being high. Hidden entirely
                  when no discrete GPU/hotspot sensor is reported. -->
@@ -197,6 +215,128 @@
                 </StackPanel>
             </Border>
 
+            <!-- Round 12, #95: fan RPM over time, complementing the temp-vs-RPM scatter above -
+                 a plain time series shows hunting/oscillation (RPM repeatedly ramping up and down
+                 at a near-constant temperature) that a scatter cloud's shape hides. Same
+                 primary-fan tracking as the scatter, so this appears/disappears together with it. -->
+            <Border Margin="0,16,0,0">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding FanCurvePoints.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Fan RPM over time" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="A fan that repeatedly ramps up and down at a near-constant temperature ('hunting') shows here as visible oscillation, which the scatter plot above hides."
+                               Style="{StaticResource SubStat}" Margin="0,-6,0,10" TextWrapping="Wrap" />
+                    <lvc:CartesianChart Series="{Binding FanRpmSeries}" XAxes="{Binding HiddenXAxes}" YAxes="{Binding FanRpmYAxes}"
+                                         Height="140" TooltipPosition="Hidden" LegendPosition="Hidden" Background="Transparent" />
+                </StackPanel>
+            </Border>
+
+            <!-- Round 12, #90/#91/#92: power scheme + sleep-state support + USB selective-suspend -
+                 all on-demand (shelling out to powercfg/WMI, not something to poll every tick). -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Power plan &amp; sleep support" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Load power info" Command="{Binding LoadPowerInfoCommand}" />
+                    </Grid>
+                    <TextBlock Text="{Binding PowerPlanStatusText}" Margin="0,4,0,8" TextWrapping="Wrap">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding PowerPlanStatusText}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <ItemsControl ItemsSource="{Binding PowerPlans}" Margin="0,0,0,10">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" FontSize="12.5" VerticalAlignment="Center">
+                                        <Run Text="{Binding Name, Mode=OneWay}" />
+                                        <Run Foreground="{DynamicResource SuccessBrush}">
+                                            <Run.Text>
+                                                <Binding Path="IsActive" Converter="{StaticResource ActivePlanSuffixConverter}" Mode="OneWay" />
+                                            </Run.Text>
+                                        </Run>
+                                    </TextBlock>
+                                    <Button Grid.Column="1" Content="Switch to this" FontSize="11" Padding="8,3"
+                                            Command="{Binding DataContext.SetPowerPlanCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                            CommandParameter="{Binding Guid}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Margin="0,4,0,0" TextWrapping="Wrap">
+                        <Run Text="Sleep state: " Style="{StaticResource SubStat}" />
+                        <Run Text="{Binding SleepStateSupportText, Mode=OneWay}" FontSize="12.5" />
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- #92: per-device USB selective-suspend status - on-demand, and honestly reports
+                 "Unknown" for most devices on most systems (see UsbPowerService's remarks). -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="USB selective suspend" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Load USB devices" Command="{Binding LoadUsbDevicesCommand}" />
+                    </Grid>
+                    <TextBlock Text="Best-effort per-device read - Windows exposes no simple public API for this, so most devices on most systems will honestly show 'Unknown' rather than a guess."
+                               Style="{StaticResource SubStat}" Margin="0,-2,0,10" TextWrapping="Wrap" />
+                    <ItemsControl ItemsSource="{Binding UsbDevices}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="{Binding Name}" FontSize="12" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Grid.Column="1" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="8,0,0,0">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Text" Value="Unknown" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding SelectiveSuspendEnabled}" Value="True">
+                                                        <Setter Property="Text" Value="Enabled" />
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding SelectiveSuspendEnabled}" Value="False">
+                                                        <Setter Property="Text" Value="Disabled" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
             <!-- Temperatures -->
             <TextBlock Text="Temperatures" Style="{StaticResource SubStat}" Margin="0,16,0,10" />
             <ItemsControl ItemsSource="{Binding Temperatures}" Margin="0,0,0,16">
@@ -247,9 +387,23 @@
                 </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
                     <DataTemplate>
+                        <!-- Round 12, #96: out-of-spec 12V/5V/3.3V rail flagging - a recognized
+                             rail more than ~5% off nominal tints red; anything else (unrecognized
+                             rail name, or within spec) stays the normal accent color. -->
                         <views:VfdMeter Title="{Binding SensorName}" Glow="False" Width="172" Margin="0,0,8,8"
                                         ValueText="{Binding Value, StringFormat={}{0:0.###}, TargetNullValue=–}" Unit="V"
-                                        SubText="{Binding HardwareName}" AccentBrush="{DynamicResource AccentBrush}" />
+                                        SubText="{Binding HardwareName}" AccentBrush="{DynamicResource AccentBrush}">
+                            <views:VfdMeter.Style>
+                                <Style TargetType="views:VfdMeter">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsVoltageOutOfSpec}" Value="True">
+                                            <Setter Property="AccentBrush" Value="{DynamicResource DangerBrush}" />
+                                            <Setter Property="SubText" Value="Out of spec (±5%)" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </views:VfdMeter.Style>
+                        </views:VfdMeter>
                     </DataTemplate>
                 </ItemsControl.ItemTemplate>
             </ItemsControl>
