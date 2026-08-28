@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Diagnostics;
+using System.Net.NetworkInformation;
 using System.Windows;
 using System.Windows.Threading;
 using LiveChartsCore;
@@ -8,6 +9,7 @@ using LiveChartsCore.SkiaSharpView;
 using LiveChartsCore.SkiaSharpView.Painting;
 using SkiaSharp;
 using TaskManagerPlus.Common;
+using TaskManagerPlus.Models;
 using TaskManagerPlus.Services;
 
 namespace TaskManagerPlus.ViewModels;
@@ -21,6 +23,68 @@ public sealed class DnsAdapterResolverRow
     public string AdapterName { get; init; } = string.Empty;
     public string ResolverIp { get; init; } = string.Empty;
     public bool IsFirstResponder { get; set; }
+}
+
+/// <summary>#547-#554's per-adapter composite row for the new Adapter health card - assembled from
+/// several independent services (AdapterErrorCounterService, AdapterAdvancedPropertyService,
+/// AdapterPowerManagementService, AdapterDriverStoreService, ...) the same way AdapterAddressInfo
+/// composes DhcpAddressingService's output for the Addressing card. Extends ObservableObject (unlike
+/// AdapterAddressInfo's plain mutable class) because this card's per-adapter "Advanced properties"
+/// Expander needs to keep its expanded/collapsed UI state across the 15s tick that refreshes #547's
+/// error counters - see NetworkViewModel.RefreshAdapterHealth's remarks for why only the
+/// per-tick fields below are ever reassigned after construction.</summary>
+public sealed class AdapterHealthRow : ObservableObject
+{
+    public string AdapterName { get; init; } = string.Empty;
+
+    // #549/#550/#551/#552/#553: read once when this row is first created - none of these change
+    // without a driver reinstall/reconfiguration this app would need a restart to see anyway, the
+    // same "queried once" tradeoff the existing #48 AdapterDrivers list already takes. (#556's
+    // Driver Store match lives on the existing AdapterDrivers list itself, not here - see
+    // NetworkViewModel's constructor remarks.)
+    public List<AdapterAdvancedProperty> AdvancedProperties { get; init; } = new();
+    public List<AdapterAdvancedProperty> OffloadProperties { get; init; } = new();
+    public List<AdapterProblemFlag> ProblemFlags { get; init; } = new();
+    public AdapterPowerManagementInfo PowerManagement { get; init; } = new(null, null, "Unknown", null, null);
+
+    // #551: plain Yes/No/Unknown text for the view - avoids a bool?-to-text converter/multi-trigger
+    // for two fields that never change after construction (PowerManagement itself is never
+    // reassigned), same "compute it once in C#" tradeoff GatewayStatusText etc. already take above.
+    public string ArpOffloadText => PowerManagement.ArpOffloadEnabled switch { true => "On", false => "Off", null => "Unknown" };
+    public string WakeOnMagicPacketText => PowerManagement.WakeOnMagicPacketEnabled switch { true => "On", false => "Off", null => "Unknown" };
+
+    // #547: per-tick error/discard deltas - the only fields mutated after construction, updated in
+    // place every 15s tick so this row's object identity (and any expanded Expander bound to it)
+    // survives the refresh instead of being torn down and rebuilt.
+    private long _rxErrorsDelta;
+    public long RxErrorsDelta { get => _rxErrorsDelta; set => SetProperty(ref _rxErrorsDelta, value); }
+
+    private long _txErrorsDelta;
+    public long TxErrorsDelta { get => _txErrorsDelta; set => SetProperty(ref _txErrorsDelta, value); }
+
+    private long _rxDiscardsDelta;
+    public long RxDiscardsDelta { get => _rxDiscardsDelta; set => SetProperty(ref _rxDiscardsDelta, value); }
+
+    private long _txDiscardsDelta;
+    public long TxDiscardsDelta { get => _txDiscardsDelta; set => SetProperty(ref _txDiscardsDelta, value); }
+
+    private bool _hasCurrentErrorRate;
+    public bool HasCurrentErrorRate { get => _hasCurrentErrorRate; set => SetProperty(ref _hasCurrentErrorRate, value); }
+
+    // Sticky for the rest of this app session - unlike HasCurrentErrorRate (only the latest tick),
+    // this stays true once any error/discard has ever been seen, so a sporadic error that's since
+    // cleared still counts toward #554's quality score below.
+    private bool _hasEverHadErrorsThisSession;
+    public bool HasEverHadErrorsThisSession { get => _hasEverHadErrorsThisSession; set => SetProperty(ref _hasEverHadErrorsThisSession, value); }
+
+    // #554: the card's headline - recomputed by NetworkViewModel.RecomputeLinkQuality whenever
+    // either input (a fresh #547 sample, or a completed #548 scan) changes. Deliberately labelled a
+    // heuristic, same as every other "quick flag, not a verdict" indicator in this app.
+    private string _linkQualityLabel = "Unknown";
+    public string LinkQualityLabel { get => _linkQualityLabel; set => SetProperty(ref _linkQualityLabel, value); }
+
+    private string _linkQualityReason = "Not enough data yet.";
+    public string LinkQualityReason { get => _linkQualityReason; set => SetProperty(ref _linkQualityReason, value); }
 }
 
 /// <summary>
@@ -658,6 +722,66 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
     public AsyncRelayCommand RefreshWifiProfilesCommand { get; }
     public AsyncRelayCommand DeleteWifiProfileCommand { get; }
 
+    // ---- suggestions.md #547-556: NIC driver, offload, power management and link health --------
+    // New "Adapter health" card. #547 (per-adapter error/discard deltas) and the registry-derived
+    // facts #549-553 need ride the same 15s CheckConnectivityAsync tick AdapterLinks/AdapterDrivers
+    // already use above - #547 explicitly wants a per-tick delta, and a handful of small registry
+    // reads per adapter is no heavier than the WMI/netsh calls that tick already makes elsewhere
+    // (ReadProxyConfig, WifiDiagnosticsService.ReadCurrentWifiAsync, ...). #548 (event-log scan) and
+    // #555 (restart) are on-demand only, per CLAUDE.md's event-log-scan and disruptive-action
+    // conventions - #555 sits behind the same MessageBox.Show confirm-first pattern
+    // ReleaseSelectedAdapter/RenewAdapter above already use for their own connection-dropping actions.
+    private readonly AdapterErrorCounterService _adapterErrorCounters = new();
+
+    // #548: reset counts attributed to an adapter by the most recent scan - empty until a scan has
+    // actually run, in which case #554 simply has one less input to work from.
+    private readonly Dictionary<string, int> _linkFlapCountsByAdapter = new(StringComparer.OrdinalIgnoreCase);
+
+    // #556: every Net-class package currently staged in the Driver Store - read once at startup,
+    // matched against each adapter's own driver record when its AdapterHealthRow is first built.
+    private List<StagedDriverPackage> _allStagedNetDrivers = new();
+
+    public ObservableCollection<AdapterHealthRow> AdapterHealth { get; } = new();
+
+    // #552: machine-wide TCP offload settings - read once at startup, like AdapterDrivers, since
+    // these don't change without an explicit `netsh int tcp set global` command this app itself
+    // never issues.
+    private TcpGlobalSettings _tcpGlobalSettings = new("Unknown", "Unknown", "Unknown");
+    public TcpGlobalSettings TcpGlobalSettings { get => _tcpGlobalSettings; private set => SetProperty(ref _tcpGlobalSettings, value); }
+
+    // #548: on-demand link-flap/reset scan - its own lookback window, mirroring #524/#530/#541's
+    // on-demand event-log scans elsewhere on this tab.
+    private double _linkFlapScanWindowHours = 24.0;
+    public double LinkFlapScanWindowHours { get => _linkFlapScanWindowHours; set => SetProperty(ref _linkFlapScanWindowHours, Math.Clamp(value, 1.0, 720.0)); }
+
+    private bool _isScanningLinkFlaps;
+    public bool IsScanningLinkFlaps { get => _isScanningLinkFlaps; private set => SetProperty(ref _isScanningLinkFlaps, value); }
+
+    private string _linkFlapScanStatusText = "Not scanned yet.";
+    public string LinkFlapScanStatusText { get => _linkFlapScanStatusText; private set => SetProperty(ref _linkFlapScanStatusText, value); }
+
+    public ObservableCollection<LinkFlapEvent> LinkFlapEvents { get; } = new();
+    public AsyncRelayCommand ScanLinkFlapsCommand { get; }
+
+    // #555: restart action - target adapter picked by name from the same set AdapterHealth/
+    // AdapterLinks already list.
+    private string? _selectedHealthAdapterName;
+    public string? SelectedHealthAdapterName { get => _selectedHealthAdapterName; set => SetProperty(ref _selectedHealthAdapterName, value); }
+
+    private bool _isRestartingAdapter;
+    public bool IsRestartingAdapter { get => _isRestartingAdapter; private set => SetProperty(ref _isRestartingAdapter, value); }
+
+    private string _restartAdapterStatusText = "Pick an adapter above, then Restart. This briefly drops its connection.";
+    public string RestartAdapterStatusText { get => _restartAdapterStatusText; private set => SetProperty(ref _restartAdapterStatusText, value); }
+
+    public RelayCommand RestartAdapterCommand { get; }
+
+    // #551: "the exact Device Manager location to change it" - Windows has no documented way to
+    // deep-link straight to one device's Power Management tab, so this opens Device Manager itself
+    // (same ShellExecute-a-known-tool shape #46's OpenHostsFileCommand already uses) rather than
+    // leaving the guidance text as a dead end.
+    public RelayCommand OpenDeviceManagerCommand { get; }
+
     public NetworkViewModel(PerformanceViewModel performance)
     {
         Performance = performance;
@@ -674,13 +798,18 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
 
         _ = CheckConnectivityAsync();
 
-        // #48: one-time driver read - see AdapterDrivers' remarks.
-        _ = Task.Run(() =>
+        // #48/#556: one-time driver read plus a Driver Store sweep, matched together - neither can
+        // change without a reinstall/reboot this app would need a restart to see anyway, same
+        // "queried once" tradeoff AdapterDrivers already took before #556 extended it.
+        _ = Task.Run(async () =>
         {
             var drivers = NetworkDiagnosticsService.ReadAdapterDriverInfo();
+            _allStagedNetDrivers = await AdapterDriverStoreService.ReadNetDriverPackagesAsync();
+            var annotated = drivers.Select(d => d with { StagedPackages = AdapterDriverStoreService.MatchToAdapter(_allStagedNetDrivers, d) }).ToList();
+
             System.Windows.Application.Current?.Dispatcher.Invoke(() =>
             {
-                foreach (var d in drivers) AdapterDrivers.Add(d);
+                foreach (var d in annotated) AdapterDrivers.Add(d);
             });
         });
 
@@ -849,6 +978,18 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         RunWlanReportCommand = new AsyncRelayCommand(RunWlanReportAsync, () => !IsRunningWlanReport);
         RefreshWifiProfilesCommand = new AsyncRelayCommand(RefreshWifiProfilesAsync, () => !IsLoadingWifiProfiles);
         DeleteWifiProfileCommand = new AsyncRelayCommand(param => DeleteWifiProfileAsync(param as WifiProfileAudit), _ => !IsLoadingWifiProfiles);
+
+        // #547-556: Adapter health card wiring.
+        ScanLinkFlapsCommand = new AsyncRelayCommand(ScanLinkFlapsAsync, () => !IsScanningLinkFlaps);
+        RestartAdapterCommand = new RelayCommand(RestartSelectedAdapter, () => !string.IsNullOrWhiteSpace(SelectedHealthAdapterName) && !IsRestartingAdapter);
+        OpenDeviceManagerCommand = new RelayCommand(_ => OpenDeviceManager());
+
+        // #552: one-time machine-wide TCP offload read - see TcpGlobalSettings' remarks.
+        _ = Task.Run(async () =>
+        {
+            var tcp = await TcpGlobalSettingsService.ReadAsync();
+            System.Windows.Application.Current?.Dispatcher.Invoke(() => TcpGlobalSettings = tcp);
+        });
     }
 
     private async Task CheckConnectivityAsync()
@@ -896,6 +1037,11 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
             AdapterLinks.Clear();
             foreach (var link in links) AdapterLinks.Add(link);
 
+            // #547-556: Adapter health card - see RefreshAdapterHealth's remarks for why this
+            // only does registry/driver-store work for adapters this session hasn't already built a
+            // row for, and always refreshes #547's error-delta fields regardless.
+            await Task.Run(RefreshAdapterHealth);
+
             var vpnAdapters = NetworkDiagnosticsService.ReadActiveVpnAdapterNames();
             HasActiveVpn = vpnAdapters.Count > 0;
             VpnStatusText = HasActiveVpn ? string.Join(", ", vpnAdapters) : "None detected";
@@ -938,6 +1084,240 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         }
     }
 
+    /// <summary>
+    /// #547-556: builds/refreshes the Adapter health card. Called via Task.Run from
+    /// CheckConnectivityAsync above, so this runs on a background thread - every
+    /// ObservableCollection/property mutation below is marshaled back to the UI thread through
+    /// Dispatcher.Invoke, the same pattern the one-time #48 AdapterDrivers read already uses.
+    ///
+    /// A brand-new adapter (not yet represented by an AdapterHealthRow) gets its one-time
+    /// registry/USB-cross-reference facts (#549-553) read here, once - see AdapterHealthRow's
+    /// remarks for why those fields are never reassigned afterward, which is what keeps this card's
+    /// per-adapter "Advanced properties" Expander from collapsing every 15s. Every adapter, new or
+    /// already-known, gets its #547 error-delta fields refreshed on every call (the one genuinely
+    /// per-tick part of this card), and #554's quality score is recomputed from whatever's now known.
+    /// </summary>
+    private void RefreshAdapterHealth()
+    {
+        // #547: always sample - cheap NetworkInterface counter reads, no registry/shell-out involved.
+        var errorSamples = _adapterErrorCounters.Sample();
+        var errorsByName = errorSamples.ToDictionary(e => e.AdapterName, e => e, StringComparer.OrdinalIgnoreCase);
+
+        var existingNames = new HashSet<string>(
+            System.Windows.Application.Current?.Dispatcher.Invoke(() => AdapterHealth.Select(r => r.AdapterName).ToList())
+                ?? new List<string>(),
+            StringComparer.OrdinalIgnoreCase);
+
+        var activeAdapters = NetworkInterface.GetAllNetworkInterfaces()
+            .Where(ni => ni.OperationalStatus == OperationalStatus.Up &&
+                         ni.NetworkInterfaceType is not (NetworkInterfaceType.Loopback or NetworkInterfaceType.Tunnel))
+            .ToList();
+
+        var newAdapters = activeAdapters.Where(ni => !existingNames.Contains(ni.Name)).ToList();
+        var newRows = new List<AdapterHealthRow>();
+        if (newAdapters.Count > 0)
+        {
+            // Only newly-seen adapters need these heavier one-time reads - a WMI sweep plus a
+            // handful of registry key opens per adapter.
+            var pnpIdsByGuid = AdapterUsbLookupService.ReadPnpDeviceIdsByGuid();
+            var usbDevices = UsbPowerService.ReadUsbSelectiveSuspend();
+            foreach (var ni in newAdapters)
+                newRows.Add(BuildAdapterHealthRow(ni, pnpIdsByGuid, usbDevices));
+        }
+
+        var currentNames = new HashSet<string>(activeAdapters.Select(a => a.Name), StringComparer.OrdinalIgnoreCase);
+
+        System.Windows.Application.Current?.Dispatcher.Invoke(() =>
+        {
+            // Drop rows for adapters that disappeared (renamed, unplugged, disabled).
+            for (int i = AdapterHealth.Count - 1; i >= 0; i--)
+                if (!currentNames.Contains(AdapterHealth[i].AdapterName)) AdapterHealth.RemoveAt(i);
+
+            foreach (var row in newRows) AdapterHealth.Add(row);
+
+            // #547: refresh every row's error-delta fields in place - this is what keeps each row's
+            // object identity (and any expanded Expander) intact across this 15s tick.
+            foreach (var row in AdapterHealth)
+            {
+                if (!errorsByName.TryGetValue(row.AdapterName, out var e)) continue;
+                row.RxErrorsDelta = e.ReceivedErrorsDelta;
+                row.TxErrorsDelta = e.OutboundErrorsDelta;
+                row.RxDiscardsDelta = e.ReceivedDiscardsDelta;
+                row.TxDiscardsDelta = e.OutboundDiscardsDelta;
+                row.HasCurrentErrorRate = e.HasNonZeroRate;
+                if (e.HasNonZeroRate) row.HasEverHadErrorsThisSession = true;
+            }
+
+            RecomputeLinkQuality();
+        });
+    }
+
+    /// <summary>The one-time (per adapter, per session) half of RefreshAdapterHealth -
+    /// everything a freshly-discovered adapter needs read once: #549's full advanced-property
+    /// enumeration, #552's offload subset of it, #550's known-problem flags (including the USB
+    /// Selective Suspend cross-reference via AdapterUsbLookupService, only attempted when the
+    /// adapter's own PNPDeviceID actually starts with "USB"), and #551's power-management read.</summary>
+    private static AdapterHealthRow BuildAdapterHealthRow(
+        NetworkInterface ni, Dictionary<string, string> pnpIdsByGuid, List<UsbDevicePowerInfo> usbDevices)
+    {
+        var properties = AdapterAdvancedPropertyService.ReadAll(ni.Id);
+        var offload = AdapterAdvancedPropertyService.FilterOffloadRelated(properties);
+
+        string wantedGuid = ni.Id.Trim('{', '}');
+        pnpIdsByGuid.TryGetValue(wantedGuid, out var pnpDeviceId);
+        bool isUsbAdapter = pnpDeviceId is not null && pnpDeviceId.StartsWith("USB", StringComparison.OrdinalIgnoreCase);
+        bool? selectiveSuspend = isUsbAdapter ? AdapterUsbLookupService.FindSelectiveSuspend(usbDevices, pnpDeviceId) : null;
+
+        var problems = AdapterAdvancedPropertyService.DetectKnownProblems(properties, selectiveSuspend);
+        var power = AdapterPowerManagementService.Read(ni.Id);
+
+        return new AdapterHealthRow
+        {
+            AdapterName = ni.Name,
+            AdvancedProperties = properties,
+            OffloadProperties = offload,
+            ProblemFlags = problems,
+            PowerManagement = power,
+        };
+    }
+
+    /// <summary>
+    /// #554: combines #548's link-state transitions with #547's error-counter rate into one
+    /// per-adapter "clean / marginal / bad" headline, over a rolling window - deliberately labelled
+    /// a heuristic (the same "quick flag, not a verdict" framing this app's other pattern-matched
+    /// indicators use), not a hard measurement. Called both after every #547 sample
+    /// (RefreshAdapterHealth above) and after a #548 scan completes (ScanLinkFlapsAsync below),
+    /// since either input changing should move the badge. Must run on the UI thread (it touches
+    /// AdapterHealth's items directly) - both call sites already guarantee that via
+    /// Dispatcher.Invoke.
+    /// </summary>
+    private void RecomputeLinkQuality()
+    {
+        foreach (var row in AdapterHealth)
+        {
+            _linkFlapCountsByAdapter.TryGetValue(row.AdapterName, out int flapCount);
+
+            if (row.HasCurrentErrorRate || flapCount >= 3)
+            {
+                row.LinkQualityLabel = "Bad";
+                row.LinkQualityReason = row.HasCurrentErrorRate
+                    ? "Currently seeing non-zero packet errors/discards."
+                    : $"{flapCount} link-state change(s) in the last scanned window.";
+            }
+            else if (row.HasEverHadErrorsThisSession || flapCount >= 1)
+            {
+                row.LinkQualityLabel = "Marginal";
+                row.LinkQualityReason = row.HasEverHadErrorsThisSession
+                    ? "A packet error/discard was seen earlier this session (currently clear)."
+                    : $"{flapCount} link-state change in the last scanned window.";
+            }
+            else
+            {
+                row.LinkQualityLabel = "Clean";
+                row.LinkQualityReason = _linkFlapCountsByAdapter.Count == 0
+                    ? "No errors seen so far. Run a link-flap scan below for the full picture."
+                    : "No errors or link-state changes seen.";
+            }
+        }
+    }
+
+    /// <summary>#548: on-demand System-log link-state/reset scan - see LinkFlapEventLogService's
+    /// remarks for why this is EventID-filtered rather than provider-filtered. After a successful
+    /// scan, best-effort attributes each event to an adapter by matching its AdapterHint (or, when
+    /// that field wasn't present in the event's own data, its raw message text) against every known
+    /// adapter's Name/Description, then feeds those per-adapter counts into #554's quality score.
+    /// Unattributed events still count toward the total shown in the status text, just not toward
+    /// any specific adapter's headline - honest under-attribution rather than a guessed owner.</summary>
+    private async Task ScanLinkFlapsAsync()
+    {
+        if (IsScanningLinkFlaps) return;
+        IsScanningLinkFlaps = true;
+        LinkFlapScanStatusText = "Scanning...";
+        try
+        {
+            var window = TimeSpan.FromHours(LinkFlapScanWindowHours);
+            var result = await Task.Run(() => LinkFlapEventLogService.Scan(window));
+
+            var adapterDescriptions = NetworkInterface.GetAllNetworkInterfaces()
+                .Select(ni => (ni.Name, ni.Description))
+                .ToList();
+
+            _linkFlapCountsByAdapter.Clear();
+            foreach (var e in result.Events)
+            {
+                string? matchedName = AttributeEventToAdapter(e, adapterDescriptions);
+                if (matchedName is null) continue;
+                _linkFlapCountsByAdapter[matchedName] = _linkFlapCountsByAdapter.GetValueOrDefault(matchedName) + 1;
+            }
+
+            LinkFlapEvents.Clear();
+            foreach (var e in result.Events) LinkFlapEvents.Add(e);
+
+            LinkFlapScanStatusText = !result.ChannelAvailable
+                ? "The System log couldn't be read."
+                : result.Events.Count == 0
+                    ? $"No link-state events in the last {LinkFlapScanWindowHours:0.#}h - clean."
+                    : $"{result.Events.Count} event(s) ({result.ResetCount} look like a reset/disconnect) in the last {LinkFlapScanWindowHours:0.#}h.";
+
+            RecomputeLinkQuality();
+        }
+        catch (Exception ex)
+        {
+            LinkFlapScanStatusText = $"Scan failed: {ex.Message}";
+        }
+        finally
+        {
+            IsScanningLinkFlaps = false;
+        }
+    }
+
+    private static string? AttributeEventToAdapter(LinkFlapEvent e, List<(string Name, string Description)> adapters)
+    {
+        string haystack = $"{e.AdapterHint} {e.Message}";
+        foreach (var (name, description) in adapters)
+        {
+            if (description.Length > 3 && haystack.Contains(description, StringComparison.OrdinalIgnoreCase))
+                return name;
+        }
+        return null;
+    }
+
+    /// <summary>#555: "Restart this adapter" - behind the same MessageBox.Show confirm-first
+    /// pattern ReleaseSelectedAdapter/RenewAdapter already use for their own connection-dropping
+    /// actions, since bouncing admin state briefly drops whatever's using this adapter.</summary>
+    private void RestartSelectedAdapter()
+    {
+        string? target = SelectedHealthAdapterName;
+        if (string.IsNullOrWhiteSpace(target)) return;
+
+        var confirm = MessageBox.Show(
+            $"Restart the adapter \"{target}\"?\nThis disables then re-enables it, which briefly drops its connection.",
+            "Restart adapter", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        _ = RunRestartAdapterAsync(target);
+    }
+
+    private async Task RunRestartAdapterAsync(string adapterName)
+    {
+        if (IsRestartingAdapter) return;
+        IsRestartingAdapter = true;
+        RestartAdapterStatusText = $"Restarting \"{adapterName}\"...";
+        try
+        {
+            string output = await AdapterRestartService.RestartAsync(adapterName);
+            RestartAdapterStatusText = output;
+        }
+        catch (Exception ex)
+        {
+            RestartAdapterStatusText = $"Restart failed: {ex.Message}";
+        }
+        finally
+        {
+            IsRestartingAdapter = false;
+        }
+    }
+
     /// <summary>#46: opens the hosts file in Notepad for DNS override troubleshooting - explicitly
     /// launches notepad.exe rather than ShellExecute-ing the bare path, since the hosts file has
     /// no extension and so no reliably-registered default handler to fall back to.</summary>
@@ -952,6 +1332,22 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         catch
         {
             // Best-effort - if Notepad can't launch there's nothing more useful this app can do here.
+        }
+    }
+
+    /// <summary>#551: opens Device Manager - there's no documented switch/URI to deep-link straight
+    /// to a specific device's Power Management tab, so this just gets the user to the right tool
+    /// (they still pick the adapter and tab themselves), the same "known tool over nothing" shape
+    /// OpenHostsFile above already takes for a different destination.</summary>
+    private static void OpenDeviceManager()
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo("devmgmt.msc") { UseShellExecute = true });
+        }
+        catch
+        {
+            // Best-effort - if it can't launch there's nothing more useful this app can do here.
         }
     }
 

@@ -704,12 +704,16 @@
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
                                 <Grid Margin="0,0,0,8">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0" Text="{Binding Name}" FontSize="12.5" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
-                                    <TextBlock Grid.Column="1" Text="{Binding SpeedMbps, StringFormat={}{0:0} Mbps}" FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center">
+                                    <TextBlock Grid.Row="0" Grid.Column="0" Text="{Binding Name}" FontSize="12.5" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                    <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding SpeedMbps, StringFormat={}{0:0} Mbps}" FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center">
                                         <TextBlock.Style>
                                             <Style TargetType="TextBlock">
                                                 <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
@@ -720,6 +724,27 @@
                                                 </Style.Triggers>
                                             </Style>
                                         </TextBlock.Style>
+                                    </TextBlock>
+                                    <!-- #553: configured Speed & Duplex keyword (Auto vs. a forced
+                                         value) - the actual mismatch cause, not just the negotiated-
+                                         speed symptom above. Colored the same way LooksDegraded
+                                         colors the negotiated-speed value above; hidden entirely
+                                         when the driver doesn't register a `*SpeedDuplex` keyword at
+                                         all (most Wi-Fi adapters). -->
+                                    <TextBlock Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,2,0,0" FontSize="11.5"
+                                               Visibility="{Binding ConfiguredSpeedDuplex, Converter={StaticResource NullToVisibilityConverter}}">
+                                        <Run Text="Configured: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding ConfiguredSpeedDuplex}" FontWeight="SemiBold">
+                                            <Run.Style>
+                                                <Style TargetType="Run">
+                                                    <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding ConfiguredLooksForcedOrHalfDuplex}" Value="True">
+                                                            <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Run.Style>
+                                        </Run>
                                     </TextBlock>
                                 </Grid>
                             </DataTemplate>
@@ -775,15 +800,59 @@
 
                     <!-- Round 9, #48: adapter driver version/date - a date-based "worth a manual
                          check" heuristic, the same one ReadOutdatedDrivers uses elsewhere, NOT a
-                         claim that a newer version is actually known to exist online. -->
+                         claim that a newer version is actually known to exist online. #556 adds the
+                         "packages present on this PC" list underneath each one - staged Driver Store
+                         packages matched by INF name/provider, so the user can see whether an older
+                         or newer package is already on the machine to roll back to, again NOT any
+                         online claim. -->
                     <ItemsControl ItemsSource="{Binding AdapterDrivers}" Margin="0,10,0,0">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,4" TextWrapping="Wrap">
-                                    <Run Text="{Binding DeviceName}" FontWeight="SemiBold" />
-                                    <Run Text=" — driver " /><Run Text="{Binding DriverVersion}" />
-                                    <Run Text=" (" /><Run Text="{Binding DriverDate, StringFormat={}{0:d}, TargetNullValue=unknown date}" /><Run Text=")" />
-                                </TextBlock>
+                                <StackPanel Margin="0,0,0,8">
+                                    <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap">
+                                        <Run Text="{Binding DeviceName}" FontWeight="SemiBold" />
+                                        <Run Text=" — driver " /><Run Text="{Binding DriverVersion}" />
+                                        <Run Text=" (" /><Run Text="{Binding DriverDate, StringFormat={}{0:d}, TargetNullValue=unknown date}" /><Run Text=")" />
+                                    </TextBlock>
+                                    <ItemsControl ItemsSource="{Binding StagedPackages}" Margin="12,2,0,0">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <TextBlock FontSize="11.5" Margin="0,1,0,0" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}">
+                                                    <Run Text="•" /> <Run Text="{Binding PublishedName}" FontFamily="Consolas" />
+                                                    <Run Text=" (" /><Run Text="{Binding OriginalName}" /><Run Text=") — " />
+                                                    <Run Text="{Binding ProviderName}" /><Run Text=", " />
+                                                    <Run Text="{Binding DriverVersion}" />
+                                                    <Run Text=" (" /><Run Text="{Binding DriverDate, StringFormat={}{0:d}, TargetNullValue=unknown date}" /><Run Text=")" />
+                                                    <Run FontWeight="SemiBold" Foreground="{DynamicResource SuccessBrush}">
+                                                        <Run.Style>
+                                                            <Style TargetType="Run">
+                                                                <Setter Property="Text" Value="" />
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding IsCurrentlyInstalled}" Value="True">
+                                                                        <Setter Property="Text" Value=" — currently installed" />
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </Run.Style>
+                                                    </Run>
+                                                </TextBlock>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                    <TextBlock Text="No other packages for this class found in the Driver Store." FontSize="11.5" Margin="12,1,0,0"
+                                               Foreground="{DynamicResource TextSecondaryBrush}" Opacity="0.7">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding StagedPackages.Count}" Value="0">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </StackPanel>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
@@ -800,6 +869,284 @@
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- suggestions.md #547-556: Adapter health - per-adapter error/discard rates (#547),
+                 an on-demand link-flap/reset scan (#548), the Device Manager "Advanced" tab nobody
+                 can find (#549) with known-problem flags on top of it (#550), "allow the computer
+                 to turn off this device" detection (#551), machine-wide TCP/IP offload settings
+                 (#552), a #554 per-adapter clean/marginal/bad heuristic headline, and a "Restart
+                 this adapter" action (#555) behind an explicit confirm. #553 (configured Speed &amp;
+                 Duplex) and #556 (staged driver packages) extend the existing Adapters card above
+                 instead of duplicating here. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Adapter health" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Driver, offload, power-management and link-quality detail per adapter - the Device Manager Advanced tab and Power Management checkbox nobody can find, in one place."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+
+                    <!-- #552: machine-wide TCP/IP offload settings, from `netsh int tcp show global`. -->
+                    <TextBlock Text="TCP/IP offload (machine-wide)" Style="{StaticResource SpecLabel}" Margin="0,0,0,4" />
+                    <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap">
+                        <Run Text="Receive-Side Scaling: " /><Run Text="{Binding TcpGlobalSettings.ReceiveSideScalingState}" FontWeight="SemiBold" />
+                        <Run Text="   Chimney Offload: " /><Run Text="{Binding TcpGlobalSettings.ChimneyOffloadState}" FontWeight="SemiBold" />
+                        <Run Text="   Receive Segment Coalescing: " /><Run Text="{Binding TcpGlobalSettings.ReceiveSegmentCoalescingState}" FontWeight="SemiBold" />
+                    </TextBlock>
+                    <TextBlock Text="Read-only - this app never changes these. A buggy driver with LSO or RSC enabled can produce stalled-but-not-dead connections that look like a server problem rather than a local offload bug."
+                               Style="{StaticResource SubStat}" Margin="0,4,0,16" TextWrapping="Wrap" Opacity="0.7" />
+
+                    <!-- #548: on-demand link-flap/reset scan - the System log's own 27/32/33
+                         link-state events, whichever vendor provider logged them. -->
+                    <Grid Margin="0,0,0,6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Link-flap / reset scan" Style="{StaticResource SpecLabel}" Margin="0" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="1" Text="Window (h)" VerticalAlignment="Center" Margin="0,0,6,0" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        <TextBox Grid.Column="2" Width="50" Margin="0,0,8,0" VerticalContentAlignment="Center"
+                                 Text="{Binding LinkFlapScanWindowHours, UpdateSourceTrigger=LostFocus, StringFormat={}{0:0.#}}" />
+                        <Button Grid.Column="3" Content="Scan" Padding="10,4" Command="{Binding ScanLinkFlapsCommand}" />
+                    </Grid>
+                    <TextBlock Text="{Binding LinkFlapScanStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,6" TextWrapping="Wrap" />
+                    <DataGrid ItemsSource="{Binding LinkFlapEvents}" AutoGenerateColumns="False" IsReadOnly="True" HeadersVisibility="Column" CanUserSortColumns="True"
+                              MaxHeight="220" Margin="0,0,0,4">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Time" Binding="{Binding TimeUtc, StringFormat={}{0:g}}" Width="1.3*" />
+                            <DataGridTextColumn Header="Event" Binding="{Binding Kind}" Width="1*" />
+                            <DataGridTextColumn Header="Provider" Binding="{Binding ProviderName}" Width="1.2*" />
+                            <DataGridTextColumn Header="Adapter hint" Binding="{Binding AdapterHint, TargetNullValue=''}" Width="1.3*" />
+                            <DataGridTextColumn Header="Message" Binding="{Binding Message}" Width="2.3*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <TextBlock Text="No scan run yet - set a window above and click Scan.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding LinkFlapEvents.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
+                    <!-- #555: restart action - target adapter picked from the same set listed
+                         below, behind an explicit Yes/No confirm since it briefly drops the
+                         connection. -->
+                    <Grid Margin="0,16,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <ComboBox Grid.Column="0" Margin="0,0,8,0" ItemsSource="{Binding AdapterHealth}"
+                                  DisplayMemberPath="AdapterName" SelectedValuePath="AdapterName"
+                                  SelectedValue="{Binding SelectedHealthAdapterName}" />
+                        <Button Grid.Column="1" Content="Restart this adapter" Padding="10,4" Command="{Binding RestartAdapterCommand}" />
+                    </Grid>
+                    <TextBlock Text="{Binding RestartAdapterStatusText}" Style="{StaticResource SubStat}" Margin="0,6,0,16" TextWrapping="Wrap" />
+
+                    <!-- Per-adapter detail: #547 error/discard deltas, #549/#550 advanced
+                         properties + known-problem flags, #551 power management, #552's per-
+                         adapter offload keywords, #554's quality headline. -->
+                    <ItemsControl ItemsSource="{Binding AdapterHealth}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Margin="0,0,0,12" Padding="10" CornerRadius="6" BorderThickness="1" BorderBrush="{DynamicResource BorderSubtleBrush}">
+                                    <StackPanel>
+                                        <!-- #554: headline. -->
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" Text="{Binding AdapterName}" FontWeight="SemiBold" FontSize="13.5" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                            <Border Grid.Column="1" CornerRadius="4" Padding="9,3">
+                                                <Border.Style>
+                                                    <Style TargetType="Border">
+                                                        <Setter Property="Background" Value="{DynamicResource WarningBrush}" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding LinkQualityLabel}" Value="Clean">
+                                                                <Setter Property="Background" Value="{DynamicResource SuccessBrush}" />
+                                                            </DataTrigger>
+                                                            <DataTrigger Binding="{Binding LinkQualityLabel}" Value="Bad">
+                                                                <Setter Property="Background" Value="{DynamicResource DangerBrush}" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Border.Style>
+                                                <TextBlock Text="{Binding LinkQualityLabel}" FontSize="11" FontWeight="Bold" Foreground="White" />
+                                            </Border>
+                                        </Grid>
+                                        <TextBlock Text="{Binding LinkQualityReason}" Style="{StaticResource SubStat}" Margin="0,3,0,2" TextWrapping="Wrap" Opacity="0.85" />
+                                        <TextBlock Text="Link quality is a heuristic (link-state changes + error rate) - a quick flag, not a verdict."
+                                                   Style="{StaticResource SubStat}" Margin="0,0,0,10" TextWrapping="Wrap" Opacity="0.6" FontStyle="Italic" />
+
+                                        <!-- #547: per-tick error/discard deltas - the whole card
+                                             border turns danger-colored while the current rate is
+                                             nonzero, same "color = flag" treatment the existing
+                                             Adapter errors card uses. -->
+                                        <TextBlock Text="Error / discard rate (this tick)" Style="{StaticResource SpecLabel}" Margin="0,0,0,4" />
+                                        <TextBlock TextWrapping="Wrap" Margin="0,0,0,2">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+                                                    <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding HasCurrentErrorRate}" Value="True">
+                                                            <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                            <Setter Property="FontWeight" Value="SemiBold" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                            <Run Text="In: " /><Run Text="{Binding RxErrorsDelta}" /><Run Text=" errors, " />
+                                            <Run Text="{Binding RxDiscardsDelta}" /><Run Text=" discarded  •  Out: " />
+                                            <Run Text="{Binding TxErrorsDelta}" /><Run Text=" errors, " />
+                                            <Run Text="{Binding TxDiscardsDelta}" /><Run Text=" discarded" />
+                                        </TextBlock>
+                                        <TextBlock Text="Non-zero receive errors on Ethernet almost always mean a bad cable or port."
+                                                   Style="{StaticResource SubStat}" Margin="0,2,0,12" TextWrapping="Wrap" Opacity="0.7" />
+
+                                        <!-- #551: power management. -->
+                                        <TextBlock Text="Power management" Style="{StaticResource SpecLabel}" Margin="0,0,0,4" />
+                                        <TextBlock Text="{Binding PowerManagement.Explanation}" TextWrapping="Wrap" Margin="0,0,0,2">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+                                                    <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding PowerManagement.DeviceMayBePoweredOff}" Value="True">
+                                                            <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                        <TextBlock Style="{StaticResource SubStat}" Margin="0,2,0,2">
+                                            <Run Text="ARP offload: " /><Run Text="{Binding ArpOffloadText}" FontWeight="SemiBold" />
+                                            <Run Text="   Wake on Magic Packet: " /><Run Text="{Binding WakeOnMagicPacketText}" FontWeight="SemiBold" />
+                                        </TextBlock>
+                                        <Grid Margin="0,2,0,12">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" Text="To change this: Device Manager &gt; Network adapters &gt; this adapter &gt; Properties &gt; Power Management tab."
+                                                       Style="{StaticResource SubStat}" TextWrapping="Wrap" Opacity="0.7" VerticalAlignment="Center" Margin="0,0,8,0" />
+                                            <Button Grid.Column="1" Content="Open Device Manager" Padding="8,3"
+                                                    Command="{Binding DataContext.OpenDeviceManagerCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" />
+                                        </Grid>
+
+                                        <!-- #550: known-problem setting flags - hidden entirely when clean. -->
+                                        <StackPanel Margin="0,0,0,10">
+                                            <StackPanel.Style>
+                                                <Style TargetType="StackPanel">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding ProblemFlags.Count}" Value="0">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </StackPanel.Style>
+                                            <TextBlock Text="Worth a look, not a verdict" Style="{StaticResource SpecLabel}" Margin="0,0,0,4" />
+                                            <ItemsControl ItemsSource="{Binding ProblemFlags}">
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <TextBlock TextWrapping="Wrap" Margin="0,0,0,4" FontSize="11.5" Foreground="{DynamicResource WarningBrush}">
+                                                            <Run Text="{Binding Title}" FontWeight="SemiBold" /><Run Text=" — " /><Run Text="{Binding Detail}" />
+                                                        </TextBlock>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </StackPanel>
+
+                                        <!-- #549: full advanced-property viewer, and #552's offload
+                                             subset of the same list - both collapsed by default. -->
+                                        <Expander Background="Transparent" BorderThickness="0" Foreground="{DynamicResource TextPrimaryBrush}" IsExpanded="False">
+                                            <Expander.Header>
+                                                <TextBlock Text="Advanced properties" Style="{StaticResource CardTitle}" Margin="0" FontSize="12.5" />
+                                            </Expander.Header>
+                                            <StackPanel Margin="0,8,0,0">
+                                                <TextBlock Text="The Device Manager &quot;Advanced&quot; tab for this adapter - read-only here."
+                                                           Style="{StaticResource SubStat}" Margin="0,0,0,6" TextWrapping="Wrap" Opacity="0.7" />
+                                                <ItemsControl ItemsSource="{Binding AdvancedProperties}">
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate>
+                                                            <Grid Margin="0,0,0,3">
+                                                                <Grid.ColumnDefinitions>
+                                                                    <ColumnDefinition Width="*" />
+                                                                    <ColumnDefinition Width="Auto" />
+                                                                </Grid.ColumnDefinitions>
+                                                                <TextBlock Grid.Column="0" Text="{Binding FriendlyName}" FontSize="11.5" TextTrimming="CharacterEllipsis" />
+                                                                <TextBlock Grid.Column="1" Text="{Binding ValueText}" FontSize="11.5" FontWeight="SemiBold" Margin="8,0,0,0" />
+                                                            </Grid>
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                                <TextBlock Text="This driver doesn't register any advanced properties.">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding AdvancedProperties.Count}" Value="0">
+                                                                    <Setter Property="Visibility" Value="Visible" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+
+                                                <!-- #552: offload-related subset of the list above. -->
+                                                <TextBlock Text="Offload settings (LSO / RSC / checksum / RSS)" Style="{StaticResource SpecLabel}" Margin="0,12,0,4" />
+                                                <ItemsControl ItemsSource="{Binding OffloadProperties}">
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate>
+                                                            <Grid Margin="0,0,0,3">
+                                                                <Grid.ColumnDefinitions>
+                                                                    <ColumnDefinition Width="*" />
+                                                                    <ColumnDefinition Width="Auto" />
+                                                                </Grid.ColumnDefinitions>
+                                                                <TextBlock Grid.Column="0" Text="{Binding FriendlyName}" FontSize="11.5" TextTrimming="CharacterEllipsis" />
+                                                                <TextBlock Grid.Column="1" Text="{Binding ValueText}" FontSize="11.5" FontWeight="SemiBold" Margin="8,0,0,0" />
+                                                            </Grid>
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                                <TextBlock Text="No offload-related keywords found for this driver.">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding OffloadProperties.Count}" Value="0">
+                                                                    <Setter Property="Visibility" Value="Visible" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+                                            </StackPanel>
+                                        </Expander>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="No active adapters detected.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding AdapterHealth.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
                 </StackPanel>
             </Border>
 

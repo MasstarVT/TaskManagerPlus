@@ -18,15 +18,33 @@ public sealed record ConnectivityResult(
     /// even check (mirrors GatewayReachable/DnsReachable's null convention).</summary>
     bool? CaptivePortalDetected);
 
-/// <summary>One active network adapter's negotiated link speed (#31).</summary>
-public sealed record AdapterLinkInfo(string Name, double SpeedMbps, bool LooksDegraded);
+/// <summary>One active network adapter's negotiated link speed (#31), extended by #553 with the
+/// *configured* Speed &amp; Duplex keyword (Auto vs. a forced value) alongside it - the actual
+/// mismatch cause a forced/half-duplex setting can produce, rather than just the negotiated-speed
+/// symptom <see cref="LooksDegraded"/> alone reports. <see cref="ConfiguredSpeedDuplex"/> is null
+/// when the driver doesn't register a `*SpeedDuplex` keyword at all (most Wi-Fi adapters, some
+/// USB/virtual ones) - the view hides that row rather than showing a guessed value.</summary>
+public sealed record AdapterLinkInfo(
+    string Name, double SpeedMbps, bool LooksDegraded,
+    string? ConfiguredSpeedDuplex, bool ConfiguredLooksForcedOrHalfDuplex);
 
 /// <summary>Read-only WinHTTP/IE proxy configuration (round 9, #47) - display only, this app never
 /// writes to these keys.</summary>
 public sealed record ProxyConfigInfo(bool Enabled, string ProxyServer, string AutoConfigUrl);
 
-/// <summary>One network adapter's driver version/date (round 9, #48).</summary>
-public sealed record AdapterDriverInfo(string DeviceName, string DriverVersion, DateTime? DriverDate, bool LooksOld);
+/// <summary>One network adapter's driver version/date (round 9, #48). <see cref="Manufacturer"/> and
+/// <see cref="InfName"/> (#556) are the join keys AdapterDriverStoreService.MatchToAdapter uses to
+/// cross-reference this against the Driver Store's own package list; <see cref="StagedPackages"/> is
+/// where that match result is actually attached - an extra `init`-only property alongside this
+/// record's positional ones, set via a `with` expression after the fact, the same "annotate after
+/// construction" shape RouteEntry/HostsFileEntry/AdapterAddressInfo already use for their own
+/// derived flags (those are mutable classes rather than records, but the intent is identical).
+/// Empty until NetworkViewModel has actually read the Driver Store, not merely "no packages
+/// found".</summary>
+public sealed record AdapterDriverInfo(string DeviceName, string DriverVersion, DateTime? DriverDate, bool LooksOld, string Manufacturer, string InfName)
+{
+    public List<StagedDriverPackage> StagedPackages { get; init; } = new();
+}
 
 /// <summary>Min/max/avg round-trip and packet loss over N pings (round 9, #50) - a jitter/loss
 /// quick test, distinct from the single-shot gateway/DNS ping above. <see cref="JitterMs"/> is
@@ -158,7 +176,7 @@ public sealed class NetworkDiagnosticsService
         try
         {
             using var searcher = new ManagementObjectSearcher(
-                "SELECT DeviceName, Manufacturer, DriverVersion, DriverDate FROM Win32_PnPSignedDriver WHERE DeviceClass = 'NET'");
+                "SELECT DeviceName, Manufacturer, DriverVersion, DriverDate, InfName FROM Win32_PnPSignedDriver WHERE DeviceClass = 'NET'");
             foreach (ManagementObject mo in searcher.Get())
             {
                 string deviceName = (mo["DeviceName"] as string ?? string.Empty).Trim();
@@ -179,8 +197,9 @@ public sealed class NetworkDiagnosticsService
                     try { driverDate = ManagementDateTimeConverter.ToDateTime(wmiDate); } catch { /* leave null */ }
                 }
                 bool looksOld = driverDate is { } d && d.Year > 2006 && d < DriverAgeCutoff;
+                string infName = (mo["InfName"] as string ?? string.Empty).Trim();
 
-                drivers.Add(new AdapterDriverInfo(deviceName, (mo["DriverVersion"] as string ?? string.Empty).Trim(), driverDate, looksOld));
+                drivers.Add(new AdapterDriverInfo(deviceName, (mo["DriverVersion"] as string ?? string.Empty).Trim(), driverDate, looksOld, manufacturer, infName));
             }
         }
         catch
@@ -314,9 +333,10 @@ public sealed class NetworkDiagnosticsService
     }
 
     /// <summary>Negotiated link speed per active adapter (#31) - flags a "Gigabit"-branded
-    /// adapter that negotiated down to under 1 Gbps, a classic bad-cable/bad-port symptom.
-    /// No I/O here (pure NetworkInterface enumeration), so it's cheap to call on every tick of
-    /// whichever timer calls it.</summary>
+    /// adapter that negotiated down to under 1 Gbps, a classic bad-cable/bad-port symptom. #553
+    /// adds the *configured* Speed &amp; Duplex keyword (a cheap single registry-value read per
+    /// adapter via AdapterAdvancedPropertyService) alongside it, since a forced/half-duplex setting
+    /// is the actual mismatch cause, not just the negotiated-speed symptom above.</summary>
     public static List<AdapterLinkInfo> ReadAdapterLinks()
     {
         var links = new List<AdapterLinkInfo>();
@@ -333,7 +353,13 @@ public sealed class NetworkDiagnosticsService
                                      ni.Description.Contains("GbE", StringComparison.OrdinalIgnoreCase);
                 bool degraded = looksGigabit && mbps > 0 && mbps < 1000;
 
-                links.Add(new AdapterLinkInfo(ni.Name, mbps, degraded));
+                var speedDuplex = AdapterAdvancedPropertyService.FindSpeedDuplex(AdapterAdvancedPropertyService.ReadAll(ni.Id));
+                string? configuredText = speedDuplex?.ValueText;
+                bool looksForcedOrHalf = speedDuplex is not null && (
+                    speedDuplex.ValueText.Contains("half", StringComparison.OrdinalIgnoreCase) ||
+                    (!speedDuplex.ValueText.Contains("auto", StringComparison.OrdinalIgnoreCase) && speedDuplex.RawValue != "0"));
+
+                links.Add(new AdapterLinkInfo(ni.Name, mbps, degraded, configuredText, looksForcedOrHalf));
             }
         }
         catch
