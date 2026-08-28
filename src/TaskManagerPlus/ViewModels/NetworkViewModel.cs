@@ -256,6 +256,73 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
     public RelayCommand ShowLatencyHistoryDayCommand { get; }
     public RelayCommand ShowLatencyHistoryWeekCommand { get; }
 
+    // ---- suggestions.md #510-516: path MTU, routing and hop-level diagnostics ------------------
+
+    // #510/#512: on-demand path MTU discovery, plus the derived PMTUD black-hole verdict from the
+    // same sweep - see PathMtuService's remarks for why this is a manual button, never a tick.
+    private string _pathMtuTargetHost = "1.1.1.1";
+    public string PathMtuTargetHost { get => _pathMtuTargetHost; set => SetProperty(ref _pathMtuTargetHost, value); }
+
+    private string _pathMtuResultText = "Not run yet.";
+    public string PathMtuResultText { get => _pathMtuResultText; private set => SetProperty(ref _pathMtuResultText, value); }
+
+    private string? _pathMtuBlackHoleText;
+    public string? PathMtuBlackHoleText { get => _pathMtuBlackHoleText; private set => SetProperty(ref _pathMtuBlackHoleText, value); }
+
+    private bool _isRunningPathMtu;
+    public bool IsRunningPathMtu { get => _isRunningPathMtu; private set => SetProperty(ref _isRunningPathMtu, value); }
+
+    public AsyncRelayCommand RunPathMtuCommand { get; }
+
+    private PathMtuResult? _lastPathMtuResult;
+
+    // #511: per-adapter configured MTU inventory, cross-referenced against the discovered path
+    // MTU above once one exists.
+    public ObservableCollection<InterfaceMtuInfo> InterfaceMtus { get; } = new();
+    public AsyncRelayCommand RefreshInterfaceMtusCommand { get; }
+
+    // #513/#514: routing table viewer with conflict flags, plus the separate persistent-route
+    // section - see RoutingTableService's remarks.
+    public ObservableCollection<RouteEntry> Routes { get; } = new();
+    public ObservableCollection<PersistentRouteEntry> PersistentRoutes { get; } = new();
+    private bool _isRefreshingRoutes;
+    public bool IsRefreshingRoutes { get => _isRefreshingRoutes; private set => SetProperty(ref _isRefreshingRoutes, value); }
+    public AsyncRelayCommand RefreshRoutingCommand { get; }
+
+    // #515: MTR-style continuous hop monitor - its own explicit start/stop toggle, distinct from
+    // the #501 latency ring and the shared connectivity timer - see MtrService's remarks.
+    private readonly MtrService _mtr = new();
+
+    private string _mtrHost = "1.1.1.1";
+    public string MtrHost { get => _mtrHost; set => SetProperty(ref _mtrHost, value); }
+
+    public ObservableCollection<MtrHopStats> MtrHops { get; } = new();
+
+    private bool _isMtrRunning;
+    public bool IsMtrRunning { get => _isMtrRunning; private set => SetProperty(ref _isMtrRunning, value); }
+
+    public RelayCommand ToggleMtrCommand { get; }
+
+    // #516: traceroute baseline save/diff - built on top of the existing #49 traceroute card's
+    // output, parsed into hops via TracerouteService.ParseHops.
+    private List<TracerouteHop> _lastTracerouteHops = new();
+
+    private string _tracerouteBaselineName = string.Empty;
+    public string TracerouteBaselineName { get => _tracerouteBaselineName; set => SetProperty(ref _tracerouteBaselineName, value); }
+
+    public ObservableCollection<string> TracerouteBaselineNames { get; } = new();
+
+    private string? _selectedTracerouteBaseline;
+    public string? SelectedTracerouteBaseline { get => _selectedTracerouteBaseline; set => SetProperty(ref _selectedTracerouteBaseline, value); }
+
+    public ObservableCollection<TracerouteDiffEntry> TracerouteDiff { get; } = new();
+
+    private string? _tracerouteDiffSummaryText;
+    public string? TracerouteDiffSummaryText { get => _tracerouteDiffSummaryText; private set => SetProperty(ref _tracerouteDiffSummaryText, value); }
+
+    public RelayCommand SaveTracerouteBaselineCommand { get; }
+    public RelayCommand CompareTracerouteBaselineCommand { get; }
+
     public NetworkViewModel(PerformanceViewModel performance)
     {
         Performance = performance;
@@ -335,6 +402,22 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
 
         _latencyMonitor.CycleCompleted += OnLatencyCycleCompleted;
         LoadLatencyHistoryView();
+
+        // #510-516: path MTU / routing / MTR / traceroute baseline wiring.
+        RunPathMtuCommand = new AsyncRelayCommand(RunPathMtuAsync, () => !IsRunningPathMtu && !string.IsNullOrWhiteSpace(PathMtuTargetHost));
+        RefreshInterfaceMtusCommand = new AsyncRelayCommand(RefreshInterfaceMtusAsync);
+        RefreshRoutingCommand = new AsyncRelayCommand(RefreshRoutingAsync, () => !IsRefreshingRoutes);
+        ToggleMtrCommand = new RelayCommand(_ => ToggleMtr());
+        SaveTracerouteBaselineCommand = new RelayCommand(SaveTracerouteBaseline,
+            () => _lastTracerouteHops.Count > 0 && !string.IsNullOrWhiteSpace(TracerouteBaselineName));
+        CompareTracerouteBaselineCommand = new RelayCommand(CompareTracerouteBaseline,
+            () => _lastTracerouteHops.Count > 0 && !string.IsNullOrWhiteSpace(SelectedTracerouteBaseline));
+
+        _mtr.CycleCompleted += OnMtrCycleCompleted;
+
+        LoadTracerouteBaselineNames();
+        _ = RefreshInterfaceMtusAsync();
+        _ = RefreshRoutingAsync();
     }
 
     private async Task CheckConnectivityAsync()
@@ -454,6 +537,12 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         finally
         {
             IsTracerouting = false;
+
+            // #516: parse this run's hops so Save/Compare-to-baseline have something to work
+            // with - a fresh run always replaces whatever the buttons were pointed at before.
+            _lastTracerouteHops = TracerouteService.ParseHops(TracerouteOutput);
+            TracerouteDiff.Clear();
+            TracerouteDiffSummaryText = null;
         }
     }
 
@@ -665,10 +754,186 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         foreach (var p in points) LatencyHistoryPoints.Add(p);
     }
 
+    // ---- #510-516 helpers ---------------------------------------------------------------------
+
+    /// <summary>#510/#512: on-demand path MTU discovery to <see cref="PathMtuTargetHost"/> - a
+    /// dozen-plus round trips, so this only ever runs from the button.</summary>
+    private async Task RunPathMtuAsync()
+    {
+        if (IsRunningPathMtu) return;
+        IsRunningPathMtu = true;
+        PathMtuResultText = "Discovering path MTU (a dozen-plus round trips, this can take several seconds)...";
+        PathMtuBlackHoleText = null;
+        try
+        {
+            var result = await PathMtuService.DiscoverAsync(PathMtuTargetHost);
+            _lastPathMtuResult = result;
+            PathMtuResultText = result.Message;
+            PathMtuBlackHoleText = result.BlackHoleMessage;
+        }
+        catch (Exception ex)
+        {
+            _lastPathMtuResult = null;
+            PathMtuResultText = $"Path MTU discovery failed: {ex.Message}";
+        }
+        finally
+        {
+            IsRunningPathMtu = false;
+            RecomputeInterfaceMtuMismatches();
+        }
+    }
+
+    /// <summary>#511: per-adapter configured MTU inventory - shells out via netsh, so this only
+    /// runs on load and from an explicit refresh, never on a tick.</summary>
+    private async Task RefreshInterfaceMtusAsync()
+    {
+        try
+        {
+            var infos = await InterfaceMtuService.ReadAllAsync();
+            InterfaceMtus.Clear();
+            foreach (var info in infos) InterfaceMtus.Add(info);
+            RecomputeInterfaceMtuMismatches();
+        }
+        catch
+        {
+            // Best-effort - leave whatever was already loaded.
+        }
+    }
+
+    /// <summary>#511: flags an interface configured with a larger MTU than the most recent #510
+    /// path MTU discovery found - a no-op (all flags cleared) until a path MTU has actually been
+    /// discovered.</summary>
+    private void RecomputeInterfaceMtuMismatches()
+    {
+        int? pathMtu = _lastPathMtuResult?.DiscoveredMtu;
+        foreach (var iface in InterfaceMtus)
+        {
+            if (pathMtu is { } mtu && iface.Mtu > mtu)
+            {
+                iface.IsMismatched = true;
+                iface.MismatchReason = $"Configured MTU {iface.Mtu} is larger than the {mtu}-byte path MTU discovered to {_lastPathMtuResult!.Host} - packets this size toward that host may be dropped or fragmented.";
+            }
+            else
+            {
+                iface.IsMismatched = false;
+                iface.MismatchReason = null;
+            }
+        }
+        // ObservableCollection<T> doesn't raise a change notification for a mutated element's own
+        // properties - force the bound ItemsControl to re-evaluate its DataTriggers by touching
+        // the collection itself, the same "the objects aren't INotifyPropertyChanged" tradeoff
+        // AdapterLinks/InterfaceMtus (a clear+rebuild display list) already accepts elsewhere.
+        var snapshot = InterfaceMtus.ToList();
+        InterfaceMtus.Clear();
+        foreach (var i in snapshot) InterfaceMtus.Add(i);
+    }
+
+    /// <summary>#513/#514: routing table + persistent routes - both shell out/read the registry,
+    /// so this only runs on load and from an explicit refresh, never on a tick.</summary>
+    private async Task RefreshRoutingAsync()
+    {
+        if (IsRefreshingRoutes) return;
+        IsRefreshingRoutes = true;
+        try
+        {
+            var routes = await RoutingTableService.GetActiveRoutesAsync();
+            Routes.Clear();
+            foreach (var r in routes) Routes.Add(r);
+
+            var persistent = await Task.Run(RoutingTableService.ReadPersistentRoutes);
+            PersistentRoutes.Clear();
+            foreach (var p in persistent) PersistentRoutes.Add(p);
+        }
+        catch
+        {
+            // Best-effort - leave whatever was already loaded.
+        }
+        finally
+        {
+            IsRefreshingRoutes = false;
+        }
+    }
+
+    /// <summary>#515: start/stop toggle for the MTR-style continuous hop monitor - a no-op start
+    /// with an empty host, same "silently do nothing" guard ToggleLatencyMonitor's callers get
+    /// from their own text-box binding.</summary>
+    private void ToggleMtr()
+    {
+        if (IsMtrRunning)
+        {
+            _mtr.Stop();
+            IsMtrRunning = false;
+        }
+        else
+        {
+            if (string.IsNullOrWhiteSpace(MtrHost)) return;
+            MtrHops.Clear();
+            _mtr.Start(MtrHost.Trim(), 1.0);
+            IsMtrRunning = true;
+        }
+    }
+
+    /// <summary>Fired on MtrService's own background probe-loop thread - marshal to the UI thread
+    /// before touching any bound collection, same pattern OnLatencyCycleCompleted already uses.</summary>
+    private void OnMtrCycleCompleted() => System.Windows.Application.Current?.Dispatcher.Invoke(() =>
+    {
+        var snapshot = _mtr.GetSnapshot();
+        MtrHops.Clear();
+        foreach (var hop in snapshot) MtrHops.Add(hop);
+    });
+
+    /// <summary>#516: saves the most recently completed traceroute run as a named baseline.</summary>
+    private void SaveTracerouteBaseline()
+    {
+        if (_lastTracerouteHops.Count == 0 || string.IsNullOrWhiteSpace(TracerouteBaselineName)) return;
+
+        TracerouteBaselineService.SaveBaseline(TracerouteBaselineName.Trim(), TracerouteHost, _lastTracerouteHops);
+        LoadTracerouteBaselineNames();
+        SelectedTracerouteBaseline = TracerouteBaselineName.Trim();
+    }
+
+    /// <summary>#516: diffs the most recently completed traceroute run against the selected saved
+    /// baseline, highlighting inserted/removed/reordered hops.</summary>
+    private void CompareTracerouteBaseline()
+    {
+        if (_lastTracerouteHops.Count == 0 || string.IsNullOrWhiteSpace(SelectedTracerouteBaseline)) return;
+
+        var file = TracerouteBaselineService.Load();
+        var baseline = file.Baselines.FirstOrDefault(b => b.Name.Equals(SelectedTracerouteBaseline, StringComparison.OrdinalIgnoreCase));
+        if (baseline is null)
+        {
+            TracerouteDiff.Clear();
+            TracerouteDiffSummaryText = $"Baseline '{SelectedTracerouteBaseline}' no longer exists.";
+            return;
+        }
+
+        var diff = TracerouteBaselineService.Diff(baseline, _lastTracerouteHops);
+        TracerouteDiff.Clear();
+        foreach (var entry in diff) TracerouteDiff.Add(entry);
+
+        int inserted = diff.Count(d => d.Kind == TracerouteDiffKind.Inserted);
+        int removed = diff.Count(d => d.Kind == TracerouteDiffKind.Removed);
+        int reordered = diff.Count(d => d.Kind == TracerouteDiffKind.Reordered);
+        TracerouteDiffSummaryText = inserted == 0 && removed == 0 && reordered == 0
+            ? $"Path matches baseline '{baseline.Name}' (saved {baseline.SavedUtc.ToLocalTime():g}) - same hops, same order."
+            : $"{inserted} inserted, {removed} removed, {reordered} reordered hop(s) vs baseline '{baseline.Name}' (saved {baseline.SavedUtc.ToLocalTime():g}) - " +
+              "your ISP may have rerouted you, or a hop's address simply changed. Quick flag, not a verdict.";
+    }
+
+    private void LoadTracerouteBaselineNames()
+    {
+        var file = TracerouteBaselineService.Load();
+        TracerouteBaselineNames.Clear();
+        foreach (var b in file.Baselines.OrderBy(b => b.Name, StringComparer.OrdinalIgnoreCase))
+            TracerouteBaselineNames.Add(b.Name);
+    }
+
     public void Dispose()
     {
         _timer.Stop();
         _latencyMonitor.CycleCompleted -= OnLatencyCycleCompleted;
         _latencyMonitor.Dispose();
+        _mtr.CycleCompleted -= OnMtrCycleCompleted;
+        _mtr.Dispose();
     }
 }

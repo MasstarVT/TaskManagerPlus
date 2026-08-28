@@ -430,6 +430,38 @@
                         <Run Text="VPN: " /><Run Text="{Binding VpnStatusText, Mode=OneWay}" />
                     </TextBlock>
 
+                    <!-- #511: per-adapter configured MTU, cross-referenced against the most
+                         recent #510 discovered path MTU - flags an interface configured larger
+                         than the path can actually carry. -->
+                    <Grid Margin="0,14,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Interface MTU" Style="{StaticResource SpecLabel}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Refresh" Padding="8,3" Command="{Binding RefreshInterfaceMtusCommand}" />
+                    </Grid>
+                    <DataGrid ItemsSource="{Binding InterfaceMtus}" AutoGenerateColumns="False" IsReadOnly="True" HeadersVisibility="Column" Margin="0,6,0,0" MaxHeight="200">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="AF" Binding="{Binding AddressFamily}" Width="0.6*" />
+                            <DataGridTextColumn Header="Interface" Binding="{Binding InterfaceName}" Width="1.6*" />
+                            <DataGridTextColumn Header="MTU" Binding="{Binding Mtu}" Width="0.7*" />
+                        </DataGrid.Columns>
+                        <DataGrid.RowStyle>
+                            <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsMismatched}" Value="True">
+                                        <Setter Property="Background" Value="{DynamicResource WarningBrush}" />
+                                        <Setter Property="Opacity" Value="0.85" />
+                                        <Setter Property="ToolTip" Value="{Binding MismatchReason}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </DataGrid.RowStyle>
+                    </DataGrid>
+                    <TextBlock Text="Run Path MTU discovery below to flag an interface configured larger than the path can carry."
+                               Style="{StaticResource SubStat}" Margin="0,6,0,0" TextWrapping="Wrap" Opacity="0.7" />
+
                     <!-- Round 9, #48: adapter driver version/date - a date-based "worth a manual
                          check" heuristic, the same one ReadOutdatedDrivers uses elsewhere, NOT a
                          claim that a newer version is actually known to exist online. -->
@@ -519,7 +551,9 @@
                 </StackPanel>
             </Border>
 
-            <!-- Round 9, #49: on-demand traceroute to a user-entered host - shells to tracert.exe. -->
+            <!-- Round 9, #49: on-demand traceroute to a user-entered host - shells to tracert.exe.
+                 #516 adds "Save as baseline" / "Compare to baseline" beside the output box, plus
+                 the diff results below it. -->
             <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
                 <StackPanel>
                     <TextBlock Text="Traceroute" Style="{StaticResource CardTitle}" />
@@ -534,6 +568,213 @@
                     <TextBox Text="{Binding TracerouteOutput, Mode=OneWay}" Margin="0,8,0,0" MaxHeight="240"
                              IsReadOnly="True" TextWrapping="NoWrap" FontFamily="Consolas" FontSize="11.5"
                              VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" Background="Transparent" BorderThickness="0" />
+
+                    <!-- #516: save the run above as a named baseline, or diff it against one
+                         already saved - turns the text dump above into an actionable "your ISP
+                         rerouted you" signal instead of two blocks of text to eyeball. -->
+                    <TextBlock Text="Baseline diff" Style="{StaticResource SpecLabel}" Margin="0,14,0,6" />
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBox Grid.Column="0" Margin="0,0,8,0" VerticalContentAlignment="Center"
+                                 Text="{Binding TracerouteBaselineName, UpdateSourceTrigger=PropertyChanged}" />
+                        <Button Grid.Column="1" Content="Save as baseline" Padding="10,4" Command="{Binding SaveTracerouteBaselineCommand}" />
+                    </Grid>
+                    <Grid Margin="0,6,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <ComboBox Grid.Column="0" Margin="0,0,8,0" ItemsSource="{Binding TracerouteBaselineNames}"
+                                  SelectedItem="{Binding SelectedTracerouteBaseline}" VerticalContentAlignment="Center" />
+                        <Button Grid.Column="1" Content="Compare to baseline" Padding="10,4" Command="{Binding CompareTracerouteBaselineCommand}" />
+                    </Grid>
+                    <TextBlock Text="Run a traceroute above first - Save/Compare act on the most recently completed run."
+                               Style="{StaticResource SubStat}" Margin="0,6,0,0" TextWrapping="Wrap" Opacity="0.7" />
+
+                    <TextBlock Text="{Binding TracerouteDiffSummaryText}" Style="{StaticResource SubStat}" Margin="0,10,0,0" TextWrapping="Wrap"
+                               Visibility="{Binding TracerouteDiffSummaryText, Converter={StaticResource NullToVisibilityConverter}}" />
+                    <ItemsControl ItemsSource="{Binding TracerouteDiff}" Margin="0,6,0,0">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,3">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="70" />
+                                        <ColumnDefinition Width="70" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="{Binding BaselineHop, TargetNullValue=—, StringFormat=hop {0}}" FontSize="11.5" FontFamily="Consolas" />
+                                    <TextBlock Grid.Column="1" Text="{Binding CurrentHop, TargetNullValue=—, StringFormat=hop {0}}" FontSize="11.5" FontFamily="Consolas" />
+                                    <TextBlock Grid.Column="2" Text="{Binding Ip}" FontSize="11.5" FontFamily="Consolas" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Grid.Column="3" Text="{Binding Kind}" FontSize="11" FontWeight="SemiBold">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding Kind}" Value="Inserted">
+                                                        <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding Kind}" Value="Removed">
+                                                        <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding Kind}" Value="Reordered">
+                                                        <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #510/#512: on-demand path MTU discovery, plus the derived PMTUD black-hole
+                 verdict from the same sweep - a dozen-plus round trips, never on a tick. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Path MTU discovery" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Binary-searches the largest packet that survives with DontFragment set, then reports the discovered path MTU."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBox Grid.Column="0" Margin="0,0,8,0" Text="{Binding PathMtuTargetHost, UpdateSourceTrigger=PropertyChanged}" VerticalContentAlignment="Center" />
+                        <Button Grid.Column="1" Content="Discover path MTU" Padding="10,4" Command="{Binding RunPathMtuCommand}" />
+                    </Grid>
+                    <TextBlock Text="{Binding PathMtuResultText}" Style="{StaticResource SubStat}" Margin="0,10,0,0" TextWrapping="Wrap" />
+                    <!-- #512: PMTUD black-hole verdict - hidden until a sweep actually flags one. -->
+                    <TextBlock Text="{Binding PathMtuBlackHoleText}" Style="{StaticResource SubStat}" Foreground="{DynamicResource DangerBrush}"
+                               Margin="0,8,0,0" TextWrapping="Wrap" Visibility="{Binding PathMtuBlackHoleText, Converter={StaticResource NullToVisibilityConverter}}" />
+                </StackPanel>
+            </Border>
+
+            <!-- #515: MTR-style continuous hop monitor - own explicit start/stop toggle, distinct
+                 from the one-shot traceroute above. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="MTR (continuous hop monitor)" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <TextBox Grid.Column="1" Width="160" Margin="0,0,8,0" VerticalContentAlignment="Center"
+                                 Text="{Binding MtrHost, UpdateSourceTrigger=PropertyChanged}" />
+                        <Button Grid.Column="2" Padding="10,4">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                    <Setter Property="Content" Value="Start" />
+                                    <Setter Property="Command" Value="{Binding ToggleMtrCommand}" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsMtrRunning}" Value="True">
+                                            <Setter Property="Content" Value="Stop" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                    </Grid>
+                    <TextBlock Text="Repeatedly probes every hop with increasing-TTL pings, attributing sent/received/loss/min/avg/max to a specific hop over time - distinct from the one-shot traceroute above."
+                               Style="{StaticResource SubStat}" Margin="0,0,0,10" TextWrapping="Wrap" Opacity="0.85" />
+                    <DataGrid ItemsSource="{Binding MtrHops}" AutoGenerateColumns="False" IsReadOnly="True" HeadersVisibility="Column">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Hop" Binding="{Binding Hop}" Width="50" />
+                            <DataGridTextColumn Header="Address" Binding="{Binding Address, TargetNullValue='(no reply)'}" Width="1.4*" />
+                            <DataGridTextColumn Header="Sent" Binding="{Binding Sent}" Width="0.6*" />
+                            <DataGridTextColumn Header="Recv" Binding="{Binding Received}" Width="0.6*" />
+                            <DataGridTextColumn Header="Loss" Binding="{Binding LossPercent, StringFormat={}{0:0.#}%}" Width="0.7*" />
+                            <DataGridTextColumn Header="Min" Binding="{Binding MinMs, StringFormat={}{0:0.#} ms}" Width="0.8*" />
+                            <DataGridTextColumn Header="Avg" Binding="{Binding AvgMs, StringFormat={}{0:0.#} ms}" Width="0.8*" />
+                            <DataGridTextColumn Header="Max" Binding="{Binding MaxMs, StringFormat={}{0:0.#} ms}" Width="0.8*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <TextBlock Text="Not started - enter a host and click Start.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding MtrHops.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- #513/#514: routing table viewer with conflict flags, plus the separate
+                 persistent-route section - the fastest way to see a VPN or virtual adapter
+                 hijacking traffic, or a stale persistent route left by an uninstalled one. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Routing" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Refresh" Padding="10,4" Command="{Binding RefreshRoutingCommand}" />
+                    </Grid>
+                    <TextBlock Text="Flags more than one default route, duplicate routes to the same prefix at an equal metric, and on-link routes that don't match their own interface's subnet. Quick flag, not a verdict."
+                               Style="{StaticResource SubStat}" Margin="0,0,0,10" TextWrapping="Wrap" Opacity="0.85" />
+                    <DataGrid ItemsSource="{Binding Routes}" AutoGenerateColumns="False" IsReadOnly="True" HeadersVisibility="Column" CanUserSortColumns="True" MaxHeight="280">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="AF" Binding="{Binding AddressFamily}" Width="0.6*" />
+                            <DataGridTextColumn Header="Destination" Binding="{Binding Destination}" Width="1.3*" />
+                            <DataGridTextColumn Header="Netmask" Binding="{Binding Netmask}" Width="1.1*" />
+                            <DataGridTextColumn Header="Gateway" Binding="{Binding Gateway}" Width="1.2*" />
+                            <DataGridTextColumn Header="Interface" Binding="{Binding InterfaceLabel}" Width="1.2*" />
+                            <DataGridTextColumn Header="Metric" Binding="{Binding Metric}" Width="0.6*" />
+                        </DataGrid.Columns>
+                        <DataGrid.RowStyle>
+                            <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsFlagged}" Value="True">
+                                        <Setter Property="Background" Value="{DynamicResource WarningBrush}" />
+                                        <Setter Property="Opacity" Value="0.85" />
+                                        <Setter Property="ToolTip" Value="{Binding FlagReason}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </DataGrid.RowStyle>
+                    </DataGrid>
+
+                    <!-- #514: persistent routes - read from the registry, not route print's own
+                         Persistent Routes section, per this item's own spec. -->
+                    <TextBlock Text="Persistent routes (survive a reboot)" Style="{StaticResource SpecLabel}" Margin="0,14,0,6" />
+                    <TextBlock Text="A stale persistent route left by an uninstalled VPN silently fails to apply rather than showing up as visibly broken - worth checking against the live table above."
+                               Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" Opacity="0.7" />
+                    <DataGrid ItemsSource="{Binding PersistentRoutes}" AutoGenerateColumns="False" IsReadOnly="True" HeadersVisibility="Column" MaxHeight="160">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="AF" Binding="{Binding AddressFamily}" Width="0.6*" />
+                            <DataGridTextColumn Header="Destination" Binding="{Binding Destination}" Width="1.3*" />
+                            <DataGridTextColumn Header="Netmask" Binding="{Binding Netmask}" Width="1.1*" />
+                            <DataGridTextColumn Header="Gateway" Binding="{Binding Gateway}" Width="1.2*" />
+                            <DataGridTextColumn Header="Metric" Binding="{Binding Metric}" Width="0.7*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <TextBlock Text="None found.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding PersistentRoutes.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
                 </StackPanel>
             </Border>
 
