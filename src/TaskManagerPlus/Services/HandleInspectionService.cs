@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -429,11 +429,25 @@ public static class HandleInspectionService
     /// system-wide handle-table walk for its "who holds a handle to lsass.exe" scan, rather than
     /// duplicating the NtQuerySystemInformation/SystemHandleInformation P/Invoke plumbing a second
     /// time - see that class's remarks for how it uses these raw entries.</summary>
+    /// <summary>Hard ceiling on the system handle table snapshot, in bytes. A healthy machine's
+    /// whole table is a few megabytes (roughly 24 bytes x a few hundred thousand handles), but a
+    /// process leaking handles drags it up without limit - a machine with a dozen runaway
+    /// processes measured 62 million live handles, which is a ~500 MB snapshot, and this method
+    /// was faithfully allocating a managed array that size (three live at once accounted for
+    /// 1.49 GB - 93% - of this app's entire heap). A diagnostic tool has to stay small on exactly
+    /// the sick machine it exists to diagnose, so past this ceiling the walk reports nothing
+    /// rather than trying: callers already treat an empty result as "couldn't read the handle
+    /// table", which is CLAUDE.md's degrade-never-fabricate rule and is far better than pinning
+    /// a gigabyte-plus to answer a "quick flag, not a verdict" question.</summary>
+    private const int MaxHandleTableBytes = 48 << 20; // 48 MB - ~2 million handles
+
     internal static List<SYSTEM_HANDLE_TABLE_ENTRY_INFO> ReadSystemHandles()
     {
         int size = 1 << 20; // 1 MB starting guess, grown below if needed
         for (int attempt = 0; attempt < 8; attempt++)
         {
+            if (size > MaxHandleTableBytes) return new List<SYSTEM_HANDLE_TABLE_ENTRY_INFO>();
+
             IntPtr buffer = Marshal.AllocHGlobal(size);
             try
             {
@@ -446,8 +460,16 @@ public static class HandleInspectionService
                 if (status != 0) return new List<SYSTEM_HANDLE_TABLE_ENTRY_INFO>();
 
                 int count = Marshal.ReadInt32(buffer); // ULONG HandleCount (top bytes zero on x64 ULONG)
-                var list = new List<SYSTEM_HANDLE_TABLE_ENTRY_INFO>(count);
                 int entrySize = Marshal.SizeOf<SYSTEM_HANDLE_TABLE_ENTRY_INFO>();
+
+                // Never trust the count past what this buffer actually holds. The kernel fills in
+                // as much as fits, so a count larger than the buffer would have sent the loop
+                // below reading unallocated memory - and sized the managed List to match.
+                int maxEntries = (size - 8) / entrySize;
+                if (count > maxEntries) count = maxEntries;
+                if (count < 0) count = 0;
+
+                var list = new List<SYSTEM_HANDLE_TABLE_ENTRY_INFO>(count);
                 IntPtr entryPtr = IntPtr.Add(buffer, 8); // ULONG HandleCount + 4 bytes padding before the array on x64
                 for (int i = 0; i < count; i++)
                     list.Add(Marshal.PtrToStructure<SYSTEM_HANDLE_TABLE_ENTRY_INFO>(IntPtr.Add(entryPtr, i * entrySize)));
