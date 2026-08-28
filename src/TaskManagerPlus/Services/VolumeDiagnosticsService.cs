@@ -160,68 +160,27 @@ public static class VolumeDiagnosticsService
         }
     }
 
-    private static readonly Regex ShadowVolumeRegex = new(@"For volume:.*\(([A-Za-z]):\)", RegexOptions.Compiled);
-    private static readonly Regex ShadowUsedRegex = new(
-        @"Used Shadow Copy Storage space:\s*([\d.,]+)\s*(bytes|KB|MB|GB|TB)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
     /// <summary>
     /// Shadow copy (VSS) storage used per volume (#42), via `vssadmin list shadowstorage` - the
     /// same known-tool tradeoff as the TRIM check above; VSS's own storage-allocation internals
-    /// aren't exposed through any simpler managed API. Reads every volume in one shell-out (rather
-    /// than once per drive letter) since the command already reports the whole system in one pass.
-    /// Empty (not an error) on the very common case where no volume has any shadow copies at all.
+    /// aren't exposed through any simpler managed API. Empty (not an error) on the very common
+    /// case where no volume has any shadow copies at all.
+    ///
+    /// Round 21, #397: this method used to own the `list shadowstorage` shell-out/parse directly.
+    /// It now delegates to VssService.ReadShadowStorageAsync (which extends the same parse to also
+    /// carry Allocated/Maximum for the new Volume Shadow Copy card) rather than shelling out to the
+    /// same command a second time - this method's signature and behavior for its existing caller
+    /// (SystemSpecsService.ReadVolumesAsync) are unchanged.
     /// </summary>
     public static async Task<Dictionary<string, long>> ReadShadowCopyUsageByVolumeAsync()
     {
         var result = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
         try
         {
-            var psi = new ProcessStartInfo("vssadmin.exe", "list shadowstorage")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return result;
-
-            // Concurrent async reads + a bounded WaitForExitAsync + Kill()-on-timeout - the same
-            // pattern TracerouteService.RunAsync uses (and the same ordering fix ReadTrimStatusAsync
-            // above just got): the previous version's synchronous ReadToEnd() ran unbounded before
-            // WaitForExit's result was even checked, risking a deadlock if vssadmin's report filled
-            // a pipe buffer before exiting.
-            var outputTask = proc.StandardOutput.ReadToEndAsync();
-            var errorTask = proc.StandardError.ReadToEndAsync();
-
-            using var cts = new CancellationTokenSource(10000);
-            try
-            {
-                await proc.WaitForExitAsync(cts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                try { proc.Kill(); } catch { /* best-effort */ }
-                return result;
-            }
-
-            string output = (await outputTask) + (await errorTask);
-
-            string? currentVolume = null;
-            foreach (var line in output.Split('\n'))
-            {
-                var volMatch = ShadowVolumeRegex.Match(line);
-                if (volMatch.Success) { currentVolume = volMatch.Groups[1].Value.ToUpperInvariant(); continue; }
-
-                var usedMatch = ShadowUsedRegex.Match(line);
-                if (usedMatch.Success && currentVolume is not null &&
-                    double.TryParse(usedMatch.Groups[1].Value, System.Globalization.NumberStyles.Number,
-                        System.Globalization.CultureInfo.InvariantCulture, out double amount))
-                {
-                    long bytes = (long)(amount * UnitMultiplier(usedMatch.Groups[2].Value));
-                    result[currentVolume] = bytes; // "For volume" (source) entry - the one that matters for "how much is used on this drive".
-                }
-            }
+            var entries = await VssService.ReadShadowStorageAsync();
+            foreach (var entry in entries)
+                if (!string.IsNullOrEmpty(entry.Volume))
+                    result[entry.Volume.TrimEnd(':')] = entry.UsedBytes; // "For volume" (source) entry - the one that matters for "how much is used on this drive", keyed bare (no colon) same as before.
         }
         catch
         {
@@ -229,14 +188,4 @@ public static class VolumeDiagnosticsService
         }
         return result;
     }
-
-    private static double UnitMultiplier(string unit) => unit.ToUpperInvariant() switch
-    {
-        "BYTES" => 1,
-        "KB" => 1024,
-        "MB" => 1024d * 1024,
-        "GB" => 1024d * 1024 * 1024,
-        "TB" => 1024d * 1024 * 1024 * 1024,
-        _ => 1,
-    };
 }

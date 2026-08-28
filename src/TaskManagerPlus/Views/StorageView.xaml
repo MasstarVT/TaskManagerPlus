@@ -460,6 +460,344 @@
                 </StackPanel>
             </Border>
 
+            <!-- Round 21 (final chunk), #394-#400: "Volume Shadow Copy" card - VSS writer health,
+                 correlated VSS/SPP/volsnap failure events, shadow copy inventory, shadow storage
+                 allocation/limit + resize, restore points + System Protection per-drive state +
+                 "create a restore point now," and registered VSS provider inventory. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Volume Shadow Copy" Style="{StaticResource CardTitle}" Margin="0" />
+                        <Button Grid.Column="1" Content="Refresh" Padding="10,4" Command="{Binding RefreshVssCommand}" />
+                    </Grid>
+                    <TextBlock Text="VSS writer health, backup/restore-point failure events, shadow copy inventory, shadow storage allocation/limits, System Protection state, and registered snapshot providers - the diagnostics behind Windows' own System Restore and every VSS-based backup tool."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding VssStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,10" TextWrapping="Wrap" />
+
+                    <!-- #394: VSS writer health - a failed writer is the single most common root
+                         cause of "my backup keeps failing," and is otherwise invisible everywhere
+                         else in Windows. -->
+                    <TextBlock Text="Writers" FontWeight="SemiBold" FontSize="13" Margin="0,0,0,4" />
+                    <ItemsControl ItemsSource="{Binding VssWriters}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Border Grid.Column="0" CornerRadius="3" Padding="8,3" VerticalAlignment="Top" Margin="0,0,10,0">
+                                        <Border.Style>
+                                            <Style TargetType="Border">
+                                                <Setter Property="Background" Value="{DynamicResource SuccessBrush}" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsHealthy}" Value="False">
+                                                        <Setter Property="Background" Value="{DynamicResource DangerBrush}" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Border.Style>
+                                        <TextBlock Text="{Binding StatusSummaryText}" FontSize="11" FontWeight="SemiBold" Foreground="White" />
+                                    </Border>
+                                    <StackPanel Grid.Column="1">
+                                        <TextBlock Text="{Binding Name}" FontSize="12.5" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Style="{StaticResource SubStat}" Margin="0,2,0,0" TextWrapping="Wrap">
+                                            <Run Text="Last error: " /><Run Text="{Binding LastError, Mode=OneWay}" />
+                                        </TextBlock>
+                                        <TextBlock Text="{Binding Id}" Style="{StaticResource SubStat}" FontFamily="Consolas" FontSize="10.5" Margin="0,2,0,0" />
+                                    </StackPanel>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="No VSS writers reported.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding VssWriters.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
+                    <!-- #395/#399: correlated VSS/SPP/volsnap failure events - a writer that
+                         currently shows Stable above but has been failing nightly still shows up
+                         here. volsnap 25 gets a distinct callout since it's why restore points/
+                         shadow copies silently disappear. -->
+                    <TextBlock Text="Correlated failure events (last 30 days)" FontWeight="SemiBold" FontSize="13" Margin="0,14,0,4" />
+                    <TextBlock Text="Application-log VSS (8193, 12289, 12293) and SPP (16387); System-log volsnap (25, 33, 36)."
+                               Style="{StaticResource SubStat}" Margin="0,0,0,6" TextWrapping="Wrap" />
+                    <ItemsControl ItemsSource="{Binding VssRelatedEvents}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border BorderThickness="0,0,0,1" BorderBrush="{DynamicResource BorderSubtleBrush}" Padding="0,0,0,8" Margin="0,0,0,8">
+                                    <StackPanel>
+                                        <TextBlock FontSize="12.5" TextWrapping="Wrap">
+                                            <Run Text="{Binding TimeCreated, Mode=OneWay, StringFormat={}{0:g}}" FontWeight="SemiBold" />
+                                            <Run Text=" - " /><Run Text="{Binding Volume, Mode=OneWay}" FontWeight="SemiBold" />
+                                            <Run Text=" - " /><Run Text="{Binding Source, Mode=OneWay}" />
+                                            <Run Text=" (event " /><Run Text="{Binding EventId, Mode=OneWay}" /><Run Text=")" />
+                                        </TextBlock>
+                                        <TextBlock Text="{Binding Message}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,2,0,0" />
+                                        <TextBlock Text="{Binding ExplanationText}" Foreground="{DynamicResource WarningBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,2,0,0"
+                                                   Visibility="{Binding HasExplanation, Converter={StaticResource BoolToVisibilityConverter}}" />
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="No VSS/SPP/volsnap failure events found in the last 30 days.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding VssRelatedEvents.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
+                    <!-- #396: shadow copy inventory - grouped by volume with age. -->
+                    <TextBlock Text="Shadow copies" FontWeight="SemiBold" FontSize="13" Margin="0,14,0,4" />
+                    <ItemsControl ItemsSource="{Binding VssShadowCopies}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Margin="0,0,0,8" Padding="10" CornerRadius="4" BorderThickness="1" BorderBrush="{DynamicResource BorderSubtleBrush}">
+                                    <StackPanel>
+                                        <TextBlock FontSize="12.5" TextWrapping="Wrap">
+                                            <Run Text="{Binding Volume, Mode=OneWay}" FontWeight="SemiBold" />
+                                            <Run Text=" - created " /><Run Text="{Binding CreationTime, Mode=OneWay, StringFormat={}{0:g}, TargetNullValue=Unknown}" />
+                                            <Run Text=" (" /><Run Text="{Binding AgeText, Mode=OneWay}" /><Run Text=")" />
+                                        </TextBlock>
+                                        <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,2,0,0">
+                                            <Run Text="Provider: " /><Run Text="{Binding Provider, Mode=OneWay}" />
+                                        </TextBlock>
+                                        <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,2,0,0">
+                                            <Run Text="Originating machine: " /><Run Text="{Binding OriginatingMachine, Mode=OneWay}" />
+                                        </TextBlock>
+                                        <TextBlock Text="{Binding ShadowCopyId}" Style="{StaticResource SubStat}" FontFamily="Consolas" FontSize="10.5" Margin="0,2,0,0" />
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="No shadow copies exist on any volume.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding VssShadowCopies.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
+                    <!-- #397: shadow storage allocation/limit + resize. -->
+                    <TextBlock Text="Shadow storage allocation and limit" FontWeight="SemiBold" FontSize="13" Margin="0,14,0,4" />
+                    <ItemsControl ItemsSource="{Binding VssShadowStorage}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Margin="0,0,0,10" Padding="10" CornerRadius="4" BorderThickness="1" BorderBrush="{DynamicResource BorderSubtleBrush}">
+                                    <StackPanel>
+                                        <TextBlock Text="{Binding Volume}" FontSize="13" FontWeight="SemiBold" />
+                                        <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,2,0,2"
+                                                   Visibility="{Binding StorageVolume, Converter={StaticResource StringToVisibilityConverter}}">
+                                            <Run Text="Storage lives on: " /><Run Text="{Binding StorageVolume, Mode=OneWay}" />
+                                        </TextBlock>
+                                        <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,2">
+                                            <Run Text="Used: " /><Run Text="{Binding UsedBytes, Mode=OneWay, Converter={StaticResource BytesToReadableConverter}}" />
+                                            <Run Text=" · Allocated: " /><Run Text="{Binding AllocatedBytes, Mode=OneWay, Converter={StaticResource BytesToReadableConverter}}" />
+                                        </TextBlock>
+                                        <TextBlock Margin="0,0,0,4" TextWrapping="Wrap">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding HasNumericMaximum}" Value="True">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                            <Run Text="Maximum: " /><Run Text="{Binding MaximumBytes, Mode=OneWay, Converter={StaticResource BytesToReadableConverter}}" />
+                                        </TextBlock>
+                                        <TextBlock Text="Maximum: UNBOUNDED - no cap set, can grow to fill the volume" FontWeight="SemiBold"
+                                                   Foreground="{DynamicResource WarningBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,4">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsUnbounded}" Value="True">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+
+                                        <TextBlock Text="Resize (a number of GB, or type UNBOUNDED):" Style="{StaticResource SubStat}" Margin="0,4,0,4" />
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBox Grid.Column="0" Text="{Binding NewMaxSizeGb, UpdateSourceTrigger=PropertyChanged}"
+                                                     Margin="0,0,8,0" Padding="6,3" VerticalAlignment="Center" />
+                                            <Button Grid.Column="1" Content="Resize" Padding="10,4" FontSize="11.5"
+                                                    Command="{Binding DataContext.ResizeShadowStorageCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                    CommandParameter="{Binding}" />
+                                        </Grid>
+                                        <TextBlock Text="{Binding ResizeStatusText}" Style="{StaticResource SubStat}" Margin="0,4,0,0" TextWrapping="Wrap"
+                                                   Visibility="{Binding ResizeStatusText, Converter={StaticResource StringToVisibilityConverter}}" />
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="No volume has a shadow-copy-storage association.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding VssShadowStorage.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
+                    <!-- #398: System Protection per-drive state + restore points + create action. -->
+                    <TextBlock Text="System Protection" FontWeight="SemiBold" FontSize="13" Margin="0,14,0,4" />
+                    <ItemsControl ItemsSource="{Binding SystemProtectionStatuses}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Margin="0,0,0,6">
+                                    <TextBlock FontSize="12.5">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
+                                                <Setter Property="FontWeight" Value="SemiBold" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsProtected}" Value="False">
+                                                        <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                        <Run Text="{Binding DriveLetter, Mode=OneWay, StringFormat={}{0}:}" />
+                                        <Run Text=" - " /><Run Text="{Binding ProtectedText, Mode=OneWay}" />
+                                    </TextBlock>
+                                    <TextBlock Text="{Binding DetectionMethodText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,2,0,0" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <TextBlock Text="Create a restore point now" FontWeight="SemiBold" FontSize="12.5" Margin="0,10,0,4" />
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBox Grid.Column="0" Text="{Binding NewRestorePointDescription, UpdateSourceTrigger=PropertyChanged}"
+                                 Margin="0,0,8,0" Padding="6,3" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Create restore point" Padding="10,4" Command="{Binding CreateRestorePointCommand}" />
+                    </Grid>
+                    <TextBlock Text="{Binding CreateRestorePointStatusText}" Style="{StaticResource SubStat}" Margin="0,4,0,4" TextWrapping="Wrap"
+                               Visibility="{Binding CreateRestorePointStatusText, Converter={StaticResource StringToVisibilityConverter}}" />
+
+                    <TextBlock Text="Restore points" FontWeight="SemiBold" FontSize="12.5" Margin="0,10,0,4" />
+                    <ItemsControl ItemsSource="{Binding RestorePoints}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border BorderThickness="0,0,0,1" BorderBrush="{DynamicResource BorderSubtleBrush}" Padding="0,0,0,6" Margin="0,0,0,6">
+                                    <StackPanel>
+                                        <TextBlock FontSize="12.5" TextWrapping="Wrap">
+                                            <Run Text="{Binding CreationTime, Mode=OneWay, StringFormat={}{0:g}, TargetNullValue=Unknown}" FontWeight="SemiBold" />
+                                            <Run Text=" - " /><Run Text="{Binding Description, Mode=OneWay}" />
+                                        </TextBlock>
+                                        <TextBlock Style="{StaticResource SubStat}" Margin="0,2,0,0">
+                                            <Run Text="Type: " /><Run Text="{Binding RestorePointTypeText, Mode=OneWay}" />
+                                            <Run Text=" · Sequence " /><Run Text="{Binding SequenceNumber, Mode=OneWay}" />
+                                        </TextBlock>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="No restore points found - System Protection may be off for every drive, or this Windows edition/build doesn't expose the SystemRestore WMI class. An empty list on a drive you believe is protected is itself the finding.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding RestorePoints.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
+                    <!-- #400: registered VSS provider inventory. -->
+                    <TextBlock Text="Registered VSS providers" FontWeight="SemiBold" FontSize="13" Margin="0,14,0,4" />
+                    <TextBlock Text="A third-party provider shadowing the Microsoft Software Shadow Copy provider is a recurring cause of failed snapshots and stuck writers - not a fault by itself, but worth a manual check if writers above are unhealthy or snapshots are getting stuck."
+                               Style="{StaticResource SubStat}" Margin="0,0,0,6" TextWrapping="Wrap" />
+                    <ItemsControl ItemsSource="{Binding VssProviders}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Margin="0,0,0,8">
+                                    <TextBlock FontSize="12.5" TextWrapping="Wrap">
+                                        <Run Text="{Binding Name, Mode=OneWay}" FontWeight="SemiBold" />
+                                        <Run Text=" (" /><Run Text="{Binding TypeText, Mode=OneWay}" /><Run Text=")" />
+                                    </TextBlock>
+                                    <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,2,0,0">
+                                        <Run Text="Version " /><Run Text="{Binding Version, Mode=OneWay}" />
+                                        <Run Text=" · " /><Run Text="{Binding Id, Mode=OneWay}" FontFamily="Consolas" />
+                                    </TextBlock>
+                                    <TextBlock Text="Not a Microsoft provider - worth a manual check if snapshots are failing or getting stuck (informational, not a fault by itself)."
+                                               Foreground="{DynamicResource WarningBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,2,0,0">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsMicrosoft}" Value="False">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="No VSS providers reported.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding VssProviders.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
             <!-- Round 14, #328: per-drive Healthy/Watch/Replace verdict - combines predicted
                  failure, critical SMART attributes, NVMe critical-warning bits, pending sectors and
                  pool membership into one three-state verdict with reasons listed beneath it,

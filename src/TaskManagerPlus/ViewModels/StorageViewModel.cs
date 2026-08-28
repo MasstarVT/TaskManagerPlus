@@ -1369,6 +1369,42 @@ public sealed class StorageViewModel : ObservableObject
 
     public AsyncRelayCommand CheckBitLockerRecoveryPromptsCommand { get; }
 
+    // ================================================================================
+    // Round 21 (final chunk), #394-#400: "Volume Shadow Copy" card - writer health, correlated
+    // VSS/SPP/volsnap failure events, shadow copy inventory, shadow storage allocation/limit +
+    // resize, restore points + System Protection per-drive state + "create a restore point now",
+    // and VSS provider inventory. One-time read at tab load, same tier as the rest of this file's
+    // WMI/vssadmin-only cards, except the resize and create-restore-point actions below, which are
+    // explicit button-triggered AsyncRelayCommands. See VssService.
+    // ================================================================================
+    public ObservableCollection<VssWriterInfo> VssWriters { get; } = new();
+    public ObservableCollection<VssRelatedEventInfo> VssRelatedEvents { get; } = new();
+    public ObservableCollection<VssShadowCopyInfo> VssShadowCopies { get; } = new();
+    public ObservableCollection<VssShadowStorageInfo> VssShadowStorage { get; } = new();
+    public ObservableCollection<VssProviderInfo> VssProviders { get; } = new();
+    public ObservableCollection<RestorePointInfo> RestorePoints { get; } = new();
+    public ObservableCollection<SystemProtectionDriveStatus> SystemProtectionStatuses { get; } = new();
+
+    private string _vssStatusText = "Loading...";
+    public string VssStatusText { get => _vssStatusText; private set => SetProperty(ref _vssStatusText, value); }
+
+    public AsyncRelayCommand RefreshVssCommand { get; }
+
+    // #397
+    public AsyncRelayCommand ResizeShadowStorageCommand { get; }
+
+    // #398
+    private string _newRestorePointDescription = "Task Manager Plus";
+    public string NewRestorePointDescription { get => _newRestorePointDescription; set => SetProperty(ref _newRestorePointDescription, value); }
+
+    private bool _isCreatingRestorePoint;
+    public bool IsCreatingRestorePoint { get => _isCreatingRestorePoint; private set => SetProperty(ref _isCreatingRestorePoint, value); }
+
+    private string _createRestorePointStatusText = string.Empty;
+    public string CreateRestorePointStatusText { get => _createRestorePointStatusText; private set => SetProperty(ref _createRestorePointStatusText, value); }
+
+    public AsyncRelayCommand CreateRestorePointCommand { get; }
+
     private readonly ProcessesViewModel _processes;
 
     public StorageViewModel(PerformanceViewModel performance, EnergyThermalsViewModel energyThermals, ProcessesViewModel processes)
@@ -1525,6 +1561,11 @@ public sealed class StorageViewModel : ObservableObject
         // Round 20, #392
         CheckBitLockerRecoveryPromptsCommand = new AsyncRelayCommand(CheckBitLockerRecoveryPromptsAsync, () => !IsCheckingBitLockerRecoveryPrompts);
 
+        // Round 21 (final chunk), #394-#400: "Volume Shadow Copy" card.
+        RefreshVssCommand = new AsyncRelayCommand(LoadVssAsync);
+        ResizeShadowStorageCommand = new AsyncRelayCommand(param => ResizeShadowStorageAsync(param as VssShadowStorageInfo));
+        CreateRestorePointCommand = new AsyncRelayCommand(CreateRestorePointAsync, () => !IsCreatingRestorePoint);
+
         // #324: subscribe to the shared sampler's tick rather than owning a new heavy timer -
         // see PerformanceViewModel.Sampled's remarks.
         Performance.Sampled += OnPerformanceSampled;
@@ -1634,6 +1675,13 @@ public sealed class StorageViewModel : ObservableObject
         // Round 20, #389-#391/#393: BitLocker card - same one-time-at-load tier; #392's recovery-
         // prompt history stays behind its own explicit button (event-log scan).
         _ = LoadBitLockerAsync();
+
+        // Round 21 (final chunk), #394-#400: "Volume Shadow Copy" card - writers, correlated
+        // events, shadow copies, shadow storage, restore points, System Protection state and
+        // provider inventory are ALL one-time-at-load reads per this chunk's brief (unlike most of
+        // this file's event-log scans, which sit behind their own explicit "Check now" button) -
+        // only the resize and create-restore-point actions are user-triggered.
+        _ = LoadVssAsync();
     }
 
     /// <summary>#371: repaints the retry-trend chart's axis text/gridlines to match the active
@@ -4430,6 +4478,150 @@ public sealed class StorageViewModel : ObservableObject
         finally
         {
             row.IsCheckingEjectBlockers = false;
+        }
+    }
+
+    // ================================================================================
+    // Round 21 (final chunk), #394-#400: "Volume Shadow Copy" card - one combined one-time load
+    // (writers, correlated events, shadow copies, shadow storage, restore points, System
+    // Protection state, providers) per this chunk's brief, plus the resize and create-restore-
+    // point actions.
+    // ================================================================================
+    private async Task LoadVssAsync()
+    {
+        VssStatusText = "Loading...";
+        try
+        {
+            var writers = await VssService.ReadWritersAsync();
+            var shadows = await VssService.ReadShadowCopiesAsync();
+            var shadowStorage = await VssService.ReadShadowStorageAsync();
+            var providers = await VssService.ReadProvidersAsync();
+            var events = await Task.Run(VssService.ReadRelatedEvents);
+            var restorePoints = await Task.Run(VssService.ReadRestorePoints);
+            var systemProtection = await Task.Run(() => VssService.ReadSystemProtectionStatus(shadowStorage));
+
+            VssWriters.Clear();
+            foreach (var w in writers) VssWriters.Add(w);
+
+            VssRelatedEvents.Clear();
+            foreach (var e in events) VssRelatedEvents.Add(e);
+
+            VssShadowCopies.Clear();
+            foreach (var s in shadows) VssShadowCopies.Add(s);
+
+            VssShadowStorage.Clear();
+            foreach (var s in shadowStorage) VssShadowStorage.Add(s);
+
+            VssProviders.Clear();
+            foreach (var p in providers) VssProviders.Add(p);
+
+            RestorePoints.Clear();
+            foreach (var r in restorePoints) RestorePoints.Add(r);
+
+            SystemProtectionStatuses.Clear();
+            foreach (var s in systemProtection) SystemProtectionStatuses.Add(s);
+
+            int unhealthyWriters = writers.Count(w => !w.IsHealthy);
+            VssStatusText = $"{writers.Count} writer(s) ({unhealthyWriters} not healthy) · {shadows.Count} shadow copy(ies) · " +
+                $"{providers.Count} provider(s) · {restorePoints.Count} restore point(s).";
+        }
+        catch (Exception ex)
+        {
+            VssStatusText = $"Failed: {ex.Message}";
+        }
+    }
+
+    /// <summary>#397: resize confirmed first (same Yes/No MessageBox.Show pattern #341/#343/#348/
+    /// #387 already use for a disruptive action) - shrinking below the current usage makes Windows
+    /// delete older shadow copies on the volume to fit.</summary>
+    private async Task ResizeShadowStorageAsync(VssShadowStorageInfo? row)
+    {
+        if (row is null || row.IsResizing) return;
+
+        string input = (row.NewMaxSizeGb ?? string.Empty).Trim();
+        bool wantsUnbounded = input.Equals("UNBOUNDED", StringComparison.OrdinalIgnoreCase);
+        string maxSizeArg;
+        string maxSizeDisplay;
+        if (wantsUnbounded)
+        {
+            maxSizeArg = "UNBOUNDED";
+            maxSizeDisplay = "UNBOUNDED (no cap - can grow to fill the volume)";
+        }
+        else if (double.TryParse(input, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out double gb) && gb > 0)
+        {
+            maxSizeArg = $"{gb.ToString(System.Globalization.CultureInfo.InvariantCulture)}GB";
+            maxSizeDisplay = $"{gb.ToString(System.Globalization.CultureInfo.InvariantCulture)} GB";
+        }
+        else
+        {
+            row.ResizeStatusText = "Enter a positive number of GB, or \"UNBOUNDED\".";
+            return;
+        }
+
+        string forVolume = row.Volume;
+        string onVolume = string.IsNullOrEmpty(row.StorageVolume) ? row.Volume : row.StorageVolume;
+
+        var confirm = System.Windows.MessageBox.Show(
+            $"Resize shadow copy storage for {forVolume}?\n\n" +
+            $"New maximum: {maxSizeDisplay}\n\n" +
+            "If the new maximum is smaller than what's currently used, Windows deletes older shadow copies on this volume to fit.",
+            "Resize shadow copy storage",
+            System.Windows.MessageBoxButton.YesNo,
+            System.Windows.MessageBoxImage.Warning);
+        if (confirm != System.Windows.MessageBoxResult.Yes) return;
+
+        row.IsResizing = true;
+        row.ResizeStatusText = "Resizing...";
+        try
+        {
+            var (success, message) = await VssService.ResizeShadowStorageAsync(forVolume, onVolume, maxSizeArg);
+            row.ResizeStatusText = message;
+            if (success)
+            {
+                var refreshed = await VssService.ReadShadowStorageAsync();
+                VssShadowStorage.Clear();
+                foreach (var s in refreshed) VssShadowStorage.Add(s);
+            }
+        }
+        catch (Exception ex)
+        {
+            row.ResizeStatusText = $"Failed: {ex.Message}";
+        }
+        finally
+        {
+            row.IsResizing = false;
+        }
+    }
+
+    /// <summary>#398: creates a restore point now (Checkpoint-Computer - see
+    /// VssService.CreateRestorePointAsync's remarks for why), then re-reads the restore-point list
+    /// and calls out Windows' own once-per-24-hours throttle if the count didn't actually grow.
+    /// </summary>
+    private async Task CreateRestorePointAsync()
+    {
+        IsCreatingRestorePoint = true;
+        CreateRestorePointStatusText = "Creating a restore point (this can take a little while)...";
+        try
+        {
+            int before = RestorePoints.Count;
+            var (success, message) = await VssService.CreateRestorePointAsync(NewRestorePointDescription);
+
+            var refreshed = await Task.Run(VssService.ReadRestorePoints);
+            RestorePoints.Clear();
+            foreach (var r in refreshed) RestorePoints.Add(r);
+
+            CreateRestorePointStatusText = success && refreshed.Count <= before
+                ? message + " No new restore point appeared in the list - Windows only allows one restore point per 24 hours by default " +
+                    "(the SystemRestorePointCreationFrequency policy), so this is the most likely reason if one was already created recently."
+                : message;
+        }
+        catch (Exception ex)
+        {
+            CreateRestorePointStatusText = $"Failed: {ex.Message}";
+        }
+        finally
+        {
+            IsCreatingRestorePoint = false;
         }
     }
 }
