@@ -7,8 +7,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Task Manager Plus — a Windows Task Manager replacement written in C# / WPF
 (.NET 8). Eighteen top-level tabs (Summary, CPU, Memory, Storage, Network,
 GPU, Energy & Thermals, Responsiveness, Processes, Services, Startup,
-System Specs, Stability, Security, Windows Health, Events, Devices &
-Drivers, Troubleshoot), live color-theming (six palette families + saturation +
+System, Stability, Security, Windows Health, Events, Devices &
+Drivers, Troubleshoot — note the twelfth tab's header is the single word
+"System", though its ViewModel/view are named SystemSpecs*; `--tab` and
+SelectTabByName match header text, so "System Specs" finds nothing), live
+color-theming (six palette families + saturation +
 high-contrast + color-blind-safe alerts), a CSV/HTML/Markdown logging &
 reporting system, a system tray icon with a global hotkey, and an optional
 LAN-visible remote monitor endpoint. Navigation is a TMOG-style top
@@ -407,6 +410,47 @@ per file:
   user (or a future update mechanism) can replace it without a rebuild.
   Both existing lists are explicitly labelled in-code and in the UI as a
   curated/partial subset, never a complete authority.
+- **XAML: `<Run Text="{Binding ...}">` must carry `Mode=OneWay`.** Unlike
+  `TextBlock.Text`, `Run.Text` sets `BindsTwoWayByDefault`, so a Run bound to
+  a get-only property throws *"A TwoWay or OneWayToSource binding cannot work
+  on the read-only property ..."* the moment that view loads. Every one of the
+  ~1,100 Run bindings in this codebase is `Mode=OneWay` (two are `OneTime`);
+  a Run is display-only and never writes back, so OneWay is correct even when
+  the source property does have a setter. Add it to any new one. A bare
+  `{Binding}` (bind the DataContext itself) takes `{Binding Mode=OneWay}` —
+  no comma, since the positional path slot is empty.
+
+- **XAML: a style used by more than one view belongs in `Themes/Dark.xaml`.**
+  `StaticResource` resolves against the *referencing* element's own lookup
+  chain, not globally, so a key declared in some `UserControl.Resources` is
+  invisible to every other view — and the failure is not a graceful one: it
+  throws while the referencing view's BAML loads, which (for anything reached
+  from `MainWindow.xaml`) means MainWindow's constructor throws and the app
+  starts with an error dialog and no main window. `ColorRowLabel` sat in
+  `SettingsPanel.xaml`'s own resources while `StabilityView.xaml` referenced
+  it 20 times, and did exactly that. Note this is *not* symmetric with the
+  `DynamicResource` rule under "Theming" below: a missing DynamicResource key
+  silently resolves to null (a brush that renders transparent), a missing
+  StaticResource key throws.
+
+- **XAML: a `TabItem` whose `Header` isn't a string needs
+  `AutomationProperties.Name`.** `SelectTabByName` (the `--tab` launch flag,
+  Ctrl+1..9, the Ctrl+K command palette, every cross-tab jump) matches on
+  header text and falls back to `AutomationProperties.Name`; UI Automation
+  and screen readers read the same value. Only the Stability tab is like this
+  today — its Header is a StackPanel carrying the new-dump alert badge — and
+  without the attached name it was both unreachable by name and announced as
+  the literal `"System.Windows.Controls.TabItem Header: Content:"`.
+
+- **Parse tool output with `InvariantCulture`; parse user input with the
+  current culture.** Everything shelled-out tools emit (`powercfg`, DISM,
+  `fltmc`, `defrag`, battery/SRUM reports, WMI strings) is machine-formatted,
+  so `double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, ...)`
+  is the rule — on a comma-decimal locale (de-DE, fr-FR, ...) a bare
+  `double.Parse("42.5")` reads `.` as a *group* separator and silently returns
+  4250, with no exception to notice. The exception is a value the user typed
+  into a TextBox (e.g. the PSU wattage box), which should follow their locale.
+
 - **On-demand vs. polled**: anything that takes more than a trivial
   registry/perf-counter read (event-log scans, recursive file-system
   walks, registry-tree sweeps, network calls) is gated behind an explicit
@@ -453,6 +497,15 @@ per file:
   `requireAdministrator`) rather than elevating per-action, so ending other
   users' processes and controlling services just work without extra
   prompts.
+
+- **`EnableUnsafeBinaryFormatterSerialization` is explicitly off.**
+  `UseWindowsForms` (present only for the tray icon's `NotifyIcon`) turns it
+  on by default for WinForms clipboard/drag-drop compat. Nothing here uses
+  `BinaryFormatter`, and the only clipboard calls are `Clipboard.SetText`,
+  which doesn't go through it — so leaving it on was just deserialization
+  attack surface on a process that runs elevated by manifest. If a future
+  feature genuinely needs `Clipboard.SetData` with a custom object, or
+  WinForms drag-drop, that is what to revisit — not the flag.
 
 - **Target framework carries an explicit Windows API version**
   (`net8.0-windows10.0.19041.0`, not a bare `net8.0-windows`). This is

@@ -25,6 +25,10 @@ wrong with this PC" diagnostics.
   processes are using it.
 - **Energy & Thermals** — real temperature/fan/voltage/power sensors (via
   LibreHardwareMonitorLib), fan curve, battery health, and power-plan info.
+- **Responsiveness** — why the machine feels laggy even when usage looks
+  fine: DPC/ISR latency by driver, frame-present and VBlank jitter, input
+  latency, hard-fault rate, desktop heap and USER/GDI handle pressure, and a
+  flight recorder that keeps a rolling window around a stutter.
 - **Processes** — live CPU%/memory/threads/handles for every process, a
   process tree view, priority/affinity/suspend controls, and per-file
   signature checks. End a single process or its whole tree.
@@ -33,10 +37,33 @@ wrong with this PC" diagnostics.
 - **Startup** — everything registered to launch at sign-in (registry Run
   keys + Startup folders) plus Scheduled Tasks, with measured logon delay
   and enable/disable.
-- **System Specs** — hardware inventory, security posture (Secure Boot/
+- **System** — hardware inventory, security posture (Secure Boot/
   TPM/VBS), disk health, installed software, and outdated-driver hints.
 - **Stability** — event-log-based crash/TDR/minidump diagnostics and a
   computed stability index.
+- **Security** — persistence/autorun locations, file trust and signature
+  checks, Defender and protection status, platform security (VBS/HVCI/LSA),
+  network exposure (firewall, shares, WinRM, hosts file, DNS, certificate
+  stores), account checks, and bloatware/OEM cleanup. Everything is framed as
+  a flag worth a look, never a verdict; anything it removes is quarantined
+  rather than deleted and recorded in an undoable action journal.
+- **Windows Health** — component-store repair (DISM/SFC), Windows Update
+  policy, disk cleanup, environment-variable editing, registry-backup status,
+  and a log of every registry change this app made on your behalf, each one
+  individually undoable or exportable as a `.reg`.
+- **Events** — a full Event Viewer replacement: channel tree, paged grid,
+  XPath filter builder, friendly and raw-XML detail, live tail, saved
+  filters, plain-English explanations for known event IDs, plus ETW capture
+  and servicing-log parsing.
+- **Devices & Drivers** — driver inventory with signature and date checks,
+  the device tree, resource/power detail, the driver store, filter drivers,
+  and Driver Verifier controls.
+- **Troubleshoot** — guided, symptom-first diagnostics ("it's slow after
+  sleep", "games stutter"), driven by editable JSON rule packs rather than
+  hardcoded checks. Fix actions show the exact command before running,
+  offer a dry run where one exists, and take a restore point plus a registry
+  backup ahead of anything risky. Also hosts the timeline, baselines,
+  background health, evidence bundles, and a glossary.
 - **Theming** — six palette families (Dark/Light/Green/Amber/Blue/
   Monochrome) plus High Contrast, a saturation slider, and per-metric
   accent colors. Click the ⊙ button in the tab strip to open the Colors
@@ -109,8 +136,10 @@ src/TaskManagerPlus/
   Models/       Data classes for rows shown in the UI (ProcessRow, ServiceRow, ...)
   Services/     The actual system-interaction code (WMI, performance counters,
                 ServiceController, registry, native interop) - no UI dependencies
-  ViewModels/   One view model per tab; most poll on a timer, a few (Startup,
-                System Specs, Stability) load on demand
+  ViewModels/   One view model per tab. The polled ones share a single
+                sampler; the heavier tabs (Startup, System, Stability,
+                Security, Windows Health, Events, Devices & Drivers) load
+                on demand behind an explicit button instead
   Views/        XAML for each tab
   Converters/   Value converters for formatting (bytes, percentages, ...)
   Themes/       Theme resource dictionary (palettes, tab strip, control styles)
