@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Windows;
 using LiveChartsCore;
 using LiveChartsCore.SkiaSharpView;
 using LiveChartsCore.SkiaSharpView.Painting;
@@ -160,6 +161,57 @@ public sealed class StartupViewModel : ObservableObject
     private BootExecuteInfo? _bootExecuteInfo;
     public BootExecuteInfo? BootExecuteInfo { get => _bootExecuteInfo; private set => SetProperty(ref _bootExecuteInfo, value); }
 
+    #region #724-731 - Boot configuration (BCD inspector)
+
+    // #724: one shared BcdInspectorService.ReadAsync() snapshot behind every #724-731 feature -
+    // see BcdInspectorService's remarks for why bcdedit is shelled out to once per refresh, not
+    // once per feature.
+    private BcdStore? _bcdStore;
+    public BcdStore? BcdStore { get => _bcdStore; private set => SetProperty(ref _bcdStore, value); }
+
+    public bool IsBcdAvailable => BcdStore?.Available == true;
+    public string? BcdUnavailableReason => BcdStore?.Error;
+
+    // #725: boot-mode/integrity quick-flag banner - a flag, not a verdict (see BootModeFlag's
+    // remarks), each with a one-click "clear this flag" that confirms the exact bcdedit command
+    // first.
+    public ObservableCollection<BootModeFlag> BootModeFlags { get; } = new();
+    public AsyncRelayCommand ClearBootModeFlagCommand { get; }
+
+    // #727: performance-trap BCD options, with the observed effect compared against this
+    // machine's real CPU/RAM totals.
+    public ObservableCollection<PerformanceTrapOption> PerformanceTrapOptions { get; } = new();
+
+    // #728: boot status policy / auto-repair audit.
+    private BootStatusPolicyInfo? _bootStatusPolicy;
+    public BootStatusPolicyInfo? BootStatusPolicy { get => _bootStatusPolicy; private set => SetProperty(ref _bootStatusPolicy, value); }
+    public AsyncRelayCommand RestoreBootStatusPolicyCommand { get; }
+
+    // #729: boot menu / multi-OS entry list - timeout change goes through a small text box bound
+    // to BootTimeoutInput; default-entry change goes through a button per row (CommandParameter
+    // is that row's BootMenuEntryRef).
+    private BootMenuInfo? _bootMenuInfo;
+    public BootMenuInfo? BootMenuInfo { get => _bootMenuInfo; private set => SetProperty(ref _bootMenuInfo, value); }
+
+    private string _bootTimeoutInput = string.Empty;
+    public string BootTimeoutInput { get => _bootTimeoutInput; set => SetProperty(ref _bootTimeoutInput, value); }
+
+    public AsyncRelayCommand SetBootTimeoutCommand { get; }
+    public AsyncRelayCommand SetDefaultEntryCommand { get; }
+
+    // #730: UEFI firmware boot order - read-only listing plus a copyable fix command (never run
+    // automatically - see FirmwareBootOrderInfo's remarks).
+    private FirmwareBootOrderInfo? _firmwareBootOrder;
+    public FirmwareBootOrderInfo? FirmwareBootOrder { get => _firmwareBootOrder; private set => SetProperty(ref _firmwareBootOrder, value); }
+    public RelayCommand CopyFirmwareDisplayOrderFixCommand { get; }
+
+    // #731: BCD backup and export - restore is never automated, only the matching `bcdedit
+    // /import` command is shown (see BcdBackupEntry.ImportCommandText).
+    public ObservableCollection<BcdBackupEntry> BcdBackups { get; } = new();
+    public AsyncRelayCommand ExportBcdBackupCommand { get; }
+
+    #endregion
+
     #region #715-723 - Sign-in section (logon breakdown, Group Policy, profile health)
 
     // #715: Winlogon notification-subscriber timing (GPClient/Profiles/TermSrv/Sens, whichever
@@ -287,9 +339,19 @@ public sealed class StartupViewModel : ObservableObject
 
         MeasureProfileSizeCommand = new AsyncRelayCommand(param => MeasureProfileSizeAsync(param as ProfileListEntry));
 
+        // #724-731: Boot configuration (BCD inspector) commands - every mutating one confirms
+        // the exact bcdedit command first (see each handler below).
+        ClearBootModeFlagCommand = new AsyncRelayCommand(param => ClearBootModeFlagAsync(param as BootModeFlag));
+        RestoreBootStatusPolicyCommand = new AsyncRelayCommand(RestoreBootStatusPolicyAsync, () => BootStatusPolicy?.DisablesStartupRepair == true);
+        SetBootTimeoutCommand = new AsyncRelayCommand(SetBootTimeoutAsync);
+        SetDefaultEntryCommand = new AsyncRelayCommand(param => SetDefaultEntryAsync(param as BootMenuEntryRef));
+        CopyFirmwareDisplayOrderFixCommand = new RelayCommand(_ => CopyFirmwareDisplayOrderFix(), _ => FirmwareBootOrder?.SuggestedFixCommand is not null);
+        ExportBcdBackupCommand = new AsyncRelayCommand(ExportBcdBackupAsync);
+
         Refresh();
         LoadBootPerformance();
         LoadSignInDiagnostics();
+        LoadBcdInspector();
         _ = CheckPendingCaptureWorkflowsAsync();
     }
 
@@ -474,6 +536,171 @@ public sealed class StartupViewModel : ObservableObject
                 }
             });
         });
+    }
+
+    /// <summary>#724-731: Boot configuration (BCD inspector) - one BcdInspectorService.ReadAsync()
+    /// snapshot behind every one of these features (see BcdInspectorService's remarks), off the UI
+    /// thread like every other event-log/registry read this tab does at load/refresh time. Called
+    /// once at startup, and again after any BCD mutation succeeds so the whole section reflects
+    /// the new state immediately rather than the user having to hit the tab's own Refresh.</summary>
+    private void LoadBcdInspector()
+    {
+        _ = Task.Run(async () =>
+        {
+            var store = await BcdInspectorService.ReadAsync();
+            var flags = BcdInspectorService.DetectBootModeFlags(store.CurrentEntry);
+            var (logicalProcessors, totalRamBytes) = BcdInspectorService.ReadSystemTotals();
+            var perfTraps = BcdInspectorService.DetectPerformanceTrapOptions(store.CurrentEntry, logicalProcessors, totalRamBytes);
+            var statusPolicy = BcdInspectorService.ReadBootStatusPolicy(store.CurrentEntry);
+            var menu = BcdInspectorService.ReadBootMenuInfo(store);
+            var fwOrder = BcdInspectorService.ReadFirmwareBootOrder(store);
+            var backups = BcdInspectorService.ListBackups();
+
+            Application.Current?.Dispatcher.Invoke(() =>
+            {
+                BcdStore = store;
+                OnPropertyChanged(nameof(IsBcdAvailable));
+                OnPropertyChanged(nameof(BcdUnavailableReason));
+
+                BootModeFlags.Clear();
+                foreach (var f in flags) BootModeFlags.Add(f);
+
+                PerformanceTrapOptions.Clear();
+                foreach (var p in perfTraps) PerformanceTrapOptions.Add(p);
+
+                BootStatusPolicy = statusPolicy;
+
+                BootMenuInfo = menu;
+                BootTimeoutInput = menu.TimeoutSeconds?.ToString() ?? string.Empty;
+
+                FirmwareBootOrder = fwOrder;
+                CopyFirmwareDisplayOrderFixCommand.RaiseCanExecuteChanged();
+
+                BcdBackups.Clear();
+                foreach (var b in backups) BcdBackups.Add(b);
+            });
+        });
+    }
+
+    /// <summary>#731: always takes a fresh BCD export immediately before any mutating BCD action -
+    /// best-effort (a failed backup doesn't block the actual mutation the user already confirmed;
+    /// StatusMessage isn't touched here so it doesn't clobber the mutation's own result message).
+    /// Restore is never automated by this app - see BcdBackupEntry.ImportCommandText.</summary>
+    private static async Task BackupBeforeMutationAsync()
+    {
+        try { await BcdInspectorService.ExportBackupAsync(); }
+        catch { /* best-effort - see remarks above */ }
+    }
+
+    /// <summary>#725: "one-click clear this flag" - confirms the exact bcdedit command that will
+    /// run before running it, matching CLAUDE.md's "mutating actions require explicit
+    /// confirmation" rule and this app's existing confirm-then-act pattern (see
+    /// ProcessesViewModel.EndSelected).</summary>
+    private async Task ClearBootModeFlagAsync(BootModeFlag? flag)
+    {
+        if (flag is null) return;
+
+        var confirm = MessageBox.Show(
+            $"This will run:\n\n{flag.ClearCommandText}\n\nClear this boot-mode flag now? This takes effect on the next boot.",
+            "Clear boot-mode flag", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        await BackupBeforeMutationAsync();
+        var (success, error) = await BcdInspectorService.ClearBootModeFlagAsync(flag);
+        StatusMessage = success
+            ? $"Cleared {flag.OptionName}. Takes effect on the next boot."
+            : $"Couldn't clear {flag.OptionName}: {error}";
+        if (success) LoadBcdInspector();
+    }
+
+    /// <summary>#728: restores bootstatuspolicy/recoveryenabled to Windows defaults - confirmed
+    /// with both commands shown up front.</summary>
+    private async Task RestoreBootStatusPolicyAsync()
+    {
+        if (BcdStore?.CurrentEntry is not { } current) return;
+        string id = current.Identifier;
+
+        var confirm = MessageBox.Show(
+            $"This will run:\n\nbcdedit /deletevalue {id} bootstatuspolicy\nbcdedit /set {id} recoveryenabled yes\n\nRestore boot status policy and Startup Repair to Windows defaults now?",
+            "Restore boot status policy defaults", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        await BackupBeforeMutationAsync();
+        var (success, error) = await BcdInspectorService.RestoreBootStatusPolicyDefaultsAsync(id);
+        StatusMessage = success ? "Boot status policy restored to Windows defaults." : $"Couldn't restore boot status policy: {error}";
+        if (success) LoadBcdInspector();
+    }
+
+    /// <summary>#729: boot menu timeout, from the BootTimeoutInput text box.</summary>
+    private async Task SetBootTimeoutAsync()
+    {
+        if (!int.TryParse(BootTimeoutInput, out int seconds) || seconds < 0 || seconds > 999)
+        {
+            StatusMessage = "Enter a boot menu timeout between 0 and 999 seconds.";
+            return;
+        }
+
+        var confirm = MessageBox.Show(
+            $"This will run:\n\nbcdedit /timeout {seconds}\n\nChange the boot menu timeout to {seconds}s now?",
+            "Change boot menu timeout", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        await BackupBeforeMutationAsync();
+        var (success, error) = await BcdInspectorService.SetTimeoutAsync(seconds);
+        StatusMessage = success ? $"Boot menu timeout set to {seconds}s." : $"Couldn't set boot timeout: {error}";
+        if (success) LoadBcdInspector();
+    }
+
+    /// <summary>#729: default boot entry, one button per DisplayOrder row (CommandParameter is
+    /// that row's BootMenuEntryRef).</summary>
+    private async Task SetDefaultEntryAsync(BootMenuEntryRef? entry)
+    {
+        if (entry is null) return;
+
+        var confirm = MessageBox.Show(
+            $"This will run:\n\nbcdedit /default {entry.Identifier}\n\nSet \"{entry.Description}\" as the default boot entry now?",
+            "Change default boot entry", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        await BackupBeforeMutationAsync();
+        var (success, error) = await BcdInspectorService.SetDefaultEntryAsync(entry.Identifier);
+        StatusMessage = success ? $"Default boot entry set to \"{entry.Description}\"." : $"Couldn't set default entry: {error}";
+        if (success) LoadBcdInspector();
+    }
+
+    /// <summary>#730: copies the ready-to-run `bcdedit /set {fwbootmgr} displayorder ...` fix
+    /// command to the clipboard - never run automatically (this app makes no firmware NVRAM
+    /// writes itself, see FirmwareBootOrderInfo's remarks).</summary>
+    private void CopyFirmwareDisplayOrderFix()
+    {
+        if (FirmwareBootOrder?.SuggestedFixCommand is not { } cmd) return;
+        try
+        {
+            Clipboard.SetText(cmd);
+            StatusMessage = "Fix command copied to clipboard.";
+        }
+        catch
+        {
+            StatusMessage = "Couldn't copy to clipboard.";
+        }
+    }
+
+    /// <summary>#731: one-click `bcdedit /export` - the matching `bcdedit /import` command is
+    /// shown in plain text alongside each listed backup (see BcdBackupEntry.ImportCommandText);
+    /// restore is never automated.</summary>
+    private async Task ExportBcdBackupAsync()
+    {
+        var (success, path, error) = await BcdInspectorService.ExportBackupAsync();
+        if (success)
+        {
+            StatusMessage = $"BCD exported to {path}. To restore: bcdedit /import \"{path}\"";
+            BcdBackups.Clear();
+            foreach (var b in BcdInspectorService.ListBackups()) BcdBackups.Add(b);
+        }
+        else
+        {
+            StatusMessage = $"Couldn't export BCD backup: {error}";
+        }
     }
 
     /// <summary>#720: on-demand size/file-count walk for one ProfileList row's ProfileImagePath -

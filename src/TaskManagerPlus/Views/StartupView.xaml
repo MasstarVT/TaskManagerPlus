@@ -11,10 +11,55 @@
     <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16">
         <StackPanel>
 
-            <!-- #707: "this boot was Nx your normal" quick flag - a flag, not a verdict, sitting
-                 at the very top of the tab. Collapsed whenever there's no meaningful regression
-                 (or not enough same-boot-type history yet to judge against) - see
-                 BootPerformanceService.ComputeRegressionFlag. -->
+            <!-- #725: boot-mode/driver-signature-integrity flag banner - a quick flag, not a
+                 verdict (see BootModeFlag's remarks: testsigning/debug/safeboot flags are all
+                 routinely on deliberately), sitting at the very top of the tab. Collapsed
+                 whenever the current boot entry has none of these set (the common case). Each
+                 flag can be cleared below with a one-click action that confirms the exact
+                 bcdedit command first. -->
+            <Border Background="{DynamicResource DangerMutedBrush}" BorderBrush="{DynamicResource DangerBrush}"
+                    BorderThickness="1" CornerRadius="8" Padding="14,10" Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding BootModeFlags.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" FontSize="12.5" FontWeight="SemiBold"
+                               Text="This boot entry has one or more boot-mode/driver-signature flags set." />
+                    <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" FontSize="11" Margin="0,4,0,0"
+                               Text="Quick flag, not a verdict - these are routinely on deliberately (driver development, troubleshooting a boot failure). Each can be cleared below, with confirmation." />
+                    <ItemsControl ItemsSource="{Binding BootModeFlags}" Margin="0,8,0,0">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,8" Margin="0,0,0,6">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Grid.Column="0">
+                                            <TextBlock FontSize="12" FontWeight="SemiBold" Text="{Binding OptionName}" />
+                                            <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Text="{Binding Message}" Margin="0,2,0,0" />
+                                        </StackPanel>
+                                        <Button Grid.Column="1" Content="Clear this flag" Padding="8,3" FontSize="11" VerticalAlignment="Center" Margin="8,0,0,0"
+                                                Command="{Binding DataContext.ClearBootModeFlagCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                CommandParameter="{Binding}" />
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #707: "this boot was Nx your normal" quick flag - a flag, not a verdict.
+                 Collapsed whenever there's no meaningful regression (or not enough same-boot-type
+                 history yet to judge against) - see BootPerformanceService.ComputeRegressionFlag. -->
             <Border Background="{DynamicResource DangerMutedBrush}" BorderBrush="{DynamicResource DangerBrush}"
                     BorderThickness="1" CornerRadius="8" Padding="14,10" Margin="0,0,0,16">
                 <Border.Style>
@@ -1057,6 +1102,317 @@
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #724-731: Boot configuration (BCD inspector) - one shared BcdInspectorService
+                 snapshot behind every one of these; see StartupViewModel's #724-731 region and
+                 BcdInspectorService's remarks. Read-only by default; every mutating action shows
+                 the exact bcdedit command first and asks for confirmation. -->
+            <Border Margin="0,20,0,0" BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,1,0,0" Padding="0,16,0,0">
+                <StackPanel>
+                    <TextBlock Text="Boot configuration" Style="{StaticResource CardTitle}" Margin="0,0,0,4" />
+                    <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,10"
+                               Text="Everything Windows' Boot Configuration Data (BCD) store controls about how this PC starts. Read-only by default - every change here shows the exact bcdedit command and asks for confirmation first." />
+
+                    <TextBlock TextWrapping="Wrap" Margin="0,0,0,10">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsBcdAvailable}" Value="False">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                        <Run Text="Boot configuration data isn't available: " /><Run Text="{Binding BcdUnavailableReason}" />
+                    </TextBlock>
+
+                    <StackPanel>
+                        <StackPanel.Style>
+                            <Style TargetType="StackPanel">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsBcdAvailable}" Value="False">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </StackPanel.Style>
+
+                        <!-- #727: performance-trap BCD options - collapsed when the current boot
+                             entry has none of these set (the common case). -->
+                        <StackPanel Margin="0,0,0,16">
+                            <StackPanel.Style>
+                                <Style TargetType="StackPanel">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding PerformanceTrapOptions.Count}" Value="0">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </StackPanel.Style>
+                            <TextBlock Text="Performance-limiting boot options" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                            <Border Background="{DynamicResource DangerMutedBrush}" BorderBrush="{DynamicResource DangerBrush}"
+                                    BorderThickness="1" CornerRadius="8" Padding="10,8" Margin="0,0,0,8">
+                                <TextBlock Foreground="{DynamicResource DangerBrush}" FontSize="11.5" TextWrapping="Wrap"
+                                           Text="Quick flag, not a verdict - these BCD options cap what hardware Windows will actually use at boot, which can look exactly like a hardware problem." />
+                            </Border>
+                            <ItemsControl ItemsSource="{Binding PerformanceTrapOptions}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,8" Margin="0,0,0,6">
+                                            <StackPanel>
+                                                <TextBlock FontSize="12.5" FontWeight="SemiBold">
+                                                    <Run Text="{Binding OptionName}" /><Run Text="  " />
+                                                    <Run Text="{Binding RawValue}" Foreground="{DynamicResource TextSecondaryBrush}" FontWeight="Normal" />
+                                                </TextBlock>
+                                                <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap"
+                                                           Text="{Binding ObservedEffect}" Margin="0,2,0,0" />
+                                            </StackPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+
+                        <!-- #728: boot status policy / auto-repair audit. -->
+                        <StackPanel Margin="0,0,0,16">
+                            <StackPanel.Style>
+                                <Style TargetType="StackPanel">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding BootStatusPolicy}" Value="{x:Null}">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </StackPanel.Style>
+                            <TextBlock Text="Boot status policy &amp; auto-repair" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                            <Border CornerRadius="6" Padding="10,8">
+                                <Border.Style>
+                                    <Style TargetType="Border">
+                                        <Setter Property="Background" Value="{DynamicResource BgElevatedBrush}" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding BootStatusPolicy.DisablesStartupRepair}" Value="True">
+                                                <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Border.Style>
+                                <StackPanel>
+                                    <TextBlock FontSize="11.5" TextWrapping="Wrap">
+                                        <Run Text="bootstatuspolicy: " FontWeight="SemiBold" /><Run Text="{Binding BootStatusPolicy.PolicyText}" />
+                                        <Run Text="   ·   recoveryenabled: " FontWeight="SemiBold" /><Run Text="{Binding BootStatusPolicy.RecoveryText}" />
+                                    </TextBlock>
+                                    <TextBlock FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding BootStatusPolicy.DisablesStartupRepair}" Value="True">
+                                                        <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                        <Run Text="{Binding BootStatusPolicy.SummaryText}" />
+                                    </TextBlock>
+                                    <Button Content="Restore to Windows defaults" HorizontalAlignment="Left" Margin="0,8,0,0"
+                                            Command="{Binding RestoreBootStatusPolicyCommand}">
+                                        <Button.Style>
+                                            <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding BootStatusPolicy.DisablesStartupRepair}" Value="True">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Button.Style>
+                                    </Button>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+
+                        <!-- #729: boot menu / multi-OS entry list. -->
+                        <StackPanel Margin="0,0,0,16">
+                            <StackPanel.Style>
+                                <Style TargetType="StackPanel">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding BootMenuInfo}" Value="{x:Null}">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </StackPanel.Style>
+                            <TextBlock Text="Boot menu" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                            <TextBlock FontSize="11.5" TextWrapping="Wrap" Margin="0,0,0,8">
+                                <Run Text="Show boot menu: " FontWeight="SemiBold" /><Run Text="{Binding BootMenuInfo.DisplayBootMenuText}" />
+                                <Run Text="   ·   Timeout: " FontWeight="SemiBold" /><Run Text="{Binding BootMenuInfo.TimeoutText}" />
+                                <Run Text="   ·   Default: " FontWeight="SemiBold" /><Run Text="{Binding BootMenuInfo.DefaultDescription}" />
+                            </TextBlock>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                                <TextBox Width="70" Text="{Binding BootTimeoutInput, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,8,0" ToolTip="Boot menu timeout, in seconds" />
+                                <Button Content="Set timeout" Command="{Binding SetBootTimeoutCommand}" />
+                            </StackPanel>
+                            <ItemsControl ItemsSource="{Binding BootMenuInfo.DisplayOrder}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border CornerRadius="6" Padding="10,8" Margin="0,0,0,6">
+                                            <Border.Style>
+                                                <Style TargetType="Border">
+                                                    <Setter Property="Background" Value="{DynamicResource BgElevatedBrush}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsDefault}" Value="True">
+                                                            <Setter Property="Background" Value="{DynamicResource AccentMutedBrush}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Border.Style>
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                                    <TextBlock FontSize="12" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" Text="{Binding Description}" />
+                                                    <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Text="{Binding Identifier}" />
+                                                </StackPanel>
+                                                <Button Grid.Column="1" Padding="8,3" FontSize="11" VerticalAlignment="Center" Margin="8,0,0,0"
+                                                        Command="{Binding DataContext.SetDefaultEntryCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                        CommandParameter="{Binding}">
+                                                    <Button.Style>
+                                                        <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                                            <Setter Property="Content" Value="Set as default" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding IsDefault}" Value="True">
+                                                                    <Setter Property="IsEnabled" Value="False" />
+                                                                    <Setter Property="Content" Value="Default" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Button.Style>
+                                                </Button>
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+
+                        <!-- #730: UEFI firmware boot order - read-only listing plus a copyable
+                             fix command (never run automatically). -->
+                        <StackPanel Margin="0,0,0,16">
+                            <StackPanel.Style>
+                                <Style TargetType="StackPanel">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding FirmwareBootOrder.DisplayOrder.Count}" Value="0">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </StackPanel.Style>
+                            <TextBlock Text="UEFI firmware boot order" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                            <Border Background="{DynamicResource DangerMutedBrush}" BorderBrush="{DynamicResource DangerBrush}"
+                                    BorderThickness="1" CornerRadius="8" Padding="10,8" Margin="0,0,0,8">
+                                <Border.Style>
+                                    <Style TargetType="Border">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding FirmwareBootOrder.WindowsBootManagerFirst}" Value="False">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Border.Style>
+                                <StackPanel>
+                                    <TextBlock Foreground="{DynamicResource DangerBrush}" FontSize="11.5" TextWrapping="Wrap"
+                                               Text="Windows Boot Manager isn't first in the UEFI firmware boot order - another entry (another OS, a network/PXE boot, a USB device) will be tried first at power-on." />
+                                    <TextBlock FontSize="11" FontFamily="Consolas" TextWrapping="Wrap" Margin="0,6,0,0"
+                                               Foreground="{DynamicResource TextSecondaryBrush}" Text="{Binding FirmwareBootOrder.SuggestedFixCommand}" />
+                                    <Button Content="Copy fix command" HorizontalAlignment="Left" Margin="0,8,0,0" Command="{Binding CopyFirmwareDisplayOrderFixCommand}" />
+                                </StackPanel>
+                            </Border>
+                            <ItemsControl ItemsSource="{Binding FirmwareBootOrder.DisplayOrder}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,8" Margin="0,0,0,6">
+                                            <TextBlock FontSize="11.5" TextWrapping="Wrap">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding LooksStale}" Value="True">
+                                                                <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                                <Run Text="{Binding Description}" FontWeight="SemiBold" />
+                                                <Run Text=" — " /><Run Text="{Binding Identifier}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                            </TextBlock>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+
+                        <!-- #731: BCD backup and export - restore is never automated, only the
+                             matching `bcdedit /import` command is shown. -->
+                        <StackPanel Margin="0,0,0,16">
+                            <TextBlock Text="BCD backups" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                            <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,8"
+                                       Text="Every mutating action above exports a full copy of the BCD store first, automatically. Restore is never automated - copy the import command and run it yourself, from an elevated command prompt, if you ever need to roll back." />
+                            <Button Content="Back up BCD now" HorizontalAlignment="Left" Margin="0,0,0,8" Command="{Binding ExportBcdBackupCommand}" />
+                            <ItemsControl ItemsSource="{Binding BcdBackups}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,8" Margin="0,0,0,6">
+                                            <StackPanel>
+                                                <TextBlock FontSize="11.5" FontWeight="SemiBold" Text="{Binding CreatedUtc, StringFormat={}{0:g}, Mode=OneWay}" />
+                                                <TextBlock FontSize="11" FontFamily="Consolas" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap"
+                                                           Text="{Binding ImportCommandText}" Margin="0,2,0,0" />
+                                            </StackPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+
+                        <!-- #724: BCD inspector panel - a structured, read-only tree of every
+                             entry bcdedit knows about (Windows Boot Manager, each OS loader
+                             entry). -->
+                        <StackPanel>
+                            <TextBlock Text="All boot entries (read-only)" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                            <ItemsControl ItemsSource="{Binding BcdStore.Entries}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,8" Margin="0,0,0,8">
+                                            <StackPanel>
+                                                <TextBlock FontSize="12.5" FontWeight="SemiBold">
+                                                    <Run Text="{Binding Header}" /><Run Text="  " />
+                                                    <Run Text="{Binding Identifier}" Foreground="{DynamicResource TextSecondaryBrush}" FontWeight="Normal" />
+                                                </TextBlock>
+                                                <ItemsControl ItemsSource="{Binding DisplayLines}" Margin="0,6,0,0">
+                                                    <ItemsControl.ItemsPanel>
+                                                        <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                                                    </ItemsControl.ItemsPanel>
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate>
+                                                            <Border Background="{DynamicResource BgHoverBrush}" CornerRadius="4" Padding="6,3" Margin="0,0,6,6">
+                                                                <TextBlock Text="{Binding}" FontSize="10.5" FontFamily="Consolas" TextTrimming="CharacterEllipsis" MaxWidth="420" />
+                                                            </Border>
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                            </StackPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </StackPanel>
                 </StackPanel>
             </Border>
 

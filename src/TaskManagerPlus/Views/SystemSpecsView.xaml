@@ -509,7 +509,67 @@
                                 </TextBlock.Style>
                             </TextBlock>
                         </StackPanel>
+
+                        <!-- #732: VBS/HVCI/hypervisor launch state - combines bcdedit's
+                             hypervisorlaunchtype, the two DeviceGuard policy registry locations,
+                             and the actually-running state above - see SystemSpecsViewModel.Apply. -->
+                        <StackPanel Margin="8,10,8,0">
+                            <TextBlock Text="Hypervisor launch type" Style="{StaticResource SpecLabel}" />
+                            <TextBlock Text="{Binding HypervisorLaunchTypeText}" Style="{StaticResource SpecValue}" TextWrapping="Wrap" />
+                        </StackPanel>
+                        <StackPanel Margin="8,10,0,0">
+                            <TextBlock Text="HVCI (Memory Integrity)" Style="{StaticResource SpecLabel}" />
+                            <TextBlock Text="{Binding HvciText}" TextWrapping="Wrap">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource SpecValue}">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding HvciWarning}" Value="True">
+                                                <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </StackPanel>
+
+                        <!-- #733: firmware boot mode + system disk partition style - a legacy/MBR
+                             system disk is a hard blocker for Windows 11 and Secure Boot, flagged
+                             plainly below rather than left for the user to infer. -->
+                        <StackPanel Margin="0,10,8,0">
+                            <TextBlock Text="Firmware boot mode" Style="{StaticResource SpecLabel}" />
+                            <TextBlock Text="{Binding FirmwareTypeText}" Style="{StaticResource SpecValue}" TextWrapping="Wrap" />
+                        </StackPanel>
+                        <StackPanel Margin="8,10,8,0">
+                            <TextBlock Text="System disk partition style" Style="{StaticResource SpecLabel}" />
+                            <TextBlock Text="{Binding DiskPartitionStyleText}" TextWrapping="Wrap">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource SpecValue}">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding LegacyDiskBlockerWarning}" Value="True">
+                                                <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </StackPanel>
                     </UniformGrid>
+
+                    <Border Background="{DynamicResource DangerMutedBrush}" BorderBrush="{DynamicResource DangerBrush}"
+                            BorderThickness="1" CornerRadius="8" Padding="10,8" Margin="0,12,0,0">
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding LegacyDiskBlockerWarning}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                        <TextBlock Foreground="{DynamicResource DangerBrush}" FontSize="11.5" TextWrapping="Wrap"
+                                   Text="This system disk uses the legacy MBR partition style - that's a hard blocker for both Windows 11 and Secure Boot, which both require a GPT system disk. Converting in place requires a disk-to-GPT conversion (e.g. mbr2gpt.exe) before either will work." />
+                    </Border>
                 </StackPanel>
             </Border>
 

@@ -98,6 +98,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public bool IsElevated { get; } = new WindowsPrincipal(WindowsIdentity.GetCurrent())
         .IsInRole(WindowsBuiltInRole.Administrator);
 
+    /// <summary>#726: live safe-mode detection - read once here (safe mode can't change without
+    /// a reboot, so there's nothing to poll), drives a persistent header strip visible on every
+    /// tab (see MainWindow.xaml) rather than something scoped to the Startup tab alone.</summary>
+    public SafeModeInfo SafeMode { get; } = SafeModeDetectionService.Detect();
+
     /// <summary>Round 12, #87: read-only "where is this app currently storing settings" status
     /// line for the Settings drawer - portable mode is a launch-time decision (AppPaths.Initialize,
     /// from App.xaml.cs), not something this drawer can toggle live.</summary>

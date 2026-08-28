@@ -31,6 +31,12 @@ public sealed class SystemSpecsService
         var totalMemorySlots = ReadTotalMemorySlots();
         var hwIds = ReadHardwareIdentifiers();
 
+        // #732: bcdedit's hypervisorlaunchtype is read once here (via the same BcdInspectorService
+        // #724-731 use on the Startup tab) rather than re-implemented locally - it's just one more
+        // value off the current loader entry the parser already exposes.
+        var bcdStore = await BcdInspectorService.ReadAsync();
+        string? hypervisorLaunchType = bcdStore.CurrentEntry?.Get("hypervisorlaunchtype");
+
         return new SystemSpecs
         {
             OsName = osName,
@@ -62,7 +68,7 @@ public sealed class SystemSpecsService
             Disks = ReadDisks(),
             Volumes = await ReadVolumesAsync(),
 
-            Security = ReadSecurityInfo(),
+            Security = ReadSecurityInfo(hypervisorLaunchType),
             OutdatedDrivers = ReadOutdatedDrivers(),
             RecentUpdates = ReadRecentHotfixes(),
             AntivirusProducts = ReadAntivirusProducts(out var multipleActive),
@@ -81,6 +87,9 @@ public sealed class SystemSpecsService
             CpuIdentifier = hwIds.CpuId,
 
             RebootPending = ReadRebootPending(),
+
+            // #733: firmware boot mode + system disk partition style - see ReadFirmwareDiskInfo.
+            FirmwareDisk = ReadFirmwareDiskInfo(),
         };
     }
 
@@ -871,15 +880,55 @@ public sealed class SystemSpecsService
     /// policy; Win32_DeviceGuard (root\Microsoft\Windows\DeviceGuard) is unelevated-readable but
     /// simply doesn't exist pre-Windows 10 1607.
     /// </summary>
-    private static SecurityInfo ReadSecurityInfo() => new()
+    private static SecurityInfo ReadSecurityInfo(string? hypervisorLaunchType)
     {
-        SecureBootEnabled = ReadSecureBootEnabled(),
-        TpmPresent = ReadTpmStatus(out var tpmReady, out var tpmVersion),
-        TpmReady = tpmReady,
-        TpmVersion = tpmVersion,
-        VbsRunning = ReadVbsStatus(out var vbsServices),
-        VbsServicesRunning = vbsServices,
-    };
+        var (vbsPolicy, hvciPolicy, hvciScenario) = ReadDeviceGuardRegistry();
+        return new SecurityInfo
+        {
+            SecureBootEnabled = ReadSecureBootEnabled(),
+            TpmPresent = ReadTpmStatus(out var tpmReady, out var tpmVersion),
+            TpmReady = tpmReady,
+            TpmVersion = tpmVersion,
+            VbsRunning = ReadVbsStatus(out var vbsServices),
+            VbsServicesRunning = vbsServices,
+            HypervisorLaunchType = hypervisorLaunchType,
+            VbsPolicyEnabled = vbsPolicy,
+            HvciPolicyEnabled = hvciPolicy,
+            HvciScenarioEnabled = hvciScenario,
+        };
+    }
+
+    /// <summary>
+    /// #732: the "configured" half of VBS/HVCI posture, from the two registry locations Windows
+    /// itself writes to depending on how VBS/Memory Integrity was turned on - the legacy
+    /// HypervisorEnforcedCodeIntegrity value (set by Group Policy's "Turn On Virtualization Based
+    /// Security" / older manual registry configuration) and the newer per-scenario Enabled value
+    /// the Windows Security app's Core Isolation > Memory Integrity toggle actually writes. Both
+    /// are read independently - a machine may have only one of the two set - and combined with the
+    /// *running* half (Win32_DeviceGuard.SecurityServicesRunning, already read by ReadVbsStatus)
+    /// in SystemSpecsViewModel.Apply, since "configured" and "running" commonly disagree (a policy
+    /// change that needs a reboot to take effect).
+    /// </summary>
+    private static (bool? VbsPolicyEnabled, bool? HvciPolicyEnabled, bool? HvciScenarioEnabled) ReadDeviceGuardRegistry()
+    {
+        bool? vbsPolicy = ReadRegistryDwordAsBool(@"SYSTEM\CurrentControlSet\Control\DeviceGuard", "EnableVirtualizationBasedSecurity");
+        bool? hvciPolicy = ReadRegistryDwordAsBool(@"SYSTEM\CurrentControlSet\Control\DeviceGuard", "HypervisorEnforcedCodeIntegrity");
+        bool? hvciScenario = ReadRegistryDwordAsBool(@"SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity", "Enabled");
+        return (vbsPolicy, hvciPolicy, hvciScenario);
+    }
+
+    private static bool? ReadRegistryDwordAsBool(string subKeyPath, string valueName)
+    {
+        try
+        {
+            using var key = Registry.LocalMachine.OpenSubKey(subKeyPath);
+            return key?.GetValue(valueName) is int i ? i != 0 : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
 
     private static bool? ReadSecureBootEnabled()
     {
@@ -957,6 +1006,98 @@ public sealed class SystemSpecsService
         4 => "SMM Firmware Measurement",
         _ => string.Empty,
     };
+
+    /// <summary>
+    /// #733: firmware boot mode (UEFI vs legacy BIOS) and the system disk's partition style - a
+    /// legacy/MBR system disk is a hard blocker for both Windows 11 and Secure Boot, so this is
+    /// stated plainly (see FirmwareDiskInfo.IsHardBlocker) rather than left for the user to infer.
+    /// </summary>
+    private static FirmwareDiskInfo ReadFirmwareDiskInfo() => new()
+    {
+        FirmwareType = ReadFirmwareType(),
+        SystemDiskPartitionStyle = ReadSystemDiskPartitionStyle(),
+    };
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern uint GetFirmwareType(out uint firmwareType);
+
+    /// <summary>
+    /// GetFirmwareType (documented since Windows 8) is the purpose-built, "known Windows API"
+    /// answer to "is this a UEFI or legacy BIOS boot" - it returns FirmwareTypeUefi (2) or
+    /// FirmwareTypeBios (1) directly, which is the modern equivalent of the older
+    /// GetFirmwareEnvironmentVariable-returns-ERROR_INVALID_FUNCTION probe technique (BIOS has no
+    /// UEFI runtime services to even attempt that call against). Falls back to the SecureBoot\State
+    /// registry key - a key only ever created on a UEFI boot, regardless of the
+    /// UEFISecureBootEnabled value inside it - if the API call itself fails for any reason.
+    /// </summary>
+    private static string ReadFirmwareType()
+    {
+        try
+        {
+            if (GetFirmwareType(out uint type) != 0)
+            {
+                return type switch
+                {
+                    2 => "UEFI",
+                    1 => "Legacy BIOS",
+                    _ => "Unknown",
+                };
+            }
+        }
+        catch
+        {
+            // Fall through to the registry-based fallback below.
+        }
+
+        try
+        {
+            using var key = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Control\SecureBoot\State");
+            return key is not null ? "UEFI" : "Legacy BIOS (assumed - no SecureBoot state key present)";
+        }
+        catch
+        {
+            return "Unknown";
+        }
+    }
+
+    /// <summary>MSFT_Disk.PartitionStyle (root\Microsoft\Windows\Storage) for the disk hosting the
+    /// currently running OS (IsBoot), falling back to the disk hosting the system/EFI partition
+    /// (IsSystem) and then simply the first enumerated disk if neither flag is set (some older
+    /// storage stacks don't populate them) - PartitionStyle 1 = MBR, 2 = GPT.</summary>
+    private static string ReadSystemDiskPartitionStyle()
+    {
+        try
+        {
+            using var searcher = new ManagementObjectSearcher(
+                @"root\Microsoft\Windows\Storage",
+                "SELECT PartitionStyle, IsBoot, IsSystem FROM MSFT_Disk");
+
+            ManagementObject? bootDisk = null, systemDisk = null, firstDisk = null;
+            foreach (ManagementObject mo in searcher.Get())
+            {
+                firstDisk ??= mo;
+                if (mo["IsBoot"] is bool ib && ib) { bootDisk = mo; break; }
+                if (systemDisk is null && mo["IsSystem"] is bool isys && isys) systemDisk = mo;
+            }
+
+            var chosen = bootDisk ?? systemDisk ?? firstDisk;
+            if (chosen is null) return "Unknown";
+
+            int style = Convert.ToInt32(chosen["PartitionStyle"] ?? -1);
+            return style switch
+            {
+                1 => "MBR",
+                2 => "GPT",
+                _ => "Unknown",
+            };
+        }
+        catch
+        {
+            // root\Microsoft\Windows\Storage unavailable (older Windows, or the Storage
+            // Management WMI provider isn't running) - Unknown, never guessed.
+            return "Unknown";
+        }
+    }
 
     // The device classes where a stale third-party driver is actually a plausible troubleshooting
     // lead (GPU, network, storage controller, audio/webcam peripherals, ...) - deliberately not

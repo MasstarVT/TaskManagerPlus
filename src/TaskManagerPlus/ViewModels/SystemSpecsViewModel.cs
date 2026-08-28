@@ -168,6 +168,29 @@ public sealed class SystemSpecsViewModel : ObservableObject
     private bool _rebootPending;
     public bool RebootPending { get => _rebootPending; private set => SetProperty(ref _rebootPending, value); }
 
+    // #732: VBS/HVCI/hypervisor launch state - combines bcdedit's hypervisorlaunchtype, the two
+    // DeviceGuard policy registry locations, and the actually-running state already read for
+    // VbsText above. See Apply() for how Configured-vs-Running is derived.
+    private string _hypervisorLaunchTypeText = "Unknown";
+    public string HypervisorLaunchTypeText { get => _hypervisorLaunchTypeText; private set => SetProperty(ref _hypervisorLaunchTypeText, value); }
+
+    private string _hvciText = "Unknown";
+    public string HvciText { get => _hvciText; private set => SetProperty(ref _hvciText, value); }
+
+    private bool _hvciWarning;
+    public bool HvciWarning { get => _hvciWarning; private set => SetProperty(ref _hvciWarning, value); }
+
+    // #733: firmware boot mode + system disk partition style - a legacy/MBR system disk is a hard
+    // blocker for both Windows 11 and Secure Boot, stated plainly via LegacyDiskBlockerWarning.
+    private string _firmwareTypeText = "Unknown";
+    public string FirmwareTypeText { get => _firmwareTypeText; private set => SetProperty(ref _firmwareTypeText, value); }
+
+    private string _diskPartitionStyleText = "Unknown";
+    public string DiskPartitionStyleText { get => _diskPartitionStyleText; private set => SetProperty(ref _diskPartitionStyleText, value); }
+
+    private bool _legacyDiskBlockerWarning;
+    public bool LegacyDiskBlockerWarning { get => _legacyDiskBlockerWarning; private set => SetProperty(ref _legacyDiskBlockerWarning, value); }
+
     public AsyncRelayCommand RefreshCommand { get; }
 
     public SystemSpecsViewModel()
@@ -353,6 +376,33 @@ public sealed class SystemSpecsViewModel : ObservableObject
             false => "Off",
             null => "Unknown",
         };
+
+        // #732: hypervisor launch type is read straight off the current BCD loader entry - "Auto"
+        // is the Windows 11-default value that actually starts the hypervisor at boot; "Off"
+        // disables it outright regardless of any VBS/HVCI policy below.
+        HypervisorLaunchTypeText = string.IsNullOrWhiteSpace(security.HypervisorLaunchType)
+            ? "Not set (Windows default)"
+            : security.HypervisorLaunchType;
+
+        // HVCI ("Memory Integrity") specifically, not VBS as a whole - configured-vs-running is
+        // the one distinction that actually matters here, since a policy change commonly needs a
+        // reboot before it takes effect (VbsServicesRunning above is the *running* half; the two
+        // registry locations are the *configured* half - see ReadDeviceGuardRegistry's remarks).
+        bool hvciRunning = security.VbsServicesRunning.Any(s => s.Contains("Memory Integrity", StringComparison.OrdinalIgnoreCase));
+        bool? hvciConfigured = security.HvciScenarioEnabled ?? security.HvciPolicyEnabled;
+        HvciText = (hvciConfigured, hvciRunning) switch
+        {
+            (_, true) => "Running",
+            (true, false) => "Configured, not running yet (a restart may be required)",
+            (false, false) => "Off",
+            (null, false) => "Unknown",
+        };
+        HvciWarning = hvciConfigured == true && !hvciRunning;
+
+        // #733: firmware boot mode + system disk partition style.
+        FirmwareTypeText = specs.FirmwareDisk.FirmwareType;
+        DiskPartitionStyleText = specs.FirmwareDisk.SystemDiskPartitionStyle;
+        LegacyDiskBlockerWarning = specs.FirmwareDisk.IsHardBlocker;
 
         OutdatedDrivers.Clear();
         foreach (var d in specs.OutdatedDrivers)

@@ -123,6 +123,15 @@
                             Padding="8,3" Background="Transparent" BorderThickness="1" BorderBrush="{DynamicResource AccentBrush}" Foreground="{DynamicResource AccentBrush}" FontSize="11.5" />
                 </StackPanel>
             </Border>
+
+            <!-- #726: persistent safe-mode banner - visible on every tab (this is part of the
+                 shared header chrome, not any one tab's content), since safe mode changes what
+                 every tab is even able to observe. See MainViewModel.SafeMode/
+                 SafeModeDetectionService's remarks. Collapsed on a normal boot (the common case). -->
+            <Border Background="{DynamicResource DangerMutedBrush}" BorderBrush="{DynamicResource DangerBrush}" BorderThickness="0,1,0,0" Padding="20,7"
+                    Visibility="{Binding SafeMode.IsSafeMode, Converter={StaticResource BoolToVisibilityConverter}}">
+                <TextBlock Text="{Binding SafeMode.BannerText}" Foreground="{DynamicResource DangerBrush}" FontSize="12" FontWeight="SemiBold" TextWrapping="Wrap" />
+            </Border>
             </StackPanel>
         </Border>
 
