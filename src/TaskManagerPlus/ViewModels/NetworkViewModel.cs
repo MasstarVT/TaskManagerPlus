@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Diagnostics;
+using System.Windows;
 using System.Windows.Threading;
 using LiveChartsCore;
 using LiveChartsCore.Measure;
@@ -443,6 +444,97 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
     public Axis[] DnsResponseHiddenXAxes { get; }
     public Axis[] DnsResponseMsYAxes { get; }
 
+    // ---- suggestions.md #527-535: DHCP, addressing, ARP and gateway ------------------------------
+    // Two new cards - "Addressing" (#527/#528/#529/#530/#531/#534) and "ARP / neighbours"
+    // (#532/#533) - plus a new section on the existing #513 Routing card (#535). #527/#528/#534 all
+    // read one Win32_NetworkAdapterConfiguration sweep (DhcpAddressingService.ReadAll); #529 shells
+    // out to ipconfig.exe scoped to whichever adapter is selected below; #530/#531's event-log scans
+    // and #531's gratuitous-ARP probe are on-demand, per CLAUDE.md's event-log-scan convention.
+
+    // #527/#528/#529/#534: per-adapter lease detail, APIPA flag, and the addressing sanity checklist.
+    public ObservableCollection<AdapterAddressInfo> Addressing { get; } = new();
+
+    private bool _isRefreshingAddressing;
+    public bool IsRefreshingAddressing { get => _isRefreshingAddressing; private set => SetProperty(ref _isRefreshingAddressing, value); }
+
+    public AsyncRelayCommand RefreshAddressingCommand { get; }
+
+    // #529: which adapter Release/Renew/Register DNS act on.
+    private AdapterAddressInfo? _selectedAddressingAdapter;
+    public AdapterAddressInfo? SelectedAddressingAdapter { get => _selectedAddressingAdapter; set => SetProperty(ref _selectedAddressingAdapter, value); }
+
+    private bool _isRunningDhcpAction;
+    public bool IsRunningDhcpAction { get => _isRunningDhcpAction; private set => SetProperty(ref _isRunningDhcpAction, value); }
+
+    private string _dhcpActionStatusText = "Select an adapter above, then Release, Renew, or Register DNS.";
+    public string DhcpActionStatusText { get => _dhcpActionStatusText; private set => SetProperty(ref _dhcpActionStatusText, value); }
+
+    public RelayCommand ReleaseAddressCommand { get; }
+    public RelayCommand RenewAddressCommand { get; }
+    public RelayCommand RegisterDnsCommand { get; }
+
+    // #528: the APIPA banner's own Renew button - scoped to whichever adapter it's shown on
+    // (via CommandParameter), independent of whatever's picked in the Actions section's adapter
+    // selector above.
+    public RelayCommand RenewApipaAdapterCommand { get; }
+
+    // #530: DHCP client event timeline - its own lookback window, mirroring #524's DNS scan.
+    private double _dhcpScanWindowHours = 24.0;
+    public double DhcpScanWindowHours { get => _dhcpScanWindowHours; set => SetProperty(ref _dhcpScanWindowHours, Math.Clamp(value, 1.0, 720.0)); }
+
+    private bool _isScanningDhcpEvents;
+    public bool IsScanningDhcpEvents { get => _isScanningDhcpEvents; private set => SetProperty(ref _isScanningDhcpEvents, value); }
+
+    private string _dhcpScanStatusText = "Not scanned yet - the DHCP-Client Operational log is disabled by default on most machines.";
+    public string DhcpScanStatusText { get => _dhcpScanStatusText; private set => SetProperty(ref _dhcpScanStatusText, value); }
+
+    public ObservableCollection<DhcpClientEvent> DhcpEvents { get; } = new();
+    public AsyncRelayCommand ScanDhcpEventsCommand { get; }
+
+    // #531: System-log Tcpip 4198/4199 correlation, plus the active gratuitous-ARP probe.
+    private double _ipConflictScanWindowHours = 24.0;
+    public double IpConflictScanWindowHours { get => _ipConflictScanWindowHours; set => SetProperty(ref _ipConflictScanWindowHours, Math.Clamp(value, 1.0, 720.0)); }
+
+    private bool _isScanningIpConflicts;
+    public bool IsScanningIpConflicts { get => _isScanningIpConflicts; private set => SetProperty(ref _isScanningIpConflicts, value); }
+
+    private string _ipConflictScanStatusText = "Not scanned yet.";
+    public string IpConflictScanStatusText { get => _ipConflictScanStatusText; private set => SetProperty(ref _ipConflictScanStatusText, value); }
+
+    public ObservableCollection<IpConflictLogEntry> IpConflictEvents { get; } = new();
+    public AsyncRelayCommand ScanIpConflictsCommand { get; }
+
+    private bool _isProbingGratuitousArp;
+    public bool IsProbingGratuitousArp { get => _isProbingGratuitousArp; private set => SetProperty(ref _isProbingGratuitousArp, value); }
+
+    private string _gratuitousArpResultText = "Not probed yet.";
+    public string GratuitousArpResultText { get => _gratuitousArpResultText; private set => SetProperty(ref _gratuitousArpResultText, value); }
+
+    public AsyncRelayCommand ProbeGratuitousArpCommand { get; }
+
+    // #532/#533: new "ARP / neighbours" card.
+    public ObservableCollection<ArpEntry> ArpEntries { get; } = new();
+
+    private bool _isRefreshingArp;
+    public bool IsRefreshingArp { get => _isRefreshingArp; private set => SetProperty(ref _isRefreshingArp, value); }
+
+    private string _arpStatusText = "Not loaded yet.";
+    public string ArpStatusText { get => _arpStatusText; private set => SetProperty(ref _arpStatusText, value); }
+
+    public AsyncRelayCommand RefreshArpCommand { get; }
+
+    // #533: gateway-MAC-change alert - null hides the banner (no baseline yet, or nothing changed).
+    private string? _gatewayMacChangeText;
+    public string? GatewayMacChangeText { get => _gatewayMacChangeText; private set => SetProperty(ref _gatewayMacChangeText, value); }
+
+    private readonly GatewayFingerprintFile _gatewayFingerprint = GatewayFingerprintService.Load();
+
+    // #535: interface-metric section on the existing #513 Routing card.
+    public ObservableCollection<InterfaceMetricInfo> InterfaceMetrics { get; } = new();
+
+    private string _adapterWinnerText = "Refresh routing to see which adapter Windows currently prefers for outbound traffic.";
+    public string AdapterWinnerText { get => _adapterWinnerText; private set => SetProperty(ref _adapterWinnerText, value); }
+
     public NetworkViewModel(PerformanceViewModel performance)
     {
         Performance = performance;
@@ -593,6 +685,20 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         _ = RefreshDnsCacheAsync();
         _ = RefreshDohConfigAsync();
         _ = RefreshHostsFileAsync();
+
+        // #527-535: Addressing / ARP-neighbours card wiring.
+        RefreshAddressingCommand = new AsyncRelayCommand(RefreshAddressingAsync, () => !IsRefreshingAddressing);
+        ReleaseAddressCommand = new RelayCommand(() => ReleaseSelectedAdapter(), () => SelectedAddressingAdapter is not null && !IsRunningDhcpAction);
+        RenewAddressCommand = new RelayCommand(() => RenewAdapter(SelectedAddressingAdapter), () => SelectedAddressingAdapter is not null && !IsRunningDhcpAction);
+        RegisterDnsCommand = new RelayCommand(() => RegisterDnsForSelectedAdapter(), () => !IsRunningDhcpAction);
+        RenewApipaAdapterCommand = new RelayCommand(param => RenewAdapter(param as AdapterAddressInfo), _ => !IsRunningDhcpAction);
+        ScanDhcpEventsCommand = new AsyncRelayCommand(ScanDhcpEventsAsync, () => !IsScanningDhcpEvents);
+        ScanIpConflictsCommand = new AsyncRelayCommand(ScanIpConflictsAsync, () => !IsScanningIpConflicts);
+        ProbeGratuitousArpCommand = new AsyncRelayCommand(ProbeGratuitousArpAsync, () => !IsProbingGratuitousArp);
+        RefreshArpCommand = new AsyncRelayCommand(RefreshArpAsync, () => !IsRefreshingArp);
+
+        _ = RefreshAddressingAsync();
+        _ = RefreshArpAsync();
     }
 
     private async Task CheckConnectivityAsync()
@@ -1067,6 +1173,13 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
             var persistent = await Task.Run(RoutingTableService.ReadPersistentRoutes);
             PersistentRoutes.Clear();
             foreach (var p in persistent) PersistentRoutes.Add(p);
+
+            // #535: per-adapter routing metric + "which adapter wins" - shares this card's refresh
+            // since it's another netsh/route shell-out, not a trivial local read.
+            var metrics = await InterfaceMetricService.ReadAllAsync();
+            InterfaceMetrics.Clear();
+            foreach (var m in metrics) InterfaceMetrics.Add(m);
+            AdapterWinnerText = InterfaceMetricService.DescribeWinner(metrics);
         }
         catch
         {
@@ -1368,6 +1481,237 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         finally
         {
             IsScanningDnsFailures = false;
+        }
+    }
+
+    // ---- #527-535 helpers -------------------------------------------------------------------
+
+    /// <summary>#527/#528/#534: reloads the Addressing card's per-adapter DHCP lease/APIPA/sanity
+    /// data from one Win32_NetworkAdapterConfiguration sweep - shelled off the UI thread via
+    /// Task.Run since WMI queries are synchronous.</summary>
+    private async Task RefreshAddressingAsync()
+    {
+        if (IsRefreshingAddressing) return;
+        IsRefreshingAddressing = true;
+        try
+        {
+            var infos = await Task.Run(DhcpAddressingService.ReadAll);
+            string? previouslySelected = SelectedAddressingAdapter?.AdapterName;
+
+            Addressing.Clear();
+            foreach (var i in infos) Addressing.Add(i);
+
+            SelectedAddressingAdapter = (previouslySelected is null ? null : Addressing.FirstOrDefault(a => a.AdapterName == previouslySelected))
+                ?? Addressing.FirstOrDefault();
+        }
+        catch
+        {
+            // Best-effort - leave whatever was already loaded.
+        }
+        finally
+        {
+            IsRefreshingAddressing = false;
+        }
+    }
+
+    /// <summary>#529: release - behind an explicit Yes/No confirmation since it briefly drops
+    /// connectivity on the selected adapter, the same MessageBox.Show confirm pattern
+    /// ProcessesViewModel.EndSelected already uses for its own disruptive action.</summary>
+    private void ReleaseSelectedAdapter()
+    {
+        var target = SelectedAddressingAdapter;
+        if (target is null) return;
+
+        var confirm = MessageBox.Show(
+            $"Release the IP address on \"{target.AdapterName}\"?\nThis briefly drops connectivity on this adapter until it's renewed or reconnected.",
+            "Release IP address", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        _ = RunDhcpActionAsync(() => DhcpAddressingService.ReleaseAsync(target.AdapterName), "Release");
+    }
+
+    /// <summary>#529: renew - same confirm-first pattern as Release above.</summary>
+    /// <summary>#529 (also used directly by #528's own per-adapter banner button via
+    /// <see cref="RenewApipaAdapterCommand"/>) - same confirm-first pattern as Release.</summary>
+    private void RenewAdapter(AdapterAddressInfo? target)
+    {
+        if (target is null) return;
+
+        var confirm = MessageBox.Show(
+            $"Renew the IP address on \"{target.AdapterName}\"?\nThis briefly drops connectivity while a new lease is negotiated.",
+            "Renew IP address", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        _ = RunDhcpActionAsync(() => DhcpAddressingService.RenewAsync(target.AdapterName), "Renew");
+    }
+
+    /// <summary>#529: register DNS - ipconfig.exe has no per-adapter scope for this (see
+    /// DhcpAddressingService.RegisterDnsAsync's remarks), so the confirmation says so rather than
+    /// implying it only touches the selected adapter.</summary>
+    private void RegisterDnsForSelectedAdapter()
+    {
+        var confirm = MessageBox.Show(
+            "Re-register this machine's DNS records with its configured DNS server(s)?\nipconfig has no per-adapter scope for this - it re-registers every adapter, not just the one selected above. Normally harmless, but it does generate DNS traffic.",
+            "Register DNS", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        _ = RunDhcpActionAsync(DhcpAddressingService.RegisterDnsAsync, "Register DNS");
+    }
+
+    private async Task RunDhcpActionAsync(Func<Task<string>> action, string label)
+    {
+        if (IsRunningDhcpAction) return;
+        IsRunningDhcpAction = true;
+        DhcpActionStatusText = $"Running {label}...";
+        try
+        {
+            string output = await action();
+            DhcpActionStatusText = $"{label}: {output}";
+        }
+        catch (Exception ex)
+        {
+            DhcpActionStatusText = $"{label} failed: {ex.Message}";
+        }
+        finally
+        {
+            IsRunningDhcpAction = false;
+            await RefreshAddressingAsync();
+        }
+    }
+
+    /// <summary>#530: scans the DHCP-Client Admin + Operational logs over the chosen lookback
+    /// window - shelled off the UI thread via Task.Run since EventLogReader is synchronous, same
+    /// pattern ScanDnsFailuresAsync (#524) already uses.</summary>
+    private async Task ScanDhcpEventsAsync()
+    {
+        if (IsScanningDhcpEvents) return;
+        IsScanningDhcpEvents = true;
+        DhcpScanStatusText = "Scanning...";
+        try
+        {
+            var window = TimeSpan.FromHours(DhcpScanWindowHours);
+            var result = await Task.Run(() => DhcpEventLogService.Scan(window));
+
+            DhcpEvents.Clear();
+            foreach (var e in result.Events) DhcpEvents.Add(e);
+
+            DhcpScanStatusText = !result.AdminChannelAvailable && !result.OperationalChannelAvailable
+                ? "Neither the DHCP-Client Admin nor Operational log could be read."
+                : !result.OperationalChannelAvailable
+                    ? $"DHCP-Client Operational log unavailable (it's disabled by default - enable it in Event Viewer's \"Show Analytic and Debug Logs\" for full results). Found {result.Events.Count} event(s) from the Admin log only."
+                    : result.Events.Count == 0
+                        ? $"No DHCP lease events in the last {DhcpScanWindowHours:0.#}h."
+                        : $"{result.Events.Count} event(s) in the last {DhcpScanWindowHours:0.#}h.";
+        }
+        catch (Exception ex)
+        {
+            DhcpScanStatusText = $"Scan failed: {ex.Message}";
+        }
+        finally
+        {
+            IsScanningDhcpEvents = false;
+        }
+    }
+
+    /// <summary>#531: correlates System-log Tcpip 4198/4199 address-conflict events against this
+    /// machine's currently configured addresses.</summary>
+    private async Task ScanIpConflictsAsync()
+    {
+        if (IsScanningIpConflicts) return;
+        IsScanningIpConflicts = true;
+        IpConflictScanStatusText = "Scanning...";
+        try
+        {
+            var currentIps = Addressing.Select(a => a.IpAddress).Where(ip => ip.Length > 0).ToList();
+            var window = TimeSpan.FromHours(IpConflictScanWindowHours);
+            var result = await Task.Run(() => IpConflictService.ScanSystemLog(window, currentIps));
+
+            IpConflictEvents.Clear();
+            foreach (var e in result.Events) IpConflictEvents.Add(e);
+
+            IpConflictScanStatusText = !result.ChannelAvailable
+                ? "The System log's Tcpip provider couldn't be read."
+                : result.Events.Count == 0
+                    ? $"No address-conflict events in the last {IpConflictScanWindowHours:0.#}h."
+                    : $"{result.Events.Count} conflict event(s) in the last {IpConflictScanWindowHours:0.#}h.";
+        }
+        catch (Exception ex)
+        {
+            IpConflictScanStatusText = $"Scan failed: {ex.Message}";
+        }
+        finally
+        {
+            IsScanningIpConflicts = false;
+        }
+    }
+
+    /// <summary>#531's active check: a gratuitous-ARP-style probe of the selected adapter's own
+    /// address - see IpConflictService.ProbeOwnAddressAsync's remarks.</summary>
+    private async Task ProbeGratuitousArpAsync()
+    {
+        if (IsProbingGratuitousArp) return;
+        var target = SelectedAddressingAdapter ?? Addressing.FirstOrDefault();
+        if (target is null)
+        {
+            GratuitousArpResultText = "No adapter with an IPv4 address to probe - refresh Addressing first.";
+            return;
+        }
+
+        IsProbingGratuitousArp = true;
+        GratuitousArpResultText = $"Probing {target.IpAddress}...";
+        try
+        {
+            var (_, message) = await IpConflictService.ProbeOwnAddressAsync(target.IpAddress, target.MacAddress);
+            GratuitousArpResultText = message;
+        }
+        catch (Exception ex)
+        {
+            GratuitousArpResultText = $"Probe failed: {ex.Message}";
+        }
+        finally
+        {
+            IsProbingGratuitousArp = false;
+        }
+    }
+
+    /// <summary>#532/#533: reloads the ARP/neighbour cache, then (once the gateway's own MAC is
+    /// actually known from this snapshot) runs #533's gateway-MAC-fingerprint check against it.</summary>
+    private async Task RefreshArpAsync()
+    {
+        if (IsRefreshingArp) return;
+        IsRefreshingArp = true;
+        try
+        {
+            string? gatewayIp = NetworkDiagnosticsService.FindDefaultGateway();
+            var result = await ArpCacheService.ReadAsync(gatewayIp);
+
+            ArpEntries.Clear();
+            foreach (var e in result.Entries.OrderBy(e => e.IsGateway ? 0 : 1).ThenBy(e => e.IpAddress, StringComparer.OrdinalIgnoreCase))
+                ArpEntries.Add(e);
+
+            ArpStatusText = result.Entries.Count == 0
+                ? "ARP cache is empty (or couldn't be read)."
+                : $"{result.Entries.Count} neighbour(s)." + (result.GatewayEntryMissing ? " No ARP entry for the gateway yet - try pinging it first (the Connectivity card above does this every 15s)." : string.Empty);
+
+            // #533: only meaningful once the gateway's own MAC actually resolved from this snapshot.
+            if (gatewayIp is not null && result.GatewayMac is not null)
+            {
+                string profileKey = Wifi?.Ssid ?? "Wired";
+                GatewayMacChangeText = GatewayFingerprintService.CheckAndUpdate(_gatewayFingerprint, profileKey, gatewayIp, result.GatewayMac);
+                await Task.Run(() => GatewayFingerprintService.Save(_gatewayFingerprint));
+            }
+            else
+            {
+                GatewayMacChangeText = null;
+            }
+        }
+        catch (Exception ex)
+        {
+            ArpStatusText = $"Couldn't read the ARP cache: {ex.Message}";
+        }
+        finally
+        {
+            IsRefreshingArp = false;
         }
     }
 

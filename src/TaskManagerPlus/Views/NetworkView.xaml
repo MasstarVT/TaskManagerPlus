@@ -1086,6 +1086,300 @@
                             </Style>
                         </TextBlock.Style>
                     </TextBlock>
+
+                    <!-- #535: per-adapter routing metric + "which adapter wins" for outbound
+                         traffic - the classic "Ethernet is plugged in but everything goes over
+                         Wi-Fi" confusion explained by the numbers, not just asserted. Shares this
+                         card's own Refresh button above rather than getting a second one, since
+                         it's another netsh shell-out refreshed on the same on-demand cadence. -->
+                    <TextBlock Text="Interface metrics" Style="{StaticResource SpecLabel}" Margin="0,14,0,6" />
+                    <TextBlock Text="{Binding AdapterWinnerText}" Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" />
+                    <DataGrid ItemsSource="{Binding InterfaceMetrics}" AutoGenerateColumns="False" IsReadOnly="True" HeadersVisibility="Column" MaxHeight="200">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="AF" Binding="{Binding AddressFamily}" Width="0.6*" />
+                            <DataGridTextColumn Header="Interface" Binding="{Binding InterfaceName}" Width="1.6*" />
+                            <DataGridTextColumn Header="Metric" Binding="{Binding Metric}" Width="0.7*" />
+                            <DataGridTextColumn Header="State" Binding="{Binding State}" Width="0.9*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <TextBlock Text="No interface metrics found.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding InterfaceMetrics.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- suggestions.md #527/#528/#529/#530/#531/#534: "Addressing" card - DHCP lease detail
+                 with expiry/rogue-server flags (#527), an APIPA banner with a one-click Renew
+                 (#528), Release/Renew/Register-DNS actions behind an explicit confirmation since
+                 they briefly drop connectivity (#529, the same MessageBox.Show Yes/No pattern
+                 ProcessesViewModel's own disruptive "End process" action already uses), an
+                 on-demand DHCP-Client event timeline (#530), an on-demand IP-conflict log
+                 correlation + active gratuitous-ARP probe (#531), and a per-adapter addressing
+                 sanity checklist (#534). All read from one DhcpAddressingService.ReadAll() sweep
+                 per adapter, so the per-adapter block below shows every flag together rather than
+                 splitting them across separate lists. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Addressing" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Refresh" Padding="10,4" Command="{Binding RefreshAddressingCommand}" />
+                    </Grid>
+                    <TextBlock Text="DHCP lease detail, APIPA/self-assigned-address detection, and an addressing sanity checklist - one block per IP-configured adapter."
+                               Style="{StaticResource SubStat}" Margin="0,0,0,10" TextWrapping="Wrap" Opacity="0.85" />
+
+                    <ItemsControl ItemsSource="{Binding Addressing}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Margin="0,0,0,10" Padding="10" CornerRadius="6" BorderThickness="1" BorderBrush="{DynamicResource BorderSubtleBrush}">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Setter Property="Background" Value="Transparent" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsApipa}" Value="True">
+                                                    <Setter Property="Background" Value="{DynamicResource DangerBrush}" />
+                                                    <Setter Property="Opacity" Value="0.9" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
+                                    <StackPanel>
+                                        <TextBlock FontSize="13">
+                                            <Run Text="{Binding AdapterName}" FontWeight="SemiBold" />
+                                            <Run Text=" — " /><Run Text="{Binding IpAddress}" FontFamily="Consolas" />
+                                            <Run Text="/" /><Run Text="{Binding SubnetMask}" FontFamily="Consolas" />
+                                        </TextBlock>
+
+                                        <!-- #528: APIPA banner - "DHCP failed, no address was offered", with a Renew shortcut
+                                             scoped to this adapter regardless of what's selected in the Actions section below. -->
+                                        <StackPanel Margin="0,6,0,0" Visibility="{Binding IsApipa, Converter={StaticResource BoolToVisibilityConverter}}">
+                                            <TextBlock Text="DHCP failed — no address was offered. This 169.254.x.x address is self-assigned (APIPA); the adapter never heard back from a DHCP server, so it can only talk to other devices on the same self-assigned range."
+                                                       Style="{StaticResource SubStat}" TextWrapping="Wrap" FontWeight="SemiBold" />
+                                            <Button Content="Renew this adapter" Padding="8,3" Margin="0,6,0,0" HorizontalAlignment="Left"
+                                                    Command="{Binding DataContext.RenewApipaAdapterCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                    CommandParameter="{Binding}" />
+                                        </StackPanel>
+
+                                        <TextBlock Text="{Binding LeaseStatusText}" Margin="0,6,0,0" TextWrapping="Wrap">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding LeaseExpiringSoon}" Value="True">
+                                                            <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                            <Setter Property="FontWeight" Value="SemiBold" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                        <TextBlock Style="{StaticResource SubStat}" Margin="0,2,0,0" TextWrapping="Wrap"
+                                                   Visibility="{Binding DhcpServer, Converter={StaticResource NullToVisibilityConverter}}">
+                                            <Run Text="DHCP server: " /><Run Text="{Binding DhcpServer}" FontFamily="Consolas" />
+                                        </TextBlock>
+                                        <TextBlock Style="{StaticResource SubStat}" Margin="0,2,0,0" TextWrapping="Wrap"
+                                                   Visibility="{Binding DefaultGateway, Converter={StaticResource NullToVisibilityConverter}}">
+                                            <Run Text="Gateway: " /><Run Text="{Binding DefaultGateway}" FontFamily="Consolas" />
+                                        </TextBlock>
+
+                                        <!-- #527: rogue-DHCP-server flag. -->
+                                        <TextBlock Text="{Binding RogueDhcpReason}" Style="{StaticResource SubStat}" Margin="0,6,0,0" TextWrapping="Wrap"
+                                                   Foreground="{DynamicResource WarningBrush}" FontWeight="SemiBold"
+                                                   Visibility="{Binding RogueDhcpReason, Converter={StaticResource NullToVisibilityConverter}}" />
+
+                                        <!-- #534: addressing sanity checklist. -->
+                                        <ItemsControl ItemsSource="{Binding SanityFlags}" Margin="0,6,0,0">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding}" Style="{StaticResource SubStat}" Margin="0,0,0,3" TextWrapping="Wrap"
+                                                               Foreground="{DynamicResource WarningBrush}" />
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="No IP-configured adapters found.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding Addressing.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
+                    <!-- #529: release / renew / register-DNS, each behind an explicit confirmation
+                         (see NetworkViewModel.ReleaseSelectedAdapter's remarks) since they briefly
+                         drop connectivity. -->
+                    <TextBlock Text="Actions" Style="{StaticResource SpecLabel}" Margin="0,16,0,6" />
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <ComboBox Grid.Column="0" Margin="0,0,8,0" VerticalContentAlignment="Center"
+                                  ItemsSource="{Binding Addressing}" DisplayMemberPath="AdapterName"
+                                  SelectedItem="{Binding SelectedAddressingAdapter}" />
+                        <Button Grid.Column="1" Content="Release" Padding="10,4" Margin="0,0,6,0" Command="{Binding ReleaseAddressCommand}" />
+                        <Button Grid.Column="2" Content="Renew" Padding="10,4" Margin="0,0,6,0" Command="{Binding RenewAddressCommand}" />
+                        <Button Grid.Column="3" Content="Register DNS" Padding="10,4" Command="{Binding RegisterDnsCommand}" />
+                    </Grid>
+                    <TextBlock Text="{Binding DhcpActionStatusText}" Style="{StaticResource SubStat}" Margin="0,6,0,0" TextWrapping="Wrap" />
+
+                    <!-- #530: DHCP-Client event timeline - explicit Scan button per the
+                         on-demand-for-event-logs convention. -->
+                    <Grid Margin="0,16,0,6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="DHCP lease event timeline" Style="{StaticResource SpecLabel}" Margin="0" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="1" Text="Window (h)" VerticalAlignment="Center" Margin="0,0,6,0" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        <TextBox Grid.Column="2" Width="50" Margin="0,0,8,0" VerticalContentAlignment="Center"
+                                 Text="{Binding DhcpScanWindowHours, UpdateSourceTrigger=LostFocus, StringFormat={}{0:0.#}}" />
+                        <Button Grid.Column="3" Content="Scan" Padding="10,4" Command="{Binding ScanDhcpEventsCommand}" />
+                    </Grid>
+                    <TextBlock Text="{Binding DhcpScanStatusText}" Style="{StaticResource SubStat}" Margin="0,6,0,0" TextWrapping="Wrap" />
+                    <ItemsControl ItemsSource="{Binding DhcpEvents}" Margin="0,8,0,0">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,4" TextWrapping="Wrap" FontSize="11.5">
+                                    <Run Text="{Binding TimeUtc, StringFormat={}{0:g}}" FontFamily="Consolas" />
+                                    <Run Text=" [" /><Run Text="{Binding Channel}" /><Run Text="/" /><Run Text="{Binding Category}" FontWeight="SemiBold" /><Run Text="] " />
+                                    <Run Text="{Binding Message}" />
+                                </TextBlock>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <!-- #531: IP-conflict log correlation + active gratuitous-ARP probe. -->
+                    <Grid Margin="0,16,0,6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="IP address conflicts" Style="{StaticResource SpecLabel}" Margin="0" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="1" Text="Window (h)" VerticalAlignment="Center" Margin="0,0,6,0" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        <TextBox Grid.Column="2" Width="50" Margin="0,0,8,0" VerticalContentAlignment="Center"
+                                 Text="{Binding IpConflictScanWindowHours, UpdateSourceTrigger=LostFocus, StringFormat={}{0:0.#}}" />
+                        <Button Grid.Column="3" Content="Scan log" Padding="10,4" Command="{Binding ScanIpConflictsCommand}" />
+                    </Grid>
+                    <TextBlock Text="{Binding IpConflictScanStatusText}" Style="{StaticResource SubStat}" Margin="0,6,0,0" TextWrapping="Wrap" />
+                    <ItemsControl ItemsSource="{Binding IpConflictEvents}" Margin="0,8,0,0">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Margin="0,0,0,4" TextWrapping="Wrap" FontSize="11.5">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding MatchesCurrentAddress}" Value="True">
+                                                    <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                    <Setter Property="FontWeight" Value="SemiBold" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                    <Run Text="{Binding TimeUtc, StringFormat={}{0:g}}" FontFamily="Consolas" />
+                                    <Run Text=" — IP " /><Run Text="{Binding ConflictingIp, TargetNullValue=unknown}" FontFamily="Consolas" />
+                                    <Run Text=", MAC " /><Run Text="{Binding ConflictingMac, TargetNullValue='not in event data'}" FontFamily="Consolas" />
+                                </TextBlock>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <Grid Margin="0,10,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Active check: sends a live ARP request for the selected adapter's own address and flags any other host that answers for it - a duplicate-address-detection probe, same idea as a gratuitous ARP. Quick flag, not a verdict."
+                                   Style="{StaticResource SubStat}" TextWrapping="Wrap" Opacity="0.85" VerticalAlignment="Center" Margin="0,0,10,0" />
+                        <Button Grid.Column="1" Content="Probe now" Padding="10,4" Command="{Binding ProbeGratuitousArpCommand}" />
+                    </Grid>
+                    <TextBlock Text="{Binding GratuitousArpResultText}" Style="{StaticResource SubStat}" Margin="0,6,0,0" TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+
+            <!-- suggestions.md #532/#533: "ARP / neighbours" card - the neighbour cache as a
+                 sortable grid with OUI vendor lookup (#532), flags for two IPs sharing one MAC and
+                 an incomplete gateway entry (#532), and a gateway-MAC-change alert persisted per
+                 network profile (#533). -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="ARP / neighbours" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Refresh" Padding="10,4" Command="{Binding RefreshArpCommand}" />
+                    </Grid>
+                    <TextBlock Text="{Binding ArpStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" />
+
+                    <!-- #533: gateway-MAC-change alert - hidden entirely when there's nothing to flag. -->
+                    <TextBlock Text="{Binding GatewayMacChangeText}" Style="{StaticResource SubStat}" Margin="0,0,0,10" TextWrapping="Wrap"
+                               Foreground="{DynamicResource DangerBrush}" FontWeight="SemiBold"
+                               Visibility="{Binding GatewayMacChangeText, Converter={StaticResource NullToVisibilityConverter}}" />
+
+                    <DataGrid ItemsSource="{Binding ArpEntries}" AutoGenerateColumns="False" IsReadOnly="True" HeadersVisibility="Column" CanUserSortColumns="True" MaxHeight="320">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="IP" Binding="{Binding IpAddress}" Width="1.1*" />
+                            <DataGridTextColumn Header="MAC" Binding="{Binding MacAddress}" Width="1.2*" />
+                            <DataGridTextColumn Header="Vendor" Binding="{Binding Vendor}" Width="1.4*" />
+                            <DataGridTextColumn Header="Interface" Binding="{Binding InterfaceName}" Width="1.1*" />
+                            <DataGridTextColumn Header="Type" Binding="{Binding EntryType}" Width="0.8*" />
+                        </DataGrid.Columns>
+                        <DataGrid.RowStyle>
+                            <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsGateway}" Value="True">
+                                        <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+                                        <Setter Property="BorderThickness" Value="2" />
+                                        <Setter Property="ToolTip" Value="This is the default gateway." />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding IsFlagged}" Value="True">
+                                        <Setter Property="Background" Value="{DynamicResource WarningBrush}" />
+                                        <Setter Property="Opacity" Value="0.85" />
+                                        <Setter Property="ToolTip" Value="{Binding FlagReason}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </DataGrid.RowStyle>
+                    </DataGrid>
+                    <TextBlock Text="No ARP entries found.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding ArpEntries.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
                 </StackPanel>
             </Border>
 
