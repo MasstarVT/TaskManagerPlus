@@ -134,11 +134,18 @@ public sealed class WprStatusResult
     public string? ErrorMessage { get; set; }
 }
 
-/// <summary>#153: one provider's event count from a tracerpt summary.txt.</summary>
+/// <summary>#153: one provider's event count from a tracerpt summary.txt. #154 adds
+/// <see cref="PercentOfTotal"/>, filled in by <c>EtwTraceService.ParseTracerptSummary</c> once the
+/// full list is known (never guessed from a single row in isolation) - purely derived from the
+/// existing summary parse, no new ETL parsing.</summary>
 public sealed class TracerptProviderCount
 {
     public string ProviderName { get; set; } = "";
     public long EventCount { get; set; }
+
+    /// <summary>#154: this provider's share of the trace's total event count, 0-100. Left at 0
+    /// (never guessed) when the total couldn't be determined.</summary>
+    public double PercentOfTotal { get; set; }
 }
 
 /// <summary>#153: the parsed result of running tracerpt against a finished capture - event counts
@@ -152,10 +159,158 @@ public sealed class TracerptSummary
     public string TraceDurationText => TraceDuration is { } d ? d.ToString(d.TotalHours >= 1 ? @"hh\:mm\:ss" : @"mm\:ss") : "Unknown";
     public long TotalEvents { get; set; }
     public long LostEvents { get; set; }
+
+    /// <summary>#153's raw per-provider counts - sorted descending by <c>EtwTraceService.
+    /// ParseTracerptSummary</c> (with <see cref="TracerptProviderCount.PercentOfTotal"/> filled in)
+    /// specifically so #154's "what dominated this trace" ranked bar list can bind straight to this
+    /// without re-sorting in the ViewModel or XAML.</summary>
     public List<TracerptProviderCount> EventsPerProvider { get; set; } = new();
+
     public string? SummaryTextPath { get; set; }
     public string? HtmlReportPath { get; set; }
     public string RawSummaryText { get; set; } = "";
+
+    /// <summary>#154: a one-line "what dominated this trace" callout, derived purely from the
+    /// already-sorted <see cref="EventsPerProvider"/> - null (hidden in the UI) unless the top
+    /// provider's share is large enough to be worth calling out by name (&gt;= 20% of all events)
+    /// rather than always narrating the top row even when the distribution is basically flat.</summary>
+    public string? DominantProviderSummary => EventsPerProvider.Count > 0 && EventsPerProvider[0].PercentOfTotal >= 20
+        ? $"\"{EventsPerProvider[0].ProviderName}\" accounted for {EventsPerProvider[0].PercentOfTotal:0.#}% of all events in this trace."
+        : null;
+}
+
+/// <summary>#157: one growth-watchdog sample of the in-progress capture's on-disk footprint - see
+/// <c>EtwTraceService.SampleCaptureSize</c>'s remarks for exactly what "footprint" means while WPR
+/// is still recording (its own %TEMP%\WPR scratch folder, not the final output path, until Stop
+/// merges it). <see cref="Available"/> is false when the size couldn't be determined at all -
+/// distinct from a genuine 0-byte reading, so the UI can show "Unknown" rather than a misleading
+/// "0 B" during that state.</summary>
+public sealed class EtwCaptureSizeSample
+{
+    public DateTime SampledAtUtc { get; set; }
+    public long TotalBytes { get; set; }
+    public bool Available { get; set; }
+}
+
+/// <summary>
+/// #158: one user-editable capture recipe - a tool + its raw command-line arguments, so a user can
+/// add their own wpr/logman/netsh trace recipes (e.g. `netsh trace start scenario=NetConnection
+/// capture=yes`) without touching code, by editing etw-recipes.json directly or through this
+/// panel's Add/Remove controls. Deliberately a different, more general shape than #150's
+/// <see cref="EtwCapturePreset"/> (which only ever assembles `-start &lt;WprProfile&gt;` arguments
+/// for <c>EtwTraceService.StartCaptureAsync</c>'s own specific profile-list builder) rather than a
+/// replacement for it - reshaping the already-wired preset UI/ViewModel/service signature around
+/// this more general shape would have been a much larger refactor for comparatively little gain, so
+/// this exists alongside the WPR-profile presets as a separate, tool-agnostic "run any recorded
+/// command line" list instead. <see cref="Arguments"/> may contain the literal token
+/// <c>%OUTPUT%</c>, substituted with the chosen (quoted) output path before running - see
+/// <c>EtwTraceService.RunRecipeAsync</c>.
+/// </summary>
+public sealed class EtwCaptureRecipe
+{
+    public string Name { get; set; } = "";
+    public string Description { get; set; } = "";
+    public string Tool { get; set; } = "wpr.exe";
+    public string Arguments { get; set; } = "";
+
+    /// <summary>Rough hand-entered "expected size/minute" estimate, same "labelled as an estimate,
+    /// never measured live" spirit as #150's EtwCapturePreset.DiskEstimate.</summary>
+    public string ExpectedSizePerMinute { get; set; } = "";
+
+    /// <summary>True for the seeded defaults - purely cosmetic (a "Built-in" tag in the UI), never
+    /// used to block editing/removing: once loaded, a built-in recipe is just as editable/removable
+    /// as a user's own, the same "edit/duplicate/delete like your own" precedent #108's saved event
+    /// filters already established for their own built-in starter presets.</summary>
+    public bool IsBuiltIn { get; set; }
+}
+
+/// <summary>etw-recipes.json root - same shape as every other settings file in this app (a plain
+/// serializable object with a static <see cref="Defaults"/> factory), loaded/saved by
+/// EtwRecipeSettingsService. The built-ins below are seeded from #150's own five WPR scenario
+/// presets (translated into their equivalent literal `wpr -start ... -filemode` command lines, so
+/// the same intent is expressed once instead of duplicated as a second hardcoded preset list) plus
+/// one netsh trace example, matching #158's own suggested starter set.</summary>
+public sealed class EtwRecipeSettings
+{
+    public List<EtwCaptureRecipe> Recipes { get; set; } = new();
+
+    public static EtwRecipeSettings Defaults => new()
+    {
+        Recipes = new List<EtwCaptureRecipe>
+        {
+            new()
+            {
+                Name = "Stutter / UI hangs",
+                Description = "CPU, GPU, desktop composition, and disk I/O activity - use this when the desktop or an app visibly freezes or stutters.",
+                Tool = "wpr.exe",
+                Arguments = "-start CPU -start GPU -start DesktopComposition -start DiskIO -filemode",
+                ExpectedSizePerMinute = "~50-150 MB/min (estimate)",
+                IsBuiltIn = true,
+            },
+            new()
+            {
+                Name = "Disk latency",
+                Description = "Disk I/O, file I/O, and minifilter (antivirus/backup driver) activity - use this for slow file opens/saves or a disk that feels sluggish.",
+                Tool = "wpr.exe",
+                Arguments = "-start DiskIO -start FileIO -start Minifilter -filemode",
+                ExpectedSizePerMinute = "~30-100 MB/min (estimate)",
+                IsBuiltIn = true,
+            },
+            new()
+            {
+                Name = "Network",
+                Description = "Networking I/O activity - use this for slow downloads, dropped connections, or high network-related CPU use.",
+                Tool = "wpr.exe",
+                Arguments = "-start Network -filemode",
+                ExpectedSizePerMinute = "~10-40 MB/min (estimate)",
+                IsBuiltIn = true,
+            },
+            new()
+            {
+                Name = "Power / idle drain",
+                Description = "Power usage and CPU activity - use this to investigate a laptop that drains its battery unusually quickly at idle.",
+                Tool = "wpr.exe",
+                Arguments = "-start Power -start CPU -filemode",
+                ExpectedSizePerMinute = "~10-30 MB/min (estimate)",
+                IsBuiltIn = true,
+            },
+            new()
+            {
+                Name = "Registry",
+                Description = "Registry read/write activity - use this for slowdowns caused by heavy registry access (some antivirus/backup tools, some installers).",
+                Tool = "wpr.exe",
+                Arguments = "-start Registry -filemode",
+                ExpectedSizePerMinute = "~10-30 MB/min (estimate)",
+                IsBuiltIn = true,
+            },
+            new()
+            {
+                Name = "Network connection capture (netsh)",
+                Description = "A netsh trace scenario capture of network connection activity - a lighter-weight built-in alternative to the WPR Network preset above.",
+                Tool = "netsh.exe",
+                Arguments = "trace start scenario=NetConnection capture=yes tracefile=%OUTPUT%",
+                ExpectedSizePerMinute = "~5-20 MB/min (estimate)",
+                IsBuiltIn = true,
+            },
+        },
+    };
+}
+
+/// <summary>#159: one leftover trace artifact found under a known WMI/WPR/vendor trace-log
+/// location - size and last-write time only (no attempt to determine whether it's still "in use";
+/// a session actively writing to one of these would normally show up as a running session in #146
+/// instead). <see cref="IsOld"/>/<see cref="IsOversized"/> are simple, documented threshold flags
+/// ("quick flag, not a verdict") driving the row highlight in the UI, not a claim that the file is
+/// definitely safe to delete.</summary>
+public sealed class EtwStaleArtifact
+{
+    public string Path { get; set; } = "";
+    public string Location { get; set; } = "";
+    public long SizeBytes { get; set; }
+    public DateTime LastWriteUtc { get; set; }
+
+    public bool IsOld => (DateTime.UtcNow - LastWriteUtc).TotalDays > 30;
+    public bool IsOversized => SizeBytes > 200L * 1024 * 1024;
 }
 
 /// <summary>

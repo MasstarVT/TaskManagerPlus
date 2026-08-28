@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.Text;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Data;
@@ -43,6 +44,10 @@ public sealed class EtwCaptureViewModel : ObservableObject, IDisposable
             // stay behind their own explicit buttons since they're each a heavier read.
             if (Sessions.Count == 0 && RefreshSessionsCommand.CanExecute(null)) RefreshSessionsCommand.Execute(null);
             if (EtwProviders.Count == 0 && LoadEtwProvidersCommand.CanExecute(null)) LoadEtwProvidersCommand.Execute(null);
+            // #160: also cheap (a couple of file/registry checks, no shell-out unless PATH doesn't
+            // already have it) - worth doing on first open rather than waiting for the user to
+            // stumble on a "Detect" button in the handoff section.
+            if (IsWpaInstalled is null && DetectWpaCommand.CanExecute(null)) DetectWpaCommand.Execute(null);
         }
     }
 
@@ -187,7 +192,21 @@ public sealed class EtwCaptureViewModel : ObservableObject, IDisposable
     public EtwProviderRow? SelectedEtwProvider
     {
         get => _selectedEtwProvider;
-        set { if (SetProperty(ref _selectedEtwProvider, value)) ComputeListeningSessions(); }
+        set
+        {
+            if (!SetProperty(ref _selectedEtwProvider, value)) return;
+            ComputeListeningSessions();
+            // #155/#156: convenience auto-fill - picking a provider here also seeds the real-time
+            // tail and CSV-extract provider fields below, so the common path (pick a provider once,
+            // then either tail it live or pull it out of a saved trace) doesn't require retyping
+            // the name. Only fills while that field's own operation isn't already running, so it
+            // never clobbers a name someone is mid-edit on.
+            if (value is not null)
+            {
+                if (!IsTailing) TailProviderName = value.Name;
+                if (!IsExtracting) ExtractProviderName = value.Name;
+            }
+        }
     }
 
     public ObservableCollection<EtwProviderSessionUsage> ListeningSessions { get; } = new();
@@ -232,6 +251,153 @@ public sealed class EtwCaptureViewModel : ObservableObject, IDisposable
             : $"{usage.Count} running session(s) have this provider enabled.";
     }
 
+    // ==================== #155: real-time provider tail (no WPA needed) ====================
+
+    private string _tailProviderName = string.Empty;
+    public string TailProviderName { get => _tailProviderName; set => SetProperty(ref _tailProviderName, value); }
+
+    private bool _isTailing;
+    public bool IsTailing { get => _isTailing; private set => SetProperty(ref _isTailing, value); }
+
+    private string? _tailStatusText;
+    public string? TailStatusText { get => _tailStatusText; private set => SetProperty(ref _tailStatusText, value); }
+
+    // Bounded so a chatty provider's scrolling text pane can't grow without limit - keeps roughly
+    // the most recent ~150 KB of output once the buffer crosses ~200 KB.
+    private readonly StringBuilder _tailBuffer = new();
+    private string _tailOutputText = string.Empty;
+    public string TailOutputText { get => _tailOutputText; private set => SetProperty(ref _tailOutputText, value); }
+
+    private EtwTraceService.EtwRealtimeTailHandle? _tailHandle;
+
+    public AsyncRelayCommand StartTailCommand { get; }
+    public RelayCommand StopTailCommand { get; }
+    public RelayCommand ClearTailOutputCommand { get; }
+
+    private async Task StartTailAsync()
+    {
+        if (IsTailing) return;
+        string provider = TailProviderName.Trim();
+        if (provider.Length == 0) { TailStatusText = "Enter or pick a provider (above) first."; return; }
+
+        TailStatusText = "Starting real-time session...";
+        _tailBuffer.Clear();
+        TailOutputText = string.Empty;
+
+        var (handle, message) = await EtwTraceService.StartRealtimeTailAsync(
+            provider,
+            onLine: line => Application.Current?.Dispatcher.BeginInvoke(() => AppendTailLine(line)),
+            onExited: msg => Application.Current?.Dispatcher.BeginInvoke(() =>
+            {
+                TailStatusText = msg;
+                IsTailing = false;
+                _tailHandle = null;
+            }));
+
+        if (handle is null)
+        {
+            TailStatusText = message;
+            return;
+        }
+
+        _tailHandle = handle;
+        IsTailing = true;
+        TailStatusText = message;
+    }
+
+    private void AppendTailLine(string line)
+    {
+        _tailBuffer.AppendLine(line);
+        if (_tailBuffer.Length > 200_000) _tailBuffer.Remove(0, _tailBuffer.Length - 150_000);
+        TailOutputText = _tailBuffer.ToString();
+    }
+
+    /// <summary>Stops a tail this panel started - guaranteed teardown (kill tracerpt, `logman stop`
+    /// + `logman delete`) via EtwRealtimeTailHandle.Dispose(). The same handle is also disposed from
+    /// this ViewModel's own Dispose() below, so app exit tears down a still-running tail exactly the
+    /// same way an explicit Stop click does.</summary>
+    private void StopTail()
+    {
+        _tailHandle?.Dispose();
+        _tailHandle = null;
+        IsTailing = false;
+        TailStatusText = "Real-time tail stopped.";
+    }
+
+    private void ClearTailOutput()
+    {
+        _tailBuffer.Clear();
+        TailOutputText = string.Empty;
+    }
+
+    // ==================== #156: extract one provider's events from an .etl to CSV ====================
+
+    private string _extractProviderName = string.Empty;
+    public string ExtractProviderName { get => _extractProviderName; set => SetProperty(ref _extractProviderName, value); }
+
+    private string _extractSourceEtlPath = string.Empty;
+    public string ExtractSourceEtlPath { get => _extractSourceEtlPath; set => SetProperty(ref _extractSourceEtlPath, value); }
+
+    private bool _isExtracting;
+    public bool IsExtracting { get => _isExtracting; private set => SetProperty(ref _isExtracting, value); }
+
+    private string? _extractStatusText;
+    public string? ExtractStatusText { get => _extractStatusText; private set => SetProperty(ref _extractStatusText, value); }
+
+    public RelayCommand BrowseExtractSourceCommand { get; }
+    public AsyncRelayCommand ExtractProviderCsvCommand { get; }
+
+    /// <summary>#156's "next to the trace file in the capture history list" note doesn't apply here -
+    /// this ViewModel has no capture-history list (only the single most recent LastEtlPath), so this
+    /// is the "browse for an .etl file" substitute the task instructions call out as acceptable when
+    /// that's the case. Defaults to whatever trace was last captured/summarized/collected in this
+    /// session (LastEtlPath), when there is one.</summary>
+    private void BrowseExtractSource()
+    {
+        var dialog = new OpenFileDialog
+        {
+            Title = "Choose a trace to extract from",
+            Filter = "ETL trace files (*.etl)|*.etl|All files (*.*)|*.*",
+            InitialDirectory = AppPaths.GetPath("Traces"),
+        };
+        if (dialog.ShowDialog() == true) ExtractSourceEtlPath = dialog.FileName;
+    }
+
+    private async Task ExtractProviderCsvAsync()
+    {
+        string source = ExtractSourceEtlPath.Trim();
+        string provider = ExtractProviderName.Trim();
+        if (source.Length == 0) { ExtractStatusText = "Choose a trace file first."; return; }
+        if (provider.Length == 0) { ExtractStatusText = "Enter or pick a provider (above) first."; return; }
+
+        var saveDialog = new SaveFileDialog
+        {
+            Title = "Save extracted events as",
+            Filter = "CSV files (*.csv)|*.csv|All files (*.*)|*.*",
+            FileName = $"{Path.GetFileNameWithoutExtension(source)}-{SanitizeFileNamePart(provider)}.csv",
+            InitialDirectory = Path.GetDirectoryName(source) is { Length: > 0 } dir ? dir : AppPaths.GetPath("Traces"),
+        };
+        if (saveDialog.ShowDialog() != true) return;
+
+        IsExtracting = true;
+        ExtractStatusText = "Exporting to CSV (this re-parses the whole .etl, so a large trace can take a minute)...";
+        try
+        {
+            var (_, message, _) = await EtwTraceService.ExtractProviderEventsToCsvAsync(source, provider, saveDialog.FileName);
+            ExtractStatusText = message;
+        }
+        finally
+        {
+            IsExtracting = false;
+        }
+    }
+
+    private static string SanitizeFileNamePart(string s)
+    {
+        foreach (char c in Path.GetInvalidFileNameChars()) s = s.Replace(c, '_');
+        return s.Length > 40 ? s[..40] : s;
+    }
+
     // ==================== #149/#150: capture ====================
 
     public List<EtwCapturePreset> Presets { get; } = EtwTraceService.GetCapturePresets();
@@ -273,6 +439,90 @@ public sealed class EtwCaptureViewModel : ObservableObject, IDisposable
 
     private string? _captureStatusText;
     public string? CaptureStatusText { get => _captureStatusText; private set => SetProperty(ref _captureStatusText, value); }
+
+    // ==================== #157: trace-file growth watchdog ====================
+
+    private readonly DispatcherTimer _growthTimer;
+    private EtwCaptureSizeSample? _lastGrowthSample;
+
+    private string? _captureSizeText;
+    /// <summary>Live "how big is this capture so far" readout - see EtwTraceService.
+    /// SampleCaptureSize's remarks on exactly what this measures while WPR is still recording.</summary>
+    public string? CaptureSizeText { get => _captureSizeText; private set => SetProperty(ref _captureSizeText, value); }
+
+    private string? _captureGrowthRateText;
+    public string? CaptureGrowthRateText { get => _captureGrowthRateText; private set => SetProperty(ref _captureGrowthRateText, value); }
+
+    private string? _captureProjectedSizeText;
+    public string? CaptureProjectedSizeText { get => _captureProjectedSizeText; private set => SetProperty(ref _captureProjectedSizeText, value); }
+
+    private string? _captureSpaceWarningText;
+    /// <summary>Non-null only when the capture's drive is already below the safety threshold, or is
+    /// projected to drop below it within the next 10 minutes at the current growth rate - null the
+    /// rest of the time, so the UI's warning banner stays hidden rather than showing a stale "all
+    /// clear" message.</summary>
+    public string? CaptureSpaceWarningText { get => _captureSpaceWarningText; private set => SetProperty(ref _captureSpaceWarningText, value); }
+
+    private const long GrowthWatchdogFreeSpaceThresholdBytes = 1024L * 1024 * 1024;
+
+    /// <summary>Ticks every 5s while a capture is running - a lightweight file-size/free-space
+    /// re-render, never a shell-out, so this doesn't violate CLAUDE.md's on-demand rule any more
+    /// than #149's own elapsed-time timer does (see this class's own remarks on that distinction).</summary>
+    private void GrowthTimerTick(object? sender, EventArgs e)
+    {
+        var sample = EtwTraceService.SampleCaptureSize(CaptureOutputPath);
+        if (!sample.Available)
+        {
+            CaptureSizeText = "Unknown";
+            CaptureGrowthRateText = null;
+            CaptureProjectedSizeText = null;
+            return;
+        }
+
+        CaptureSizeText = Formatting.FormatBytes(sample.TotalBytes);
+
+        double? bytesPerSec = null;
+        if (_lastGrowthSample is { } prev)
+        {
+            double seconds = (sample.SampledAtUtc - prev.SampledAtUtc).TotalSeconds;
+            if (seconds > 0.5) bytesPerSec = Math.Max(0, (sample.TotalBytes - prev.TotalBytes) / seconds);
+        }
+        _lastGrowthSample = sample;
+
+        if (bytesPerSec is not { } rate)
+        {
+            CaptureGrowthRateText = "Measuring...";
+            CaptureProjectedSizeText = null;
+            return;
+        }
+
+        CaptureGrowthRateText = Formatting.FormatByteRate(rate);
+        long projectedIn10Min = sample.TotalBytes + (long)(rate * 600);
+        CaptureProjectedSizeText = $"~{Formatting.FormatBytes(projectedIn10Min)} in 10 more minutes at this rate";
+
+        long? freeBytes = EtwTraceService.GetAvailableFreeBytes(CaptureOutputPath);
+        if (freeBytes is not { } free)
+        {
+            CaptureSpaceWarningText = null;
+            return;
+        }
+
+        if (free < GrowthWatchdogFreeSpaceThresholdBytes)
+        {
+            CaptureSpaceWarningText = $"Only {Formatting.FormatBytes(free)} free on the capture's drive - already below the 1 GB safety threshold.";
+        }
+        else if (rate > 0)
+        {
+            double secondsToThreshold = (free - GrowthWatchdogFreeSpaceThresholdBytes) / rate;
+            CaptureSpaceWarningText = secondsToThreshold < 600
+                ? $"At this growth rate, free space on the capture's drive will drop below 1 GB in about {TimeSpan.FromSeconds(secondsToThreshold):mm\\:ss}."
+                : null;
+        }
+        else
+        {
+            CaptureSpaceWarningText = null;
+        }
+    }
 
     public AsyncRelayCommand StartGeneralCaptureCommand { get; }
     public AsyncRelayCommand StartPresetCaptureCommand { get; }
@@ -322,6 +572,11 @@ public sealed class EtwCaptureViewModel : ObservableObject, IDisposable
         _captureStartedAtUtc = DateTime.UtcNow;
         ElapsedText = "00:00";
         _elapsedTimer.Start();
+
+        _lastGrowthSample = null;
+        CaptureSizeText = null; CaptureGrowthRateText = null; CaptureProjectedSizeText = null; CaptureSpaceWarningText = null;
+        _growthTimer.Start();
+
         CaptureStatusText = $"Recording \"{label}\" - click Stop when you've reproduced the issue.";
     }
 
@@ -329,6 +584,7 @@ public sealed class EtwCaptureViewModel : ObservableObject, IDisposable
     {
         if (!IsCapturing) return;
         _elapsedTimer.Stop();
+        _growthTimer.Stop();
         string outputPath = CaptureOutputPath;
 
         CaptureStatusText = "Stopping and merging the trace - this can take a minute or two for a longer capture...";
@@ -344,6 +600,7 @@ public sealed class EtwCaptureViewModel : ObservableObject, IDisposable
 
         CaptureStatusText = message;
         LastEtlPath = outputPath;
+        ExtractSourceEtlPath = outputPath;
         CaptureOutputPath = DefaultCapturePath();
 
         // #153: automatic summary right after a successful capture.
@@ -434,6 +691,7 @@ public sealed class EtwCaptureViewModel : ObservableObject, IDisposable
             if (!success) return;
 
             LastEtlPath = _bootTraceMarker.EtlPath;
+            ExtractSourceEtlPath = _bootTraceMarker.EtlPath;
             ClearBootTraceMarker();
             _ = SummarizeAsync(_bootTraceMarker.EtlPath);
         }
@@ -535,7 +793,7 @@ public sealed class EtwCaptureViewModel : ObservableObject, IDisposable
         {
             var (success, message) = await EtwTraceService.CancelCaptureAsync();
             CaptureStatusText = message;
-            if (IsCapturing) { IsCapturing = false; ActiveCaptureName = null; _elapsedTimer.Stop(); }
+            if (IsCapturing) { IsCapturing = false; ActiveCaptureName = null; _elapsedTimer.Stop(); _growthTimer.Stop(); }
             if (success) WprStatus = await EtwTraceService.GetWprStatusAsync();
         }
         finally
@@ -571,6 +829,7 @@ public sealed class EtwCaptureViewModel : ObservableObject, IDisposable
         };
         if (dialog.ShowDialog() != true) return;
         LastEtlPath = dialog.FileName;
+        ExtractSourceEtlPath = dialog.FileName;
         _ = SummarizeAsync(dialog.FileName);
     }
 
@@ -608,6 +867,222 @@ public sealed class EtwCaptureViewModel : ObservableObject, IDisposable
         }
     }
 
+    // ==================== #158: user-editable capture recipes ====================
+
+    public ObservableCollection<EtwCaptureRecipe> Recipes { get; } = new();
+
+    private EtwCaptureRecipe? _selectedRecipe;
+    public EtwCaptureRecipe? SelectedRecipe { get => _selectedRecipe; set => SetProperty(ref _selectedRecipe, value); }
+
+    private bool _isRunningRecipe;
+    public bool IsRunningRecipe { get => _isRunningRecipe; private set => SetProperty(ref _isRunningRecipe, value); }
+
+    private string? _recipeStatusText;
+    public string? RecipeStatusText { get => _recipeStatusText; private set => SetProperty(ref _recipeStatusText, value); }
+
+    // Small inline "add a recipe" form fields - a separate dialog window felt like overkill for
+    // five short fields, and every other list-editing surface in this app (saved event filters,
+    // the watchlist) is likewise just data-bound rows plus a small form, not a modal.
+    private string _recipeEditName = string.Empty;
+    public string RecipeEditName { get => _recipeEditName; set => SetProperty(ref _recipeEditName, value); }
+    private string _recipeEditDescription = string.Empty;
+    public string RecipeEditDescription { get => _recipeEditDescription; set => SetProperty(ref _recipeEditDescription, value); }
+    private string _recipeEditTool = "wpr.exe";
+    public string RecipeEditTool { get => _recipeEditTool; set => SetProperty(ref _recipeEditTool, value); }
+    private string _recipeEditArguments = string.Empty;
+    public string RecipeEditArguments { get => _recipeEditArguments; set => SetProperty(ref _recipeEditArguments, value); }
+    private string _recipeEditSizeEstimate = string.Empty;
+    public string RecipeEditSizeEstimate { get => _recipeEditSizeEstimate; set => SetProperty(ref _recipeEditSizeEstimate, value); }
+
+    public RelayCommand AddRecipeCommand { get; }
+    public RelayCommand RemoveRecipeCommand { get; }
+    public RelayCommand ResetRecipesToDefaultsCommand { get; }
+    public AsyncRelayCommand RunRecipeCommand { get; }
+
+    private void LoadRecipes()
+    {
+        var settings = EtwRecipeSettingsService.Load();
+        Recipes.Clear();
+        foreach (var r in settings.Recipes) Recipes.Add(r);
+    }
+
+    private void SaveRecipes() => EtwRecipeSettingsService.Save(new EtwRecipeSettings { Recipes = Recipes.ToList() });
+
+    private void AddRecipe()
+    {
+        if (string.IsNullOrWhiteSpace(RecipeEditName) || string.IsNullOrWhiteSpace(RecipeEditArguments))
+        {
+            RecipeStatusText = "A recipe needs at least a name and arguments.";
+            return;
+        }
+
+        Recipes.Add(new EtwCaptureRecipe
+        {
+            Name = RecipeEditName.Trim(),
+            Description = RecipeEditDescription.Trim(),
+            Tool = string.IsNullOrWhiteSpace(RecipeEditTool) ? "wpr.exe" : RecipeEditTool.Trim(),
+            Arguments = RecipeEditArguments.Trim(),
+            ExpectedSizePerMinute = RecipeEditSizeEstimate.Trim(),
+            IsBuiltIn = false,
+        });
+        SaveRecipes();
+        RecipeStatusText = $"Added \"{RecipeEditName.Trim()}\".";
+        RecipeEditName = string.Empty;
+        RecipeEditDescription = string.Empty;
+        RecipeEditArguments = string.Empty;
+        RecipeEditSizeEstimate = string.Empty;
+    }
+
+    private void RemoveRecipe()
+    {
+        if (SelectedRecipe is null) return;
+        Recipes.Remove(SelectedRecipe);
+        SaveRecipes();
+        SelectedRecipe = null;
+    }
+
+    private void ResetRecipesToDefaults()
+    {
+        var confirm = MessageBox.Show(
+            "Replace your custom recipe list with the built-in defaults? This can't be undone.",
+            "Reset recipes", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        Recipes.Clear();
+        foreach (var r in EtwRecipeSettings.Defaults.Recipes) Recipes.Add(r);
+        SaveRecipes();
+    }
+
+    private async Task RunRecipeAsync()
+    {
+        if (SelectedRecipe is null) return;
+        IsRunningRecipe = true;
+        RecipeStatusText = $"Running \"{SelectedRecipe.Name}\"...";
+        try
+        {
+            try { Directory.CreateDirectory(AppPaths.GetPath("Traces")); } catch { /* RunRecipeAsync itself will surface any real problem */ }
+            string outputPath = Path.Combine(AppPaths.GetPath("Traces"), $"recipe-{SanitizeFileNamePart(SelectedRecipe.Name)}-{DateTime.Now:yyyyMMdd-HHmmss}.etl");
+            var (_, message) = await EtwTraceService.RunRecipeAsync(SelectedRecipe, outputPath);
+            RecipeStatusText = message;
+        }
+        finally
+        {
+            IsRunningRecipe = false;
+        }
+    }
+
+    // ==================== #159: stale trace-artifact finder ====================
+
+    public ObservableCollection<EtwStaleArtifact> StaleArtifacts { get; } = new();
+
+    private bool _isScanningStaleArtifacts;
+    public bool IsScanningStaleArtifacts { get => _isScanningStaleArtifacts; private set => SetProperty(ref _isScanningStaleArtifacts, value); }
+
+    private string? _staleArtifactsStatusText;
+    public string? StaleArtifactsStatusText { get => _staleArtifactsStatusText; private set => SetProperty(ref _staleArtifactsStatusText, value); }
+
+    public AsyncRelayCommand ScanStaleArtifactsCommand { get; }
+    public RelayCommand RevealStaleArtifactCommand { get; }
+
+    private async Task ScanStaleArtifactsAsync()
+    {
+        IsScanningStaleArtifacts = true;
+        StaleArtifactsStatusText = "Scanning known trace-artifact locations...";
+        try
+        {
+            var list = await Task.Run(EtwTraceService.ScanStaleTraceArtifacts);
+            StaleArtifacts.Clear();
+            foreach (var a in list) StaleArtifacts.Add(a);
+            StaleArtifactsStatusText = list.Count == 0
+                ? "No leftover .etl files found in the known trace-artifact locations."
+                : $"{list.Count} file(s) found, {Formatting.FormatBytes(list.Sum(a => a.SizeBytes))} total.";
+        }
+        catch (Exception ex)
+        {
+            StaleArtifactsStatusText = $"Couldn't scan: {ex.Message}";
+        }
+        finally
+        {
+            IsScanningStaleArtifacts = false;
+        }
+    }
+
+    private static void RevealStaleArtifact(object? parameter)
+    {
+        if (parameter is EtwStaleArtifact artifact) EtwTraceService.RevealInExplorer(artifact.Path);
+    }
+
+    // ==================== #160: trace handoff helper (WPA + notes.md stub) ====================
+
+    private bool? _isWpaInstalled;
+    public bool? IsWpaInstalled { get => _isWpaInstalled; private set { if (SetProperty(ref _isWpaInstalled, value)) OnPropertyChanged(nameof(IsWpaNotInstalled)); } }
+
+    /// <summary>Null-safe passthrough for XAML - true only once detection has actually run and come
+    /// back negative, never during the brief "still detecting" (null) state right after the panel
+    /// opens. Same "computed bool for a nullable/derived state" shape as IsWprRecording above.</summary>
+    public bool IsWpaNotInstalled => _isWpaInstalled == false;
+
+    private string? _wpaPath;
+    public string? WpaPath { get => _wpaPath; private set => SetProperty(ref _wpaPath, value); }
+
+    public AsyncRelayCommand DetectWpaCommand { get; }
+    public RelayCommand OpenInWpaCommand { get; }
+
+    private string _notesSymptomText = string.Empty;
+    public string NotesSymptomText { get => _notesSymptomText; set => SetProperty(ref _notesSymptomText, value); }
+
+    private string? _notesStatusText;
+    public string? NotesStatusText { get => _notesStatusText; private set => SetProperty(ref _notesStatusText, value); }
+
+    private bool _isGeneratingNotes;
+    public bool IsGeneratingNotes { get => _isGeneratingNotes; private set => SetProperty(ref _isGeneratingNotes, value); }
+
+    public AsyncRelayCommand GenerateNotesCommand { get; }
+
+    private async Task DetectWpaAsync()
+    {
+        string? path = await EtwTraceService.DetectWpaPathAsync();
+        WpaPath = path;
+        IsWpaInstalled = path is not null;
+    }
+
+    /// <summary>Hands the trace off to WPA - UseShellExecute=true is the same deliberate exception
+    /// OpenHtmlReport above takes (opening a document/app for the user, not consuming its output).</summary>
+    private void OpenInWpa()
+    {
+        if (WpaPath is null || LastEtlPath is null || !File.Exists(LastEtlPath)) return;
+        try
+        {
+            Process.Start(new ProcessStartInfo(WpaPath, $"\"{LastEtlPath}\"") { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            NotesStatusText = $"Couldn't open WPA: {ex.Message}";
+        }
+    }
+
+    private async Task GenerateNotesAsync()
+    {
+        if (LastEtlPath is null) { NotesStatusText = "Summarize or pick a trace first (below) so there's a file to write notes next to."; return; }
+
+        IsGeneratingNotes = true;
+        NotesStatusText = "Reading machine specs...";
+        try
+        {
+            var specs = await new SystemSpecsService().QueryAsync();
+            var (_, message, _) = await EtwTraceService.GenerateNotesStubAsync(LastEtlPath, NotesSymptomText, specs);
+            NotesStatusText = message;
+        }
+        catch (Exception ex)
+        {
+            NotesStatusText = $"Couldn't generate notes: {ex.Message}";
+        }
+        finally
+        {
+            IsGeneratingNotes = false;
+        }
+    }
+
     public EtwCaptureViewModel()
     {
         RefreshSessionsCommand = new AsyncRelayCommand(RefreshSessionsAsync, () => !IsSessionsLoading);
@@ -620,6 +1095,13 @@ public sealed class EtwCaptureViewModel : ObservableObject, IDisposable
                 || p.Name.Contains(EtwProviderSearchText, StringComparison.OrdinalIgnoreCase)
                 || p.Guid.Contains(EtwProviderSearchText, StringComparison.OrdinalIgnoreCase));
 
+        StartTailCommand = new AsyncRelayCommand(StartTailAsync, () => !IsTailing);
+        StopTailCommand = new RelayCommand(_ => StopTail(), _ => IsTailing);
+        ClearTailOutputCommand = new RelayCommand(_ => ClearTailOutput());
+
+        BrowseExtractSourceCommand = new RelayCommand(_ => BrowseExtractSource(), _ => !IsExtracting);
+        ExtractProviderCsvCommand = new AsyncRelayCommand(ExtractProviderCsvAsync, () => !IsExtracting);
+
         BrowseCaptureOutputCommand = new RelayCommand(_ => BrowseCaptureOutput(), _ => !IsCapturing);
         StartGeneralCaptureCommand = new AsyncRelayCommand(StartGeneralCaptureAsync, () => !IsCapturing);
         StartPresetCaptureCommand = new AsyncRelayCommand(p => StartPresetCaptureAsync(p as EtwCapturePreset), _ => !IsCapturing);
@@ -627,6 +1109,22 @@ public sealed class EtwCaptureViewModel : ObservableObject, IDisposable
 
         _elapsedTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(1) };
         _elapsedTimer.Tick += ElapsedTimerTick;
+
+        _growthTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(5) };
+        _growthTimer.Tick += GrowthTimerTick;
+
+        AddRecipeCommand = new RelayCommand(_ => AddRecipe());
+        RemoveRecipeCommand = new RelayCommand(_ => RemoveRecipe(), _ => SelectedRecipe is not null);
+        ResetRecipesToDefaultsCommand = new RelayCommand(_ => ResetRecipesToDefaults());
+        RunRecipeCommand = new AsyncRelayCommand(RunRecipeAsync, () => !IsRunningRecipe && SelectedRecipe is not null);
+        LoadRecipes();
+
+        ScanStaleArtifactsCommand = new AsyncRelayCommand(ScanStaleArtifactsAsync, () => !IsScanningStaleArtifacts);
+        RevealStaleArtifactCommand = new RelayCommand(RevealStaleArtifact);
+
+        DetectWpaCommand = new AsyncRelayCommand(DetectWpaAsync, () => true);
+        OpenInWpaCommand = new RelayCommand(_ => OpenInWpa(), _ => IsWpaInstalled == true && LastEtlPath is not null);
+        GenerateNotesCommand = new AsyncRelayCommand(GenerateNotesAsync, () => !IsGeneratingNotes && LastEtlPath is not null);
 
         ArmBootTraceCommand = new RelayCommand(_ => ArmBootTrace(), _ => !IsBootTraceBusy && !IsBootTracePending);
         CollectBootTraceCommand = new AsyncRelayCommand(CollectBootTraceAsync, () => !IsBootTraceBusy && IsBootTracePending);
@@ -648,5 +1146,12 @@ public sealed class EtwCaptureViewModel : ObservableObject, IDisposable
     {
         _elapsedTimer.Stop();
         _elapsedTimer.Tick -= ElapsedTimerTick;
+        _growthTimer.Stop();
+        _growthTimer.Tick -= GrowthTimerTick;
+
+        // #155: guaranteed teardown on app exit too, not just on an explicit Stop click - mirrors
+        // EventsViewModel.Dispose disposing its own live watchers/handles.
+        _tailHandle?.Dispose();
+        _tailHandle = null;
     }
 }
