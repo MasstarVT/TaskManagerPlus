@@ -1484,14 +1484,21 @@ public sealed class EventLogService
     // this tab is capped to, and this read exists specifically to join against those.
     // ---------------------------------------------------------------------------------------
 
-    /// <summary>Item 47: reads the "Application Error" provider's event 1000 - the standard
-    /// documented insertion-string order (faulting app name/version/timestamp, faulting module
-    /// name/version/timestamp, exception code, fault offset, ...) is read positionally, defensively
-    /// bounds-checked like every other legacy-provider parse in this file, since it isn't a
-    /// formally versioned per-Windows-release contract either.</summary>
-    public List<AppErrorEventInfo> ReadApplicationErrorEvents(int lookbackDays)
+    /// <summary>
+    /// Round 16, item 47 / Round 17, item 50 (this chunk's anchor): reads the "Application Error"
+    /// provider's event 1000 and parses every documented positional insertion string - faulting
+    /// application name/version/timestamp (0-2), faulting module name/version/timestamp (3-5),
+    /// exception code (6), fault offset (7), process id (8), application start time (9, not
+    /// surfaced - not useful on its own without the process's own launch context), application
+    /// path (10), module path (11), report id (12) - defensively bounds-checked like every other
+    /// legacy-provider parse in this file, since it isn't a formally versioned per-Windows-release
+    /// contract either. Every other item in this chunk (51/52/56/57/60) is a view, lookup or join
+    /// over this same parsed list - see ApplicationCrashService and StabilityViewModel, which both
+    /// call this once per refresh rather than re-querying per item.
+    /// </summary>
+    public List<ApplicationCrashEvent> ReadApplicationCrashEvents(int lookbackDays)
     {
-        var result = new List<AppErrorEventInfo>();
+        var result = new List<ApplicationCrashEvent>();
         try
         {
             long maxAgeMs = lookbackDays * 24L * 60 * 60 * 1000;
@@ -1512,21 +1519,132 @@ public sealed class EventLogService
                     try
                     {
                         var props = record.Properties;
-                        string? appName = props.Count > 0 ? props[0].Value as string : null;
-                        string? modName = props.Count > 3 ? props[3].Value as string : null;
-                        string? offset = props.Count > 7 ? props[7].Value as string ?? props[7].Value?.ToString() : null;
-                        string? reportId = props.Count > 12 ? props[12].Value as string : null;
+                        string? Get(int idx) => idx < props.Count ? (props[idx].Value as string ?? props[idx].Value?.ToString()) : null;
+                        string? Norm(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
+
+                        string? appName = Norm(Get(0));
+                        string? appVersion = Norm(Get(1));
+                        string? appTimeStamp = Norm(Get(2));
+                        string? modName = Norm(Get(3));
+                        string? modVersion = Norm(Get(4));
+                        string? modTimeStamp = Norm(Get(5));
+                        string? exceptionCode = Norm(Get(6));
+                        string? offset = Norm(Get(7));
+                        string? processIdRaw = Norm(Get(8));
+                        string? appPath = Norm(Get(10));
+                        string? modPath = Norm(Get(11));
+                        string? reportId = Norm(Get(12));
+
+                        int? pid = null;
+                        if (processIdRaw is not null)
+                        {
+                            string trimmed = processIdRaw.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? processIdRaw[2..] : processIdRaw;
+                            if (int.TryParse(trimmed, System.Globalization.NumberStyles.HexNumber, System.Globalization.CultureInfo.InvariantCulture, out var hexPid))
+                                pid = hexPid;
+                            else if (int.TryParse(processIdRaw, out var decPid))
+                                pid = decPid;
+                        }
 
                         string message;
                         try { message = record.FormatDescription() ?? string.Empty; }
                         catch { message = string.Empty; }
 
-                        result.Add(new AppErrorEventInfo
+                        result.Add(new ApplicationCrashEvent
                         {
                             TimeCreated = record.TimeCreated ?? DateTime.MinValue,
-                            AppName = string.IsNullOrWhiteSpace(appName) ? null : appName,
-                            ModName = string.IsNullOrWhiteSpace(modName) ? null : modName,
-                            Offset = string.IsNullOrWhiteSpace(offset) ? null : offset,
+                            AppName = appName,
+                            AppVersion = appVersion,
+                            AppTimeStamp = appTimeStamp,
+                            ModName = modName,
+                            ModVersion = modVersion,
+                            ModTimeStamp = modTimeStamp,
+                            ExceptionCode = exceptionCode,
+                            // Item 51: plain-English exception name, computed once here rather
+                            // than live in the model (Models don't call into Services - see
+                            // ApplicationCrashEvent's own remarks).
+                            ExceptionCodeText = NtStatusLookup.Describe(exceptionCode),
+                            Offset = offset,
+                            ProcessId = pid,
+                            ApplicationPath = appPath,
+                            ModulePath = modPath,
+                            ReportId = reportId,
+                            Message = Truncate(message, 300),
+                        });
+                    }
+                    catch { /* one malformed record shouldn't stop the rest of the scan */ }
+                }
+            }
+        }
+        catch
+        {
+            // Provider/log unavailable - degrade to "no Application Error events available"
+            // (item 47's WER join just falls back to showing each report on its own).
+        }
+        return result;
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Round 17, item 53: Application-log event 1002 ("Application Hang") - a separate fault
+    // class from event 1000 above. Parsed from the event's own formatted message text (regex,
+    // like several other legacy-provider parses in this file already do) rather than positional
+    // properties, since this event's raw property layout isn't a documented, versioned contract
+    // and the message text's own labelled fields are far more stable to key off. HangType/
+    // HangSignature are deliberately NOT parsed here - see ApplicationHangEvent's remarks on why
+    // those are joined in from the matching WER AppHang report instead (WerReportService.
+    // JoinApplicationHangEvents).
+    // ---------------------------------------------------------------------------------------
+
+    private static readonly Regex AppHangProgramRegex = new(
+        @"^The program\s+(.+?)\s+version\s+(.+?)\s+stopped interacting", RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.Compiled);
+    private static readonly Regex AppHangPidRegex = new(@"Process ID:\s*(0x[0-9A-Fa-f]+|\d+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex AppHangPathRegex = new(@"Application Path:\s*([^\r\n]+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex AppHangReportIdRegex = new(@"Report Id:\s*([0-9A-Fa-f-]{20,})", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    public List<ApplicationHangEvent> ReadApplicationHangEvents(int lookbackDays)
+    {
+        var result = new List<ApplicationHangEvent>();
+        try
+        {
+            long maxAgeMs = lookbackDays * 24L * 60 * 60 * 1000;
+            var query = new EventLogQuery("Application", PathType.LogName,
+                $"*[System[Provider[@Name='Application Hang'] and (EventID=1002) and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]")
+            {
+                ReverseDirection = true,
+            };
+
+            using var reader = new EventLogReader(query);
+            int count = 0;
+            const int maxEvents = 300;
+            while (count < maxEvents && reader.ReadEvent() is { } record)
+            {
+                using (record)
+                {
+                    count++;
+                    try
+                    {
+                        string message;
+                        try { message = record.FormatDescription() ?? string.Empty; }
+                        catch { message = string.Empty; }
+
+                        string? processName = null, version = null;
+                        var programMatch = AppHangProgramRegex.Match(message);
+                        if (programMatch.Success)
+                        {
+                            processName = programMatch.Groups[1].Value.Trim();
+                            version = programMatch.Groups[2].Value.Trim();
+                        }
+
+                        string? pid = AppHangPidRegex.Match(message) is { Success: true } pm ? pm.Groups[1].Value.Trim() : null;
+                        string? path = AppHangPathRegex.Match(message) is { Success: true } pathm ? pathm.Groups[1].Value.Trim() : null;
+                        string? reportId = AppHangReportIdRegex.Match(message) is { Success: true } rm ? rm.Groups[1].Value.Trim() : null;
+
+                        result.Add(new ApplicationHangEvent
+                        {
+                            TimeCreated = record.TimeCreated ?? DateTime.MinValue,
+                            ProcessName = processName,
+                            Version = version,
+                            ProcessId = pid,
+                            ApplicationPath = string.IsNullOrWhiteSpace(path) ? null : path,
                             ReportId = string.IsNullOrWhiteSpace(reportId) ? null : reportId,
                             Message = Truncate(message, 300),
                         });
@@ -1537,9 +1655,228 @@ public sealed class EventLogService
         }
         catch
         {
-            // Provider/log unavailable - degrade to "no Application Error events available for
-            // the WER join" (item 47's join just falls back to showing each report on its own).
+            // Provider/log unavailable - degrade to "no application hangs found".
         }
         return result;
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Round 17, item 54: ".NET Runtime" provider events 1026 (unhandled exception) and 1023 -
+    // both carry the same "Application: X / Framework Version: Y / Exception Info: Type: message"
+    // text shape followed by a managed stack trace ("   at ..." lines per frame), so both are
+    // read with the same regex-based parse against the formatted message text - the message text
+    // is a long-stable, widely-documented shape for this provider, unlike this file's other
+    // legacy-provider parses that fall back to regex only because the *positional* layout isn't
+    // documented.
+    // ---------------------------------------------------------------------------------------
+
+    private static readonly Regex ClrAppNameRegex = new(@"^Application:\s*(.+)$", RegexOptions.Multiline | RegexOptions.Compiled);
+    private static readonly Regex ClrFrameworkVersionRegex = new(@"^Framework Version:\s*(.+)$", RegexOptions.Multiline | RegexOptions.Compiled);
+    private static readonly Regex ClrExceptionInfoLineRegex = new(@"^Exception Info:\s*(.+)$", RegexOptions.Multiline | RegexOptions.Compiled);
+    private static readonly Regex ClrStackFrameRegex = new(@"^\s{3}at\s+(.+)$", RegexOptions.Multiline | RegexOptions.Compiled);
+
+    public List<ManagedExceptionEvent> ReadClrExceptionEvents(int lookbackDays)
+    {
+        var result = new List<ManagedExceptionEvent>();
+        try
+        {
+            long maxAgeMs = lookbackDays * 24L * 60 * 60 * 1000;
+            var query = new EventLogQuery("Application", PathType.LogName,
+                $"*[System[Provider[@Name='.NET Runtime'] and (EventID=1026 or EventID=1023) and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]")
+            {
+                ReverseDirection = true,
+            };
+
+            using var reader = new EventLogReader(query);
+            int count = 0;
+            const int maxEvents = 300;
+            while (count < maxEvents && reader.ReadEvent() is { } record)
+            {
+                using (record)
+                {
+                    count++;
+                    try
+                    {
+                        string message;
+                        try { message = record.FormatDescription() ?? string.Empty; }
+                        catch { message = string.Empty; }
+
+                        string? appName = ClrAppNameRegex.Match(message) is { Success: true } am ? am.Groups[1].Value.Trim() : null;
+                        string? framework = ClrFrameworkVersionRegex.Match(message) is { Success: true } fm ? fm.Groups[1].Value.Trim() : null;
+
+                        string? exceptionType = null, exceptionMessage = null;
+                        var excMatch = ClrExceptionInfoLineRegex.Match(message);
+                        if (excMatch.Success)
+                        {
+                            string line = excMatch.Groups[1].Value.Trim();
+                            int colon = line.IndexOf(':');
+                            if (colon > 0)
+                            {
+                                exceptionType = line[..colon].Trim();
+                                exceptionMessage = line[(colon + 1)..].Trim();
+                            }
+                            else
+                            {
+                                exceptionType = line;
+                            }
+                        }
+
+                        var frames = ClrStackFrameRegex.Matches(message)
+                            .Select(m => m.Groups[1].Value.Trim())
+                            .Take(5)
+                            .ToList();
+
+                        result.Add(new ManagedExceptionEvent
+                        {
+                            TimeCreated = record.TimeCreated ?? DateTime.MinValue,
+                            EventId = record.Id,
+                            ApplicationName = string.IsNullOrWhiteSpace(appName) ? null : appName,
+                            FrameworkVersion = string.IsNullOrWhiteSpace(framework) ? null : framework,
+                            ExceptionType = string.IsNullOrWhiteSpace(exceptionType) ? null : exceptionType,
+                            ExceptionMessage = string.IsNullOrWhiteSpace(exceptionMessage) ? null : exceptionMessage,
+                            TopStackFrames = frames,
+                            Message = Truncate(message, 500),
+                        });
+                    }
+                    catch { /* one malformed record shouldn't stop the rest of the scan */ }
+                }
+            }
+        }
+        catch
+        {
+            // Provider/log unavailable (a machine that's never run/crashed a managed process) -
+            // degrade to "no managed exceptions found".
+        }
+        return result;
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Round 17, item 58: Service Control Manager crash/failure events - the service-side
+    // equivalent of an application crash. Each event id has its own known property layout
+    // (documented by Microsoft, though - like every other legacy-provider parse in this file -
+    // not a formally versioned per-release contract), read positionally and defensively bounds-
+    // checked.
+    // ---------------------------------------------------------------------------------------
+
+    public List<ServiceFailureEvent> ReadServiceFailureEvents(int lookbackDays)
+    {
+        var result = new List<ServiceFailureEvent>();
+        try
+        {
+            long maxAgeMs = lookbackDays * 24L * 60 * 60 * 1000;
+            var query = new EventLogQuery("System", PathType.LogName,
+                $"*[System[Provider[@Name='Service Control Manager'] and (EventID=7031 or EventID=7034 or EventID=7024 or EventID=7000 or EventID=7009) and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]")
+            {
+                ReverseDirection = true,
+            };
+
+            using var reader = new EventLogReader(query);
+            int count = 0;
+            const int maxEvents = 500;
+            while (count < maxEvents && reader.ReadEvent() is { } record)
+            {
+                using (record)
+                {
+                    count++;
+                    var parsed = ParseServiceFailureEvent(record);
+                    if (parsed is not null) result.Add(parsed);
+                }
+            }
+        }
+        catch
+        {
+            // Provider/log unavailable - degrade to "no service failures found".
+        }
+        return result;
+    }
+
+    private static ServiceFailureEvent? ParseServiceFailureEvent(EventRecord record)
+    {
+        try
+        {
+            var props = record.Properties;
+            string message;
+            try { message = record.FormatDescription() ?? string.Empty; }
+            catch { message = string.Empty; }
+
+            DateTime time = record.TimeCreated ?? DateTime.MinValue;
+
+            switch (record.Id)
+            {
+                // 7034: "The %1 service terminated unexpectedly. It has done this %2 time(s)."
+                // 7031: same, plus "The following corrective action will be taken in %3
+                // milliseconds: %4."
+                case 7034:
+                case 7031:
+                {
+                    string? name = props.Count > 0 ? props[0].Value as string : null;
+                    int? restartCount = props.Count > 1 && TryToInt(props[1].Value, out var c) ? c : null;
+                    string? action = record.Id == 7031 && props.Count > 3 ? props[3].Value as string : null;
+                    return new ServiceFailureEvent
+                    {
+                        TimeCreated = time,
+                        EventId = record.Id,
+                        ServiceName = string.IsNullOrWhiteSpace(name) ? null : name,
+                        RestartCount = restartCount,
+                        RecoveryAction = string.IsNullOrWhiteSpace(action) ? null : action,
+                        Message = Truncate(message, 300),
+                    };
+                }
+                // 7024: "The %1 service terminated with service-specific error %2."
+                case 7024:
+                {
+                    string? name = props.Count > 0 ? props[0].Value as string : null;
+                    string? exitCode = props.Count > 1 ? FormatBugcheckValue(props[1].Value) : null;
+                    return new ServiceFailureEvent
+                    {
+                        TimeCreated = time,
+                        EventId = 7024,
+                        ServiceName = string.IsNullOrWhiteSpace(name) ? null : name,
+                        ExitCode = exitCode,
+                        Message = Truncate(message, 300),
+                    };
+                }
+                // 7000: "The %1 service failed to start due to the following error: ..."
+                case 7000:
+                {
+                    string? name = props.Count > 0 ? props[0].Value as string : null;
+                    return new ServiceFailureEvent
+                    {
+                        TimeCreated = time,
+                        EventId = 7000,
+                        ServiceName = string.IsNullOrWhiteSpace(name) ? null : name,
+                        Message = Truncate(message, 300),
+                    };
+                }
+                // 7009: "A timeout was reached (%1 milliseconds) while waiting for the %2 service
+                // to connect." - the service name is property index 1 here, not 0.
+                case 7009:
+                {
+                    string? name = props.Count > 1 ? props[1].Value as string : null;
+                    return new ServiceFailureEvent
+                    {
+                        TimeCreated = time,
+                        EventId = 7009,
+                        ServiceName = string.IsNullOrWhiteSpace(name) ? null : name,
+                        Message = Truncate(message, 300),
+                    };
+                }
+                default:
+                    return null;
+            }
+        }
+        catch
+        {
+            // One malformed record shouldn't stop the rest of the scan.
+            return null;
+        }
+    }
+
+    private static bool TryToInt(object? value, out int result)
+    {
+        result = 0;
+        if (value is null) return false;
+        try { result = Convert.ToInt32(value); return true; }
+        catch { return false; }
     }
 }

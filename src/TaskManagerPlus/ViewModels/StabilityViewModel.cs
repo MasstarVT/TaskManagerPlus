@@ -227,6 +227,63 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
     public Axis[] WerHistoryXAxes { get; }
     public Axis[] WerHistoryYAxes { get; }
 
+    // ---------------------------------------------------------------------------------------
+    // Round 17, items 50-63: application crash/hang forensics beyond the raw event log - see
+    // BuildCrashForensicsBundle/ApplyCrashForensicsBundle for how these are all computed off the
+    // UI thread from the same handful of event-log/registry reads, one per refresh.
+    // ---------------------------------------------------------------------------------------
+
+    // Items 50/51/56/57: structured, enriched Application Error (1000) events - the anchor list
+    // every other item below is a view/lookup/join over.
+    public ObservableCollection<ApplicationCrashEvent> ApplicationCrashes { get; } = new();
+
+    // Item 52: per-application crash leaderboard, above the raw grid.
+    public ObservableCollection<AppCrashLeaderboardRow> AppCrashLeaderboard { get; } = new();
+
+    // Item 53: Application Hang (1002) events, joined to a matching WER AppHang report.
+    public ObservableCollection<ApplicationHangEvent> ApplicationHangs { get; } = new();
+
+    // Items 54/55: managed (.NET/CLR) exceptions + exception-type/top-frame clustering.
+    public ObservableCollection<ManagedExceptionEvent> ManagedExceptions { get; } = new();
+    public ObservableCollection<ManagedExceptionClusterRow> ManagedExceptionClusters { get; } = new();
+
+    // Items 58/59: Service Control Manager crash/failure events + restart-loop warnings.
+    public ObservableCollection<ServiceFailureEvent> ServiceFailures { get; } = new();
+    public ObservableCollection<ServiceRestartLoopWarning> ServiceRestartLoopWarnings { get; } = new();
+
+    /// <summary>Item 59: fired (already on the UI thread) when the user asks to jump from a
+    /// restart-loop warning row to the matching entry on the Services tab - MainWindow subscribes
+    /// and does the actual tab switch + filter (the same "raise an event, let the shell handle
+    /// cross-view-model navigation" shape ShowTrayToastRequested above already uses), keeping this
+    /// view model itself with no direct reference to ServicesViewModel or the tab strip.</summary>
+    public event Action<string>? JumpToServiceRequested;
+    public RelayCommand JumpToServiceCommand { get; }
+
+    // Item 61: SilentProcessExit "Capture settings" fields - lives in the same card as LocalDumps
+    // above (both are per-executable crash-capture registry config), sharing that card's own
+    // LocalDumpsTargetExe textbox as the target rather than a second one.
+    private string _silentExitReportingMode = "1";
+    public string SilentExitReportingMode { get => _silentExitReportingMode; set => SetProperty(ref _silentExitReportingMode, value); }
+
+    private string _silentExitLocalDumpFolder = @"%LOCALAPPDATA%\CrashDumps";
+    public string SilentExitLocalDumpFolder { get => _silentExitLocalDumpFolder; set => SetProperty(ref _silentExitLocalDumpFolder, value); }
+
+    private string _silentExitMonitorProcess = string.Empty;
+    public string SilentExitMonitorProcess { get => _silentExitMonitorProcess; set => SetProperty(ref _silentExitMonitorProcess, value); }
+
+    private string _silentExitStatusText = string.Empty;
+    public string SilentExitStatusText { get => _silentExitStatusText; private set => SetProperty(ref _silentExitStatusText, value); }
+
+    public RelayCommand LoadSilentExitConfigCommand { get; }
+    public RelayCommand SaveSilentExitConfigCommand { get; }
+    public RelayCommand ClearSilentExitConfigCommand { get; }
+
+    // Item 62: postmortem debugger + Image File Execution Options hijack audit - a plain
+    // registry read, refreshed alongside everything else in RefreshAsync (no separate button;
+    // see CLAUDE.md's "on-demand vs. polled" note - this is cheap, not an expensive scan).
+    private PostmortemDebuggerInfo? _postmortemDebugger;
+    public PostmortemDebuggerInfo? PostmortemDebugger { get => _postmortemDebugger; private set => SetProperty(ref _postmortemDebugger, value); }
+
     private bool _isLoading;
     public bool IsLoading { get => _isLoading; private set => SetProperty(ref _isLoading, value); }
 
@@ -456,6 +513,54 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
             LocalDumpsStatusText = ok ? "Override removed." : "Couldn't remove the registry value(s).";
         });
 
+        // Round 17, item 61: SilentProcessExit load/save/clear - shares LocalDumpsTargetExe
+        // above as the target executable field (see this section's own remarks).
+        LoadSilentExitConfigCommand = new RelayCommand(() =>
+        {
+            var cfg = SilentProcessExitService.ReadConfig(LocalDumpsTargetExe);
+            if (cfg.Exists)
+            {
+                SilentExitReportingMode = (cfg.ReportingMode ?? 1).ToString();
+                SilentExitLocalDumpFolder = cfg.LocalDumpFolder ?? SilentExitLocalDumpFolder;
+                SilentExitMonitorProcess = cfg.MonitorProcess ?? string.Empty;
+                SilentExitStatusText = $"Loaded existing configuration: {cfg.ReportingModeText}.";
+            }
+            else
+            {
+                SilentExitStatusText = string.IsNullOrWhiteSpace(LocalDumpsTargetExe)
+                    ? "SilentProcessExit needs a target executable (it has no global default) - fill in \"Target executable\" above first."
+                    : "No SilentProcessExit configuration found for this target yet - showing the fields above as-is.";
+            }
+        });
+
+        SaveSilentExitConfigCommand = new RelayCommand(() =>
+        {
+            if (string.IsNullOrWhiteSpace(LocalDumpsTargetExe))
+            {
+                SilentExitStatusText = "SilentProcessExit needs a target executable (it has no global default) - fill in \"Target executable\" above first.";
+                return;
+            }
+            int mode = int.TryParse(SilentExitReportingMode, out var m) ? m : 1;
+            bool ok = SilentProcessExitService.WriteConfig(LocalDumpsTargetExe.Trim(), mode, SilentExitLocalDumpFolder, SilentExitMonitorProcess);
+            SilentExitStatusText = ok
+                ? $"Saved. Windows will now report a silent exit of {LocalDumpsTargetExe.Trim()} the way ReportingMode {mode} configures."
+                : "Couldn't write the registry value.";
+        });
+
+        ClearSilentExitConfigCommand = new RelayCommand(() =>
+        {
+            bool ok = SilentProcessExitService.ClearConfig(LocalDumpsTargetExe);
+            SilentExitStatusText = ok ? "SilentProcessExit configuration removed." : "Couldn't remove the registry value(s).";
+        });
+
+        // Round 17, item 59: jump from a restart-loop warning row to the matching Services-tab
+        // entry - see JumpToServiceRequested's own remarks.
+        JumpToServiceCommand = new RelayCommand(param =>
+        {
+            if (param is string name && !string.IsNullOrWhiteSpace(name))
+                JumpToServiceRequested?.Invoke(name);
+        });
+
         _dailyEventColumns = new ColumnSeries<double>
         {
             Values = DailyEventCounts,
@@ -590,6 +695,14 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
             var werBundle = await Task.Run(BuildWerBundle);
             ApplyWerBundle(werBundle);
 
+            // Round 17, items 50-63: application crash/hang forensics - independent of the two
+            // reads above (its own event-log queries plus a couple of registry reads), computed
+            // off the UI thread and applied separately, same shape as the two bundles above. Runs
+            // after werBundle so item 53's hang join has werBundle's own AppHang reports to join
+            // against without a second WER scan.
+            var crashBundle = await Task.Run(() => BuildCrashForensicsBundle(werBundle.HangReports));
+            ApplyCrashForensicsBundle(crashBundle);
+
             RefreshErrorText = null;
         }
         catch (Exception ex)
@@ -716,7 +829,7 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
         // Item 47: join to the Application-log event 1000 (Application Error) - a longer lookback
         // than EventLogService.LookbackDays' default 30 days, since item 48's WER-archive history
         // commonly reaches back further than that.
-        var appEvents = _service.ReadApplicationErrorEvents(WerHistoryDays);
+        var appEvents = _service.ReadApplicationCrashEvents(WerHistoryDays);
         reports = WerReportService.JoinApplicationErrorEvents(reports, appEvents);
 
         var crashes = reports.Where(r => !r.IsHang).ToList();
@@ -802,6 +915,176 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
             null => "Not set (Windows default applies)",
         };
         return $"Default consent: {status.DefaultConsentText} · Don't show UI: {dontShowUi}";
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Round 17, items 50-63: application crash/hang forensics bundle - same "compute off the UI
+    // thread, apply on the UI thread" shape as DumpAnalysisBundle/WerBundle above.
+    // ---------------------------------------------------------------------------------------
+
+    // Item 60's 30-day window - independent of item 48's 90-day WER-archive history and the
+    // plain 30-day EventLogService.LookbackDays used elsewhere on this tab (same number, kept as
+    // its own constant since it's driven by item 60's own "crashes (30d)" wording, not shared
+    // state with the rest of the tab).
+    private const int CrashForensicsLookbackDays = 30;
+
+    private sealed class CrashForensicsBundle
+    {
+        public List<ApplicationCrashEvent> Crashes { get; init; } = new();
+        public List<AppCrashLeaderboardRow> Leaderboard { get; init; } = new();
+        public List<ApplicationHangEvent> Hangs { get; init; } = new();
+        public List<ManagedExceptionEvent> ManagedExceptions { get; init; } = new();
+        public List<ManagedExceptionClusterRow> ManagedExceptionClusters { get; init; } = new();
+        public List<ServiceFailureEvent> ServiceFailures { get; init; } = new();
+        public List<ServiceRestartLoopWarning> ServiceRestartLoops { get; init; } = new();
+        public PostmortemDebuggerInfo PostmortemDebugger { get; init; } = new();
+    }
+
+    private CrashForensicsBundle BuildCrashForensicsBundle(List<WerReport> werHangReports)
+    {
+        // Items 50/51: raw structured parse (item 51's exception-code text is filled in inside
+        // the parse itself - see EventLogService.ReadApplicationCrashEvents).
+        var rawCrashes = _service.ReadApplicationCrashEvents(CrashForensicsLookbackDays);
+        // Items 56/57: foreign-module flag + injection-surface cross-check.
+        var crashes = ApplicationCrashService.EnrichWithModuleForensics(rawCrashes);
+        // Item 52: per-application leaderboard over the enriched list.
+        var leaderboard = ApplicationCrashService.BuildLeaderboard(crashes);
+
+        // Item 53: hang events, joined to the WER AppHang reports werBundle already scanned.
+        var rawHangs = _service.ReadApplicationHangEvents(CrashForensicsLookbackDays);
+        var hangs = WerReportService.JoinApplicationHangEvents(rawHangs, werHangReports);
+
+        // Item 60 support: refresh the cross-tab crash-count cache from the same lists just read
+        // above - no second event-log query for the Processes tab's own "crashes (30d)" column.
+        CrashHistoryCacheService.UpdateFrom(crashes, hangs);
+
+        // Items 54/55: managed exceptions + clustering.
+        var managedExceptions = _service.ReadClrExceptionEvents(CrashForensicsLookbackDays);
+        var clusters = BuildManagedExceptionClusters(managedExceptions);
+
+        // Items 58/59: service failures + restart-loop detection.
+        var serviceFailures = _service.ReadServiceFailureEvents(CrashForensicsLookbackDays);
+        var restartLoops = DetectServiceRestartLoops(serviceFailures);
+
+        // Item 62: postmortem debugger + IFEO audit - a plain registry read, cheap enough to run
+        // alongside everything else here rather than needing its own button.
+        var postmortem = PostmortemDebuggerService.Read();
+
+        return new CrashForensicsBundle
+        {
+            Crashes = crashes,
+            Leaderboard = leaderboard,
+            Hangs = hangs,
+            ManagedExceptions = managedExceptions,
+            ManagedExceptionClusters = clusters,
+            ServiceFailures = serviceFailures,
+            ServiceRestartLoops = restartLoops,
+            PostmortemDebugger = postmortem,
+        };
+    }
+
+    private void ApplyCrashForensicsBundle(CrashForensicsBundle bundle)
+    {
+        ApplicationCrashes.Clear();
+        foreach (var c in bundle.Crashes.OrderByDescending(c => c.TimeCreated)) ApplicationCrashes.Add(c);
+
+        AppCrashLeaderboard.Clear();
+        foreach (var l in bundle.Leaderboard) AppCrashLeaderboard.Add(l);
+
+        ApplicationHangs.Clear();
+        foreach (var h in bundle.Hangs.OrderByDescending(h => h.TimeCreated)) ApplicationHangs.Add(h);
+
+        ManagedExceptions.Clear();
+        foreach (var m in bundle.ManagedExceptions.OrderByDescending(m => m.TimeCreated)) ManagedExceptions.Add(m);
+
+        ManagedExceptionClusters.Clear();
+        foreach (var c in bundle.ManagedExceptionClusters) ManagedExceptionClusters.Add(c);
+
+        ServiceFailures.Clear();
+        foreach (var f in bundle.ServiceFailures.OrderByDescending(f => f.TimeCreated)) ServiceFailures.Add(f);
+
+        ServiceRestartLoopWarnings.Clear();
+        foreach (var w in bundle.ServiceRestartLoops) ServiceRestartLoopWarnings.Add(w);
+
+        PostmortemDebugger = bundle.PostmortemDebugger;
+    }
+
+    /// <summary>Item 55: clusters the already-parsed managed-exception list by (ExceptionType, top
+    /// stack frame) - the same "flat list -> grouped cluster" shape CrashesByModule/WheaSummary
+    /// already use elsewhere on this tab, applied to managed exceptions instead.</summary>
+    private static List<ManagedExceptionClusterRow> BuildManagedExceptionClusters(List<ManagedExceptionEvent> events)
+    {
+        return events
+            .GroupBy(e => (Type: e.ExceptionType ?? "Unknown", Frame: e.TopFrameText), StringComparer_ExceptionCluster.Instance)
+            .Select(g => new ManagedExceptionClusterRow
+            {
+                ExceptionType = g.Key.Type,
+                TopFrame = g.Key.Frame,
+                Count = g.Count(),
+                LastSeen = g.Max(e => e.TimeCreated),
+                ApplicationName = g.Select(e => e.ApplicationName).FirstOrDefault(n => !string.IsNullOrEmpty(n)),
+            })
+            .OrderByDescending(c => c.Count)
+            .ThenByDescending(c => c.LastSeen)
+            .ToList();
+    }
+
+    /// <summary>Item 59: for each service with at least one 7031/7034 ("terminated unexpectedly")
+    /// occurrence, finds the densest 60-minute sliding window of those events across the whole
+    /// lookback window (a two-pointer scan over the sorted timestamps) - a service whose worst
+    /// window reaches RestartLoopThreshold or more is a chronic restart loop, surfaced as a
+    /// warning row even though it never produced a single user-visible crash dialog.</summary>
+    private static readonly TimeSpan RestartLoopWindow = TimeSpan.FromHours(1);
+    private const int RestartLoopThreshold = 3;
+
+    private static List<ServiceRestartLoopWarning> DetectServiceRestartLoops(List<ServiceFailureEvent> failures)
+    {
+        var result = new List<ServiceRestartLoopWarning>();
+
+        var byService = failures
+            .Where(f => (f.EventId == 7031 || f.EventId == 7034) && !string.IsNullOrWhiteSpace(f.ServiceName))
+            .GroupBy(f => f.ServiceName!, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var g in byService)
+        {
+            var times = g.Select(f => f.TimeCreated).OrderBy(t => t).ToList();
+            int best = 0;
+            DateTime bestStart = default, bestEnd = default;
+            int left = 0;
+            for (int right = 0; right < times.Count; right++)
+            {
+                while (times[right] - times[left] > RestartLoopWindow) left++;
+                int windowCount = right - left + 1;
+                if (windowCount > best) { best = windowCount; bestStart = times[left]; bestEnd = times[right]; }
+            }
+
+            if (best >= RestartLoopThreshold)
+            {
+                result.Add(new ServiceRestartLoopWarning
+                {
+                    ServiceName = g.Key,
+                    OccurrencesInWindow = best,
+                    WindowStart = bestStart,
+                    WindowEnd = bestEnd,
+                    LastSeen = times[^1],
+                });
+            }
+        }
+
+        return result.OrderByDescending(w => w.OccurrencesInWindow).ThenByDescending(w => w.LastSeen).ToList();
+    }
+
+    /// <summary>Tiny tuple-key comparer for BuildManagedExceptionClusters' GroupBy above - the
+    /// default (Type, Frame) tuple equality is case-sensitive, which would split
+    /// "System.NullReferenceException" and a differently-cased duplicate into two clusters.</summary>
+    private sealed class StringComparer_ExceptionCluster : IEqualityComparer<(string Type, string Frame)>
+    {
+        public static readonly StringComparer_ExceptionCluster Instance = new();
+        public bool Equals((string Type, string Frame) x, (string Type, string Frame) y) =>
+            string.Equals(x.Type, y.Type, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(x.Frame, y.Frame, StringComparison.OrdinalIgnoreCase);
+        public int GetHashCode((string Type, string Frame) obj) =>
+            HashCode.Combine(obj.Type.ToUpperInvariant(), obj.Frame.ToUpperInvariant());
     }
 
     /// <summary>Round 14, item 27: fired on the FileSystemWatcher's own background thread -

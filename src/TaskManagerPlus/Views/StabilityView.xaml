@@ -957,6 +957,42 @@
                         <Button Content="Remove override" Command="{Binding ClearLocalDumpsConfigCommand}" Padding="10,4" />
                     </StackPanel>
                     <TextBlock Text="{Binding LocalDumpsStatusText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" />
+
+                    <!-- Round 17, item 61: SilentProcessExit - the LocalDumps section above only
+                         ever triggers from an actual reported fault; this covers a process that
+                         disappears silently (no error raised at all), for the same target
+                         executable entered above. -->
+                    <Separator Margin="0,12,0,12" Opacity="0.3" />
+                    <TextBlock Text="Silent process exit monitoring" Style="{StaticResource ColorRowLabel}" Margin="0,0,0,4" FontWeight="SemiBold" />
+                    <TextBlock Text="Configures HKLM\...\SilentProcessExit\&lt;exe&gt; so Windows captures a dump (or launches a monitor process) when the target executable above disappears without ever raising an error - the gap LocalDumps alone doesn't cover. Needs a target executable (no global default)."
+                               Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" />
+
+                    <Grid Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Reporting mode" VerticalAlignment="Center" Style="{StaticResource SubStat}" Margin="0,0,6,0" />
+                        <ComboBox Grid.Column="1" Width="260" SelectedValuePath="Tag" SelectedValue="{Binding SilentExitReportingMode}">
+                            <ComboBoxItem Content="1 — capture a dump" Tag="1" />
+                            <ComboBoxItem Content="2 — launch a monitor process" Tag="2" />
+                        </ComboBox>
+                    </Grid>
+
+                    <TextBlock Text="Local dump folder (used with mode 1)" Style="{StaticResource ColorRowLabel}" Margin="0,0,0,4" />
+                    <TextBox Width="340" HorizontalAlignment="Left" Margin="0,0,0,8"
+                             Text="{Binding SilentExitLocalDumpFolder, UpdateSourceTrigger=PropertyChanged}" />
+
+                    <TextBlock Text="Monitor process (used with mode 2, optional)" Style="{StaticResource ColorRowLabel}" Margin="0,0,0,4" />
+                    <TextBox Width="340" HorizontalAlignment="Left" Margin="0,0,0,8"
+                             Text="{Binding SilentExitMonitorProcess, UpdateSourceTrigger=PropertyChanged}" />
+
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                        <Button Content="Load current" Command="{Binding LoadSilentExitConfigCommand}" Padding="10,4" Margin="0,0,8,0" />
+                        <Button Content="Save" Command="{Binding SaveSilentExitConfigCommand}" Padding="10,4" Margin="0,0,8,0" />
+                        <Button Content="Remove" Command="{Binding ClearSilentExitConfigCommand}" Padding="10,4" />
+                    </StackPanel>
+                    <TextBlock Text="{Binding SilentExitStatusText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" />
                 </StackPanel>
             </Border>
 
@@ -1164,6 +1200,358 @@
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- Round 17, items 50/51/52/56/57: structured Application Error (1000) crashes -
+                 leaderboard first ("which app is actually broken on this PC"), then the raw grid
+                 with a plain-English exception reason and the foreign-module/injection-surface
+                 flags. Collapsed entirely when nothing was found. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding ApplicationCrashes.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Application crashes" Style="{StaticResource CardTitle}" Margin="0" />
+                        <TextBlock Grid.Column="1" FontSize="12.5" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center">
+                            <Run Text="{Binding ApplicationCrashes.Count, Mode=OneWay}" /><Run Text=" in last 30 days" />
+                        </TextBlock>
+                    </Grid>
+                    <TextBlock Text="Application Error (1000) events, fully parsed - reason is the exception code decoded to plain English; a foreign module (outside the app's own install directory, and not a system DLL) is flagged with its vendor and, when it matches a known injection surface on this machine, why."
+                               Style="{StaticResource SubStat}" Margin="0,-2,0,10" TextWrapping="Wrap" />
+
+                    <TextBlock Text="Which app is actually broken" Style="{StaticResource ColorRowLabel}" Margin="0,0,0,6" />
+                    <ItemsControl ItemsSource="{Binding AppCrashLeaderboard}" Margin="0,0,0,12">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock Text="{Binding ExecutableName}" FontSize="12.5" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Style="{StaticResource SubStat}">
+                                            <Run Text="First " /><Run Text="{Binding FirstSeen, StringFormat={}{0:g}, Mode=OneWay}" />
+                                            <Run Text=" · Last " /><Run Text="{Binding LastSeen, StringFormat={}{0:g}, Mode=OneWay}" />
+                                            <Run Text=" · " /><Run Text="{Binding DistinctFaultingModules, Mode=OneWay}" /><Run Text=" distinct module(s)" />
+                                            <Run Text=" · Mean gap " /><Run Text="{Binding MeanTimeBetweenCrashesText, Mode=OneWay}" />
+                                        </TextBlock>
+                                    </StackPanel>
+                                    <Border Grid.Column="1" Background="{DynamicResource DangerMutedBrush}" CornerRadius="10" Padding="8,2" VerticalAlignment="Center">
+                                        <TextBlock Foreground="{DynamicResource DangerBrush}" FontSize="11.5" FontWeight="SemiBold">
+                                            <Run Text="{Binding Count, Mode=OneWay}" /><Run Text="×" />
+                                        </TextBlock>
+                                    </Border>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <DataGrid ItemsSource="{Binding ApplicationCrashes}" Height="260" IsReadOnly="True">
+                        <DataGrid.RowStyle>
+                            <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+                                <Setter Property="ToolTip" Value="{Binding Message}" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsForeignModule}" Value="True">
+                                        <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </DataGrid.RowStyle>
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Time" Binding="{Binding TimeCreated, StringFormat={}{0:g}}" Width="150" />
+                            <DataGridTextColumn Header="Application" Binding="{Binding AppName}" Width="1.3*" />
+                            <DataGridTextColumn Header="Version" Binding="{Binding AppVersion}" Width="100" />
+                            <DataGridTextColumn Header="Faulting module" Binding="{Binding ModName}" Width="1.3*" />
+                            <DataGridTextColumn Header="Reason (exception code)" Binding="{Binding ExceptionCodeText}" Width="1.6*" />
+                            <DataGridTextColumn Header="Offset" Binding="{Binding Offset}" Width="90" />
+                            <DataGridTextColumn Header="PID" Binding="{Binding ProcessId}" Width="60" />
+                            <DataGridTemplateColumn Header="Foreign module?" Width="1.6*">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock VerticalAlignment="Center" FontSize="11.5" TextTrimming="CharacterEllipsis"
+                                                   Foreground="{DynamicResource WarningBrush}">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsForeignModule}" Value="True">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                            <Run Text="{Binding ForeignModuleReason, Mode=OneWay}" />
+                                            <Run Text=" (" /><Run Text="{Binding ModuleSignatureStatus, Mode=OneWay}" />
+                                            <Run Text=", " /><Run Text="{Binding ModuleVendor, Mode=OneWay, TargetNullValue='vendor unknown'}" /><Run Text=")" />
+                                            <LineBreak />
+                                            <Run Text="{Binding InjectionSurfaceNote, Mode=OneWay}" Foreground="{DynamicResource DangerBrush}" FontWeight="SemiBold" />
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- Round 17, item 53: Application Hang (1002) events, paired with the matching WER
+                 AppHang report (item 46) for hang type/signature - a separate fault class from a
+                 crash, so its own card rather than mixed into the grid above. Collapsed when
+                 empty. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding ApplicationHangs.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Application hangs" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Application Hang (1002) events - hang type/signature come from the matching WER AppHang report (a far more reliable source than that event's own undocumented layout)."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,8" TextWrapping="Wrap" />
+                    <DataGrid ItemsSource="{Binding ApplicationHangs}" Height="200" IsReadOnly="True">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Time" Binding="{Binding TimeCreated, StringFormat={}{0:g}}" Width="150" />
+                            <DataGridTextColumn Header="Process" Binding="{Binding ProcessName}" Width="1.2*" />
+                            <DataGridTextColumn Header="Version" Binding="{Binding Version}" Width="100" />
+                            <DataGridTextColumn Header="PID" Binding="{Binding ProcessId}" Width="90" />
+                            <DataGridTextColumn Header="Hang type" Binding="{Binding HangType, TargetNullValue='Unknown'}" Width="1.4*" />
+                            <DataGridTextColumn Header="Hang signature" Binding="{Binding HangSignature, TargetNullValue='Unknown'}" Width="1.4*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- Round 17, items 54/55: managed (.NET/CLR) exceptions - clustered by exception type
+                 + top stack frame first, raw list below. Collapsed when empty. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding ManagedExceptions.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Managed exceptions (.NET/CLR)" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="&quot;.NET Runtime&quot; events 1026/1023, parsed into exception type, message and top stack frames - dramatically more actionable than an Application Error row that just says the faulting module was clr.dll."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+
+                    <TextBlock Text="Clustered by exception type + top frame" Style="{StaticResource ColorRowLabel}" Margin="0,0,0,6" />
+                    <ItemsControl ItemsSource="{Binding ManagedExceptionClusters}" Margin="0,0,0,12">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock Text="{Binding ExceptionType}" FontSize="12.5" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Text="{Binding TopFrame}" Style="{StaticResource SubStat}" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Style="{StaticResource SubStat}">
+                                            <Run Text="{Binding ApplicationName, Mode=OneWay, TargetNullValue='(app unknown)'}" />
+                                            <Run Text=" · last " /><Run Text="{Binding LastSeen, StringFormat={}{0:g}, Mode=OneWay}" />
+                                        </TextBlock>
+                                    </StackPanel>
+                                    <Border Grid.Column="1" Background="{DynamicResource DangerMutedBrush}" CornerRadius="10" Padding="8,2" VerticalAlignment="Center">
+                                        <TextBlock Foreground="{DynamicResource DangerBrush}" FontSize="11.5" FontWeight="SemiBold">
+                                            <Run Text="{Binding Count, Mode=OneWay}" /><Run Text="×" />
+                                        </TextBlock>
+                                    </Border>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <DataGrid ItemsSource="{Binding ManagedExceptions}" Height="200" IsReadOnly="True">
+                        <DataGrid.RowStyle>
+                            <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+                                <Setter Property="ToolTip" Value="{Binding Message}" />
+                            </Style>
+                        </DataGrid.RowStyle>
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Time" Binding="{Binding TimeCreated, StringFormat={}{0:g}}" Width="140" />
+                            <DataGridTextColumn Header="Application" Binding="{Binding ApplicationName}" Width="1.1*" />
+                            <DataGridTextColumn Header="Framework" Binding="{Binding FrameworkVersion}" Width="100" />
+                            <DataGridTextColumn Header="Exception type" Binding="{Binding ExceptionType}" Width="1.5*" />
+                            <DataGridTextColumn Header="Message" Binding="{Binding ExceptionMessage}" Width="1.6*" />
+                            <DataGridTextColumn Header="Top frame" Binding="{Binding TopFrameText}" Width="1.8*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- Round 17, items 58/59: Service Control Manager crash/failure events (7031/7034/
+                 7024/7000/7009), the service-side equivalent of an application crash - plus a
+                 restart-loop warning strip when a service's own termination events cluster
+                 densely enough to look chronic. Collapsed when empty. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding ServiceFailures.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Service failures" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Service Control Manager events: terminated unexpectedly (7031/7034), service-specific exit code (7024), failed/timed out to start (7000/7009)."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+
+                    <!-- Item 59: restart-loop warning strip - a service crashing and being
+                         auto-restarted several times an hour, a chronic fault that never
+                         surfaces as a user-visible crash dialog. -->
+                    <ItemsControl ItemsSource="{Binding ServiceRestartLoopWarnings}" Margin="0,0,0,10">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Background="{DynamicResource DangerMutedBrush}" CornerRadius="6" Padding="10,6" Margin="0,0,0,6">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" FontSize="12.5" Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap">
+                                            <Run Text="Restart loop: " FontWeight="SemiBold" /><Run Text="{Binding ServiceName, Mode=OneWay}" FontWeight="SemiBold" />
+                                            <Run Text=" terminated " /><Run Text="{Binding OccurrencesInWindow, Mode=OneWay}" />
+                                            <Run Text=" times between " /><Run Text="{Binding WindowStart, StringFormat={}{0:t}, Mode=OneWay}" />
+                                            <Run Text=" and " /><Run Text="{Binding WindowEnd, StringFormat={}{0:t}, Mode=OneWay}" />
+                                            <Run Text=" - a chronic fault, even though it never showed a crash dialog." />
+                                        </TextBlock>
+                                        <Button Grid.Column="1" Content="View on Services tab" Padding="8,2" VerticalAlignment="Center" Margin="10,0,0,0"
+                                                Command="{Binding DataContext.JumpToServiceCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                CommandParameter="{Binding ServiceName}" />
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <DataGrid ItemsSource="{Binding ServiceFailures}" Height="220" IsReadOnly="True">
+                        <DataGrid.RowStyle>
+                            <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+                                <Setter Property="ToolTip" Value="{Binding Message}" />
+                            </Style>
+                        </DataGrid.RowStyle>
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Time" Binding="{Binding TimeCreated, StringFormat={}{0:g}}" Width="150" />
+                            <DataGridTextColumn Header="Service" Binding="{Binding ServiceName}" Width="1.3*" />
+                            <DataGridTextColumn Header="Event" Binding="{Binding EventKindText}" Width="1.6*" />
+                            <DataGridTextColumn Header="Count / exit code" Width="1.1*">
+                                <DataGridTextColumn.Binding>
+                                    <MultiBinding StringFormat="{}{0}{1}">
+                                        <Binding Path="RestartCount" TargetNullValue="" StringFormat="{}{0}× " />
+                                        <Binding Path="ExitCode" TargetNullValue="" />
+                                    </MultiBinding>
+                                </DataGridTextColumn.Binding>
+                            </DataGridTextColumn>
+                            <DataGridTextColumn Header="Recovery action" Binding="{Binding RecoveryAction}" Width="1.4*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- Round 17, item 62: postmortem (just-in-time) debugger + Image File Execution
+                 Options hijack audit - read-only. Collapsed only when the read outright failed to
+                 produce anything (Debugger/Auto both null and no hijacks) - otherwise always shown,
+                 since "Windows default, nothing to see here" is itself a useful confirmation. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding PostmortemDebugger}" Value="{x:Null}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Postmortem debugger audit" Style="{StaticResource CardTitle}" Margin="0" />
+                        <Border Grid.Column="1" Background="{DynamicResource DangerMutedBrush}" CornerRadius="10" Padding="8,2" VerticalAlignment="Center">
+                            <Border.Style>
+                                <Style TargetType="Border">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding PostmortemDebugger.HasNonDefaultEntries}" Value="True">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Border.Style>
+                            <TextBlock Text="Non-default entries found" Foreground="{DynamicResource DangerBrush}" FontSize="11.5" FontWeight="SemiBold" />
+                        </Border>
+                    </Grid>
+                    <TextBlock Text="HKLM\...\AeDebug names the just-in-time debugger; an Image File Execution Options\&lt;exe&gt;\Debugger value can silently hijack a process launch. Read-only - a non-default finding can be entirely legitimate (e.g. your own JIT debugger setup), it's just worth a manual check."
+                               Style="{StaticResource SubStat}" Margin="0,-2,0,10" TextWrapping="Wrap" />
+
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,4">
+                        <Run Text="AeDebug: " FontWeight="SemiBold" /><Run Text="{Binding PostmortemDebugger.Debugger, Mode=OneWay, TargetNullValue='Not set'}" />
+                        <Run Text=" (Auto=" /><Run Text="{Binding PostmortemDebugger.Auto, Mode=OneWay, TargetNullValue='not set'}" /><Run Text=")" />
+                    </TextBlock>
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,10">
+                        <Run Text="AeDebug (Wow6432Node): " FontWeight="SemiBold" /><Run Text="{Binding PostmortemDebugger.Wow64Debugger, Mode=OneWay, TargetNullValue='Not set'}" />
+                        <Run Text=" (Auto=" /><Run Text="{Binding PostmortemDebugger.Wow64Auto, Mode=OneWay, TargetNullValue='not set'}" /><Run Text=")" />
+                    </TextBlock>
+
+                    <TextBlock Text="Image File Execution Options hijacks" Margin="0,0,0,4">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource ColorRowLabel}">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding PostmortemDebugger.ImageFileExecutionOptionsHijacks.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <ItemsControl ItemsSource="{Binding PostmortemDebugger.ImageFileExecutionOptionsHijacks}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock FontSize="11.5" Margin="0,0,0,2">
+                                    <Run Text="{Binding ExecutableName, Mode=OneWay}" FontWeight="SemiBold" />
+                                    <Run Text=" → " /><Run Text="{Binding DebuggerPath, Mode=OneWay}" />
+                                </TextBlock>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="No Image File Execution Options Debugger hijacks found.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding PostmortemDebugger.ImageFileExecutionOptionsHijacks.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
                 </StackPanel>
             </Border>
 

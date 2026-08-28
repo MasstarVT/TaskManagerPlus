@@ -218,13 +218,14 @@ public static class WerReportService
     }
 
     // ---------------------------------------------------------------------------------------
-    // Item 47: join to the Application-log event 1000 (Application Error) - AppErrorEventInfo is
-    // read by EventLogService.ReadApplicationErrorEvents; this just does the matching.
+    // Item 47: join to the Application-log event 1000 (Application Error) - ApplicationCrashEvent
+    // (round 17, item 50) is read by EventLogService.ReadApplicationCrashEvents; this just does
+    // the matching.
     // ---------------------------------------------------------------------------------------
 
     private const double AppErrorJoinWindowMinutes = 10;
 
-    public static List<WerReport> JoinApplicationErrorEvents(List<WerReport> reports, List<AppErrorEventInfo> events)
+    public static List<WerReport> JoinApplicationErrorEvents(List<WerReport> reports, List<ApplicationCrashEvent> events)
     {
         if (events.Count == 0) return reports;
 
@@ -244,6 +245,58 @@ public static class WerReportService
         }
         return result;
     }
+
+    // ---------------------------------------------------------------------------------------
+    // Round 17, item 53: join Application-log event 1002 ("Application Hang") to a matching WER
+    // AppHang report - see ApplicationHangEvent's remarks on why HangType/HangSignature come from
+    // here rather than a guessed positional read of event 1002 itself.
+    // ---------------------------------------------------------------------------------------
+
+    private const double AppHangJoinWindowMinutes = 10;
+
+    public static List<ApplicationHangEvent> JoinApplicationHangEvents(List<ApplicationHangEvent> hangEvents, List<WerReport> hangReports)
+    {
+        if (hangEvents.Count == 0 || hangReports.Count == 0) return hangEvents;
+
+        var result = new List<ApplicationHangEvent>(hangEvents.Count);
+        foreach (var h in hangEvents)
+        {
+            // Prefer an exact Report Id match - WER's own report-folder name is frequently the
+            // Report Id itself, so a substring check on the folder path catches it. Fall back to
+            // a name+time-window match only when that's not available (an older report, or the
+            // event's own Report Id couldn't be parsed).
+            WerReport? match = null;
+            if (!string.IsNullOrEmpty(h.ReportId))
+                match = hangReports.FirstOrDefault(r => ReportFolderContainsReportId(r, h.ReportId!));
+
+            match ??= hangReports
+                .Where(r => !string.IsNullOrEmpty(h.ProcessName) && !string.IsNullOrEmpty(r.AppName)
+                    && string.Equals(r.AppName, h.ProcessName, StringComparison.OrdinalIgnoreCase)
+                    && Math.Abs((r.ReportTimestamp - h.TimeCreated).TotalMinutes) <= AppHangJoinWindowMinutes)
+                .OrderBy(r => Math.Abs((r.ReportTimestamp - h.TimeCreated).TotalMinutes))
+                .FirstOrDefault();
+
+            result.Add(match is null ? h : new ApplicationHangEvent
+            {
+                TimeCreated = h.TimeCreated,
+                ProcessName = h.ProcessName,
+                Version = h.Version,
+                ProcessId = h.ProcessId,
+                ApplicationPath = h.ApplicationPath,
+                ReportId = h.ReportId,
+                Message = h.Message,
+                HangType = match.EventType,
+                HangSignature = match.EffectiveBucketKey,
+            });
+        }
+        return result;
+    }
+
+    /// <summary>Best-effort fallback for the Report Id match above - the report folder's own name
+    /// on disk is frequently the Report Id itself (WER's own convention for a queue/archive
+    /// folder), so a plain substring check on the folder path catches that shape too.</summary>
+    private static bool ReportFolderContainsReportId(WerReport report, string reportId)
+        => report.ReportFolder.IndexOf(reportId, StringComparison.OrdinalIgnoreCase) >= 0;
 
     // ---------------------------------------------------------------------------------------
     // Items 41/44: is WER even collecting data, and what does it do when it does.

@@ -179,17 +179,8 @@ public sealed class WerDailyCount
     public int Count { get; init; }
 }
 
-/// <summary>Item 47: one Application-log event 1000 (Application Error) - the same "read one
-/// legacy provider's positional insertion strings, defensively" shape every other targeted query
-/// in EventLogService already uses, kept as its own small model (rather than reusing
-/// StabilityEvent) since the WER join needs app/module/offset broken out individually rather than
-/// one formatted message string.</summary>
-public sealed class AppErrorEventInfo
-{
-    public DateTime TimeCreated { get; init; }
-    public string? AppName { get; init; }
-    public string? ModName { get; init; }
-    public string? Offset { get; init; }
-    public string? ReportId { get; init; }
-    public string Message { get; init; } = string.Empty;
-}
+// Item 47's join target used to be its own small AppErrorEventInfo model (app/module/offset only).
+// Round 17, item 50 replaced it with the fully structured ApplicationCrashEvent (Models/
+// ApplicationCrashModels.cs) - a strict superset of the same fields (AppName/ModName/TimeCreated/
+// ReportId/Message all still present under the same names), so WerReportService.
+// JoinApplicationErrorEvents below just took the richer type with no other change needed.

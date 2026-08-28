@@ -14,6 +14,7 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
         <!-- Toolbar row 1: search/filters + destructive actions -->
@@ -287,6 +288,30 @@
                     </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>
                 <DataGridTextColumn Header="Path" Binding="{Binding FilePath}" Width="3*" />
+                <!-- Round 17, item 60: crashes/hangs for this executable in the last 30 days -
+                     from CrashHistoryCacheService's own cheap cache, not a per-tick query. -->
+                <DataGridTemplateColumn Header="Crashes (30d)" Width="100" SortMemberPath="CrashCount30d">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding CrashCount30d}" VerticalAlignment="Center"
+                                       ToolTip="Application Error (1000) / Application Hang (1002) events logged for this executable in the last 30 days">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding CrashCount30d}" Value="0">
+                                                <Setter Property="Text" Value="—" />
+                                            </DataTrigger>
+                                            <Trigger Property="Text" Value="1">
+                                                <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                            </Trigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
             </DataGrid.Columns>
             <DataGrid.ContextMenu>
                 <ContextMenu>
@@ -511,7 +536,47 @@
             </Border>
         </Grid>
 
-        <TextBlock Grid.Row="5" Text="{Binding StatusMessage}" Margin="0,8,0,0"
+        <!-- Round 17, item 63: processes seen in a previous poll tick and gone in the current one -
+             "my app closed itself" turned into "exit code 0xC0000005" wherever a code was
+             actually captured. Collapsed entirely when nothing has exited yet this session. -->
+        <Border Grid.Row="5" Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Margin="0,10,0,0">
+            <Border.Style>
+                <Style TargetType="Border">
+                    <Setter Property="Visibility" Value="Visible" />
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding RecentlyExited.Count}" Value="0">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </Border.Style>
+            <StackPanel>
+                <TextBlock Text="Recently exited" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                <ScrollViewer MaxHeight="120" VerticalScrollBarVisibility="Auto">
+                    <ItemsControl ItemsSource="{Binding RecentlyExited}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,3">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" FontSize="11.5">
+                                        <Run Text="{Binding Name, Mode=OneWay}" FontWeight="SemiBold" />
+                                        <Run Text=" (PID " /><Run Text="{Binding Pid, Mode=OneWay}" /><Run Text=") — " />
+                                        <Run Text="{Binding ExitCodeText, Mode=OneWay}" />
+                                    </TextBlock>
+                                    <TextBlock Grid.Column="1" Text="{Binding ExitTime, StringFormat={}{0:T}}" FontSize="11"
+                                               Foreground="{DynamicResource TextSecondaryBrush}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </StackPanel>
+        </Border>
+
+        <TextBlock Grid.Row="6" Text="{Binding StatusMessage}" Margin="0,8,0,0"
                    Foreground="{DynamicResource TextSecondaryBrush}" />
     </Grid>
 </UserControl>

@@ -19,6 +19,28 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
     public ObservableCollection<ProcessRow> Processes { get; } = new();
     public ICollectionView ProcessesView { get; }
 
+    // Round 17, item 63: pids this view model has successfully hooked Process.Exited on, so a
+    // best-effort exit code can be captured at the moment .NET itself detects the exit rather than
+    // only ever learning "the pid is gone" a poll tick later - see TrackForExit/
+    // OnTrackedProcessExited. Every entry here is disposed and removed once its exit (or the
+    // process's removal from Processes for any other reason, e.g. the app closing) is handled.
+    private readonly Dictionary<int, Process> _trackedProcesses = new();
+
+    // Round 17, item 63: pids already recorded in RecentlyExited - guards against double-adding a
+    // pid whose Process.Exited fired right around the same poll tick that also noticed its
+    // removal via the plain merge below. Trimmed alongside RecentlyExited itself (see
+    // AddRecentlyExited) so this doesn't grow without bound over a long session; a reused pid
+    // landing here after aging out of the capped RecentlyExited list is a known, accepted
+    // limitation (Windows pid reuse), not something this best-effort feature tries to solve.
+    private readonly HashSet<int> _exitRecorded = new();
+
+    /// <summary>Round 17, item 63: processes seen in a previous poll tick and gone in the current
+    /// one - "my app closed itself" turned into "exit code 0xC0000005" wherever a code was
+    /// actually captured. Newest first, capped at MaxRecentlyExited so a churny machine (lots of
+    /// short-lived helper processes) doesn't grow this list forever.</summary>
+    public ObservableCollection<RecentlyExitedProcessInfo> RecentlyExited { get; } = new();
+    private const int MaxRecentlyExited = 25;
+
     /// <summary>Round 7 #1: process tree/hierarchy view, toggleable alongside the flat grid above -
     /// rebuilt from the same already-sampled Processes collection each tick (BuildProcessTree), no
     /// second sampling source.</summary>
@@ -269,17 +291,122 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
                 // CommandLine/FilePath/StartTime/User/ParentPid/ParentName don't change for the
                 // lifetime of a pid - no need to reassign them every tick like the values above
                 // that actually vary.
+
+                // Round 17, item 60: cheap in-memory cache lookup, never a fresh event-log query
+                // on this tick - see CrashHistoryCacheService's own remarks.
+                existing.CrashCount30d = CrashHistoryCacheService.GetCrashCount(existing.Name);
+
                 latestByPid.Remove(existing.Pid);
             }
             else
             {
+                // Round 17, item 63: this pid was sampled last tick and is gone now - it exited
+                // sometime in between. If Process.Exited (hooked in TrackForExit below, when
+                // opening a handle to this pid succeeded before it exited) already fired, this
+                // pid is already in RecentlyExited with a real exit code and _exitRecorded
+                // already has it - this is only the fallback for a pid this app never managed to
+                // track (a protected process it couldn't open a handle to, or one that started
+                // and exited between two ticks before it was ever added to Processes at all).
+                if (_exitRecorded.Add(existing.Pid))
+                    AddRecentlyExited(existing.Pid, existing.Name, null);
+                UntrackProcess(existing.Pid);
+
                 Processes.RemoveAt(i);
             }
         }
 
         // Anything left in latestByPid is a newly-seen process.
         foreach (var row in latestByPid.Values)
+        {
+            row.CrashCount30d = CrashHistoryCacheService.GetCrashCount(row.Name);
             Processes.Add(row);
+            TrackForExit(row.Pid, row.Name);
+        }
+    }
+
+    /// <summary>Round 17, item 63: opens a handle to a newly-seen pid and hooks Process.Exited so
+    /// a best-effort exit code can be captured at the moment .NET itself detects the exit, rather
+    /// than only ever learning "the pid is gone" one poll tick later with no way to recover its
+    /// exit code at all. Best-effort by nature - a protected process, or a process that exits
+    /// before this ever runs for it, simply never gets tracked; the plain merge-detected removal
+    /// in MergeInto above is the fallback for those.</summary>
+    private void TrackForExit(int pid, string name)
+    {
+        if (_trackedProcesses.ContainsKey(pid)) return;
+        try
+        {
+            var proc = Process.GetProcessById(pid);
+            proc.EnableRaisingEvents = true;
+            proc.Exited += (_, _) => OnTrackedProcessExited(pid, name, proc);
+            _trackedProcesses[pid] = proc;
+        }
+        catch
+        {
+            // Access denied (a protected process) or it already exited before this ran - no
+            // Process.Exited notification is possible for this pid.
+        }
+    }
+
+    private void UntrackProcess(int pid)
+    {
+        if (_trackedProcesses.Remove(pid, out var proc))
+        {
+            try { proc.Dispose(); } catch { /* best-effort */ }
+        }
+    }
+
+    /// <summary>Round 17, item 63: fires on Process.Exited's own ThreadPool thread - hops to the
+    /// UI thread before touching RecentlyExited/Processes, the same boundary every other
+    /// background-sourced update in this app already respects (e.g. StabilityViewModel.
+    /// OnNewDumpDetected).</summary>
+    private void OnTrackedProcessExited(int pid, string name, Process proc)
+    {
+        int? exitCode = null;
+        try { exitCode = proc.ExitCode; }
+        catch { /* degrade to "unavailable" below */ }
+
+        var dispatcher = Application.Current?.Dispatcher;
+        if (dispatcher is null) return;
+
+        dispatcher.InvokeAsync(() =>
+        {
+            if (_exitRecorded.Add(pid))
+                AddRecentlyExited(pid, name, exitCode);
+            UntrackProcess(pid);
+        });
+    }
+
+    private void AddRecentlyExited(int pid, string name, int? exitCode)
+    {
+        RecentlyExited.Insert(0, new RecentlyExitedProcessInfo
+        {
+            Pid = pid,
+            Name = name,
+            ExitTime = DateTime.Now,
+            ExitCode = exitCode,
+            ExitCodeText = DescribeExitCode(exitCode),
+        });
+
+        while (RecentlyExited.Count > MaxRecentlyExited)
+        {
+            var removed = RecentlyExited[^1];
+            RecentlyExited.RemoveAt(RecentlyExited.Count - 1);
+            _exitRecorded.Remove(removed.Pid);
+        }
+    }
+
+    /// <summary>Round 17, item 63: decodes an NTSTATUS-shaped exit code (round 15, item 30's
+    /// table, reused per this item's own instruction) - a normal small exit code (0, 1, ...) is
+    /// shown as a plain number instead of a meaningless "0x00000000" hex dump; only a code whose
+    /// top bit is set (the 0x8xxxxxxx/0xC0000000+ ranges an actual crash/termination exit code
+    /// uses) gets the hex+name treatment.</summary>
+    private static string DescribeExitCode(int? exitCode)
+    {
+        if (exitCode is null) return "Exit code unavailable";
+        uint code = unchecked((uint)exitCode.Value);
+        return code >= 0x80000000
+            ? NtStatusLookup.Describe($"0x{code:X8}")
+            : code.ToString();
     }
 
     /// <summary>Round 7 #1: rebuilds the tree from the already-sampled flat Processes collection -
@@ -528,5 +655,12 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
     {
         _timer.Stop();
         _monitor.Dispose();
+
+        // Round 17, item 63: dispose every still-tracked Process handle (see TrackForExit).
+        foreach (var proc in _trackedProcesses.Values)
+        {
+            try { proc.Dispose(); } catch { /* best-effort */ }
+        }
+        _trackedProcesses.Clear();
     }
 }

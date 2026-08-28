@@ -38,6 +38,12 @@ public static class NtStatusLookup
         [0xC0000095] = "STATUS_INTEGER_OVERFLOW",
         [0xC0000096] = "STATUS_PRIVILEGED_INSTRUCTION",
         [0xC00000FD] = "STATUS_STACK_OVERFLOW",
+        // Round 17, item 51: heap-corruption and .NET-exception codes, added specifically because
+        // the application-crash exception-code column (ApplicationCrashEvent.ExceptionCodeText)
+        // needs them - both are common enough on a crash grid to be worth naming rather than
+        // falling back to the bare hex code.
+        [0xC0000374] = "STATUS_HEAP_CORRUPTION",
+        [0xE0434352] = ".NET exception (CLR)",
         [0xC0000135] = "STATUS_DLL_NOT_FOUND",
         [0xC0000138] = "STATUS_ORDINAL_NOT_FOUND",
         [0xC0000139] = "STATUS_ENTRYPOINT_NOT_FOUND",

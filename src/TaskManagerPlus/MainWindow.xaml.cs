@@ -24,6 +24,17 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         DataContext = _viewModel;
+
+        // Round 17, item 59: jump from a Stability-tab service-restart-loop warning to the
+        // matching Services-tab entry - same "raise an event, let the shell handle cross-view-
+        // model navigation" shape as the new-crash-dump toast wiring below, reusing SelectTabByName
+        // (already built for the Ctrl+1..9 / --tab launch-flag shortcuts) rather than new plumbing.
+        _viewModel.Stability.JumpToServiceRequested += name =>
+        {
+            SelectTabByName("Services");
+            _viewModel.Services.FilterText = name;
+        };
+
         Closing += (_, _) => _viewModel.Summary.GenerateReportOnExitIfEnabled();
         Closed += (_, _) => { _viewModel.Dispose(); _trayIcon?.Dispose(); };
         SourceInitialized += (_, _) => { ApplyNativeWindowChrome(); InitializeTrayIcon(); InitializeGlobalHotkey(); };

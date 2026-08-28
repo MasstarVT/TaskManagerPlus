@@ -153,4 +153,13 @@ public sealed class ProcessRow : ObservableObject
     public long PagedPoolBytes { get => _pagedPoolBytes; set => SetProperty(ref _pagedPoolBytes, value); }
 
     public double MemoryMb => MemoryBytes / 1024.0 / 1024.0;
+
+    /// <summary>Round 17, item 60: how many Application Error (1000) / Application Hang (1002)
+    /// events this executable has produced in the last 30 days, from CrashHistoryCacheService's
+    /// cheap in-memory cache (never a fresh event-log query on this tick - see that service's own
+    /// remarks). 0 both for "genuinely no crashes found" and for "the cache hasn't been built yet"
+    /// - CLAUDE.md's "degrade to 0, never fabricate" default, same as every other best-effort
+    /// count in this app.</summary>
+    private int _crashCount30d;
+    public int CrashCount30d { get => _crashCount30d; set => SetProperty(ref _crashCount30d, value); }
 }
