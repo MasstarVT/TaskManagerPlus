@@ -45,13 +45,7 @@ public static class BaselineService
         bool wasAutomatic,
         CancellationToken ct)
     {
-        var fingerprint = new HardwareFingerprint
-        {
-            CpuName = systemSpecs.CpuName,
-            RamTotalGb = ramTotalGb,
-            DiskModels = systemSpecs.Disks.Select(d => d.Primary).Where(s => s.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
-            GpuNames = systemSpecs.Gpus.Select(g => g.Primary).Where(s => s.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
-        };
+        var fingerprint = BuildCurrentFingerprint(systemSpecs, ramTotalGb);
 
         // #950: SnapshotService.Capture (a registry Uninstall-key sweep + ServiceController +
         // startup-item sample) and the two other synchronous reads below are exactly the same
@@ -127,6 +121,36 @@ public static class BaselineService
         finally
         {
             counter?.Dispose();
+        }
+    }
+
+    /// <summary>#953's fingerprint-building logic, factored out of CaptureAsync so
+    /// suggestions.md #994's "known-good comparison" flow can build the CURRENT machine's
+    /// fingerprint on demand (to compare against an imported reference profile) without needing a
+    /// full baseline capture first.</summary>
+    public static HardwareFingerprint BuildCurrentFingerprint(SystemSpecsViewModel systemSpecs, double ramTotalGb) => new()
+    {
+        CpuName = systemSpecs.CpuName,
+        RamTotalGb = ramTotalGb,
+        DiskModels = systemSpecs.Disks.Select(d => d.Primary).Where(s => s.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
+        GpuNames = systemSpecs.Gpus.Select(g => g.Primary).Where(s => s.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
+    };
+
+    /// <summary>suggestions.md #994: loads a previously exported PerformanceBaseline JSON file
+    /// (BaselineService.Save's own output shape) from an arbitrary path - the "Import reference
+    /// profile" command's file-open target. Null on any read/parse failure, same degrade-never-
+    /// fabricate convention SnapshotService.Load already establishes for the lighter snapshot
+    /// format.</summary>
+    public static PerformanceBaseline? LoadFromFile(string path)
+    {
+        try
+        {
+            var json = File.ReadAllText(path);
+            return JsonSerializer.Deserialize<PerformanceBaseline>(json);
+        }
+        catch
+        {
+            return null;
         }
     }
 

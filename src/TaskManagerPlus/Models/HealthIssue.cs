@@ -35,6 +35,16 @@ public sealed class HealthIssue
     public string? DocsUrl { get; init; }
     public string? GroupKey { get; init; }
 
+    /// <summary>#991: the firing rule's Rule.PlainEnglishBody, resolved the same way Message is -
+    /// null for the majority of rules that don't define one (and for the hand-rolled checks noted
+    /// above, which have no Rule at all). SummaryViewModel/SummaryView pick this over Message when
+    /// "Plain English mode" is on and this isn't null.</summary>
+    public string? PlainEnglishMessage { get; init; }
+
+    /// <summary>#993: the firing rule's Rule.ExplainerId, copied straight through - null when this
+    /// rule has no bundled offline explainer page (most rules).</summary>
+    public string? ExplainerId { get; init; }
+
     /// <summary>#928: Confidence rendered as a word next to the severity chip - "quick flag, not
     /// a verdict" reads more honestly as prose than a bare percentage on its own.</summary>
     public string ConfidenceWord => Confidence switch

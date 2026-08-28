@@ -615,13 +615,16 @@ public static class EvidenceBundleService
         }
         else
         {
-            Line("<table><tr><th>Severity</th><th>Finding</th><th>Confidence</th><th>Impact</th></tr>");
+            Line("<table><tr><th>Severity</th><th>Finding</th><th>Confidence</th><th>Impact</th><th>Docs</th></tr>");
             foreach (var f in findings)
             {
                 string cls = f.Severity == RuleSeverity.High ? "crit" : f.Severity == RuleSeverity.Info ? "muted" : "warn";
+                // #992: DocsUrl carried through into the bundle's index.html too, same as the
+                // Markdown/HTML diagnostic reports.
+                string docsCell = string.IsNullOrEmpty(f.DocsUrl) ? string.Empty : $"<a href=\"{Esc(f.DocsUrl)}\">Learn more</a>";
                 Line($"<tr><td class=\"{cls}\">{Esc(f.Severity.ToString())}</td>" +
                      $"<td>{Esc(f.Title ?? f.Message)}<br/><span class=\"muted\">{Esc(f.Message)}</span></td>" +
-                     $"<td>{Esc(f.ConfidenceWord)}</td><td>{Esc(f.ImpactText ?? string.Empty)}</td></tr>");
+                     $"<td>{Esc(f.ConfidenceWord)}</td><td>{Esc(f.ImpactText ?? string.Empty)}</td><td>{docsCell}</td></tr>");
             }
             Line("</table>");
         }

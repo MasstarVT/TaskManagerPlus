@@ -124,6 +124,18 @@
                             Padding="8,3" Background="Transparent" BorderThickness="1" BorderBrush="{DynamicResource AccentBrush}" Foreground="{DynamicResource AccentBrush}" FontSize="11.5" />
                 </StackPanel>
             </Border>
+
+            <!-- suggestions.md #997: "N unattended scans since you last looked, M new findings" -
+                 dismissible, collapsed whenever there's nothing new to report. -->
+            <Border Background="{DynamicResource AccentMutedBrush}" BorderBrush="{DynamicResource BorderBrush2}" BorderThickness="0,1,0,0" Padding="20,7"
+                    Visibility="{Binding UnattendedScanBannerText, Converter={StaticResource NullToVisibilityConverter}}">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="{Binding UnattendedScanBannerText}" Foreground="{DynamicResource AccentBrush}" FontSize="12" VerticalAlignment="Center" />
+                    <Button Content="Dismiss" Command="{Binding DismissUnattendedScanBannerCommand}" Cursor="Hand" Margin="12,0,0,0"
+                            Padding="8,3" Background="Transparent" BorderThickness="1" BorderBrush="{DynamicResource AccentBrush}" Foreground="{DynamicResource AccentBrush}" FontSize="11.5"
+                            AutomationProperties.Name="Dismiss unattended scan notification" />
+                </StackPanel>
+            </Border>
             </StackPanel>
         </Border>
 

@@ -3,11 +3,16 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="clr-namespace:TaskManagerPlus.ViewModels"
              xmlns:views="clr-namespace:TaskManagerPlus.Views"
+             xmlns:conv="clr-namespace:TaskManagerPlus.Converters"
              xmlns:lvc="clr-namespace:LiveChartsCore.SkiaSharpView.WPF;assembly=LiveChartsCore.SkiaSharpView.WPF"
              d:DataContext="{d:DesignInstance Type=vm:SummaryViewModel}"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              mc:Ignorable="d">
+    <!-- suggestions.md #1000: Ctrl+Shift+C copies the Health Check card as Markdown. -->
+    <UserControl.InputBindings>
+        <KeyBinding Modifiers="Ctrl+Shift" Key="C" Command="{Binding CopyMarkdownCommand}" />
+    </UserControl.InputBindings>
     <UserControl.Resources>
         <views:DashboardTileTemplateSelector x:Key="DashboardTileTemplateSelector" />
 
@@ -214,7 +219,19 @@
                     </StackPanel>
                     <StackPanel Grid.Column="1">
                         <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="{Binding Message}" FontSize="12.5" TextWrapping="Wrap" VerticalAlignment="Center" />
+                            <!-- #991: PlainEnglishMessageConverter picks Message vs.
+                                 PlainEnglishMessage based on the "Plain English mode" toggle
+                                 (MainViewModel.PlainEnglishMode). #990: GlossaryText.Text then
+                                 wraps any recognized jargon term in a dotted-underline/tooltip Run. -->
+                            <TextBlock FontSize="12.5" TextWrapping="Wrap" VerticalAlignment="Center">
+                                <conv:GlossaryText.Text>
+                                    <MultiBinding Converter="{StaticResource PlainEnglishMessageConverter}">
+                                        <Binding Path="Message" />
+                                        <Binding Path="PlainEnglishMessage" />
+                                        <Binding Path="DataContext.PlainEnglishMode" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                    </MultiBinding>
+                                </conv:GlossaryText.Text>
+                            </TextBlock>
                             <!-- #928: confidence word - "likely"/"possible"/"uncertain". -->
                             <TextBlock Text="{Binding ConfidenceWord, StringFormat=({0})}" FontSize="10.5" FontStyle="Italic"
                                        Foreground="{DynamicResource TextTertiaryBrush}" VerticalAlignment="Center" Margin="6,0,0,0" />
@@ -232,6 +249,46 @@
                                 Visibility="{Binding ImpactText, Converter={StaticResource NullToVisibilityConverter}}">
                             <TextBlock Text="{Binding ImpactText}" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource AccentBrush}" />
                         </Border>
+
+                        <!-- #992/#993: "Learn more" (an online docs link) and "Read more (offline)"
+                             (a bundled local explainer page) - both open in the default browser via
+                             ExternalLinkService; neither is affected by Offline mode (see
+                             NetworkActivityCatalogService's remarks on that boundary). Each is only
+                             shown when this finding's rule actually provides one. -->
+                        <StackPanel Orientation="Horizontal" Margin="0,5,0,0">
+                            <TextBlock Margin="0,0,14,0" Cursor="Hand">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding DocsUrl}" Value="{x:Null}">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                                <Hyperlink Command="{Binding DataContext.OpenDocsUrlCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                           CommandParameter="{Binding DocsUrl}" FontSize="11">
+                                    <Run Text="Learn more" />
+                                </Hyperlink>
+                            </TextBlock>
+                            <TextBlock Cursor="Hand">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding ExplainerId}" Value="{x:Null}">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                                <Hyperlink Command="{Binding DataContext.OpenExplainerCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                           CommandParameter="{Binding ExplainerId}" FontSize="11">
+                                    <Run Text="Read more (offline)" />
+                                </Hyperlink>
+                            </TextBlock>
+                        </StackPanel>
 
                         <!-- #929/#930: "why am I seeing this?" drill-down - only a rule-engine
                              finding (RuleId set) has a condition tree to show. -->

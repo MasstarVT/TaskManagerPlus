@@ -184,8 +184,23 @@
                         <!-- suggestions.md #981-987: one-click evidence bundle export (msinfo32/
                              dxdiag/event logs/minidumps/this app's own findings), with an opt-out
                              checklist, an opt-in PII scrub review, and a manifest. -->
-                        <Button Content="Evidence Bundle" Padding="10,4" VerticalAlignment="Center"
+                        <Button Content="Evidence Bundle" Padding="10,4" Margin="0,0,8,0" VerticalAlignment="Center"
                                 Command="{Binding ShowEvidenceBundleCommand}" />
+                        <!-- suggestions.md #995: open someone else's exported evidence bundle and
+                             review it read-only. -->
+                        <Button Content="Bundle Review" Padding="10,4" Margin="0,0,8,0" VerticalAlignment="Center"
+                                Command="{Binding ShowBundleReviewCommand}"
+                                AutomationProperties.Name="Open bundle review panel" />
+                        <!-- suggestions.md #999: read-only disclosure of every outbound network
+                             call this app can make, plus the Offline mode switch. -->
+                        <Button Content="Network Activity" Padding="10,4" Margin="0,0,8,0" VerticalAlignment="Center"
+                                Command="{Binding ShowNetworkActivityCommand}"
+                                AutomationProperties.Name="Open network activity disclosure panel" />
+                        <!-- suggestions.md #990: searchable plain-English glossary for this app's
+                             own jargon. -->
+                        <Button Content="Glossary" Padding="10,4" VerticalAlignment="Center"
+                                Command="{Binding ShowGlossaryCommand}"
+                                AutomationProperties.Name="Open glossary panel" />
                     </StackPanel>
                 </Grid>
                 <TextBlock Text="Pick the symptom that best matches what you're seeing - this runs a scripted set of checks instead of making you guess which tab to open."
@@ -254,6 +269,21 @@
              opened from the landing page. -->
         <views:EvidenceBundleView DataContext="{Binding EvidenceBundle}"
                              Visibility="{Binding DataContext.ShowEvidenceBundle, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource BoolToVisibilityConverter}}" />
+
+        <!-- suggestions.md #995: the Bundle Review panel - visible only when explicitly opened
+             from the landing page. -->
+        <views:BundleReviewView DataContext="{Binding BundleReview}"
+                             Visibility="{Binding DataContext.ShowBundleReview, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource BoolToVisibilityConverter}}" />
+
+        <!-- suggestions.md #999: the Network Activity panel - visible only when explicitly opened
+             from the landing page. -->
+        <views:NetworkActivityView DataContext="{Binding NetworkActivity}"
+                             Visibility="{Binding DataContext.ShowNetworkActivity, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource BoolToVisibilityConverter}}" />
+
+        <!-- suggestions.md #990: the Glossary panel - visible only when explicitly opened from the
+             landing page. -->
+        <views:GlossaryView DataContext="{Binding Glossary}"
+                             Visibility="{Binding DataContext.ShowGlossary, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource BoolToVisibilityConverter}}" />
 
         <!-- Run view - ordered step list plus a verdict card. Visible only once a run exists. -->
         <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16"

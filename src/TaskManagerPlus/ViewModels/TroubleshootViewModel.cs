@@ -75,6 +75,16 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
     // the same call SummaryViewModel's Health Check card already makes).
     public EvidenceBundleViewModel EvidenceBundle { get; }
 
+    // suggestions.md #990: the "Glossary" panel - a seventh sibling "page", same shape as
+    // Timeline/Baselines/BackgroundHealth/ChangeJournal/EvidenceBundle above.
+    public GlossaryViewModel Glossary { get; } = new();
+
+    // suggestions.md #999: the "Network activity" disclosure panel - an eighth sibling "page".
+    public NetworkActivityViewModel NetworkActivity { get; } = new();
+
+    // suggestions.md #995: the "Bundle review" panel - a ninth sibling "page".
+    public BundleReviewViewModel BundleReview { get; } = new();
+
     public ObservableCollection<SymptomCard> Symptoms { get; } = new();
 
     /// <summary>#915: saved run transcripts, newest first - populated on demand when the "Past
@@ -97,6 +107,9 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
                 OnPropertyChanged(nameof(ShowBackgroundHealth));
                 OnPropertyChanged(nameof(ShowChangeJournal));
                 OnPropertyChanged(nameof(ShowEvidenceBundle));
+                OnPropertyChanged(nameof(ShowGlossary));
+                OnPropertyChanged(nameof(ShowNetworkActivity));
+                OnPropertyChanged(nameof(ShowBundleReview));
             }
         }
     }
@@ -192,8 +205,54 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
         }
     }
 
+    // suggestions.md #990: landing page <-> Glossary panel, mirroring IsShowingEvidenceBundle above.
+    private bool _isShowingGlossary;
+    public bool IsShowingGlossary
+    {
+        get => _isShowingGlossary;
+        private set
+        {
+            if (SetProperty(ref _isShowingGlossary, value))
+            {
+                OnPropertyChanged(nameof(ShowLanding));
+                OnPropertyChanged(nameof(ShowGlossary));
+            }
+        }
+    }
+
+    // suggestions.md #999: landing page <-> Network activity panel.
+    private bool _isShowingNetworkActivity;
+    public bool IsShowingNetworkActivity
+    {
+        get => _isShowingNetworkActivity;
+        private set
+        {
+            if (SetProperty(ref _isShowingNetworkActivity, value))
+            {
+                OnPropertyChanged(nameof(ShowLanding));
+                OnPropertyChanged(nameof(ShowNetworkActivity));
+            }
+        }
+    }
+
+    // suggestions.md #995: landing page <-> Bundle review panel.
+    private bool _isShowingBundleReview;
+    public bool IsShowingBundleReview
+    {
+        get => _isShowingBundleReview;
+        private set
+        {
+            if (SetProperty(ref _isShowingBundleReview, value))
+            {
+                OnPropertyChanged(nameof(ShowLanding));
+                OnPropertyChanged(nameof(ShowBundleReview));
+            }
+        }
+    }
+
     /// <summary>True for the symptom-card landing grid.</summary>
-    public bool ShowLanding => SelectedRun is null && !IsShowingPastRuns && !IsShowingTimeline && !IsShowingBaselines && !IsShowingBackgroundHealth && !IsShowingChangeJournal && !IsShowingEvidenceBundle;
+    public bool ShowLanding => SelectedRun is null && !IsShowingPastRuns && !IsShowingTimeline && !IsShowingBaselines && !IsShowingBackgroundHealth && !IsShowingChangeJournal && !IsShowingEvidenceBundle
+        && !IsShowingGlossary && !IsShowingNetworkActivity && !IsShowingBundleReview;
 
     /// <summary>True for the "Past runs" list.</summary>
     public bool ShowPastRuns => SelectedRun is null && IsShowingPastRuns;
@@ -212,6 +271,15 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
 
     /// <summary>True for the Evidence Bundle panel.</summary>
     public bool ShowEvidenceBundle => SelectedRun is null && IsShowingEvidenceBundle;
+
+    /// <summary>True for the Glossary panel.</summary>
+    public bool ShowGlossary => SelectedRun is null && IsShowingGlossary;
+
+    /// <summary>True for the Network activity panel.</summary>
+    public bool ShowNetworkActivity => SelectedRun is null && IsShowingNetworkActivity;
+
+    /// <summary>True for the Bundle review panel.</summary>
+    public bool ShowBundleReview => SelectedRun is null && IsShowingBundleReview;
 
     public bool IsRunning { get => _isRunning; private set => SetProperty(ref _isRunning, value); }
 
@@ -243,6 +311,18 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
     // ShowChangeJournalCommand/HideChangeJournalCommand.
     public RelayCommand ShowEvidenceBundleCommand { get; }
     public RelayCommand HideEvidenceBundleCommand { get; }
+
+    // suggestions.md #990: landing page <-> Glossary panel.
+    public RelayCommand ShowGlossaryCommand { get; }
+    public RelayCommand HideGlossaryCommand { get; }
+
+    // suggestions.md #999: landing page <-> Network activity panel.
+    public RelayCommand ShowNetworkActivityCommand { get; }
+    public RelayCommand HideNetworkActivityCommand { get; }
+
+    // suggestions.md #995: landing page <-> Bundle review panel.
+    public RelayCommand ShowBundleReviewCommand { get; }
+    public RelayCommand HideBundleReviewCommand { get; }
 
     public TroubleshootViewModel(PerformanceViewModel performance, ProcessesViewModel processes, LoggingViewModel logging,
         EnergyThermalsViewModel energyThermals, SystemSpecsViewModel systemSpecs, ServicesViewModel services, RulesEngineService rulesEngine,
@@ -290,6 +370,12 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
         HideChangeJournalCommand = new RelayCommand(_ => IsShowingChangeJournal = false);
         ShowEvidenceBundleCommand = new RelayCommand(_ => IsShowingEvidenceBundle = true, _ => !IsRunning && SelectedRun is null);
         HideEvidenceBundleCommand = new RelayCommand(_ => IsShowingEvidenceBundle = false);
+        ShowGlossaryCommand = new RelayCommand(_ => IsShowingGlossary = true, _ => !IsRunning && SelectedRun is null);
+        HideGlossaryCommand = new RelayCommand(_ => IsShowingGlossary = false);
+        ShowNetworkActivityCommand = new RelayCommand(_ => IsShowingNetworkActivity = true, _ => !IsRunning && SelectedRun is null);
+        HideNetworkActivityCommand = new RelayCommand(_ => IsShowingNetworkActivity = false);
+        ShowBundleReviewCommand = new RelayCommand(_ => IsShowingBundleReview = true, _ => !IsRunning && SelectedRun is null);
+        HideBundleReviewCommand = new RelayCommand(_ => IsShowingBundleReview = false);
         OpenSavedRunCommand = new RelayCommand(param =>
         {
             if (param is not TroubleshootRunRecord record) return;

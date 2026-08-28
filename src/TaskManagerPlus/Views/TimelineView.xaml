@@ -7,6 +7,10 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              mc:Ignorable="d">
+    <!-- suggestions.md #1000: Ctrl+Shift+C copies this panel's currently visible events as Markdown. -->
+    <UserControl.InputBindings>
+        <KeyBinding Modifiers="Ctrl+Shift" Key="C" Command="{Binding CopyMarkdownCommand}" />
+    </UserControl.InputBindings>
     <UserControl.Resources>
         <!-- #938: one marker on a lane's track - a small colored dot, clickable (#945's "Details"
              action - a click rather than a right-click context menu, since a context menu is hard

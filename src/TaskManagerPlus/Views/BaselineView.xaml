@@ -8,6 +8,10 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              mc:Ignorable="d">
+    <!-- suggestions.md #1000: Ctrl+Shift+C copies this panel's baselines as Markdown. -->
+    <UserControl.InputBindings>
+        <KeyBinding Modifiers="Ctrl+Shift" Key="C" Command="{Binding CopyMarkdownCommand}" />
+    </UserControl.InputBindings>
     <UserControl.Resources>
         <!-- #950/#952: one captured baseline row in the "Captured baselines" list. -->
         <DataTemplate x:Key="BaselineRowTemplate" DataType="{x:Type models:PerformanceBaseline}">
@@ -322,6 +326,129 @@
                         </TextBlock.Style>
                     </TextBlock>
                     <ItemsControl ItemsSource="{Binding RecentBaselines}" ItemTemplate="{StaticResource BaselineRowTemplate}" />
+                </StackPanel>
+            </Border>
+
+            <!-- suggestions.md #994: known-good comparison against an imported reference profile -
+                 every difference below is explicitly framed as "different, not necessarily wrong",
+                 never a pass/fail check. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,14">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Compare against a reference profile" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Import reference profile..." Command="{Binding ImportReferenceProfileCommand}"
+                                AutomationProperties.Name="Import a reference profile baseline file" />
+                    </Grid>
+                    <TextBlock Text="Import an exported baseline from a known-good machine (Baselines panel's own &quot;Capture a baseline&quot; button, run there and brought here) to see how THIS machine differs - a comparison, not a pass/fail check."
+                               Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,-2,0,8" />
+                    <TextBlock Text="{Binding ReferenceStatusText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,10" />
+
+                    <StackPanel Visibility="{Binding HasReferenceProfile, Converter={StaticResource BoolToVisibilityConverter}}">
+                        <!-- Hardware fingerprints, side by side. -->
+                        <Grid Margin="0,0,0,10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                                <TextBlock Text="Reference machine" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource TextTertiaryBrush}" Margin="0,0,0,3" />
+                                <TextBlock Text="{Binding ReferenceProfile.Fingerprint.CpuName}" FontSize="11.5" TextWrapping="Wrap" />
+                                <TextBlock Text="{Binding ReferenceProfile.Fingerprint.RamTotalGb, StringFormat={}{0:0.#} GB RAM}" FontSize="11.5" />
+                                <TextBlock Text="{Binding ReferenceProfile.Fingerprint.DiskModels, Converter={StaticResource StringListJoinConverter}}" FontSize="11" TextWrapping="Wrap" Foreground="{DynamicResource TextTertiaryBrush}" />
+                                <TextBlock Text="{Binding ReferenceProfile.Fingerprint.GpuNames, Converter={StaticResource StringListJoinConverter}}" FontSize="11" TextWrapping="Wrap" Foreground="{DynamicResource TextTertiaryBrush}" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Margin="8,0,0,0">
+                                <TextBlock Text="This machine" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource TextTertiaryBrush}" Margin="0,0,0,3" />
+                                <TextBlock Text="{Binding CurrentFingerprint.CpuName}" FontSize="11.5" TextWrapping="Wrap" />
+                                <TextBlock Text="{Binding CurrentFingerprint.RamTotalGb, StringFormat={}{0:0.#} GB RAM}" FontSize="11.5" />
+                                <TextBlock Text="{Binding CurrentFingerprint.DiskModels, Converter={StaticResource StringListJoinConverter}}" FontSize="11" TextWrapping="Wrap" Foreground="{DynamicResource TextTertiaryBrush}" />
+                                <TextBlock Text="{Binding CurrentFingerprint.GpuNames, Converter={StaticResource StringListJoinConverter}}" FontSize="11" TextWrapping="Wrap" Foreground="{DynamicResource TextTertiaryBrush}" />
+                            </StackPanel>
+                        </Grid>
+                        <TextBlock Text="Different hardware - figures below reflect that, not necessarily a problem." FontSize="11" FontStyle="Italic"
+                                   Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" Margin="0,0,0,10"
+                                   Visibility="{Binding ReferenceFingerprintMismatch, Converter={StaticResource BoolToVisibilityConverter}}" />
+
+                        <!-- Performance figures, only when this machine also has at least one local baseline. -->
+                        <TextBlock Text="Performance" FontSize="12.5" Margin="0,0,0,4">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock" BasedOn="{StaticResource CardTitle}">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding ReferencePerformanceComparison.Count}" Value="0">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                        <ItemsControl ItemsSource="{Binding ReferencePerformanceComparison}" ItemTemplate="{StaticResource MetricComparisonTemplate}" Margin="0,0,0,10" />
+
+                        <!-- Installed software / services / startup - neutral wording ("only on
+                             reference" / "only on this machine"), not +/- added/removed, since
+                             neither side is the ground truth here. -->
+                        <TextBlock Text="Software, services, and startup items" Style="{StaticResource CardTitle}" FontSize="12.5" Margin="0,0,0,4" />
+                        <StackPanel Visibility="{Binding ReferenceDiff, Converter={StaticResource NullToVisibilityConverter}}">
+                            <TextBlock Text="No differences found.">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding ReferenceDiff.HasChanges}" Value="False">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                            <ItemsControl ItemsSource="{Binding ReferenceDiff.SoftwareAdded}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock FontSize="11.5" Text="{Binding StringFormat='Software, only on this machine: {0}'}" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <ItemsControl ItemsSource="{Binding ReferenceDiff.SoftwareRemoved}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock FontSize="11.5" Text="{Binding StringFormat='Software, only on the reference: {0}'}" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <ItemsControl ItemsSource="{Binding ReferenceDiff.ServicesAdded}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock FontSize="11.5" Text="{Binding StringFormat='Service, only on this machine: {0}'}" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <ItemsControl ItemsSource="{Binding ReferenceDiff.ServicesRemoved}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock FontSize="11.5" Text="{Binding StringFormat='Service, only on the reference: {0}'}" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <ItemsControl ItemsSource="{Binding ReferenceDiff.StartupAdded}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock FontSize="11.5" Text="{Binding StringFormat='Startup item, only on this machine: {0}'}" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <ItemsControl ItemsSource="{Binding ReferenceDiff.StartupRemoved}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock FontSize="11.5" Text="{Binding StringFormat='Startup item, only on the reference: {0}'}" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </StackPanel>
                 </StackPanel>
             </Border>
         </StackPanel>

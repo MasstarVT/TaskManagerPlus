@@ -39,6 +39,9 @@ public static class UpdateCheckService
     /// into one result rather than a richer error type nobody would act on.</summary>
     public static async Task<(string? TagName, string? HtmlUrl)> CheckForNewerReleaseAsync()
     {
+        // #999: Offline mode hard-disables this call, including the automatic once-at-startup
+        // check MainViewModel fires - see NetworkActivityCatalogService's remarks for the boundary.
+        if (UiPreferencesService.Load().OfflineMode) return (null, null);
         try
         {
             using var response = await Http.GetAsync(ApiUrl);

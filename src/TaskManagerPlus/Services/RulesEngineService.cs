@@ -854,6 +854,10 @@ public sealed class RulesEngineService : IDisposable
                 Category = rule.Category,
                 DocsUrl = rule.DocsUrl,
                 GroupKey = rule.GroupKey,
+                // #991: resolved the same way Message is, against the same augmented bag - null
+                // whenever this rule doesn't define one, which SummaryView/reports fall back on.
+                PlainEnglishMessage = string.IsNullOrEmpty(rule.PlainEnglishBody) ? null : ResolveTemplate(rule.PlainEnglishBody, augmentedBag),
+                ExplainerId = rule.ExplainerId,
                 CounterEvidence = rule.CounterEvidence,
                 ImpactText = TryResolveImpactText(rule.ImpactTemplate, augmentedBag),
                 ConditionReadings = readings,
@@ -879,9 +883,15 @@ public sealed class RulesEngineService : IDisposable
     private static string ResolveBody(Rule rule, IReadOnlyDictionary<string, object> bag)
     {
         string body = string.IsNullOrEmpty(rule.Body) ? rule.Title : rule.Body;
-        return Regex.Replace(body, @"\{([a-zA-Z0-9_.]+)\}", m =>
-            bag.TryGetValue(m.Groups[1].Value, out var v) ? FormatValue(v) : m.Value);
+        return ResolveTemplate(body, bag);
     }
+
+    /// <summary>#991: same `{metric.key}` placeholder substitution ResolveBody uses, factored out
+    /// so Rule.PlainEnglishBody can be resolved against the exact same live bag without duplicating
+    /// the regex - a placeholder whose key isn't in the bag is left as-is, same as ResolveBody.</summary>
+    private static string ResolveTemplate(string template, IReadOnlyDictionary<string, object> bag) =>
+        Regex.Replace(template, @"\{([a-zA-Z0-9_.]+)\}", m =>
+            bag.TryGetValue(m.Groups[1].Value, out var v) ? FormatValue(v) : m.Value);
 
     /// <summary>#932: same `{metric.key}` placeholder syntax as ResolveBody, but strict - a
     /// template with any placeholder not present in the live bag resolves to null (no finding
@@ -1075,10 +1085,12 @@ public sealed class RulesEngineService : IDisposable
           "Id": "builtin.disk.volume-full-warning",
           "Title": "Disk nearly full",
           "Body": "{disk.maxPercentUsedLabel} is {disk.maxPercentUsed}% full",
+          "PlainEnglishBody": "Your {disk.maxPercentUsedLabel} drive is running out of free space - it's {disk.maxPercentUsed}% used up.",
           "Severity": "Medium",
           "Confidence": 90,
           "Category": "Storage",
           "GroupKey": "disk",
+          "DocsUrl": "https://support.microsoft.com/windows/free-up-drive-space-in-windows-4d1899b3-c9d0-af2f-e2f1-a5e2be0a2fbc",
           "ImpactTemplate": "{disk.maxPercentUsed}% of {disk.maxPercentUsedLabel} used",
           "Condition": { "All": [
             { "Metric": "disk.maxPercentUsed", "Op": "gte", "Value": 90 },
@@ -1089,10 +1101,13 @@ public sealed class RulesEngineService : IDisposable
           "Id": "builtin.disk.volume-full-critical",
           "Title": "Disk critically full",
           "Body": "{disk.maxPercentUsedLabel} is {disk.maxPercentUsed}% full",
+          "PlainEnglishBody": "Your {disk.maxPercentUsedLabel} drive is almost completely full ({disk.maxPercentUsed}% used) - free up space soon or things like updates and app installs can start failing.",
           "Severity": "High",
           "Confidence": 95,
           "Category": "Storage",
           "GroupKey": "disk",
+          "DocsUrl": "https://support.microsoft.com/windows/free-up-drive-space-in-windows-4d1899b3-c9d0-af2f-e2f1-a5e2be0a2fbc",
+          "ExplainerId": "disk-full",
           "ImpactTemplate": "{disk.maxPercentUsed}% of {disk.maxPercentUsedLabel} used",
           "Condition": { "Metric": "disk.maxPercentUsed", "Op": "gte", "Value": 97 }
         },
@@ -1100,10 +1115,13 @@ public sealed class RulesEngineService : IDisposable
           "Id": "builtin.disk.dirty-bit",
           "Title": "Volume needs a chkdsk pass",
           "Body": "{disk.dirtyLabel} needs a chkdsk pass (dirty bit set)",
+          "PlainEnglishBody": "Windows noticed {disk.dirtyLabel} wasn't shut down cleanly last time and wants to double-check it for errors before you fully trust it again.",
           "Severity": "High",
           "Confidence": 95,
           "Category": "Storage",
           "GroupKey": "disk",
+          "DocsUrl": "https://learn.microsoft.com/windows-server/administration/windows-commands/chkdsk",
+          "ExplainerId": "dirty-bit",
           "ActionIds": ["storage.chkdsk-scan"],
           "Condition": { "Metric": "disk.anyDirty", "Op": "eq", "Value": true }
         },
@@ -1115,6 +1133,7 @@ public sealed class RulesEngineService : IDisposable
           "Confidence": 85,
           "Category": "Storage",
           "GroupKey": "disk",
+          "DocsUrl": "https://support.microsoft.com/windows/back-up-your-windows-pc-87a81f8a-78fa-456e-b521-ac0560e32338",
           "Condition": { "Metric": "disk.anyHealthWarning", "Op": "eq", "Value": true }
         },
         {
@@ -1124,6 +1143,7 @@ public sealed class RulesEngineService : IDisposable
           "Severity": "Medium",
           "Confidence": 80,
           "Category": "Thermals",
+          "DocsUrl": "https://learn.microsoft.com/windows-hardware/drivers/whea/",
           "CounterEvidence": "Ambient room temperature or a recent dust buildup can also cause this, not just a software issue.",
           "ActionIds": ["power.lower-min-proc-state"],
           "Condition": { "All": [
@@ -1135,9 +1155,12 @@ public sealed class RulesEngineService : IDisposable
           "Id": "builtin.cpu.hot-critical",
           "Title": "CPU critically hot",
           "Body": "CPU running hot ({thermal.cpuPackageC}°C)",
+          "PlainEnglishBody": "Your CPU is running very hot ({thermal.cpuPackageC}°C) - it may be slowing itself down to protect itself, and it's worth checking the fans and vents for dust.",
           "Severity": "High",
           "Confidence": 90,
           "Category": "Thermals",
+          "DocsUrl": "https://learn.microsoft.com/windows-hardware/drivers/whea/",
+          "ExplainerId": "cpu-hot",
           "CounterEvidence": "Ambient room temperature or a recent dust buildup can also cause this, not just a software issue.",
           "ActionIds": ["power.lower-min-proc-state"],
           "Condition": { "Metric": "thermal.cpuPackageC", "Op": "gte", "Value": 100 }
@@ -1149,24 +1172,31 @@ public sealed class RulesEngineService : IDisposable
           "Severity": "High",
           "Confidence": 70,
           "Category": "Thermals",
+          "ExplainerId": "dead-fan",
           "Condition": { "Metric": "thermal.deadFanDetected", "Op": "eq", "Value": true }
         },
         {
           "Id": "builtin.mem.pagefile-full",
           "Title": "Page file nearly full",
           "Body": "Page file is {mem.pageFilePercent}% full",
+          "PlainEnglishBody": "Windows' overflow memory space on disk (the page file) is almost full - {mem.pageFilePercent}% used.",
           "Severity": "Medium",
           "Confidence": 75,
           "Category": "Memory",
+          "DocsUrl": "https://support.microsoft.com/topic/how-to-determine-the-appropriate-page-file-size-for-64-bit-versions-of-windows-6a37e6c9-b0c4-e5d6-9805-4e83600a7078",
+          "ExplainerId": "pagefile-full",
           "Condition": { "Metric": "mem.pageFilePercent", "Op": "gte", "Value": 90 }
         },
         {
           "Id": "builtin.mem.thrashing",
           "Title": "Possible memory thrashing",
           "Body": "Possible memory thrashing: {mem.hardFaultsPerSec} hard faults/sec with only {mem.availablePercent}% RAM available",
+          "PlainEnglishBody": "Your PC's memory is overloaded and it's using the hard drive as backup memory ({mem.hardFaultsPerSec} hard faults/sec, only {mem.availablePercent}% RAM free) - that's a common cause of everything feeling sluggish.",
           "Severity": "High",
           "Confidence": 75,
           "Category": "Memory",
+          "DocsUrl": "https://learn.microsoft.com/troubleshoot/windows-client/performance/general-troubleshooting-for-slow-performance-issue",
+          "ExplainerId": "memory-thrashing",
           "CounterEvidence": "A lot of legitimately open browser tabs or a genuinely large workload can also drive this, not necessarily a leak.",
           "ImpactTemplate": "{mem.availablePercent}% RAM available",
           "Condition": { "All": [
@@ -1178,10 +1208,13 @@ public sealed class RulesEngineService : IDisposable
           "Id": "builtin.cpu.sustained-high",
           "Title": "Sustained high CPU",
           "Body": "CPU has been above 90% for a while - check the Processes tab for what's using it",
+          "PlainEnglishBody": "Your CPU has been almost completely busy for a while now, not just a brief spike - open the Processes tab to see what's using it.",
           "Severity": "Medium",
           "Confidence": 60,
           "Category": "CPU",
           "SustainedForSeconds": 30,
+          "DocsUrl": "https://support.microsoft.com/windows/how-to-use-task-manager-6be7b063-a49b-6a3a-5062-a9296a9c6060",
+          "ExplainerId": "sustained-cpu",
           "CounterEvidence": "A legitimate scheduled backup or antivirus scan can also cause sustained high CPU, not just a runaway process.",
           "Condition": { "Metric": "cpu.percent", "Op": "gt", "Value": 90 }
         },
@@ -1192,6 +1225,8 @@ public sealed class RulesEngineService : IDisposable
           "Severity": "Medium",
           "Confidence": 70,
           "Category": "Network",
+          "DocsUrl": "https://support.microsoft.com/windows/fix-network-connection-issues-in-windows-166e3b3a-282a-4a3e-add4-2827ff2a3ec6",
+          "ExplainerId": "network-errors",
           "CounterEvidence": "A flaky cable or an adapter that was recently unplugged/replugged can also cause a transient error count, not necessarily a failing NIC.",
           "ActionIds": ["network.reset-tcpip"],
           "Condition": { "Metric": "network.hasErrors", "Op": "eq", "Value": true }
@@ -1200,9 +1235,12 @@ public sealed class RulesEngineService : IDisposable
           "Id": "builtin.services.failed",
           "Title": "Services failed to start",
           "Body": "{services.failedCount} service(s) failed to start",
+          "PlainEnglishBody": "{services.failedCount} background Windows service(s) that were supposed to start didn't - some system features may not work correctly until this is fixed.",
           "Severity": "Medium",
           "Confidence": 80,
           "Category": "Services",
+          "DocsUrl": "https://learn.microsoft.com/windows-server/administration/windows-commands/sc-query",
+          "ExplainerId": "services-failed",
           "ImpactTemplate": "{services.failedCount} service(s) not running",
           "ActionIds": ["services.restart-failed", "system.sfc-scannow", "system.dism-restorehealth"],
           "Condition": { "Metric": "services.failedCount", "Op": "gt", "Value": 0 }
@@ -1214,7 +1252,7 @@ public sealed class RulesEngineService : IDisposable
           "Severity": "Medium",
           "Confidence": 50,
           "Category": "System",
-          "DocsUrl": null,
+          "DocsUrl": "https://support.microsoft.com/windows/update-drivers-manually-in-windows-ec62f46c-ff14-c91d-eabb-a334cdfbc464",
           "Condition": { "Metric": "system.outdatedDriverCount", "Op": "gt", "Value": 0 }
         },
         {
@@ -1224,16 +1262,20 @@ public sealed class RulesEngineService : IDisposable
           "Severity": "Medium",
           "Confidence": 60,
           "Category": "System",
+          "DocsUrl": "https://learn.microsoft.com/microsoft-365/security/defender-endpoint/microsoft-defender-antivirus-compatibility",
           "Condition": { "Metric": "system.multipleAvActive", "Op": "eq", "Value": true }
         },
         {
           "Id": "builtin.system.reboot-pending",
           "Title": "Restart pending",
           "Body": "A restart is pending to finish installing updates",
+          "PlainEnglishBody": "Windows finished installing an update but needs you to restart the PC to actually apply it.",
           "Severity": "Medium",
           "Confidence": 90,
           "Category": "System",
           "GroupKey": "reboot",
+          "DocsUrl": "https://learn.microsoft.com/windows/deployment/update/how-windows-update-works",
+          "ExplainerId": "reboot-pending",
           "Condition": { "Metric": "system.rebootPending", "Op": "eq", "Value": true }
         },
         {
@@ -1256,6 +1298,7 @@ public sealed class RulesEngineService : IDisposable
           "Severity": "Medium",
           "Confidence": 55,
           "Category": "Thermals",
+          "DocsUrl": "https://learn.microsoft.com/windows-hardware/drivers/whea/",
           "CounterEvidence": "A demanding sustained workload (rendering, compiling, gaming) on those specific days can also explain this, not necessarily a cooling problem.",
           "Condition": { "Metric": "thermal.cpuPackageC", "Aggregate": "countAbove", "AggregateThreshold": 95, "OverSeconds": 2592000, "Op": "gte", "Value": 3 }
         }

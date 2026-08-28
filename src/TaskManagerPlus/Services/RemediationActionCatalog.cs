@@ -23,6 +23,19 @@ namespace TaskManagerPlus.Services;
 /// </summary>
 public static class RemediationActionCatalog
 {
+    /// <summary>suggestions.md #1000: the subset of this catalog that needs no live target (drive
+    /// letter, service name, startup item, process id) to describe - what the Ctrl+K command
+    /// palette's "remediation action" search category lists. The parameterized factories below
+    /// (ChkdskScan/RestartService/DisableStartupItem/LowerProcessPriority) only make sense resolved
+    /// against a real finding (see Resolve), so aren't included here.</summary>
+    public static List<RemediationAction> SystemWideCatalog() => new()
+    {
+        SfcScan(),
+        DismRestoreHealth(),
+        NetshResetTcpIp(),
+        LowerMinProcessorState(),
+    };
+
     // ----- system-wide actions (no runtime target needed) --------------------------------------
 
     public static RemediationAction SfcScan() => new()

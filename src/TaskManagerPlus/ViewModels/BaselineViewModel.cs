@@ -174,6 +174,37 @@ public sealed class BaselineViewModel : ObservableObject, IDisposable
     public AsyncRelayCommand FinishChangeCommand { get; }
     public RelayCommand GenerateChangeReportCommand { get; }
 
+    // ----- suggestions.md #994: known-good comparison against an imported reference profile -----
+
+    private PerformanceBaseline? _referenceProfile;
+    public PerformanceBaseline? ReferenceProfile { get => _referenceProfile; private set => SetProperty(ref _referenceProfile, value); }
+
+    public bool HasReferenceProfile => ReferenceProfile is not null;
+
+    private HardwareFingerprint? _currentFingerprint;
+    public HardwareFingerprint? CurrentFingerprint { get => _currentFingerprint; private set => SetProperty(ref _currentFingerprint, value); }
+
+    /// <summary>True when the imported profile's hardware fingerprint doesn't match this machine's
+    /// - rendered as an explicit "different machines" note, not a failure, since #994's task notes
+    /// are explicit every difference here is framed as "different, not necessarily wrong."</summary>
+    private bool _referenceFingerprintMismatch;
+    public bool ReferenceFingerprintMismatch { get => _referenceFingerprintMismatch; private set => SetProperty(ref _referenceFingerprintMismatch, value); }
+
+    public ObservableCollection<BaselineMetricComparison> ReferencePerformanceComparison { get; } = new();
+
+    private SnapshotDiff? _referenceDiff;
+    public SnapshotDiff? ReferenceDiff { get => _referenceDiff; private set => SetProperty(ref _referenceDiff, value); }
+
+    private string _referenceStatusText = "No reference profile imported yet. Import an exported baseline (Baselines panel \"Capture a baseline\" on a known-good machine, then bring that file here) to compare it against this machine.";
+    public string ReferenceStatusText { get => _referenceStatusText; private set => SetProperty(ref _referenceStatusText, value); }
+
+    public RelayCommand ImportReferenceProfileCommand { get; }
+
+    /// <summary>suggestions.md #1000: Ctrl+Shift+C on the Baselines panel - copies a Markdown
+    /// summary of the currently captured baselines and the oldest-vs-newest regression comparison
+    /// to the clipboard.</summary>
+    public RelayCommand CopyMarkdownCommand { get; }
+
     public BaselineViewModel(PerformanceViewModel performance, EnergyThermalsViewModel energyThermals,
         SystemSpecsViewModel systemSpecs, ServicesViewModel services, ProcessesViewModel processes,
         RulesEngineService rulesEngine)
@@ -230,6 +261,12 @@ public sealed class BaselineViewModel : ObservableObject, IDisposable
         StartChangeCommand = new AsyncRelayCommand(StartChangeAsync, () => !IsChangeWindowOpen && !IsCapturing);
         FinishChangeCommand = new AsyncRelayCommand(FinishChangeAsync, () => IsChangeWindowOpen && !IsCapturing);
         GenerateChangeReportCommand = new RelayCommand(_ => GenerateChangeReport(), _ => _changeAfterBaseline is not null);
+        ImportReferenceProfileCommand = new RelayCommand(_ => ImportReferenceProfile());
+        CopyMarkdownCommand = new RelayCommand(_ =>
+        {
+            try { System.Windows.Clipboard.SetText(BuildBaselinesMarkdown()); }
+            catch { /* best-effort - a clipboard write can legitimately fail */ }
+        });
 
         LoadBaselines();
 
@@ -680,6 +717,94 @@ public sealed class BaselineViewModel : ObservableObject, IDisposable
 
         Line("</body></html>");
         return sb.ToString();
+    }
+
+    /// <summary>suggestions.md #1000: the Baselines panel's Ctrl+Shift+C Markdown export - the
+    /// regression headline plus every captured baseline's headline figures, newest first.</summary>
+    private string BuildBaselinesMarkdown()
+    {
+        var sb = new StringBuilder();
+        void Line(string s = "") => sb.Append(s).Append('\n');
+
+        Line("# Task Manager Plus baselines");
+        Line(RegressionHeaderText);
+        if (RegressionComparisons.Count > 0)
+        {
+            Line();
+            foreach (var c in RegressionComparisons) Line($"- {c.SummaryText}");
+        }
+        Line();
+        Line("## Captured baselines");
+        if (RecentBaselines.Count == 0)
+        {
+            Line("None captured yet.");
+        }
+        else
+        {
+            Line("| Captured | Label | Boot (s) | Idle CPU % | Idle RAM (GB) | WinSAT disk |");
+            Line("|---|---|---|---|---|---|");
+            foreach (var b in RecentBaselines)
+            {
+                string boot = b.LastBootDurationMs is { } ms ? (ms / 1000.0).ToString("0") : "n/a";
+                string idleCpu = b.WasIdleAtCapture && b.IdleCpuPercent is { } c ? c.ToString("0.#") : "n/a";
+                string idleRam = b.WasIdleAtCapture && b.IdleRamCommittedGb is { } r ? r.ToString("0.#") : "n/a";
+                string disk = b.WinSatDiskScore?.ToString("0.#") ?? "n/a";
+                Line($"| {b.CapturedAt:g} | {b.Label ?? "(routine)"} | {boot} | {idleCpu} | {idleRam} | {disk} |");
+            }
+        }
+        return sb.ToString();
+    }
+
+    // ----- suggestions.md #994: known-good comparison against an imported reference profile -----
+
+    /// <summary>Imports a previously exported PerformanceBaseline JSON (from a known-good machine)
+    /// and diffs it against the CURRENT machine: installed software/services/startup
+    /// (SnapshotService.Diff, reused verbatim - the same engine #955's before/after change window
+    /// already uses), performance figures where this machine has at least one local baseline to
+    /// compare against (BaselineService.CompareMetrics, same reuse), and both machines' hardware
+    /// fingerprints side by side. Every difference is framed as "different, not necessarily wrong"
+    /// in the UI (BaselineView.xaml's copy), never a pass/fail check.</summary>
+    private void ImportReferenceProfile()
+    {
+        var dialog = new OpenFileDialog
+        {
+            Title = "Import a reference profile (an exported baseline .json)",
+            Filter = "Baseline files (*.json)|*.json|All files (*.*)|*.*",
+        };
+        if (dialog.ShowDialog() != true) return;
+
+        var imported = BaselineService.LoadFromFile(dialog.FileName);
+        if (imported is null)
+        {
+            ReferenceStatusText = $"Couldn't read \"{Path.GetFileName(dialog.FileName)}\" as a baseline file.";
+            return;
+        }
+
+        ReferenceProfile = imported;
+        OnPropertyChanged(nameof(HasReferenceProfile));
+
+        // Current machine's software/services/startup, captured fresh (not from a saved baseline -
+        // #994 asks to compare against the CURRENT machine, not a stale local capture).
+        var currentSnapshot = SnapshotService.Capture();
+        ReferenceDiff = SnapshotService.Diff(imported.Snapshot, currentSnapshot);
+
+        CurrentFingerprint = BaselineService.BuildCurrentFingerprint(_systemSpecs, _performance.RamTotalGb);
+        ReferenceFingerprintMismatch = !imported.Fingerprint.MatchesHardware(CurrentFingerprint);
+
+        ReferencePerformanceComparison.Clear();
+        if (Baselines.Count > 0)
+        {
+            // No local baseline captured on THIS machine to compare performance figures against -
+            // the software/services/startup diff and the fingerprint comparison above still work
+            // fine without one; only the performance-figures section has nothing to show.
+            var latestLocal = Baselines[^1];
+            foreach (var c in BaselineService.CompareMetrics(imported, latestLocal))
+                if (!string.IsNullOrEmpty(c.SummaryText)) ReferencePerformanceComparison.Add(c);
+        }
+
+        ReferenceStatusText = $"Comparing against a reference profile captured {imported.CapturedAt:g}" +
+            (string.IsNullOrEmpty(imported.Label) ? string.Empty : $" ({imported.Label})") +
+            (Baselines.Count == 0 ? " - capture a baseline on this machine too to compare performance figures." : string.Empty);
     }
 
     public void Dispose()

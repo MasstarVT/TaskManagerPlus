@@ -34,6 +34,10 @@
             <conv:RuleSeverityToBrushConverter x:Key="RuleSeverityToBrushConverter" />
             <conv:TimelineMarkerPositionConverter x:Key="TimelineMarkerPositionConverter" />
             <conv:TimelineEventBrushConverter x:Key="TimelineEventBrushConverter" />
+            <!-- #991: picks a finding's plain-English message over its technical one when the
+                 toggle is on and this finding's rule actually provides one. -->
+            <conv:PlainEnglishMessageConverter x:Key="PlainEnglishMessageConverter" />
+            <conv:InverseBooleanConverter x:Key="InverseBooleanConverter" />
         </ResourceDictionary>
     </Application.Resources>
 </Application>

@@ -105,6 +105,47 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
     /// is a rare, silent no-op rather than a dead button shown as broken.</summary>
     public RelayCommand FixFindingCommand { get; }
 
+    /// <summary>#992: "Learn more" - opens a finding's Rule.DocsUrl in the default browser via
+    /// ExternalLinkService. A plain no-op for a finding with no DocsUrl (the Hyperlink itself is
+    /// hidden in that case, same "gate visibility on the data being present" convention
+    /// FixFindingCommand's HasFixAction check already uses).</summary>
+    public RelayCommand OpenDocsUrlCommand { get; }
+
+    /// <summary>#993: "Read more (offline)" - opens a finding's bundled local explainer HTML page
+    /// (ExplainerCatalogService, keyed by Rule.ExplainerId) in the default browser - 100% local,
+    /// works with no network. See ExplainerCatalogService's remarks for why this reuses the same
+    /// ExternalLinkService mechanism as #992's online "Learn more" link rather than a bespoke
+    /// in-app HTML viewer.</summary>
+    public RelayCommand OpenExplainerCommand { get; }
+
+    /// <summary>suggestions.md #1000: Ctrl+Shift+C on the Summary tab - copies the Health Check
+    /// card's current visible content as Markdown to the clipboard (SummaryView.xaml's
+    /// UserControl.InputBindings). Best-effort - a clipboard write can legitimately fail (another
+    /// app holding the clipboard open), swallowed the same way every other clipboard write in this
+    /// app already degrades.</summary>
+    public RelayCommand CopyMarkdownCommand { get; }
+
+    private string BuildHealthCheckMarkdown()
+    {
+        var sb = new StringBuilder();
+        void Line(string s = "") => sb.Append(s).Append('\n');
+
+        Line("## Health Check");
+        if (HealthIssues.Count == 0)
+        {
+            Line("No issues detected.");
+        }
+        else
+        {
+            foreach (var issue in HealthIssues)
+            {
+                Line($"- {(issue.IsCritical ? "**Critical**" : "Warning")}: {issue.Message}" +
+                     (string.IsNullOrEmpty(issue.DocsUrl) ? string.Empty : $" ([Learn more]({issue.DocsUrl}))"));
+            }
+        }
+        return sb.ToString();
+    }
+
     /// <summary>#976: the "Run safe fixes" batch runner - rebuilt every RefreshHealthIssues pass
     /// (see the call near the end of that method) so it always reflects the currently-fired
     /// findings.</summary>
@@ -315,6 +356,18 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
             }
         });
         FixFindingCommand = new RelayCommand(p => OpenFixDialog(p), p => p is HealthIssue { HasFixAction: true });
+        OpenDocsUrlCommand = new RelayCommand(p => { if (p is string url && url.Length > 0) ExternalLinkService.TryOpen(url); });
+        OpenExplainerCommand = new RelayCommand(p =>
+        {
+            if (p is not string id) return;
+            var path = ExplainerCatalogService.GetPath(id);
+            if (path is not null) ExternalLinkService.TryOpen(path);
+        });
+        CopyMarkdownCommand = new RelayCommand(_ =>
+        {
+            try { System.Windows.Clipboard.SetText(BuildHealthCheckMarkdown()); }
+            catch { /* best-effort - see CopySummaryStatusText's own remarks on clipboard writes */ }
+        });
 
         SafeFixes = new SafeFixBatchViewModel(_services);
         OpenSafeFixBatchCommand = new RelayCommand(_ => OpenSafeFixBatchDialog(), _ => SafeFixes.Items.Count > 0);
@@ -468,7 +521,11 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         }
         else
         {
-            foreach (var issue in HealthIssues) Line($"- {(issue.IsCritical ? "**Critical**" : "Warning")}: {issue.Message}");
+            foreach (var issue in HealthIssues)
+            {
+                Line($"- {(issue.IsCritical ? "**Critical**" : "Warning")}: {issue.Message}" +
+                     (string.IsNullOrEmpty(issue.DocsUrl) ? string.Empty : $" ([Learn more]({issue.DocsUrl}))"));
+            }
         }
         Line();
 
@@ -573,7 +630,10 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         {
             Line("<ul>");
             foreach (var issue in HealthIssues)
-                Line($"<li class=\"{(issue.IsCritical ? "crit" : "warn")}\">{(issue.IsCritical ? "Critical" : "Warning")}: {Esc(issue.Message)}</li>");
+            {
+                string docsLink = string.IsNullOrEmpty(issue.DocsUrl) ? string.Empty : $" <a href=\"{Esc(issue.DocsUrl)}\">Learn more</a>";
+                Line($"<li class=\"{(issue.IsCritical ? "crit" : "warn")}\">{(issue.IsCritical ? "Critical" : "Warning")}: {Esc(issue.Message)}{docsLink}</li>");
+            }
             Line("</ul>");
         }
 

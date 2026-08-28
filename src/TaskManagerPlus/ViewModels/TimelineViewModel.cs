@@ -159,6 +159,10 @@ public sealed class TimelineViewModel : ObservableObject
     /// SaveFileDialog usage.</summary>
     public RelayCommand ExportRangeCommand { get; }
 
+    /// <summary>suggestions.md #1000: Ctrl+Shift+C on the Timeline panel - copies the same
+    /// Markdown ExportRangeCommand would save to a file, straight to the clipboard instead.</summary>
+    public RelayCommand CopyMarkdownCommand { get; }
+
     public AsyncRelayCommand LoadCommand { get; }
 
     public TimelineViewModel(LoggingViewModel logging)
@@ -190,6 +194,11 @@ public sealed class TimelineViewModel : ObservableObject
         SelectRangePresetCommand = new RelayCommand(param => { if (param is string key) RangePreset = key; });
         SelectDetailWindowCommand = new RelayCommand(param => { if (param is double hours) DetailWindowHours = hours; });
         ExportRangeCommand = new RelayCommand(_ => ExportRange(), _ => FilteredEvents.Count > 0);
+        CopyMarkdownCommand = new RelayCommand(_ =>
+        {
+            try { System.Windows.Clipboard.SetText(BuildMarkdown()); }
+            catch { /* best-effort - a clipboard write can legitimately fail */ }
+        });
 
         RebuildFilteredView(); // establishes an initial WindowStart/EndLocal before the first load finishes
         _ = LoadAsync();

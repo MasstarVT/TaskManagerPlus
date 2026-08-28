@@ -14,6 +14,14 @@ namespace TaskManagerPlus.Services;
 /// raw interop" tradeoff ServiceControlService.ReadFailureActionsText and
 /// NetworkDiagnosticsService's `netsh wlan` parsing already take.
 /// </summary>
+/// <summary>suggestions.md #997: how often a scheduled task created via
+/// ScheduledTaskService.CreateRecurringAsync repeats.</summary>
+public enum ScheduledTaskFrequency
+{
+    Daily,
+    Weekly,
+}
+
 public static class ScheduledTaskService
 {
     /// <summary>Enumerates every registered task. Can take a couple of seconds on a system with
@@ -83,6 +91,32 @@ public static class ScheduledTaskService
     /// being active at that time.</summary>
     public static Task<(bool Success, string? Error)> CreateOnceAsync(string taskName, string command, DateTime whenLocal) =>
         CreateAsync(taskName, command, $"/sc once /st {whenLocal:HH:mm} /sd {whenLocal:MM/dd/yyyy}");
+
+    /// <summary>suggestions.md #997: a recurring daily/weekly trigger - used by
+    /// UnattendedScanService to set up a nightly/weekly unattended `--scan` run. `dayOfWeek` is
+    /// ignored for Daily.</summary>
+    public static Task<(bool Success, string? Error)> CreateRecurringAsync(
+        string taskName, string command, ScheduledTaskFrequency frequency, TimeSpan timeOfDay, DayOfWeek dayOfWeek = DayOfWeek.Sunday)
+    {
+        string timeArg = $"{timeOfDay.Hours:00}:{timeOfDay.Minutes:00}";
+        string scheduleArgs = frequency == ScheduledTaskFrequency.Weekly
+            ? $"/sc weekly /d {DayAbbreviation(dayOfWeek)} /st {timeArg}"
+            : $"/sc daily /st {timeArg}";
+        return CreateAsync(taskName, command, scheduleArgs);
+    }
+
+    /// <summary>schtasks' `/d` flag for a weekly trigger expects a three-letter day abbreviation
+    /// (MON..SUN), not .NET's DayOfWeek names.</summary>
+    private static string DayAbbreviation(DayOfWeek day) => day switch
+    {
+        DayOfWeek.Monday => "MON",
+        DayOfWeek.Tuesday => "TUE",
+        DayOfWeek.Wednesday => "WED",
+        DayOfWeek.Thursday => "THU",
+        DayOfWeek.Friday => "FRI",
+        DayOfWeek.Saturday => "SAT",
+        _ => "SUN",
+    };
 
     private static async Task<(bool Success, string? Error)> CreateAsync(string taskName, string command, string scheduleArgs)
     {

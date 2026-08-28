@@ -69,6 +69,20 @@ public sealed class Rule
 
     public string? ImportSourceFileName { get; set; }
 
+    /// <summary>#991: an optional plain-language alternative to <see cref="Body"/> - same
+    /// `{metric.key}` placeholder syntax, resolved the same way (RulesEngineService.ResolveBody).
+    /// Rendered instead of Body when the user has "Plain English mode" on (UiPreferences.
+    /// PlainEnglishMode) and this rule actually provides one; null (most rules) means Body is
+    /// shown either way. Populated on a handful of the built-in pack's more jargon-heavy rules -
+    /// see RulesEngineService.BuiltInPackJson.</summary>
+    public string? PlainEnglishBody { get; set; }
+
+    /// <summary>#993: id of a bundled offline explainer page for this rule (ExplainerCatalogService),
+    /// or null when this rule has no bundled explainer - most rules don't. Distinct from
+    /// <see cref="DocsUrl"/> (#992, an online learn.microsoft.com-style link): this opens a local
+    /// HTML file with no network involved at all.</summary>
+    public string? ExplainerId { get; set; }
+
     /// <summary>#964: default delivery channel for a finding fired by this rule - a per-rule
     /// override can still take precedence (see AlertingSettings.RuleChannelOverrides), the same
     /// "pack default + user override" layering #923's severity override already uses. Default

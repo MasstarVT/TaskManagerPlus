@@ -340,6 +340,13 @@
                 <TextBlock Text="Takes effect after restarting the app. Not the literal Ctrl+Shift+Esc combination - Windows itself intercepts that one for the real Task Manager before it would ever reach this app."
                            Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,4,0,16" />
 
+                <!-- suggestions.md #1000: Ctrl+K command palette + the discoverable shortcut sheet. -->
+                <Button Content="Keyboard shortcuts..." HorizontalAlignment="Left" Padding="10,4" Margin="0,0,0,4"
+                        Command="{Binding DataContext.OpenKeyboardShortcutsCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                        AutomationProperties.Name="Show keyboard shortcuts" />
+                <TextBlock Text="Ctrl+K also opens a command palette to search and jump to tabs, findings, rules, glossary terms, and more from anywhere."
+                           Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,4,0,16" />
+
                 <!-- #87: portable mode is a launch-time decision (the "portable" launch flag or
                      a portable.marker file next to the exe), not a live toggle - shown here as a
                      read-only status line so it's at least visible where settings are currently
@@ -348,6 +355,74 @@
                     <Run Text="Settings storage: " />
                     <Run Text="{Binding DataContext.AppPathsModeText, RelativeSource={RelativeSource AncestorType=Window}, Mode=OneTime}" FontWeight="SemiBold" />
                 </TextBlock>
+
+                <!-- suggestions.md #998: technician mode - portable-mode-only per-machine data
+                     partitioning. Hidden entirely outside portable mode, since AppPaths.
+                     SwitchMachine is a no-op there anyway. -->
+                <StackPanel Visibility="{Binding DataContext.IsPortableMode, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVisibilityConverter}}">
+                    <TextBlock Text="TECHNICIAN MODE" FontSize="10.5" FontWeight="Bold" Foreground="{DynamicResource TextTertiaryBrush}" Margin="0,0,0,14" />
+                    <TextBlock TextWrapping="Wrap" Style="{StaticResource SubStat}" Margin="0,0,0,8">
+                        <Run Text="Portable-mode-only: keeps baselines, findings history, the change journal, and other saved data separated per physical machine when this build is carried between several clients on a USB drive. Fingerprint scheme: sanitized computer name (currently " />
+                        <Run Text="{Binding DataContext.CurrentMachineFingerprint, RelativeSource={RelativeSource AncestorType=Window}, Mode=OneTime}" FontWeight="SemiBold" />
+                        <Run Text=")." />
+                    </TextBlock>
+                    <TextBlock Text="Active data folder" Style="{StaticResource ColorRowLabel}" Margin="0,0,0,4" />
+                    <ComboBox ItemsSource="{Binding DataContext.MachineOptions, RelativeSource={RelativeSource AncestorType=Window}}"
+                              SelectedItem="{Binding DataContext.SelectedMachineOption, RelativeSource={RelativeSource AncestorType=Window}}"
+                              Margin="0,0,0,8" AutomationProperties.Name="Active per-machine data folder" />
+                    <Button Content="Add this machine" HorizontalAlignment="Left" Padding="10,4" Margin="0,0,0,6"
+                            Command="{Binding DataContext.AddCurrentMachineCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                            AutomationProperties.Name="Register this physical machine's own data folder" />
+                    <TextBlock Text="Switching or adding a machine here takes effect after restarting the app - most settings/data services already cache their own file path the moment they're constructed."
+                               Style="{StaticResource SubStat}" TextWrapping="Wrap" Foreground="{DynamicResource WarningBrush}" Margin="0,0,0,22" />
+                </StackPanel>
+
+                <TextBlock Text="PLAIN ENGLISH &amp; OFFLINE" FontSize="10.5" FontWeight="Bold" Foreground="{DynamicResource TextTertiaryBrush}"
+                           Margin="0,0,0,14" />
+                <!-- suggestions.md #991: swaps a Health Check finding's technical wording for a
+                     plain-language alternative wherever the firing rule provides one. -->
+                <CheckBox Content="Plain English mode for Health Check findings"
+                          IsChecked="{Binding DataContext.PlainEnglishMode, RelativeSource={RelativeSource AncestorType=Window}}" Margin="0,0,0,16"
+                          AutomationProperties.Name="Plain English mode toggle" />
+                <!-- suggestions.md #999: see NetworkActivityCatalogService's remarks for exactly
+                     which calls this disables - also toggleable from the Troubleshoot tab's
+                     Network Activity panel, which lists them. -->
+                <CheckBox Content="Offline mode (disable the public IP lookup, update check, and traceroute)"
+                          IsChecked="{Binding DataContext.OfflineMode, RelativeSource={RelativeSource AncestorType=Window}}" Margin="0,0,0,6"
+                          AutomationProperties.Name="Offline mode toggle" />
+                <TextBlock Text="See the Troubleshoot tab's &quot;Network Activity&quot; panel for the full, itemized list of what this does and doesn't affect."
+                           Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,22" />
+
+                <TextBlock Text="UNATTENDED DIAGNOSTIC SCAN" FontSize="10.5" FontWeight="Bold" Foreground="{DynamicResource TextTertiaryBrush}"
+                           Margin="0,0,0,14" />
+                <!-- suggestions.md #997: schedules a quiet, headless "scan" launch of this exe via
+                     schtasks.exe, writing each run's findings into its own dated subfolder
+                     under AppPaths.SettingsDirectory\UnattendedScans\. A banner appears at next
+                     launch summarizing scans since the app was last opened. -->
+                <TextBlock Text="Runs a headless Health Check scan on a schedule, with no window shown - useful for catching problems between sessions on a machine that's mostly left on."
+                           Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,10" />
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                    <RadioButton GroupName="UnattendedScanFrequency" Content="Daily" Margin="0,0,14,0"
+                                 IsChecked="{Binding DataContext.UnattendedScanWeekly, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource InverseBooleanConverter}}" />
+                    <RadioButton GroupName="UnattendedScanFrequency" Content="Weekly (Sunday)"
+                                 IsChecked="{Binding DataContext.UnattendedScanWeekly, RelativeSource={RelativeSource AncestorType=Window}}" />
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                    <TextBlock Text="At" VerticalAlignment="Center" Margin="0,0,6,0" Style="{StaticResource SubStat}" />
+                    <TextBox Width="40" Text="{Binding DataContext.UnattendedScanHour, RelativeSource={RelativeSource AncestorType=Window}, UpdateSourceTrigger=LostFocus}" />
+                    <TextBlock Text=":00 (24h, local time)" VerticalAlignment="Center" Margin="6,0,0,0" Style="{StaticResource SubStat}" />
+                </StackPanel>
+                <CheckBox Content="Scrub personal info from each unattended scan's output"
+                          IsChecked="{Binding DataContext.UnattendedScanScrub, RelativeSource={RelativeSource AncestorType=Window}}" Margin="0,0,0,10" />
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                    <Button Content="Set up nightly diagnostic scan" Padding="10,4" Margin="0,0,8,0"
+                            Command="{Binding DataContext.SetupUnattendedScanCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                            AutomationProperties.Name="Set up scheduled unattended diagnostic scan" />
+                    <Button Content="Remove" Padding="10,4"
+                            Command="{Binding DataContext.RemoveUnattendedScanCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+                </StackPanel>
+                <TextBlock Text="{Binding DataContext.UnattendedScanStatusText, RelativeSource={RelativeSource AncestorType=Window}}"
+                           Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,22" />
 
                 <TextBlock Text="POLLING INTERVALS" FontSize="10.5" FontWeight="Bold" Foreground="{DynamicResource TextTertiaryBrush}"
                            Margin="0,0,0,14" />

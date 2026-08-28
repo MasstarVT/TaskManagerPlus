@@ -31,5 +31,17 @@ public sealed class UiPreferences
     /// some users legitimately don't want any background app claiming a global hotkey at all.</summary>
     public bool GlobalHotkeyEnabled { get; set; } = true;
 
+    /// <summary>#991: swaps a Health Check finding's technical Title/Message for its
+    /// Rule.PlainEnglishBody-derived alternative wherever one exists (SummaryView's finding rows,
+    /// the Markdown/HTML reports, the evidence bundle index.html) - off by default so nothing
+    /// changes for anyone who hasn't opted in.</summary>
+    public bool PlainEnglishMode { get; set; }
+
+    /// <summary>#999: hard-disables every outbound network call this app can make on its own
+    /// (PublicIpLookupService, UpdateCheckService, TracerouteService/ping targets) - see
+    /// NetworkActivityCatalogService's remarks for the exact boundary (a user-initiated "Learn
+    /// more" browser navigation is deliberately NOT gated by this). Off by default.</summary>
+    public bool OfflineMode { get; set; }
+
     public static UiPreferences Defaults => new();
 }
