@@ -229,6 +229,54 @@ public static class PowerPlanService
         return result;
     }
 
+    // #683: the "PCI Express" subgroup and its "Link State Power Management" (ASPM) setting - like
+    // SubProcessorGuid/UsbSubgroupGuid above, these are well-known, stable GUIDs (not an
+    // undocumented text format), confirmed live via `powercfg /q` on a real dev machine ("PCI
+    // Express" / "Link State Power Management", GUID Alias SUB_PCIEXPRESS/ASPM). Possible setting
+    // indices are 0 = Off, 1 = Moderate power savings, 2 = Maximum power savings.
+    public const string PciExpressSubgroupGuid = "501a4d13-42af-4429-9fd1-a8218c268e20";
+    public const string AspmSettingGuid = "ee12f906-d277-404b-b6da-e5fa1a576df5";
+
+    /// <summary>#683: reads the active scheme's ASPM index (AC and DC) - aggressive ASPM (index 1
+    /// or 2) is a well-known cause of NVMe dropouts and eGPU/Thunderbolt disconnects, since the
+    /// link partner has to renegotiate out of a low-power link state before it can be used again.
+    /// Null on either side means the setting couldn't be read (denied, or a system whose chipset
+    /// doesn't expose PCIe ASPM to Windows at all) - "Unknown", not "Off".</summary>
+    public static async Task<(int? AcIndex, int? DcIndex)> ReadAspmSettingAsync()
+    {
+        string output;
+        try { output = (await RunCapturedAsync("powercfg.exe", $"/q SCHEME_CURRENT {PciExpressSubgroupGuid} {AspmSettingGuid}", 15000)).Output; }
+        catch { return (null, null); }
+
+        var acMatch = Regex.Match(output, @"Current AC Power Setting Index:\s*0x([0-9A-Fa-f]+)", RegexOptions.IgnoreCase);
+        var dcMatch = Regex.Match(output, @"Current DC Power Setting Index:\s*0x([0-9A-Fa-f]+)", RegexOptions.IgnoreCase);
+        int? ac = acMatch.Success ? int.Parse(acMatch.Groups[1].Value, NumberStyles.HexNumber, CultureInfo.InvariantCulture) : null;
+        int? dc = dcMatch.Success ? int.Parse(dcMatch.Groups[1].Value, NumberStyles.HexNumber, CultureInfo.InvariantCulture) : null;
+        return (ac, dc);
+    }
+
+    /// <summary>#683: the GPU tab's one-click "set to Off" action - sets both AC and DC ASPM index
+    /// to 0 (Off) on the active scheme and re-activates it, the same two-step SetAcValueIndexAsync
+    /// already uses for a single-side setting change.</summary>
+    public static async Task<(bool Success, string? Error)> SetAspmOffAsync()
+    {
+        try
+        {
+            var (acOutput, acExit) = await RunCapturedAsync("powercfg.exe", $"/setacvalueindex SCHEME_CURRENT {PciExpressSubgroupGuid} {AspmSettingGuid} 0", 15000);
+            if (acExit != 0) return (false, acOutput.Trim());
+
+            var (dcOutput, dcExit) = await RunCapturedAsync("powercfg.exe", $"/setdcvalueindex SCHEME_CURRENT {PciExpressSubgroupGuid} {AspmSettingGuid} 0", 15000);
+            if (dcExit != 0) return (false, dcOutput.Trim());
+
+            var (activateOutput, activateExit) = await RunCapturedAsync("powercfg.exe", "/setactive SCHEME_CURRENT", 15000);
+            return activateExit == 0 ? (true, null) : (false, activateOutput.Trim());
+        }
+        catch (Exception ex)
+        {
+            return (false, ex.Message);
+        }
+    }
+
     /// <summary>#662: the small set of commonly-hidden-from-the-Control-Panel-UI settings this
     /// round surfaces, each with a fixed, hand-written plain-English explanation - powercfg's own
     /// setting descriptions are themselves indirect string resource references

@@ -1273,37 +1273,38 @@ public sealed class SystemSpecsService
         return result.Distinct().OrderBy(s => s, StringComparer.OrdinalIgnoreCase).ToList();
     }
 
-    /// <summary>#60: active display inventory. Resolution/refresh rate come from
-    /// Win32_VideoController's current-mode fields (CurrentHorizontalResolution/
-    /// CurrentVerticalResolution/CurrentRefreshRate) - a simpler, WMI-only source than parsing EDID
-    /// or calling EnumDisplaySettings, at the cost of describing "the adapter's current output mode"
-    /// rather than a true per-monitor EDID record. Connection type is a second, independent
-    /// WMI source - root\wmi's WmiMonitorConnectionParams, which reports the documented
-    /// D3DKMDT_VIDEO_OUTPUT_TECHNOLOGY enum per physical monitor. There is no public API mapping one
-    /// source's rows to the other's, so - the same "only pair when the counts match, otherwise don't
-    /// guess" rule GpuMonitorService uses for LUID-to-adapter pairing - resolution is only attached
-    /// to a connection-type row when both lists report the same count; otherwise whichever source is
-    /// available is still shown, just without the other's detail. HDR support has no reliable
-    /// enumeration source short of DXGI/IDXGIOutput6 COM interop, so it's deliberately not
-    /// included rather than guessed.</summary>
+    /// <summary>#60/#685-689: active display inventory. Resolution/refresh rate start from
+    /// Win32_VideoController's current-mode fields (a simpler, WMI-only source than EDID or
+    /// EnumDisplaySettings, at the cost of describing "the adapter's current output mode" rather
+    /// than a true per-monitor record) and are then overridden with DisplayConfigService's more
+    /// precise per-target QueryDisplayConfig reading when a target could be paired (see below).
+    /// Connection type is a second, independent WMI source - root\wmi's WmiMonitorConnectionParams,
+    /// which also carries the InstanceName every per-monitor pairing below keys off. There is no
+    /// public API mapping WMI's monitor rows to Win32_VideoController's adapter-level resolution, so
+    /// - the same "only pair when the counts match, otherwise don't guess" rule GpuMonitorService
+    /// uses for LUID-to-adapter pairing - that one pairing stays ordinal/count-based; the newer
+    /// #685-689 sources (EDID, QueryDisplayConfig) instead pair by the shared "DISPLAY\{pnpId}\
+    /// {uniqueId}" identifier both expose, which is far more reliable on a multi-monitor system.</summary>
     private static List<MonitorInfo> ReadMonitors()
     {
         var connectionTypes = new List<string>();
+        var instanceNames = new List<string>();
         try
         {
-            using var searcher = new ManagementObjectSearcher(@"root\wmi", "SELECT VideoOutputTechnology FROM WmiMonitorConnectionParams");
+            using var searcher = new ManagementObjectSearcher(@"root\wmi", "SELECT InstanceName, VideoOutputTechnology FROM WmiMonitorConnectionParams");
             foreach (ManagementObject mo in searcher.Get())
             {
                 int tech = 0;
                 try { tech = Convert.ToInt32(mo["VideoOutputTechnology"] ?? 0); } catch { /* leave 0 -> "VGA" bucket avoided below via Other fallback */ }
                 connectionTypes.Add(VideoOutputTechnologyName(tech));
+                instanceNames.Add(mo["InstanceName"] as string ?? string.Empty);
             }
         }
         catch
         {
             // root\wmi monitor classes unavailable (some VM/RDP configurations, or a locked-down
             // policy) - fall through to whatever Win32_VideoController resolution data can still be
-            // shown below, just without a connection type.
+            // shown below, just without a connection type or #685-689 per-monitor pairing.
         }
 
         var resolutions = new List<(int W, int H, int Hz)>();
@@ -1324,6 +1325,12 @@ public sealed class SystemSpecsService
             // fall through - connectionTypes alone can still produce rows below
         }
 
+        // #685/#686/#688/#689: two more sources, each keyed by monitor identity rather than
+        // ordinal position - see DisplayEdidService/DisplayConfigService for exactly what each
+        // degrades to on failure (an empty dictionary/list, never a thrown exception here).
+        var edidByInstance = DisplayEdidService.ReadAllByInstance();
+        var displayConfigTargets = DisplayConfigService.Query();
+
         var result = new List<MonitorInfo>();
         bool canPairResolution = connectionTypes.Count > 0 && connectionTypes.Count == resolutions.Count;
 
@@ -1332,13 +1339,44 @@ public sealed class SystemSpecsService
             for (int i = 0; i < connectionTypes.Count; i++)
             {
                 var res = canPairResolution ? resolutions[i] : ((int W, int H, int Hz)?)null;
+                string instanceName = instanceNames[i];
+
+                edidByInstance.TryGetValue(instanceName, out var edid);
+                var configTarget = instanceName.Length > 0
+                    ? displayConfigTargets.FirstOrDefault(t => t.PairKey.Length > 0 && instanceName.StartsWith(t.PairKey, StringComparison.OrdinalIgnoreCase))
+                    : null;
+
+                int width = configTarget?.SourceWidthPx > 0 ? configTarget.SourceWidthPx : res?.W ?? 0;
+                int height = configTarget?.SourceHeightPx > 0 ? configTarget.SourceHeightPx : res?.H ?? 0;
+                int refreshHz = configTarget?.RefreshHz > 0 ? configTarget.RefreshHz : res?.Hz ?? 0;
+
+                // #686: only trust the EDID-decoded refresh as a "maximum" when it's for the same
+                // resolution Windows is actually driving right now - otherwise it's comparing two
+                // different modes, not "this panel supports more than it's running at".
+                int? edidMaxRefresh = edid is { NativeRefreshHz: > 0 } && edid.NativeWidthPx == width && edid.NativeHeightPx == height
+                    ? (int)Math.Round(edid.NativeRefreshHz)
+                    : null;
+
+                string name = !string.IsNullOrWhiteSpace(configTarget?.FriendlyName) ? configTarget!.FriendlyName
+                    : !string.IsNullOrWhiteSpace(edid?.ModelName) ? edid!.ModelName
+                    : $"Display {i + 1}";
+
                 result.Add(new MonitorInfo
                 {
-                    Name = $"Display {i + 1}",
-                    WidthPx = res?.W ?? 0,
-                    HeightPx = res?.H ?? 0,
-                    RefreshHz = res?.Hz ?? 0,
+                    Name = name,
+                    WidthPx = width,
+                    HeightPx = height,
+                    RefreshHz = refreshHz,
                     ConnectionType = connectionTypes[i],
+                    Edid = edid,
+                    EdidMaxRefreshHz = edidMaxRefresh,
+                    BandwidthWarningText = EstimateBandwidthWarning(width, height, refreshHz, connectionTypes[i], configTarget?.HdrEnabled == true),
+                    HdrSupported = configTarget?.HdrSupported,
+                    HdrEnabled = configTarget?.HdrEnabled,
+                    WideColorEnabled = configTarget?.WideColorEnabled,
+                    ScalingModeText = configTarget?.ScalingModeText ?? "Unknown",
+                    DpiScalePercent = configTarget?.DpiScalePercent,
+                    RotationText = configTarget?.RotationText ?? "Unknown",
                 });
             }
         }
@@ -1357,6 +1395,41 @@ public sealed class SystemSpecsService
             }
         }
         return result;
+    }
+
+    // #687: theoretical usable-bandwidth ceiling this app assumes for each connection technology,
+    // in Gbps - Windows exposes no HDMI/DP *version* (2.0 vs. 2.1, 1.2 vs. 1.4), so this
+    // deliberately picks one representative, clearly-caveated figure per technology family rather
+    // than guessing a version. HDMI uses the well-known HDMI 2.0 18 Gbps raw ceiling (the most
+    // common "why is my cable marginal" reference point); DisplayPort uses DP 1.4 HBR3's ~25.92 Gbps
+    // effective (8b/10b) throughput; single-link DVI uses its ~9.9 Gbps raw ceiling.
+    private static readonly Dictionary<string, (double Gbps, string Label)> BandwidthCeilings = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["HDMI"] = (18.0, "HDMI 2.0"),
+        ["DisplayPort"] = (25.92, "DisplayPort 1.4 (HBR3)"),
+        ["DisplayPort (embedded)"] = (25.92, "DisplayPort 1.4 (HBR3)"),
+        ["DVI"] = (9.9, "single-link DVI"),
+    };
+
+    /// <summary>#687: required_Gbps = width x height x refresh x bitsPerChannel x 3 (RGB/YCbCr
+    /// subpixels), compared against BandwidthCeilings' assumed ceiling for the reported connection
+    /// technology. Bit depth is assumed 10 bpc when this target reports HDR/advanced color enabled,
+    /// 8 bpc otherwise (Windows doesn't expose the actual negotiated per-mode bit depth to this
+    /// app) - a rough, explicitly-caveated estimate, not a verified per-cable capability read. Null
+    /// when the mode comfortably fits (or resolution/refresh/connection type aren't known/
+    /// recognized) - only flagged when the required figure clearly exceeds the ceiling (5%+
+    /// margin), to avoid false positives right at the boundary.</summary>
+    private static string? EstimateBandwidthWarning(int width, int height, int refreshHz, string connectionType, bool assumeHdrBitDepth)
+    {
+        if (width <= 0 || height <= 0 || refreshHz <= 0) return null;
+        if (!BandwidthCeilings.TryGetValue(connectionType, out var ceiling)) return null;
+
+        int bitsPerChannel = assumeHdrBitDepth ? 10 : 8;
+        double requiredGbps = (double)width * height * refreshHz * bitsPerChannel * 3 / 1_000_000_000.0;
+
+        if (requiredGbps <= ceiling.Gbps * 1.05) return null;
+
+        return $"Needs ~{requiredGbps:0.#} Gbps at {bitsPerChannel} bpc - {ceiling.Label} caps out around {ceiling.Gbps:0.#} Gbps. This mode may only fit with chroma subsampling or DSC, which can show up as fuzzy text or intermittent dropouts on a marginal cable (rough estimate - Windows doesn't report the exact negotiated bit depth or cable/port version).";
     }
 
     // D3DKMDT_VIDEO_OUTPUT_TECHNOLOGY - a documented Microsoft enum (d3dkmdt.h), not a guess.

@@ -128,6 +128,13 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
     public ObservableCollection<SensorReading> Voltages { get; } = new();
     public ObservableCollection<SensorReading> Wattages { get; } = new();
 
+    /// <summary>#681: raw clock-speed sensor readings (Core/Memory/Shader/... per hardware
+    /// component) - previously sampled and discarded, exposed now so GpuViewModel can pull the GPU
+    /// core clock for its "low clocks under load" flag without a second SensorMonitorService poll.
+    /// Same zero-filtering as Temperatures/Voltages/Wattages below (a real clock is never exactly
+    /// 0 MHz on a running GPU).</summary>
+    public ObservableCollection<SensorReading> Clocks { get; } = new();
+
     /// <summary>Battery sensors (charge level, degradation/wear level, voltage, charge/discharge
     /// rate) - empty on any desktop, since LibreHardwareMonitorLib simply reports no Battery
     /// hardware when there isn't one. "Degradation Level" is the closest thing to a real battery
@@ -1745,6 +1752,8 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         Replace(Voltages, voltageReadingsList);
         var wattageReadings = readings.Where(r => r.Type == SensorType.Power && HasNonZeroReading(r)).ToList();
         Replace(Wattages, wattageReadings);
+        // #681: raw clock readings - see Clocks' remarks.
+        Replace(Clocks, readings.Where(r => r.Type == SensorType.Clock && HasNonZeroReading(r)));
         // Battery sensors mix several SensorTypes (Level for charge %/degradation %, Voltage,
         // Power for charge/discharge rate) - bucketed by HardwareType instead of SensorType, and
         // not zero-filtered like the others: 0% charge or 0W (fully idle, on AC) are both real,

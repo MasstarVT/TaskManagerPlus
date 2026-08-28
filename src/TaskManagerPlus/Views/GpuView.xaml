@@ -30,6 +30,59 @@
                            Text="No GPU adapter or GPU perf-counter data could be found on this system." />
             </Border>
 
+            <!-- #678: plain-English bottleneck verdict from the engine mix, plus #681's low-
+                 clocks-under-load state - both quick flags from data this tab already samples
+                 every tick, not verified diagnoses. Hidden entirely when there's nothing to say
+                 (idle GPU, or no primary adapter identified). -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Setter Property="Visibility" Value="Visible" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding BottleneckVerdictText}" Value="">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="{Binding BottleneckVerdictText}" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="{Binding BottleneckEvidenceText}" Style="{StaticResource SubStat}" Margin="0,4,0,0" TextWrapping="Wrap" />
+
+                    <!-- #681: low-clocks-under-load state, folded into this same card since both
+                         read the primary adapter's live utilization each tick. -->
+                    <Border BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,1,0,0" Margin="0,10,0,0" Padding="0,10,0,0">
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding GpuClockStateText}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                        <StackPanel>
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="GPU core clock: " FontSize="12" FontWeight="SemiBold" />
+                                <TextBlock Text="{Binding GpuCoreClockMHz, StringFormat={}{0:0} MHz}" FontSize="12" FontWeight="SemiBold" />
+                            </StackPanel>
+                            <TextBlock Text="{Binding GpuClockStateText}" TextWrapping="Wrap" Margin="0,2,0,0">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding GpuClockStateIsWarning}" Value="True">
+                                                <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </Border>
+
             <!-- #608: GPU thermal headroom - remaining °C before a reported throttle point, owned
                  by EnergyThermalsViewModel (see its remarks) and exposed here via
                  GpuViewModel.EnergyThermals. This round doesn't add a separate GPU throttle-episode
@@ -213,8 +266,24 @@
                 </TextBlock.Style>
             </TextBlock>
 
-            <!-- #56: "which app is using it" - re-presents the Processes tab's already-polling
-                 GPU% column, live-sorted here instead of sampled again. -->
+            <!-- #679: per-engine history chart - the exact glow+core LineOf pattern every other
+                 history chart in this app uses, one pair per tracked engine type sharing one
+                 chart/legend. An encode/decode spike (which explains a streaming stutter a single
+                 aggregate "GPU busy" number hides completely) is visible right alongside 3D load. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <TextBlock Text="Per-engine history" Style="{StaticResource CardTitle}" />
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,-2,0,10" TextWrapping="Wrap"
+                               Text="3D / Copy / Video Decode / Video Encode / Compute utilization over time, for the primary adapter." />
+                    <lvc:CartesianChart Series="{Binding EngineHistorySeries}" XAxes="{Binding EngineHistoryXAxes}" YAxes="{Binding EngineHistoryYAxes}"
+                                         Height="180" TooltipPosition="Top" LegendPosition="Bottom" Background="Transparent" />
+                </StackPanel>
+            </Border>
+
+            <!-- #56/#680: "which app is using it" - re-presents the Processes tab's already-
+                 polling GPU% column, live-sorted here instead of sampled again, split out by which
+                 engine type each process is actually using (#680) - a browser pinning video-decode
+                 is a very different problem from one pinning 3D, even at the same total GPU%. -->
             <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
                 <StackPanel>
                     <TextBlock Text="Top GPU processes" Style="{StaticResource CardTitle}" />
@@ -225,6 +294,7 @@
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <StackPanel Grid.Column="0" Margin="0,0,8,0">
                                         <TextBlock Text="{Binding Name}" FontSize="12.5" TextTrimming="CharacterEllipsis" />
@@ -232,7 +302,20 @@
                                             <Run Text="PID " /><Run Text="{Binding Pid, Mode=OneWay}" />
                                         </TextBlock>
                                     </StackPanel>
-                                    <TextBlock Grid.Column="1" Text="{Binding GpuPercent, StringFormat={}{0:0.0}%}"
+                                    <Border Grid.Column="1" Background="{DynamicResource AccentMutedBrush}" CornerRadius="10" Padding="7,2" Margin="0,0,8,0" VerticalAlignment="Center">
+                                        <Border.Style>
+                                            <Style TargetType="Border">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding TopGpuEngine}" Value="">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Border.Style>
+                                        <TextBlock Text="{Binding TopGpuEngine}" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource AccentBrush}" />
+                                    </Border>
+                                    <TextBlock Grid.Column="2" Text="{Binding GpuPercent, StringFormat={}{0:0.0}%}"
                                                FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center" />
                                 </Grid>
                             </DataTemplate>
@@ -652,6 +735,151 @@
                             </Style>
                         </TextBlock.Style>
                     </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- #682/#683: PCIe link speed/width per GPU/NVMe device, with per-boot drift
+                 detection, plus the active power plan's ASPM link-state setting - all from one
+                 on-demand PowerShell shell-out (PciLinkService). An x16 card running x4, or a
+                 Gen4 drive silently dropping to Gen1, is a dirty slot, a failing riser, or a dying
+                 card/drive; a link that changed since a previous boot is worth a second look even
+                 when it isn't currently below its own maximum. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="PCIe link &amp; power management" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Check PCIe links" Command="{Binding LoadPciLinkInfoCommand}" />
+                    </Grid>
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,-2,0,10" TextWrapping="Wrap"
+                               Text="Negotiated vs. maximum PCIe generation/width for GPU and NVMe devices (Get-PnpDeviceProperty), and whether the active power plan's ASPM link-state setting is on - aggressive ASPM is a known cause of NVMe dropouts and eGPU/Thunderbolt disconnects." />
+                    <TextBlock Text="{Binding PciLinkStatusText}" Margin="0,0,0,8" TextWrapping="Wrap">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding PciLinkStatusText}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
+                    <!-- #683: ASPM readout + one-click "set to Off". -->
+                    <Grid Margin="0,0,0,12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="Active plan's PCIe Link State Power Management (ASPM)" FontSize="12" VerticalAlignment="Center" />
+                            <TextBlock Text="{Binding AspmStateText}" FontWeight="SemiBold" Margin="0,2,0,0">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding AspmIsAggressive}" Value="True">
+                                                <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </StackPanel>
+                        <Button Grid.Column="1" Content="Set to Off" Command="{Binding SetAspmOffCommand}" VerticalAlignment="Center">
+                            <Button.Style>
+                                <Style TargetType="Button">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding AspmIsAggressive}" Value="True">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                    </Grid>
+
+                    <!-- #682: one row per GPU/NVMe PCIe device. -->
+                    <ItemsControl ItemsSource="{Binding PciLinks}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                            <Border Background="{DynamicResource AccentMutedBrush}" CornerRadius="3" Padding="5,1" Margin="8,0,0,0" VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding Kind}" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource AccentBrush}" />
+                                            </Border>
+                                        </StackPanel>
+                                        <TextBlock Style="{StaticResource SubStat}" FontSize="10.5" TextWrapping="Wrap" Margin="0,2,0,0">
+                                            <Run Text="Max " /><Run Text="{Binding MaxLinkText, Mode=OneWay}" />
+                                            <Run Text=" · Previous boot " /><Run Text="{Binding PreviousBootLinkText, TargetNullValue='(none recorded)', Mode=OneWay}" />
+                                        </TextBlock>
+                                        <TextBlock Foreground="{DynamicResource DangerBrush}" FontSize="10.5" FontWeight="SemiBold" Margin="0,2,0,0" Text="Link changed since a previous boot">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding ChangedSincePreviousBoot}" Value="True">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </StackPanel>
+                                    <TextBlock Grid.Column="1" Text="{Binding CurrentLinkText, Mode=OneWay}" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsBelowMax}" Value="True">
+                                                        <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <!-- #684: dedicated eGPU/Thunderbolt card - hidden entirely when no
+                         Thunderbolt-attached GPU was found. -->
+                    <Border Background="{DynamicResource BgElevatedBrush}" BorderBrush="{DynamicResource BorderBrush2}"
+                            BorderThickness="1" CornerRadius="8" Padding="12,10" Margin="0,4,0,0">
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding EgpuLink}" Value="{x:Null}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                        <StackPanel>
+                            <TextBlock Text="eGPU enclosure" FontSize="12.5" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimaryBrush}" Margin="0,0,0,4" />
+                            <TextBlock TextWrapping="Wrap" Style="{StaticResource SubStat}">
+                                <Run Text="{Binding EgpuLink.Name, Mode=OneWay}" FontWeight="SemiBold" />
+                                <Run Text=" via " /><Run Text="{Binding EgpuLink.EnclosureName, Mode=OneWay}" />
+                                <Run Text=" — negotiated " /><Run Text="{Binding EgpuLink.CurrentLinkText, Mode=OneWay}" />
+                                <Run Text=" of " /><Run Text="{Binding EgpuLink.MaxLinkText, Mode=OneWay}" /><Run Text=" max." />
+                            </TextBlock>
+                            <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource WarningBrush}" FontSize="11.5" Margin="0,4,0,0"
+                                       Text="A renegotiated/reduced link, an unplugged cable, or an enclosure power fault on a Thunderbolt GPU commonly presents to the user as 'the game just crashed' - worth checking here first." />
+                        </StackPanel>
+                    </Border>
                 </StackPanel>
             </Border>
 

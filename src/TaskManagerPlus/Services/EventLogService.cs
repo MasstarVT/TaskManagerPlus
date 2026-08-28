@@ -303,6 +303,64 @@ public sealed class EventLogService
     /// <summary>#626: reads Kernel-Power 105 (AC/DC power-source change) events - the raw list;
     /// EnergyThermalsViewModel derives the "N times in the last hour" flapping count from these
     /// timestamps.</summary>
+    // #690: Microsoft-Windows-Kernel-PnP is the provider Windows logs every device arrival/removal/
+    // configuration event under (not just monitors) - there's no separate, monitor-only event id,
+    // so this is scoped down after the fact by matching the event's own formatted message text for
+    // "monitor"/"display" (best-effort, same tier as GpuRegistryService's GpuVendorHints text
+    // match), rather than a documented monitor-specific event id this app could filter on directly.
+    private const string KernelPnpProvider = "Microsoft-Windows-Kernel-PnP";
+
+    /// <summary>#690: Kernel-PnP device arrival/removal/configuration events whose message mentions
+    /// a monitor/display, last 30 days - the event-log half of the display connect/disconnect
+    /// history (the other half, WM_DISPLAYCHANGE, is captured live in-app by MainWindow and doesn't
+    /// need an event-log read at all). Returns an empty list (never throws) when the provider/log
+    /// is unavailable or nothing matches.</summary>
+    public List<DisplayChangeEvent> ReadMonitorPnpEvents()
+    {
+        var result = new List<DisplayChangeEvent>();
+        try
+        {
+            long maxAgeMs = LookbackDays * 24L * 60 * 60 * 1000;
+            var query = new EventLogQuery("System", PathType.LogName,
+                $"*[System[Provider[@Name='{KernelPnpProvider}'] and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]")
+            {
+                ReverseDirection = true,
+            };
+
+            using var reader = new EventLogReader(query);
+            int count = 0;
+            const int maxScanned = 400; // this provider is chatty (every PnP device, not just monitors) - cap the scan, not just the match count
+            while (count < maxScanned && reader.ReadEvent() is { } record)
+            {
+                using (record)
+                {
+                    count++;
+                    string message;
+                    try { message = record.FormatDescription() ?? string.Empty; }
+                    catch { message = string.Empty; }
+
+                    if (message.Length == 0) continue;
+                    if (!message.Contains("monitor", StringComparison.OrdinalIgnoreCase) &&
+                        !message.Contains("display", StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    result.Add(new DisplayChangeEvent
+                    {
+                        TimeCreated = record.TimeCreated ?? DateTime.MinValue,
+                        Source = "Kernel-PnP",
+                        Description = Truncate(message, 200),
+                    });
+                }
+            }
+        }
+        catch
+        {
+            // Provider/log unavailable, or a policy denies event-log read even elevated - degrade
+            // to "no PnP-sourced display history" (WM_DISPLAYCHANGE-sourced entries still show).
+        }
+        return result;
+    }
+
     public List<PowerSourceChangeEvent> ReadPowerSourceChangeEvents()
     {
         var result = new List<PowerSourceChangeEvent>();

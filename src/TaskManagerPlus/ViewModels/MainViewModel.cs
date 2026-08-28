@@ -215,7 +215,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Memory = new MemoryViewModel(Performance, Processes);
         Storage = new StorageViewModel(Performance, EnergyThermals);
         Network = new NetworkViewModel(Performance);
-        Gpu = new GpuViewModel(Processes, EnergyThermals);
+        // #678: takes Performance too now, for the bottleneck verdict's CPU-core-saturation evidence.
+        Gpu = new GpuViewModel(Processes, EnergyThermals, Performance);
         Logging = new LoggingViewModel(Performance, EnergyThermals);
         Summary = new SummaryViewModel(Performance, Processes, Services, EnergyThermals, SystemSpecs, Network, Stability);
         Search = new GlobalSearchViewModel(Processes, Services, Startup, SystemSpecs);

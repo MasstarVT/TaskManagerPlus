@@ -48,6 +48,7 @@ public sealed class VolumeRow
 public sealed class SystemSpecsViewModel : ObservableObject
 {
     private readonly SystemSpecsService _service = new();
+    private readonly EventLogService _eventLog = new();
 
     public ObservableCollection<SpecRow> MemoryModules { get; } = new();
     public ObservableCollection<SpecRow> Gpus { get; } = new();
@@ -146,6 +147,17 @@ public sealed class SystemSpecsViewModel : ObservableObject
     // Round 10, #60: active display inventory.
     public ObservableCollection<SpecRow> Monitors { get; } = new();
 
+    // #685-689: rich per-monitor detail - EDID identity, refresh-rate mismatch, cable bandwidth
+    // sufficiency, HDR/advanced color, scaling/DPI/rotation. Binds directly to the Models.MonitorInfo
+    // objects (unlike Monitors/SpecRow above, the simpler #60 summary list) since MonitorInfo's own
+    // property names are already clean enough for the view to bind to without a wrapper row type.
+    public ObservableCollection<MonitorInfo> MonitorDetails { get; } = new();
+
+    // #690: display connect/disconnect/mode-change history - merges DisplayChangeHistoryService's
+    // persisted log (WM_DISPLAYCHANGE events MainWindow recorded live, across every past session)
+    // with a fresh Kernel-PnP System-log scan (EventLogService.ReadMonitorPnpEvents) each refresh.
+    public ObservableCollection<DisplayChangeEvent> DisplayChangeHistory { get; } = new();
+
     // Round 10, #62: longest-uptime records, derived from the existing boot-history.json.
     private string _longestUptimeThisMonthText = "Not enough boot history yet";
     public string LongestUptimeThisMonthText { get => _longestUptimeThisMonthText; private set => SetProperty(ref _longestUptimeThisMonthText, value); }
@@ -188,9 +200,13 @@ public sealed class SystemSpecsViewModel : ObservableObject
         {
             var specs = await _service.QueryAsync();
             var (uptimeMonth, uptimeYear) = await Task.Run(() => BootPerformanceService.ComputeLongestUptimeRecords());
+            // #690: fresh Kernel-PnP scan, merged with the persisted (WM_DISPLAYCHANGE-sourced)
+            // history below - see DisplayChangeHistory's own remarks.
+            var pnpEvents = await Task.Run(() => _eventLog.ReadMonitorPnpEvents());
             Apply(specs);
             LongestUptimeThisMonthText = uptimeMonth is { } m ? FormatUptime(m) : "Not enough boot history yet";
             LongestUptimeThisYearText = uptimeYear is { } y ? FormatUptime(y) : "Not enough boot history yet";
+            ApplyDisplayChangeHistory(pnpEvents);
             RefreshErrorText = null;
         }
         catch (Exception ex)
@@ -201,6 +217,34 @@ public sealed class SystemSpecsViewModel : ObservableObject
         {
             IsLoading = false;
         }
+    }
+
+    /// <summary>#690: merges this refresh's fresh Kernel-PnP scan with DisplayChangeHistoryService's
+    /// persisted (WM_DISPLAYCHANGE-sourced) log, de-duplicated on (time, source, description) so a
+    /// re-refresh doesn't double up entries, newest first.</summary>
+    private void ApplyDisplayChangeHistory(List<DisplayChangeEvent> pnpEvents)
+    {
+        var persisted = DisplayChangeHistoryService.Load();
+        var merged = pnpEvents.Concat(persisted)
+            .GroupBy(e => (e.TimeCreated, e.Source, e.Description))
+            .Select(g => g.First())
+            .OrderByDescending(e => e.TimeCreated)
+            .Take(150)
+            .ToList();
+
+        DisplayChangeHistory.Clear();
+        foreach (var e in merged) DisplayChangeHistory.Add(e);
+    }
+
+    /// <summary>#690: called from MainWindow's WM_DISPLAYCHANGE hook (already on the UI thread, so
+    /// this can touch the ObservableCollection directly) - persists the event and shows it
+    /// immediately without waiting for the next manual Refresh.</summary>
+    public void RecordDisplayChange(string description)
+    {
+        var evt = new DisplayChangeEvent { TimeCreated = DateTime.Now, Source = "App", Description = description };
+        DisplayChangeHistoryService.Append(evt);
+        DisplayChangeHistory.Insert(0, evt);
+        while (DisplayChangeHistory.Count > 150) DisplayChangeHistory.RemoveAt(DisplayChangeHistory.Count - 1);
     }
 
     private static string FormatUptime(TimeSpan span)
@@ -455,6 +499,10 @@ public sealed class SystemSpecsViewModel : ObservableObject
                     : "Unknown",
             });
         }
+
+        // #685-689: same source list, richer per-monitor detail panel.
+        MonitorDetails.Clear();
+        foreach (var m in specs.Monitors) MonitorDetails.Add(m);
 
         // #63: Defender exclusions - null (inaccessible/Tamper-Protection-blocked) is distinct from
         // an empty (successfully read, genuinely none configured) list.

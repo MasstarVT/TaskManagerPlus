@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.Windows.Data;
 using System.Windows.Media;
 using System.Windows.Threading;
+using LibreHardwareMonitor.Hardware;
 using LiveChartsCore;
 using LiveChartsCore.SkiaSharpView;
 using LiveChartsCore.SkiaSharpView.Painting;
@@ -39,6 +40,10 @@ public sealed class GpuViewModel : ObservableObject, IDisposable
     private bool _isRefreshing;
     private readonly EnergyThermalsViewModel _energyThermals;
     private readonly ProcessesViewModel _processes;
+
+    /// <summary>#678: CPU core-saturation evidence for the bottleneck verdict below - the shared
+    /// sampler every other tab already reads from, not a new poll.</summary>
+    private readonly PerformanceViewModel _performance;
 
     public bool IsAvailable => _service.IsAvailable;
 
@@ -141,10 +146,109 @@ public sealed class GpuViewModel : ObservableObject, IDisposable
         "startmenuexperiencehost", "taskmanagerplus", "textinputhost",
     };
 
-    public GpuViewModel(ProcessesViewModel processes, EnergyThermalsViewModel energyThermals)
+    // ================================================================================
+    // #678: plain-English bottleneck verdict from the engine mix - 3D near 100% with low Copy/
+    // Video is GPU-bound, low 3D with a saturated CPU core is CPU-bound, high Copy with VRAM at
+    // capacity is transfer-bound. A pattern-match over data this tab already samples, not a
+    // verified diagnosis - "quick flag, not a verdict", same tier as this app's other heuristics.
+    // ================================================================================
+    private string _bottleneckVerdictText = string.Empty;
+    public string BottleneckVerdictText { get => _bottleneckVerdictText; private set => SetProperty(ref _bottleneckVerdictText, value); }
+
+    private string _bottleneckEvidenceText = string.Empty;
+    public string BottleneckEvidenceText { get => _bottleneckEvidenceText; private set => SetProperty(ref _bottleneckEvidenceText, value); }
+
+    // ================================================================================
+    // #679: per-engine history chart (3D/Copy/Video Decode/Video Encode/Compute) - the exact same
+    // glow+core LineOf pattern every other history chart in this app uses, one pair per engine
+    // type sharing one chart so an encode/decode spike (which explains a streaming stutter a single
+    // aggregate "GPU busy" number hides completely) is visible right alongside 3D load.
+    // ================================================================================
+    private static readonly (string EngineType, SKColor Color)[] TrackedEngines =
+    {
+        ("3D", SKColors.DodgerBlue),
+        ("Copy", SKColors.MediumPurple),
+        ("Video Decode", SKColors.Gold),
+        ("Video Encode", SKColors.OrangeRed),
+        ("Compute", SKColors.MediumSeaGreen),
+    };
+    private readonly Dictionary<string, ObservableCollection<double>> _engineHistories = new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<LineSeries<double>> _engineHistoryCoreSeries = new();
+    public ISeries[] EngineHistorySeries { get; }
+    public Axis[] EngineHistoryXAxes { get; }
+    public Axis[] EngineHistoryYAxes { get; }
+
+    // ================================================================================
+    // #680: per-process GPU% split out by engine type (3D vs. Copy vs. Video Decode/Encode vs.
+    // Compute) - set directly on the shared ProcessRow instances each tick, from
+    // GpuMonitorService.LastPerProcessEngineUsage (see UpdateProcessEngineAttribution).
+    // ================================================================================
+    private readonly HashSet<int> _lastGpuActivePids = new();
+
+    // ================================================================================
+    // #681: "low clocks under load" flag - GPU core clock (from the sensor tree, same
+    // EnergyThermalsViewModel poll the thermal-headroom tiles above already read) combined with
+    // utilization. Low clocks at high utilization means power/thermal limiting; low clocks at low
+    // utilization is normal idle - the very common "my GPU is stuck underclocked" misdiagnosis this
+    // exists to head off. Self-calibrating against this session's own observed peak clock rather
+    // than a hardcoded "should be" figure this app has no reliable source for per-model.
+    // ================================================================================
+    private double _sessionPeakGpuClockMHz;
+
+    private double? _gpuCoreClockMHz;
+    public double? GpuCoreClockMHz { get => _gpuCoreClockMHz; private set => SetProperty(ref _gpuCoreClockMHz, value); }
+
+    private string _gpuClockStateText = string.Empty;
+    public string GpuClockStateText { get => _gpuClockStateText; private set => SetProperty(ref _gpuClockStateText, value); }
+
+    private bool _gpuClockStateIsWarning;
+    public bool GpuClockStateIsWarning { get => _gpuClockStateIsWarning; private set => SetProperty(ref _gpuClockStateIsWarning, value); }
+
+    // ================================================================================
+    // #682/#683/#684: PCIe link speed/width per GPU/NVMe device (with per-boot drift detection via
+    // PciLinkHistoryService), the active power plan's ASPM link-state setting, and eGPU/Thunderbolt
+    // enclosure detection - all read together by one on-demand PowerShell shell-out
+    // (PciLinkService), same "button + startup load" shape as the GPU-event-history card above, not
+    // a per-tick poll (a real subprocess call).
+    // ================================================================================
+    public ObservableCollection<PciLinkInfo> PciLinks { get; } = new();
+    public AsyncRelayCommand LoadPciLinkInfoCommand { get; }
+
+    private string _pciLinkStatusText = "Not checked yet this session - click \"Check PCIe links\".";
+    public string PciLinkStatusText { get => _pciLinkStatusText; private set => SetProperty(ref _pciLinkStatusText, value); }
+
+    /// <summary>#684: the first Thunderbolt-attached GPU found (if any) - GpuView.xaml hides the
+    /// dedicated eGPU card entirely when this is null, since most systems have no such device.</summary>
+    public PciLinkInfo? EgpuLink => PciLinks.FirstOrDefault(l => l.Kind == "GPU" && l.IsThunderboltAttached);
+
+    private int? _aspmAcIndex;
+    private int? _aspmDcIndex;
+
+    public string AspmStateText => _aspmAcIndex is null && _aspmDcIndex is null
+        ? "Unknown"
+        : $"AC: {AspmIndexText(_aspmAcIndex)}  ·  DC: {AspmIndexText(_aspmDcIndex)}";
+
+    /// <summary>#683: true when either AC or DC is set to Moderate/Maximum power savings - a
+    /// known cause of NVMe dropouts and eGPU/Thunderbolt disconnects (the link partner has to
+    /// renegotiate out of a low-power link state before it can be used again).</summary>
+    public bool AspmIsAggressive => _aspmAcIndex is >= 1 || _aspmDcIndex is >= 1;
+
+    public AsyncRelayCommand SetAspmOffCommand { get; }
+
+    private static string AspmIndexText(int? index) => index switch
+    {
+        0 => "Off",
+        1 => "Moderate power savings",
+        2 => "Maximum power savings",
+        null => "Unknown",
+        _ => $"{index} (unrecognized)",
+    };
+
+    public GpuViewModel(ProcessesViewModel processes, EnergyThermalsViewModel energyThermals, PerformanceViewModel performance)
     {
         _energyThermals = energyThermals;
         _processes = processes;
+        _performance = performance;
         foreach (var a in _service.Adapters) InstalledAdapters.Add(a);
 
         var view = new CollectionViewSource { Source = processes.Processes }.View;
@@ -173,7 +277,36 @@ public sealed class GpuViewModel : ObservableObject, IDisposable
             },
         };
 
+        // #679: per-engine history chart - one glow+core pair per tracked engine type, all sharing
+        // one chart/legend so an encode/decode spike is visible right alongside 3D load.
+        var engineSeriesList = new List<ISeries>();
+        foreach (var (engineType, color) in TrackedEngines)
+        {
+            var history = NewHistory();
+            _engineHistories[engineType] = history;
+            var (glow, core) = LineOf(history, color);
+            core.Name = engineType;
+            _engineHistoryCoreSeries.Add(core);
+            engineSeriesList.Add(glow);
+            engineSeriesList.Add(core);
+        }
+        EngineHistorySeries = engineSeriesList.ToArray();
+        EngineHistoryXAxes = new[] { new Axis { IsVisible = false } };
+        EngineHistoryYAxes = new[]
+        {
+            new Axis
+            {
+                MinLimit = 0,
+                MaxLimit = 100,
+                Labeler = v => $"{v:0}%",
+                LabelsPaint = new SolidColorPaint(AxisTextColor),
+                SeparatorsPaint = new SolidColorPaint(AxisSeparatorColor) { StrokeThickness = 1 },
+            },
+        };
+
         LoadGpuEventHistoryCommand = new AsyncRelayCommand(_ => LoadGpuEventHistoryAsync());
+        LoadPciLinkInfoCommand = new AsyncRelayCommand(_ => LoadPciLinkInfoAsync());
+        SetAspmOffCommand = new AsyncRelayCommand(_ => SetAspmOffAsync());
 
         // #671/#672: cheap registry reads, safe to do eagerly (see class remarks).
         RefreshRegistryReadouts();
@@ -184,6 +317,9 @@ public sealed class GpuViewModel : ObservableObject, IDisposable
         _ = RefreshAsync();
 
         _ = LoadGpuEventHistoryAsync();
+        // #682/#683/#684: a real PowerShell subprocess shell-out - on-demand only, loaded once at
+        // startup (same shape as LoadGpuEventHistoryAsync above) plus the manual button.
+        _ = LoadPciLinkInfoAsync();
     }
 
     private void RefreshRegistryReadouts()
@@ -263,6 +399,58 @@ public sealed class GpuViewModel : ObservableObject, IDisposable
         return result;
     }
 
+    /// <summary>#682/#683/#684: the on-demand PCIe link-state read - one PowerShell shell-out
+    /// (PciLinkService, which itself folds in PciLinkHistoryService's per-boot drift comparison and
+    /// #684's Thunderbolt-ancestor walk) plus the active plan's ASPM setting (powercfg).</summary>
+    private async Task LoadPciLinkInfoAsync()
+    {
+        PciLinkStatusText = "Reading PCIe link state (shells out to PowerShell - can take a few seconds)...";
+        try
+        {
+            var linksTask = PciLinkService.ReadAllAsync();
+            var aspmTask = PowerPlanService.ReadAspmSettingAsync();
+            await Task.WhenAll(linksTask, aspmTask);
+
+            PciLinks.Clear();
+            foreach (var l in linksTask.Result) PciLinks.Add(l);
+            (_aspmAcIndex, _aspmDcIndex) = aspmTask.Result;
+            OnPropertyChanged(nameof(AspmStateText));
+            OnPropertyChanged(nameof(AspmIsAggressive));
+            OnPropertyChanged(nameof(EgpuLink));
+
+            PciLinkStatusText = PciLinks.Count == 0
+                ? "No PCIe link data available - either PowerShell/the PnpDevice cmdlets aren't reachable, or no matching GPU/NVMe device was found."
+                : string.Empty;
+        }
+        catch (Exception ex)
+        {
+            PciLinkStatusText = $"PCIe link check failed: {ex.Message}";
+        }
+    }
+
+    /// <summary>#683: the "set to Off" one-click action - re-reads the setting afterward so the UI
+    /// reflects what actually took effect rather than assuming success.</summary>
+    private async Task SetAspmOffAsync()
+    {
+        try
+        {
+            var (success, error) = await PowerPlanService.SetAspmOffAsync();
+            var (ac, dc) = await PowerPlanService.ReadAspmSettingAsync();
+            _aspmAcIndex = ac;
+            _aspmDcIndex = dc;
+            OnPropertyChanged(nameof(AspmStateText));
+            OnPropertyChanged(nameof(AspmIsAggressive));
+
+            PciLinkStatusText = success
+                ? "ASPM set to Off on the active power plan."
+                : $"Couldn't set ASPM: {error ?? "unknown error"}";
+        }
+        catch (Exception ex)
+        {
+            PciLinkStatusText = $"Couldn't set ASPM: {ex.Message}";
+        }
+    }
+
     private async Task RefreshAsync()
     {
         if (!IsAvailable) return;
@@ -274,8 +462,14 @@ public sealed class GpuViewModel : ObservableObject, IDisposable
             LiveAdapters.Clear();
             foreach (var a in snapshot) LiveAdapters.Add(a);
 
+            var primary = snapshot.FirstOrDefault(a => a.NameIsExact) ?? snapshot.FirstOrDefault();
+
             UpdateVramPressure(snapshot);
             DetectEngineFlatlines(snapshot);
+            UpdateBottleneckVerdict(primary);
+            UpdateEngineHistory(primary);
+            UpdateProcessEngineAttribution();
+            UpdateGpuClockState(primary);
 
             if (NvidiaSmiAvailable && DateTime.Now - _lastNvidiaSmiCheck >= NvidiaSmiCheckInterval)
             {
@@ -380,6 +574,153 @@ public sealed class GpuViewModel : ObservableObject, IDisposable
         }
     }
 
+    /// <summary>#678: classifies the current tick's likely bottleneck from the engine mix plus
+    /// (for the CPU-bound case) the shared PerformanceViewModel's per-core CPU data, and (for the
+    /// transfer-bound case) #674's already-computed committed-vs-capacity VRAM figure. A pattern-
+    /// match over data this tab already samples every tick - "quick flag, not a verdict", same as
+    /// every other heuristic in this app.</summary>
+    private void UpdateBottleneckVerdict(GpuAdapterSnapshot? primary)
+    {
+        if (primary is null || primary.Engines.Count == 0)
+        {
+            BottleneckVerdictText = string.Empty;
+            BottleneckEvidenceText = string.Empty;
+            return;
+        }
+
+        double Engine(string type) => primary.Engines.FirstOrDefault(e => e.EngineType.Equals(type, StringComparison.OrdinalIgnoreCase))?.Percent ?? 0;
+        double engine3D = Engine("3D");
+        double engineCopy = Engine("Copy");
+        double engineDecode = Engine("Video Decode");
+        double engineEncode = Engine("Video Encode");
+        double maxCpuCorePercent = _performance.Cores.Count > 0 ? _performance.Cores.Max(c => c.Percent) : 0;
+
+        if (engine3D < 5 && engineCopy < 5 && engineDecode < 5 && engineEncode < 5)
+        {
+            // Nothing meaningfully active - no bottleneck to report at all.
+            BottleneckVerdictText = string.Empty;
+            BottleneckEvidenceText = string.Empty;
+        }
+        else if (engine3D >= 90 && engineCopy < 30 && engineDecode < 30 && engineEncode < 30)
+        {
+            BottleneckVerdictText = "Likely bottleneck: GPU (3D)";
+            BottleneckEvidenceText = $"3D engine at {engine3D:0}% with Copy/video engines idle - the GPU itself is the limiting factor (quick flag, not a verdict).";
+        }
+        else if (engine3D < 60 && maxCpuCorePercent >= 90)
+        {
+            BottleneckVerdictText = "Likely bottleneck: CPU";
+            BottleneckEvidenceText = $"3D engine only at {engine3D:0}% while a CPU core is pegged at {maxCpuCorePercent:0}% - the GPU looks like it's waiting on the CPU to feed it work (quick flag, not a verdict).";
+        }
+        else if (engineCopy >= 50 && primary.CommittedVsCapacityPercent >= 95)
+        {
+            BottleneckVerdictText = "Likely bottleneck: transfer (Copy engine / VRAM budget)";
+            BottleneckEvidenceText = $"Copy engine at {engineCopy:0}% with committed VRAM at {primary.CommittedVsCapacityPercent:0}% of capacity - data looks like it's being paged over PCIe rather than compute-bound (quick flag, not a verdict).";
+        }
+        else if (engineDecode >= 60 || engineEncode >= 60)
+        {
+            string which = engineDecode >= engineEncode ? "video decode" : "video encode";
+            double pct = Math.Max(engineDecode, engineEncode);
+            BottleneckVerdictText = $"Likely bottleneck: GPU ({which})";
+            BottleneckEvidenceText = $"The {which} engine is at {pct:0}% while 3D is only at {engine3D:0}% - a fixed-function media engine, not the shader cores, is the limiting factor here.";
+        }
+        else
+        {
+            BottleneckVerdictText = "No single engine looks clearly saturated right now";
+            BottleneckEvidenceText = $"3D {engine3D:0}%  ·  Copy {engineCopy:0}%  ·  Decode {engineDecode:0}%  ·  Encode {engineEncode:0}%";
+        }
+    }
+
+    /// <summary>#679: pushes this tick's per-engine percentages (3D/Copy/Video Decode/Video Encode/
+    /// Compute) onto their own history series - an engine this adapter didn't report at all this
+    /// tick (or no primary adapter at all) pushes 0, same "flat 0 rather than a gap" convention
+    /// every other history chart in this app already follows.</summary>
+    private void UpdateEngineHistory(GpuAdapterSnapshot? primary)
+    {
+        foreach (var (engineType, history) in _engineHistories)
+        {
+            double value = primary?.Engines.FirstOrDefault(e => e.EngineType.Equals(engineType, StringComparison.OrdinalIgnoreCase))?.Percent ?? 0;
+            PushHistory(history, value);
+        }
+    }
+
+    /// <summary>#680: writes this tick's per-engine breakdown onto the shared ProcessRow instances
+    /// (GpuMonitorService.LastPerProcessEngineUsage, from the same pid_..._engtype_... instance-name
+    /// parse the per-adapter breakdown already uses) - a pid that stopped using the GPU since the
+    /// last tick gets cleared rather than left showing a stale engine label.</summary>
+    private void UpdateProcessEngineAttribution()
+    {
+        var byPid = _service.LastPerProcessEngineUsage;
+        var currentPids = new HashSet<int>(byPid.Keys);
+
+        foreach (var stalePid in _lastGpuActivePids)
+        {
+            if (currentPids.Contains(stalePid)) continue;
+            var row = _processes.Processes.FirstOrDefault(p => p.Pid == stalePid);
+            if (row is null) continue;
+            row.TopGpuEngine = string.Empty;
+            row.TopGpuEnginePercent = 0;
+        }
+
+        foreach (var (pid, engines) in byPid)
+        {
+            if (engines.Count == 0) continue;
+            var row = _processes.Processes.FirstOrDefault(p => p.Pid == pid);
+            if (row is null) continue;
+            var top = engines[0];
+            row.TopGpuEngine = top.EngineType;
+            row.TopGpuEnginePercent = top.Percent;
+        }
+
+        _lastGpuActivePids.Clear();
+        foreach (var pid in currentPids) _lastGpuActivePids.Add(pid);
+    }
+
+    /// <summary>#681: combines the primary adapter's utilization with its GPU core clock (read from
+    /// the sensor tree EnergyThermalsViewModel already polls) to flag power/thermal limiting vs.
+    /// normal idle - see the class remarks for why this self-calibrates against this session's own
+    /// observed peak clock rather than a per-model "should be" figure this app has no source for.</summary>
+    private void UpdateGpuClockState(GpuAdapterSnapshot? primary)
+    {
+        var coreClockReading = _energyThermals.Clocks.FirstOrDefault(r =>
+            (r.HardwareType is HardwareType.GpuNvidia or HardwareType.GpuAmd or HardwareType.GpuIntel) &&
+            r.SensorName.Contains("Core", StringComparison.OrdinalIgnoreCase));
+
+        GpuCoreClockMHz = coreClockReading?.Value;
+
+        if (GpuCoreClockMHz is not { } clock || primary is null)
+        {
+            GpuClockStateText = string.Empty;
+            GpuClockStateIsWarning = false;
+            return;
+        }
+
+        if (clock > _sessionPeakGpuClockMHz) _sessionPeakGpuClockMHz = clock;
+        double utilization = primary.TotalUtilizationPercent;
+
+        if (_sessionPeakGpuClockMHz < 200)
+        {
+            // Not enough of a peak observed yet this session to judge "low" against - stay silent
+            // rather than flag against a peak that hasn't actually been reached yet.
+            GpuClockStateText = string.Empty;
+            GpuClockStateIsWarning = false;
+        }
+        else if (utilization >= 60 && clock < _sessionPeakGpuClockMHz * 0.55)
+        {
+            GpuClockStateText = $"Low clocks under load - {clock:0} MHz at {utilization:0}% utilization, well below this session's observed peak of {_sessionPeakGpuClockMHz:0} MHz. Looks like power or thermal limiting, not a stuck/underclocked GPU (quick flag, not a verdict).";
+            GpuClockStateIsWarning = true;
+        }
+        else if (utilization < 15)
+        {
+            GpuClockStateText = $"Idle - {clock:0} MHz at {utilization:0}% utilization is expected low-power behavior, not a fault.";
+            GpuClockStateIsWarning = false;
+        }
+        else
+        {
+            GpuClockStateText = $"Normal - {clock:0} MHz at {utilization:0}% utilization.";
+            GpuClockStateIsWarning = false;
+        }
+    }
+
     // ================================================================================
     // Chart plumbing - same shapes PerformanceViewModel/EnergyThermalsViewModel already establish
     // for every other history chart in this app.
@@ -436,6 +777,8 @@ public sealed class GpuViewModel : ObservableObject, IDisposable
         var sepSk = new SKColor(separator.R, separator.G, separator.B, separator.A);
         VramSpilloverYAxes[0].LabelsPaint = new SolidColorPaint(textSk);
         VramSpilloverYAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
+        EngineHistoryYAxes[0].LabelsPaint = new SolidColorPaint(textSk);
+        EngineHistoryYAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
     }
 
     public void Dispose()
