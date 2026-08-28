@@ -203,6 +203,69 @@ public sealed class StabilityViewModel : ObservableObject
     private string _timeSinceLastCrashText = "No crash found in the last 30 days";
     public string TimeSinceLastCrashText { get => _timeSinceLastCrashText; private set => SetProperty(ref _timeSinceLastCrashText, value); }
 
+    // ---- #169-174: Reliability Monitor (Win32_ReliabilityStabilityMetrics / Win32_ReliabilityRecords) ----
+    private readonly ReliabilityMonitorService _reliability = new();
+
+    /// <summary>#169: Windows' own per-day stability index, folded down from
+    /// Win32_ReliabilityStabilityMetrics' hourly samples (see ReliabilityMonitorService.
+    /// BuildDailyIndex) to align with DailyEventCounts' exact day range so both can share one X axis
+    /// on the Reliability History chart. A day with no WMI sample at all is a real null (a gap in
+    /// the overlay line), never a fabricated 0.</summary>
+    public ObservableCollection<double?> WmiStabilityIndexValues { get; } = new();
+    private readonly LineSeries<double?> _wmiStabilityLine;
+
+    /// <summary>#170: the full reliability record feed - application/Windows/miscellaneous
+    /// failures, warnings, and informational entries (software installs/updates/uninstalls), newest
+    /// first. See ReliabilityMonitorService.Classify for how Category is derived.</summary>
+    public ObservableCollection<ReliabilityRecordInfo> ReliabilityRecords { get; } = new();
+
+    /// <summary>#173: the Informational-category subset of ReliabilityRecords above, presented as a
+    /// software change log - built alongside ReliabilityRecords in RefreshReliabilityMonitorAsync,
+    /// then cross-highlighted against crash clusters from the unified timeline (PrecedesCrashClusterNote)
+    /// via ReliabilityMonitorService.CorrelateChangesWithCrashClusters.</summary>
+    public ObservableCollection<ReliabilityRecordInfo> SoftwareChangeLog { get; } = new();
+
+    private ReliabilityAnalysisStatus _reliabilityAnalysisStatus = new();
+    public ReliabilityAnalysisStatus ReliabilityAnalysisStatus { get => _reliabilityAnalysisStatus; private set => SetProperty(ref _reliabilityAnalysisStatus, value); }
+
+    /// <summary>#172: drives whether the #169/#170/#173 cards render at all - hidden entirely (not
+    /// an empty chart/grid) once #172 detects collection is off, per CLAUDE.md's "degrade to
+    /// Unknown/0/hidden" convention.</summary>
+    private bool _isReliabilityMonitorAvailable = true;
+    public bool IsReliabilityMonitorAvailable { get => _isReliabilityMonitorAvailable; private set => SetProperty(ref _isReliabilityMonitorAvailable, value); }
+
+    private bool _canRevertReliabilityAnalysis;
+    public bool CanRevertReliabilityAnalysis { get => _canRevertReliabilityAnalysis; private set => SetProperty(ref _canRevertReliabilityAnalysis, value); }
+
+    private string? _reliabilityAnalysisStatusText;
+    public string? ReliabilityAnalysisStatusText { get => _reliabilityAnalysisStatusText; private set => SetProperty(ref _reliabilityAnalysisStatusText, value); }
+
+    public RelayCommand EnableReliabilityAnalysisCommand { get; }
+    public RelayCommand RevertReliabilityAnalysisCommand { get; }
+
+    // ---- #171: on-demand RAC re-aggregation - its own action, not part of the general Refresh ----
+    private bool _isReliabilityRefreshing;
+    public bool IsReliabilityRefreshing { get => _isReliabilityRefreshing; private set => SetProperty(ref _isReliabilityRefreshing, value); }
+
+    private string? _reliabilityRefreshStatusText;
+    public string? ReliabilityRefreshStatusText { get => _reliabilityRefreshStatusText; private set => SetProperty(ref _reliabilityRefreshStatusText, value); }
+
+    public AsyncRelayCommand RefreshReliabilityCommand { get; }
+
+    // ---- #174: index disagreement flag ----
+    private const double IndexDisagreementThreshold = 2.0;
+
+    /// <summary>#174: Windows' own index averaged over the last 7 days that actually have a WMI
+    /// sample (#169) - null when no WMI sample exists in that window at all (nothing to compare).</summary>
+    private double? _windowsStabilityIndexRecent;
+    public double? WindowsStabilityIndexRecent { get => _windowsStabilityIndexRecent; private set => SetProperty(ref _windowsStabilityIndexRecent, value); }
+
+    private bool _indicesDisagree;
+    public bool IndicesDisagree { get => _indicesDisagree; private set => SetProperty(ref _indicesDisagree, value); }
+
+    private string? _indexDisagreementText;
+    public string? IndexDisagreementText { get => _indexDisagreementText; private set => SetProperty(ref _indexDisagreementText, value); }
+
     // Round 8 #40: low-memory resource-exhaustion events - see EventLogService.ReadLowMemoryEvents.
     private int _lowMemoryEventCount;
     public int LowMemoryEventCount { get => _lowMemoryEventCount; private set => SetProperty(ref _lowMemoryEventCount, value); }
@@ -244,6 +307,14 @@ public sealed class StabilityViewModel : ObservableObject
         RevertLocalDumpsCommand = new RelayCommand(RevertLocalDumps, () => CanRevertLocalDumps);
         CanRevertLocalDumps = WerReportService.BackupExists();
 
+        // #171: its own action (runs the RAC task, then re-queries) - not folded into RefreshCommand.
+        RefreshReliabilityCommand = new AsyncRelayCommand(RunReliabilityRefreshAsync);
+
+        // #172: gated behind their own explicit MessageBox confirmation, same shape as #165 above.
+        EnableReliabilityAnalysisCommand = new RelayCommand(EnableReliabilityAnalysis);
+        RevertReliabilityAnalysisCommand = new RelayCommand(RevertReliabilityAnalysis, () => CanRevertReliabilityAnalysis);
+        CanRevertReliabilityAnalysis = ReliabilityMonitorService.BackupExists();
+
         // #137: one chip per source actually wired into BuildTimeline - see TimelineSource's remarks.
         TimelineFilters.Add(new TimelineFilterChip(TimelineSource.EventLog, "Event log", ApplyTimelineFilters));
         TimelineFilters.Add(new TimelineFilterChip(TimelineSource.Minidump, "Minidump", ApplyTimelineFilters));
@@ -258,7 +329,27 @@ public sealed class StabilityViewModel : ObservableObject
             Stroke = null,
             MaxBarWidth = 12,
         };
-        DailyEventSeries = new ISeries[] { _dailyEventColumns };
+
+        // #169: Windows' own per-day stability index, overlaid on this same chart area rather than
+        // a second standalone chart - "your judgement" call per this chunk's instructions: this is
+        // explicitly a comparison against the column series beside it, so one crisp line reads more
+        // clearly as "here's the other number" than a whole second chart control would. No glow/
+        // gradient pairing (CLAUDE.md's glow+core convention is for standalone history charts -
+        // pairing it here would visually compete with the columns underneath). Scaled on its own
+        // secondary (right-hand) Y axis since a 1-10 index and a daily event count don't share a
+        // sensible scale - see DailyEventYAxes[1] below.
+        _wmiStabilityLine = new LineSeries<double?>
+        {
+            Values = WmiStabilityIndexValues,
+            Name = "Windows stability index",
+            Stroke = new SolidColorPaint(SKColors.CornflowerBlue, 2),
+            Fill = null,
+            GeometrySize = 0,
+            LineSmoothness = 0,
+            ScalesYAt = 1,
+        };
+
+        DailyEventSeries = new ISeries[] { _dailyEventColumns, _wmiStabilityLine };
         DailyEventXAxes = new[]
         {
             new Axis
@@ -280,6 +371,20 @@ public sealed class StabilityViewModel : ObservableObject
                 Labeler = v => $"{v:0}",
                 LabelsPaint = new SolidColorPaint(AxisTextColor),
                 SeparatorsPaint = new SolidColorPaint(AxisSeparatorColor) { StrokeThickness = 1 },
+            },
+            // #169: secondary axis for Windows' own 1-10 stability index, right-hand side - kept at
+            // a fixed color tied to the line series' own identity rather than the app's re-themed
+            // palette (the same "hardcoded, not DynamicResource" choice DailyEventYAxes[0]'s
+            // OrangeRed column fill already makes in this file).
+            new Axis
+            {
+                MinLimit = 0,
+                MaxLimit = 10,
+                MinStep = 2,
+                Position = LiveChartsCore.Measure.AxisPosition.End,
+                Labeler = v => $"{v:0}",
+                LabelsPaint = new SolidColorPaint(SKColors.CornflowerBlue),
+                SeparatorsPaint = null,
             },
         };
 
@@ -318,6 +423,11 @@ public sealed class StabilityViewModel : ObservableObject
 
             // #137/#142/#143/#144: folded into this same on-demand refresh, never a new timer.
             await RefreshTimelineExtrasAsync(snapshot);
+
+            // #169/#170/#172/#173/#174: Reliability Monitor data - folded into this same on-demand
+            // refresh (never a new timer), run after RefreshTimelineExtrasAsync above so #173's
+            // correlation can see this refresh's own crash-flagged timeline entries.
+            await RefreshReliabilityMonitorAsync();
 
             RefreshErrorText = null;
         }
@@ -435,6 +545,204 @@ public sealed class StabilityViewModel : ObservableObject
 
         try { WerConfigStatus = await Task.Run(() => _wer.ReadConfigStatus()); }
         catch { /* degrade - keeps its previous value (Unknown on first load) */ }
+    }
+
+    /// <summary>#169/#170/#172/#173/#174: Reliability Monitor data - reads Windows' own per-day
+    /// stability index and the full reliability record feed, applies #172's disabled-collection
+    /// gate (hiding the #169/#170/#173 cards rather than showing them empty), cross-highlights
+    /// #170's informational records against this refresh's own crash clusters (#173), and computes
+    /// the index-disagreement flag (#174). Factored out of RefreshAsync into its own method since
+    /// #171's "Refresh reliability data" button re-runs exactly this step (after running the RAC
+    /// task) without re-running everything else in RefreshAsync.</summary>
+    private async Task RefreshReliabilityMonitorAsync()
+    {
+        try { ReliabilityAnalysisStatus = await Task.Run(() => _reliability.ReadAnalysisStatus()); }
+        catch { /* degrade - keeps its previous value (enabled/Unknown on first load) */ }
+        CanRevertReliabilityAnalysis = ReliabilityMonitorService.BackupExists();
+
+        IsReliabilityMonitorAvailable = !ReliabilityAnalysisStatus.IsCollectionDisabled;
+        if (!IsReliabilityMonitorAvailable)
+        {
+            // #172: collection is off - hide the #169/#170/#173 cards entirely rather than show an
+            // empty chart/grid (CLAUDE.md's "degrade to hidden" convention). Clear anything left
+            // over from a previous refresh so a stale chart/list doesn't linger under a hidden card.
+            WmiStabilityIndexValues.Clear();
+            ReliabilityRecords.Clear();
+            SoftwareChangeLog.Clear();
+            WindowsStabilityIndexRecent = null;
+            ApplyIndexDisagreement();
+            return;
+        }
+
+        try
+        {
+            var samples = await Task.Run(() => _reliability.ReadStabilityMetrics());
+            var daily = ReliabilityMonitorService.BuildDailyIndex(samples, Math.Max(DailyEventCounts.Count, 1));
+
+            WmiStabilityIndexValues.Clear();
+            foreach (var v in daily) WmiStabilityIndexValues.Add(v);
+
+            // #174: recent-window average (last 7 days that actually have a WMI sample) - null when
+            // none do, so ApplyIndexDisagreement below never flags a disagreement against nothing.
+            var recentWithData = daily.TakeLast(7).Where(v => v.HasValue).Select(v => v!.Value).ToList();
+            WindowsStabilityIndexRecent = recentWithData.Count > 0 ? Math.Round(recentWithData.Average(), 1) : null;
+        }
+        catch
+        {
+            // degrade to whatever the previous refresh already showed
+        }
+
+        ApplyIndexDisagreement();
+
+        try
+        {
+            var records = await Task.Run(() => _reliability.ReadRecords());
+
+            // #173: cross-highlight the informational subset against crash clusters from this same
+            // refresh's already-built unified timeline (#137) - correlation only, see
+            // ReliabilityMonitorService.CorrelateChangesWithCrashClusters's remarks.
+            var crashTimestamps = _allTimelineEntries.Where(e => e.IsCrash).Select(e => e.Timestamp).ToList();
+            ReliabilityMonitorService.CorrelateChangesWithCrashClusters(records, crashTimestamps);
+
+            ReliabilityRecords.Clear();
+            foreach (var r in records) ReliabilityRecords.Add(r);
+
+            SoftwareChangeLog.Clear();
+            foreach (var r in records.Where(r => r.Category == ReliabilityRecordCategory.Informational))
+                SoftwareChangeLog.Add(r);
+        }
+        catch
+        {
+            // degrade - ReliabilityRecords/SoftwareChangeLog keep whatever the last successful read
+            // produced rather than being cleared out from under a transient failure.
+        }
+    }
+
+    /// <summary>
+    /// #174: flags when Windows' own recent-window index (averaged over the last 7 days that
+    /// actually have a WMI sample - #169) and this app's own StabilityIndex (its own weighted
+    /// formula - see ComputeStabilityIndex) diverge by more than IndexDisagreementThreshold (2.0)
+    /// points on the shared 1-10 scale. The two are expected to disagree sometimes - different
+    /// weightings (this app's own formula vs. Windows' undocumented internal one), different
+    /// lookback windows (a last-7-day average here vs. whatever period RAC's own aggregation
+    /// covers), and Windows' number lags behind however long it's been since the RAC task last ran
+    /// (#171) - so this explains the divergence rather than implying either number is "the correct
+    /// one" (CLAUDE.md's "quick flag, not a verdict"). Never flagged when there's no WMI data to
+    /// compare against at all (WindowsStabilityIndexRecent is null) - nothing to disagree with isn't
+    /// a disagreement.
+    /// </summary>
+    private void ApplyIndexDisagreement()
+    {
+        if (WindowsStabilityIndexRecent is not { } windowsIndex)
+        {
+            IndicesDisagree = false;
+            IndexDisagreementText = null;
+            return;
+        }
+
+        double diff = Math.Abs(windowsIndex - StabilityIndex);
+        IndicesDisagree = diff > IndexDisagreementThreshold;
+        IndexDisagreementText = IndicesDisagree
+            ? $"Windows' own Reliability Monitor index ({windowsIndex:0.0}/10, last 7 days) and this app's stability index "
+              + $"({StabilityIndex:0.0}/10) disagree by {diff:0.0} points. That's expected sometimes — the two use different "
+              + "weightings, different lookback windows, and Windows' number lags until the RAC task next re-aggregates "
+              + "(see \"Refresh reliability data\" below). Neither number is more correct than the other."
+            : null;
+    }
+
+    /// <summary>#171: runs the RAC scheduled task, then re-runs RefreshReliabilityMonitorAsync - a
+    /// separate action from the general RefreshCommand per this chunk's instructions, since this one
+    /// also performs the schtasks side-effect first, not just a read.</summary>
+    private async Task RunReliabilityRefreshAsync()
+    {
+        IsReliabilityRefreshing = true;
+        ReliabilityRefreshStatusText = "Running the RAC scheduled task...";
+        try
+        {
+            var (_, message) = await ReliabilityMonitorService.RunRacTaskAsync();
+            ReliabilityRefreshStatusText = message;
+
+            // Re-query regardless of whether schtasks itself reported success - #171's own goal is
+            // "the last few hours of failures actually appear", and a re-query costs nothing even if
+            // the task run failed or Windows is still catching up.
+            await RefreshReliabilityMonitorAsync();
+        }
+        catch (Exception ex)
+        {
+            ReliabilityRefreshStatusText = $"Couldn't refresh reliability data: {ex.Message}";
+        }
+        finally
+        {
+            IsReliabilityRefreshing = false;
+        }
+    }
+
+    /// <summary>#172: explicit confirmation before the registry write, mirroring EnableLocalDumps
+    /// below (and WerReportService's LocalDumps toggle, #165) exactly - states what the write does,
+    /// saves the pre-change value first (ReliabilityMonitorService.SaveBackup) so
+    /// RevertReliabilityAnalysis below can restore it even after an app restart.</summary>
+    private void EnableReliabilityAnalysis()
+    {
+        var confirm = MessageBox.Show(
+            "This writes to HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Reliability Analysis\\WMI\\WMIEnable "
+            + "(sets it to 1) so Windows resumes recording Reliability Monitor data on this PC.\n\n"
+            + "Re-enable Reliability Monitor data collection now?",
+            "Re-enable Reliability Monitor",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        var previous = _reliability.ReadAnalysisStatus();
+        ReliabilityMonitorService.SaveBackup(previous);
+
+        var (success, error) = _reliability.EnableAnalysis();
+        if (success)
+        {
+            ReliabilityAnalysisStatus = _reliability.ReadAnalysisStatus();
+            CanRevertReliabilityAnalysis = true;
+            IsReliabilityMonitorAvailable = !ReliabilityAnalysisStatus.IsCollectionDisabled;
+            ReliabilityAnalysisStatusText = "Reliability Monitor data collection re-enabled - new data will start appearing the next time the RAC task runs (see \"Refresh reliability data\" below).";
+        }
+        else
+        {
+            ReliabilityMonitorService.ClearBackup(); // nothing actually changed - don't leave a stale backup around
+            ReliabilityAnalysisStatusText = $"Couldn't re-enable Reliability Monitor: {error}";
+        }
+    }
+
+    /// <summary>#172: one-click revert - restores whatever WMIEnable looked like right before
+    /// EnableReliabilityAnalysis above last wrote to it. Mirrors RevertLocalDumps below.</summary>
+    private void RevertReliabilityAnalysis()
+    {
+        var backup = ReliabilityMonitorService.LoadBackup();
+        if (backup is null)
+        {
+            ReliabilityAnalysisStatusText = "No previous Reliability Monitor configuration was saved to revert to.";
+            return;
+        }
+
+        var confirm = MessageBox.Show(
+            "This restores the Reliability Analysis\\WMI registry configuration to what it was before this app last changed it"
+            + (backup.KeyExists ? "." : " (the WMIEnable value didn't exist before - it will be removed again.)")
+            + "\n\nRevert Reliability Monitor data collection now?",
+            "Revert Reliability Monitor",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Question);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        var (success, error) = _reliability.RestoreAnalysisStatus(backup);
+        if (success)
+        {
+            ReliabilityMonitorService.ClearBackup();
+            ReliabilityAnalysisStatus = _reliability.ReadAnalysisStatus();
+            CanRevertReliabilityAnalysis = false;
+            IsReliabilityMonitorAvailable = !ReliabilityAnalysisStatus.IsCollectionDisabled;
+            ReliabilityAnalysisStatusText = "Reliability Monitor configuration reverted to its previous state.";
+        }
+        else
+        {
+            ReliabilityAnalysisStatusText = $"Couldn't revert Reliability Monitor configuration: {error}";
+        }
     }
 
     /// <summary>#165: a real confirmation dialog stating the disk-space implication, matching the

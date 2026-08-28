@@ -127,15 +127,210 @@
                 </StackPanel>
             </Border>
 
-            <!-- #1: Reliability History - daily Critical/Error counts over the lookback window,
-                 the same "crash/failure events over time" chart Windows' own Reliability Monitor
-                 shows, bucketed from the same event query as everything else on this tab. -->
+            <!-- #1/#169: Reliability History - daily Critical/Error counts over the lookback window
+                 (this app's own bar series, left axis), the same "crash/failure events over time"
+                 chart Windows' own Reliability Monitor shows, bucketed from the same event query as
+                 everything else on this tab - overlaid with #169's line series, Windows' own 1-10
+                 SystemStabilityIndex from Win32_ReliabilityStabilityMetrics (right axis, blue) so
+                 the two independently-derived scores can be read side by side. See
+                 StabilityViewModel's constructor remarks for why this is one overlaid chart rather
+                 than two separate ones. -->
             <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
                 <StackPanel>
                     <TextBlock Text="Reliability history" Style="{StaticResource CardTitle}" />
-                    <TextBlock Text="Critical/Error events per day, last 30 days." Style="{StaticResource SubStat}" Margin="0,-4,0,10" />
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,-4,0,2" TextWrapping="Wrap">
+                        <Run Text="Critical/Error events per day (orange bars, left axis), last 30 days — with Windows' own Reliability Monitor stability index overlaid (blue line, right axis, 1-10)." />
+                    </TextBlock>
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,10" TextWrapping="Wrap"
+                                Visibility="{Binding IsReliabilityMonitorAvailable, Converter={StaticResource BoolToVisibilityConverter}}">
+                        <Run Text="Windows index (last 7 days, avg): " />
+                        <Run Text="{Binding WindowsStabilityIndexRecent, StringFormat={}{0:0.0}/10, TargetNullValue='no data yet'}" FontWeight="SemiBold" />
+                    </TextBlock>
                     <lvc:CartesianChart Series="{Binding DailyEventSeries}" XAxes="{Binding DailyEventXAxes}" YAxes="{Binding DailyEventYAxes}"
                                          Height="160" TooltipPosition="Top" LegendPosition="Hidden" Background="Transparent" />
+                </StackPanel>
+            </Border>
+
+            <!-- #174: index disagreement flag - only shown when the two independently-derived
+                 scores actually diverge by more than StabilityViewModel.IndexDisagreementThreshold;
+                 explains the divergence rather than leaving two unexplained numbers on screen
+                 (CLAUDE.md's "quick flag, not a verdict"). -->
+            <Border Background="{DynamicResource BgElevatedBrush}" BorderBrush="{DynamicResource WarningBrush}"
+                    BorderThickness="1" CornerRadius="8" Padding="14,10" Margin="0,0,0,16"
+                    Visibility="{Binding IndicesDisagree, Converter={StaticResource BoolToVisibilityConverter}}">
+                <TextBlock Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" FontSize="12.5"
+                            Text="{Binding IndexDisagreementText}" />
+            </Border>
+
+            <!-- #172: Reliability Monitor's own WMI data collection status - always shown (not
+                 collapsed), warning-styled only when collection is off, mirroring the "Error
+                 reporting status" card's shape further down this tab. Offers to re-enable it (with
+                 explicit confirmation) and #171's "run the RAC task now" refresh, which is what
+                 actually re-aggregates #169/#170's data instead of waiting for it to happen on its
+                 own schedule. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding ReliabilityAnalysisStatus.IsCollectionDisabled}" Value="True">
+                                <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
+                                <Setter Property="BorderBrush" Value="{DynamicResource DangerBrush}" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Reliability Monitor collection" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="{Binding ReliabilityAnalysisStatus.SummaryText}" FontSize="12.5" TextWrapping="Wrap" Margin="0,2,0,8" />
+                    <WrapPanel>
+                        <Button Content="Refresh reliability data" FontSize="11" Padding="8,4" Margin="0,0,8,0"
+                                 Command="{Binding RefreshReliabilityCommand}" />
+                        <Button Content="Re-enable collection..." FontSize="11" Padding="8,4" Margin="0,0,8,0"
+                                 Command="{Binding EnableReliabilityAnalysisCommand}"
+                                 Visibility="{Binding ReliabilityAnalysisStatus.IsCollectionDisabled, Converter={StaticResource BoolToVisibilityConverter}}" />
+                        <Button Content="Revert to previous..." FontSize="11" Padding="8,4" Command="{Binding RevertReliabilityAnalysisCommand}"
+                                 Visibility="{Binding CanRevertReliabilityAnalysis, Converter={StaticResource BoolToVisibilityConverter}}" />
+                    </WrapPanel>
+                    <TextBlock Text="{Binding ReliabilityRefreshStatusText}" Style="{StaticResource SubStat}" Margin="0,6,0,0" TextWrapping="Wrap"
+                                Visibility="{Binding ReliabilityRefreshStatusText, Converter={StaticResource NullToVisibilityConverter}}" />
+                    <TextBlock Text="{Binding ReliabilityAnalysisStatusText}" Style="{StaticResource SubStat}" Margin="0,4,0,0" TextWrapping="Wrap"
+                                Visibility="{Binding ReliabilityAnalysisStatusText, Converter={StaticResource NullToVisibilityConverter}}" />
+                </StackPanel>
+            </Border>
+
+            <!-- #170: the full Reliability Monitor feed - application/Windows/miscellaneous
+                 failures, warnings, and informational entries (software installs/updates/
+                 uninstalls) all from one WMI class, with product name, source, and timestamp. Hidden
+                 entirely (not an empty grid) when #172 detects collection is off. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsReliabilityMonitorAvailable}" Value="False">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Reliability Monitor feed" Style="{StaticResource CardTitle}" />
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap">
+                        <Run Text="Every Win32_ReliabilityRecords entry — failures, warnings, and informational software changes — last 30 days, newest first." />
+                    </TextBlock>
+                    <DataGrid ItemsSource="{Binding ReliabilityRecords}" IsReadOnly="True" AutoGenerateColumns="False" MaxHeight="300">
+                        <DataGrid.RowStyle>
+                            <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+                                <Setter Property="ToolTip" Value="{Binding Message}" />
+                            </Style>
+                        </DataGrid.RowStyle>
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Time" Binding="{Binding TimeGenerated, StringFormat={}{0:g}}" Width="140" />
+                            <DataGridTemplateColumn Header="Category" Width="100" SortMemberPath="CategoryLabel">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding CategoryLabel}" VerticalAlignment="Center">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding Category}" Value="Failure">
+                                                            <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding Category}" Value="Warning">
+                                                            <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding Category}" Value="Informational">
+                                                            <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTextColumn Header="Source" Binding="{Binding SourceName}" Width="1.4*" />
+                            <DataGridTextColumn Header="Event ID" Binding="{Binding EventIdentifier}" Width="70" />
+                            <DataGridTextColumn Header="Product" Binding="{Binding ProductName}" Width="2*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <TextBlock Text="No reliability records found in the last 30 days.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding ReliabilityRecords.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- #173: informational reliability records (software installs/updates/uninstalls)
+                 presented as a change log, cross-highlighted against crash clusters from the unified
+                 timeline (#137) - a concrete "this appeared right before things got worse" list,
+                 correlation only. Hidden entirely when #172 detects collection is off. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsReliabilityMonitorAvailable}" Value="False">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Software change log" Style="{StaticResource CardTitle}" />
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap">
+                        <Run Text="Quick flag, not a verdict — " FontWeight="SemiBold" />
+                        <Run Text="installs, updates, and uninstalls from the feed above. A highlighted entry was followed by a crash cluster within a few days — correlation only, not proof of cause." />
+                    </TextBlock>
+                    <ItemsControl ItemsSource="{Binding SoftwareChangeLog}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate DataType="{x:Type models:ReliabilityRecordInfo}">
+                                <Border CornerRadius="6" Padding="10,8" Margin="0,0,0,6">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Setter Property="Background" Value="{DynamicResource BgElevatedBrush}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsFlaggedBeforeCrash}" Value="True">
+                                                    <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
+                                    <StackPanel>
+                                        <TextBlock FontSize="12.5" FontWeight="SemiBold" TextWrapping="Wrap">
+                                            <Run Text="{Binding ProductName, Mode=OneWay}" />
+                                        </TextBlock>
+                                        <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}">
+                                            <Run Text="{Binding TimeGenerated, StringFormat={}{0:g}, Mode=OneWay}" />
+                                            <Run Text=" · " /><Run Text="{Binding SourceName, Mode=OneWay}" />
+                                        </TextBlock>
+                                        <TextBlock Text="{Binding PrecedesCrashClusterNote}" FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0"
+                                                    Foreground="{DynamicResource DangerBrush}" FontWeight="SemiBold"
+                                                    Visibility="{Binding IsFlaggedBeforeCrash, Converter={StaticResource BoolToVisibilityConverter}}" />
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="No software installs/updates/uninstalls found in the last 30 days.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding SoftwareChangeLog.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
                 </StackPanel>
             </Border>
 
