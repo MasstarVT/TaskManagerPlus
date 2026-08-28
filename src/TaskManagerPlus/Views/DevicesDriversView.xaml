@@ -695,10 +695,17 @@
                     <TextBlock Text="{Binding DeviceTreeStatusText}" Style="{StaticResource SubStat}" Margin="0,2,0,0" />
                 </StackPanel>
                 <!-- #471: SetupDiGetClassDevs(DIGCF_ALLCLASSES) without DIGCF_PRESENT - the one gap
-                     Win32_PnPEntity alone can't fill (it only ever lists present devices). -->
-                <CheckBox Grid.Column="1" Content="Show non-present devices" VerticalAlignment="Center"
-                          Margin="0,0,16,0" Foreground="{DynamicResource TextSecondaryBrush}"
-                          IsChecked="{Binding ShowNonPresentDevices}" />
+                     Win32_PnPEntity alone can't fill (it only ever lists present devices).
+                     #473: filter chip for devices problem-code 22 flags as manually disabled. -->
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="0,0,16,0">
+                    <CheckBox Content="Show non-present devices" VerticalAlignment="Center"
+                              Margin="0,0,16,0" Foreground="{DynamicResource TextSecondaryBrush}"
+                              IsChecked="{Binding ShowNonPresentDevices}" />
+                    <CheckBox Content="Disabled devices only" VerticalAlignment="Center"
+                              Foreground="{DynamicResource TextSecondaryBrush}"
+                              IsChecked="{Binding ShowDisabledOnly}"
+                              ToolTip="#473: shows only devices Device Manager's own problem code 22 (CONFIGFLAG_DISABLED) flags as manually disabled." />
+                </StackPanel>
                 <Button Grid.Column="2" Style="{StaticResource PrimaryButton}" Command="{Binding LoadDeviceTreeCommand}">
                     <TextBlock>
                         <TextBlock.Style>
@@ -715,10 +722,76 @@
                 </Button>
             </Grid>
 
-            <!-- #468/#469: grouped-by-class device list - click a row to select it below. -->
+            <!-- #468/#469: grouped-by-class device list - click a row to select it below.
+                 #472/#474/#475: right-click for Enable/Disable/Restart/Remove on whichever row is
+                 selected - right-clicking a ListBoxItem selects it first, same as every other
+                 Selector-derived control's ContextMenu in this app (ProcessesView/ServicesView). -->
             <ListBox ItemsSource="{Binding DeviceTreeView}" SelectedItem="{Binding SelectedDeviceNode}"
                      Height="360" Background="Transparent" BorderThickness="0"
-                     ScrollViewer.VerticalScrollBarVisibility="Auto" Margin="0,0,0,16">
+                     ScrollViewer.VerticalScrollBarVisibility="Auto" Margin="0,0,0,8">
+                <ListBox.ContextMenu>
+                    <ContextMenu>
+                        <MenuItem Header="Enable device" Command="{Binding EnableDeviceCommand}">
+                            <MenuItem.Style>
+                                <Style TargetType="MenuItem">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding SelectedDeviceNode.IsPresent}" Value="False">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding SelectedDeviceNode}" Value="{x:Null}">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </MenuItem.Style>
+                        </MenuItem>
+                        <MenuItem Header="Disable device" Command="{Binding DisableDeviceCommand}">
+                            <MenuItem.Style>
+                                <Style TargetType="MenuItem">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding SelectedDeviceNode.IsPresent}" Value="False">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding SelectedDeviceNode}" Value="{x:Null}">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </MenuItem.Style>
+                        </MenuItem>
+                        <MenuItem Header="Restart device" Command="{Binding RestartDeviceCommand}"
+                                  ToolTip="#475: pnputil /restart-device - reloads the driver without a reboot.">
+                            <MenuItem.Style>
+                                <Style TargetType="MenuItem">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding SelectedDeviceNode.IsPresent}" Value="False">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding SelectedDeviceNode}" Value="{x:Null}">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </MenuItem.Style>
+                        </MenuItem>
+                        <Separator />
+                        <MenuItem Header="Remove device entry" Command="{Binding RemoveDeviceCommand}"
+                                  ToolTip="#472: pnputil /remove-device - only for a non-present ('ghost') device.">
+                            <MenuItem.Style>
+                                <Style TargetType="MenuItem">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding SelectedDeviceNode.IsPresent}" Value="True">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding SelectedDeviceNode}" Value="{x:Null}">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </MenuItem.Style>
+                        </MenuItem>
+                    </ContextMenu>
+                </ListBox.ContextMenu>
                 <ListBox.GroupStyle>
                     <GroupStyle>
                         <GroupStyle.ContainerStyle>
@@ -770,10 +843,26 @@
                     <DataTemplate>
                         <Grid>
                             <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
-                            <StackPanel Grid.Column="0">
+                            <!-- #472: multi-select for "Remove checked" below - only ever visible for
+                                 a non-present row (present devices have nothing to remove here). -->
+                            <CheckBox Grid.Column="0" VerticalAlignment="Center" Margin="0,0,8,0"
+                                      IsChecked="{Binding IsCheckedForRemoval}">
+                                <CheckBox.Style>
+                                    <Style TargetType="CheckBox">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsPresent}" Value="False">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </CheckBox.Style>
+                            </CheckBox>
+                            <StackPanel Grid.Column="1">
                                 <TextBlock FontSize="12" TextTrimming="CharacterEllipsis">
                                     <TextBlock.Style>
                                         <Style TargetType="TextBlock">
@@ -791,7 +880,7 @@
                                     <Run Text="{Binding Manufacturer}" /><Run Text=" · " /><Run Text="{Binding Service, TargetNullValue='no driver'}" />
                                 </TextBlock>
                             </StackPanel>
-                            <Border Grid.Column="1" CornerRadius="10" Padding="7,2" VerticalAlignment="Center" Margin="6,0,0,0">
+                            <Border Grid.Column="2" CornerRadius="10" Padding="7,2" VerticalAlignment="Center" Margin="6,0,0,0">
                                 <Border.Style>
                                     <Style TargetType="Border">
                                         <Setter Property="Visibility" Value="Collapsed" />
@@ -826,6 +915,31 @@
                     </DataTemplate>
                 </ListBox.ItemTemplate>
             </ListBox>
+
+            <!-- #472: multi-select removal toolbar - acts on every currently-checked non-present
+                 row above; the context menu's "Remove device entry" is the single-device shortcut. -->
+            <Grid Margin="0,0,0,10">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="{Binding DeviceActionStatusText}" VerticalAlignment="Center"
+                           Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5" TextTrimming="CharacterEllipsis" />
+                <Button Grid.Column="1" Padding="10,4" Command="{Binding RemoveCheckedDevicesCommand}">
+                    <TextBlock>
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Text" Value="Remove checked" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsPerformingDeviceAction}" Value="True">
+                                        <Setter Property="Text" Value="Working..." />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </Button>
+            </Grid>
 
             <!-- #469: decoded problem-code detail + #467 per-device filters, for whichever device
                  is selected above. -->
@@ -927,6 +1041,178 @@
                             </TextBlock.Style>
                         </TextBlock>
                     </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- #476/#477: resource map (IRQ/I-O/memory/DMA + conflict flags) and MSI-vs-line-based
+                 interrupt mode - one shared Load button, gated the same way Class filter drivers
+                 above is (a full WMI+registry pull, not free enough for the timer-less tab's own
+                 implicit Refresh). -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Resources" Style="{StaticResource CardTitle}" Margin="0" />
+                        <Button Grid.Column="1" Padding="10,4" Command="{Binding LoadResourcesCommand}">
+                            <TextBlock>
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="Load" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsLoadingResources}" Value="True">
+                                                <Setter Property="Text" Value="Loading..." />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Button>
+                    </Grid>
+                    <TextBlock Text="{Binding ResourcesStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" />
+
+                    <TextBlock Text="IRQ / I-O / memory / DMA assignments" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,4" />
+                    <DataGrid Height="220" ItemsSource="{Binding DeviceResources}" IsReadOnly="True" Margin="0,0,0,12">
+                        <DataGrid.RowStyle>
+                            <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsFlagged}" Value="True">
+                                        <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </DataGrid.RowStyle>
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Device" Binding="{Binding DeviceName}" Width="2*" />
+                            <DataGridTextColumn Header="Kind" Binding="{Binding KindText}" Width="60" />
+                            <DataGridTextColumn Header="Range" Binding="{Binding RangeText}" Width="1.4*" />
+                            <DataGridTextColumn Header="Shareable" Binding="{Binding ShareableText}" Width="90" />
+                            <DataGridTemplateColumn Header="Flag" Width="2.5*" SortMemberPath="FlagText">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding FlagText}" FontSize="11" TextWrapping="Wrap" VerticalAlignment="Center"
+                                                   Foreground="{DynamicResource WarningBrush}" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+
+                    <!-- #476: devices reporting problem code 12 ("insufficient resources") - collapsed
+                         entirely when none, the common/healthy case. -->
+                    <Border Padding="10,8" CornerRadius="6" Background="{DynamicResource DangerMutedBrush}" Margin="0,0,0,12">
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding InsufficientResourceDevices.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                        <StackPanel>
+                            <TextBlock FontSize="12.5" FontWeight="SemiBold" Foreground="{DynamicResource DangerBrush}"
+                                       Text="Devices reporting insufficient resources (problem code 12)" TextWrapping="Wrap" />
+                            <ItemsControl ItemsSource="{Binding InsufficientResourceDevices}" Margin="0,4,0,0">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock FontSize="11" TextWrapping="Wrap" Margin="0,0,0,2">
+                                            <Run Text="{Binding Name}" FontWeight="SemiBold" /><Run Text=" - " /><Run Text="{Binding ClassName}" />
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- #477: MSI vs. line-based interrupt mode - read-only, only devices with
+                         something actually configured under Interrupt Management are listed. -->
+                    <TextBlock Text="Interrupt mode (MSI vs. line-based)" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,4" />
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,-2,0,8" TextWrapping="Wrap"
+                               Text="Read-only - changing either of these is a manual registry edit outside this app's scope. Only devices with an Interrupt Management value actually set are listed here." />
+                    <DataGrid Height="200" ItemsSource="{Binding InterruptModes}" IsReadOnly="True">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Device" Binding="{Binding DeviceName}" Width="2*" />
+                            <DataGridTextColumn Header="Mode" Binding="{Binding ModeText}" Width="1.3*" />
+                            <DataGridTextColumn Header="Affinity policy" Binding="{Binding AffinityPolicyText}" Width="1.6*" />
+                            <DataGridTextColumn Header="Line sharing" Binding="{Binding SharingText}" Width="2*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- #478: wake-armed / wake-capable devices (powercfg /devicequery) combined with a
+                 best-effort per-device "Windows allowed to power this off" read. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Wake &amp; power management" Style="{StaticResource CardTitle}" Margin="0" />
+                        <Button Grid.Column="1" Padding="10,4" Command="{Binding LoadWakePowerCommand}">
+                            <TextBlock>
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="Load" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsLoadingWakePower}" Value="True">
+                                                <Setter Property="Text" Value="Loading..." />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Button>
+                    </Grid>
+                    <TextBlock Text="{Binding WakePowerStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" />
+                    <DataGrid Height="220" ItemsSource="{Binding WakeDevices}" IsReadOnly="True">
+                        <DataGrid.RowStyle>
+                            <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsWakeArmed}" Value="True">
+                                        <Setter Property="Background" Value="{DynamicResource AccentMutedBrush}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </DataGrid.RowStyle>
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Device" Binding="{Binding DeviceName}" Width="2.2*" />
+                            <DataGridTemplateColumn Header="Wake armed" Width="90" SortMemberPath="IsWakeArmed">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock VerticalAlignment="Center" FontWeight="SemiBold">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Text" Value="No" />
+                                                    <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsWakeArmed}" Value="True">
+                                                            <Setter Property="Text" Value="Yes" />
+                                                            <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridCheckBoxColumn Header="Wake from any" Binding="{Binding CanWakeFromAny}" Width="100" />
+                            <DataGridCheckBoxColumn Header="Wake programmable" Binding="{Binding CanWakeProgrammable}" Width="130" />
+                            <DataGridTextColumn Header="Windows may power off" Binding="{Binding AllowComputerToTurnOffText}" Width="150">
+                                <DataGridTextColumn.HeaderStyle>
+                                    <Style TargetType="DataGridColumnHeader">
+                                        <Setter Property="ToolTip"
+                                                Value="Best-effort read of the 'Allow the computer to turn off this device to save power' checkbox - an undocumented registry convention, not a published API, so 'Unknown' just means no matching present device or no PNPCapabilities value was found." />
+                                    </Style>
+                                </DataGridTextColumn.HeaderStyle>
+                            </DataGridTextColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
                 </StackPanel>
             </Border>
 
