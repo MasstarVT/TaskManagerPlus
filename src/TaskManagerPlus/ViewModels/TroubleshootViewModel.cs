@@ -48,6 +48,10 @@ public sealed class TroubleshootViewModel : ObservableObject
     private readonly List<TroubleshootBranchDefinition> _branches = new();
     private bool _isRunning;
 
+    // #938-949: the Timeline panel - a sibling "page" of this tab, reached from the landing page's
+    // "Timeline" button the same way "Past runs" already is (see ShowLanding/ShowPastRuns below).
+    public TimelineViewModel Timeline { get; }
+
     public ObservableCollection<SymptomCard> Symptoms { get; } = new();
 
     /// <summary>#915: saved run transcripts, newest first - populated on demand when the "Past
@@ -65,6 +69,7 @@ public sealed class TroubleshootViewModel : ObservableObject
             {
                 OnPropertyChanged(nameof(ShowLanding));
                 OnPropertyChanged(nameof(ShowPastRuns));
+                OnPropertyChanged(nameof(ShowTimeline));
             }
         }
     }
@@ -83,11 +88,29 @@ public sealed class TroubleshootViewModel : ObservableObject
         }
     }
 
+    // #938: the Timeline panel is a third sibling "page", same shape as IsShowingPastRuns above.
+    private bool _isShowingTimeline;
+    public bool IsShowingTimeline
+    {
+        get => _isShowingTimeline;
+        private set
+        {
+            if (SetProperty(ref _isShowingTimeline, value))
+            {
+                OnPropertyChanged(nameof(ShowLanding));
+                OnPropertyChanged(nameof(ShowTimeline));
+            }
+        }
+    }
+
     /// <summary>True for the symptom-card landing grid.</summary>
-    public bool ShowLanding => SelectedRun is null && !IsShowingPastRuns;
+    public bool ShowLanding => SelectedRun is null && !IsShowingPastRuns && !IsShowingTimeline;
 
     /// <summary>True for the "Past runs" list.</summary>
     public bool ShowPastRuns => SelectedRun is null && IsShowingPastRuns;
+
+    /// <summary>True for the Timeline panel.</summary>
+    public bool ShowTimeline => SelectedRun is null && IsShowingTimeline;
 
     public bool IsRunning { get => _isRunning; private set => SetProperty(ref _isRunning, value); }
 
@@ -99,10 +122,15 @@ public sealed class TroubleshootViewModel : ObservableObject
     public RelayCommand RerunSavedCommand { get; }
     public AsyncRelayCommand RunManualStepCommand { get; }
 
-    public TroubleshootViewModel(PerformanceViewModel performance, ProcessesViewModel processes)
+    // #938: landing page <-> Timeline panel, mirroring ShowPastRunsCommand/HidePastRunsCommand.
+    public RelayCommand ShowTimelineCommand { get; }
+    public RelayCommand HideTimelineCommand { get; }
+
+    public TroubleshootViewModel(PerformanceViewModel performance, ProcessesViewModel processes, LoggingViewModel logging)
     {
         _performance = performance;
         _processes = processes;
+        Timeline = new TimelineViewModel(logging);
 
         RegisterBranch("slow", "My PC is slow right now", "Checks CPU/RAM/disk load, top offenders, and background maintenance work.", BuildSlowPcSteps, BuildSlowPcVerdict);
         RegisterBranch("crash", "It crashes or blue-screens", "Checks crash events, minidumps, reliability records, hardware errors, and recent driver installs.", BuildCrashSteps, BuildCrashVerdict);
@@ -127,6 +155,9 @@ public sealed class TroubleshootViewModel : ObservableObject
 
         ShowPastRunsCommand = new RelayCommand(_ => { RefreshPastRuns(); IsShowingPastRuns = true; }, _ => !IsRunning && SelectedRun is null);
         HidePastRunsCommand = new RelayCommand(_ => IsShowingPastRuns = false);
+
+        ShowTimelineCommand = new RelayCommand(_ => IsShowingTimeline = true, _ => !IsRunning && SelectedRun is null);
+        HideTimelineCommand = new RelayCommand(_ => IsShowingTimeline = false);
         OpenSavedRunCommand = new RelayCommand(param =>
         {
             if (param is not TroubleshootRunRecord record) return;

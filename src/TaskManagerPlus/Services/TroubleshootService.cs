@@ -35,7 +35,10 @@ public static class TroubleshootService
     private const int CrashLookbackDays = 30;
     private const int BootShutdownLookbackDays = 30;
 
-    private static string Truncate(string s, int maxLen) => s.Length <= maxLen ? s : s[..maxLen] + "…";
+    // #939/#940/#944 (Timeline, items 938-949): bumped from private to internal so
+    // TimelineService can reuse this app's existing event-log-read/shell-out/pnputil-parsing
+    // helpers instead of duplicating them - see each call site's own remarks.
+    internal static string Truncate(string s, int maxLen) => s.Length <= maxLen ? s : s[..maxLen] + "…";
 
     #region Shared helpers (event log / shell-out)
 
@@ -50,7 +53,7 @@ public static class TroubleshootService
     /// Degrades to an empty list (channel not enabled/present, access denied, provider unknown on
     /// this Windows build) rather than throwing.
     /// </summary>
-    private static List<RawEvent> ReadProviderEvents(string logName, string? providerName, IReadOnlyList<int> eventIds, int lookbackDays, int maxEvents = 100)
+    internal static List<RawEvent> ReadProviderEvents(string logName, string? providerName, IReadOnlyList<int> eventIds, int lookbackDays, int maxEvents = 100)
     {
         var results = new List<RawEvent>();
         try
@@ -130,7 +133,7 @@ public static class TroubleshootService
     /// concurrent-read/bounded-wait/kill-on-timeout pattern PowerPlanService.RunCapturedAsync and
     /// TracerouteService.RunAsync already established, reused here rather than duplicated again.
     /// </summary>
-    private static async Task<(string Output, int? ExitCode)> RunCapturedAsync(string exe, string args, int timeoutMs = 15000)
+    internal static async Task<(string Output, int? ExitCode)> RunCapturedAsync(string exe, string args, int timeoutMs = 15000)
     {
         var psi = new ProcessStartInfo(exe, args)
         {
@@ -437,7 +440,7 @@ public static class TroubleshootService
             $"{events.Count} hardware-error event(s) logged by WHEA-Logger in the last {DefaultLookbackDays} days - possible hardware involvement.", evidence);
     }
 
-    private sealed record PnpDriverInfo(string PublishedName, string Provider, DateTime? Date);
+    internal sealed record PnpDriverInfo(string PublishedName, string Provider, DateTime? Date);
 
     /// <summary>Correlates drivers installed in the 7 days before the first detected crash, via
     /// `pnputil /enum-drivers` (the same "known tool, parse its text output" tradeoff every other
@@ -478,7 +481,7 @@ public static class TroubleshootService
         }
     }
 
-    private static List<PnpDriverInfo> ParsePnpUtilDrivers(string output)
+    internal static List<PnpDriverInfo> ParsePnpUtilDrivers(string output)
     {
         var drivers = new List<PnpDriverInfo>();
         foreach (var block in Regex.Split(output.Replace("\r\n", "\n"), "\n\n+"))

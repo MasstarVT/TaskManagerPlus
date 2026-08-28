@@ -3,6 +3,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="clr-namespace:TaskManagerPlus.ViewModels"
              xmlns:models="clr-namespace:TaskManagerPlus.Models"
+             xmlns:views="clr-namespace:TaskManagerPlus.Views"
              d:DataContext="{d:DesignInstance Type=vm:TroubleshootViewModel}"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
@@ -159,9 +160,16 @@
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     <TextBlock Grid.Column="0" Text="What's the problem?" FontSize="18" FontWeight="Light" VerticalAlignment="Center" />
-                    <!-- #915: reopen a saved run's transcript, or re-run its symptom fresh. -->
-                    <Button Grid.Column="1" Content="Past runs" Padding="10,4" VerticalAlignment="Center"
-                            Command="{Binding ShowPastRunsCommand}" />
+                    <StackPanel Grid.Column="1" Orientation="Horizontal">
+                        <!-- #938: one shared time axis overlaying every dated event this app can
+                             find - crashes, updates, driver installs, software installs, thermal
+                             events, service failures, perf spikes, and user notes. -->
+                        <Button Content="Timeline" Padding="10,4" Margin="0,0,8,0" VerticalAlignment="Center"
+                                Command="{Binding ShowTimelineCommand}" />
+                        <!-- #915: reopen a saved run's transcript, or re-run its symptom fresh. -->
+                        <Button Content="Past runs" Padding="10,4" VerticalAlignment="Center"
+                                Command="{Binding ShowPastRunsCommand}" />
+                    </StackPanel>
                 </Grid>
                 <TextBlock Text="Pick the symptom that best matches what you're seeing - this runs a scripted set of checks instead of making you guess which tab to open."
                            Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,18" />
@@ -203,6 +211,12 @@
                 <ItemsControl ItemsSource="{Binding PastRuns}" ItemTemplate="{StaticResource PastRunCardTemplate}" />
             </StackPanel>
         </ScrollViewer>
+
+        <!-- #938-949: the Timeline panel - visible only when explicitly opened from the landing
+             page. TimelineView.xaml already wraps its own content in a ScrollViewer, so this isn't
+             nested in a second one. -->
+        <views:TimelineView DataContext="{Binding Timeline}"
+                             Visibility="{Binding DataContext.ShowTimeline, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource BoolToVisibilityConverter}}" />
 
         <!-- Run view - ordered step list plus a verdict card. Visible only once a run exists. -->
         <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16"

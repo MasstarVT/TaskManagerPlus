@@ -31,6 +31,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     // scratch (see TroubleshootViewModel's remarks).
     public TroubleshootViewModel Troubleshoot { get; }
 
+    // #943: see the Attach() call in the constructor - logs thermal/throttle transitions to
+    // thermal-events.jsonl for the Timeline panel's Thermal events lane.
+    private readonly ThermalEventLogService _thermalEventLog = new();
+
     // Thin wrappers over the shared Performance sampler (see CpuViewModel's remarks) - the
     // CPU/Memory/Storage/Network tabs are split views of one underlying data source, not four
     // independent pollers.
@@ -217,7 +221,13 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Summary = new SummaryViewModel(Performance, Processes, Services, EnergyThermals, SystemSpecs, Network, Stability, RulesEngine);
         RulesEditor = new RulesEditorViewModel(RulesEngine, Performance, EnergyThermals, SystemSpecs, Services, Processes);
         Search = new GlobalSearchViewModel(Processes, Services, Startup, SystemSpecs);
-        Troubleshoot = new TroubleshootViewModel(Performance, Processes);
+        Troubleshoot = new TroubleshootViewModel(Performance, Processes, Logging);
+
+        // #943: edge-triggered thermal/throttle event logging for the Timeline panel - a
+        // PropertyChanged subscription on the already-constructed Cpu/EnergyThermals view-models,
+        // not a new poll timer. Wired here (not inside TroubleshootViewModel) so it keeps logging
+        // even if the Timeline panel is never opened this session.
+        _thermalEventLog.Attach(Cpu, EnergyThermals);
 
         RemoteMonitor = new RemoteMonitorService(BuildRemoteMetricsSnapshot) { RequiredToken = _remoteMonitorSettings.Token };
         ToggleRemoteMonitorCommand = new RelayCommand(_ => IsRemoteMonitorEnabled = !IsRemoteMonitorEnabled);
