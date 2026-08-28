@@ -93,6 +93,9 @@
             <Button Content="View environment" Margin="0,0,8,8" Command="{Binding ViewEnvironmentCommand}" />
             <!-- Round 7 #12 -->
             <Button Content="View handle types" Margin="0,0,8,8" Command="{Binding ViewHandleTypesCommand}" />
+            <!-- #408: single-process, on-demand VirtualQueryEx address-space walk. -->
+            <Button Content="Address space" Margin="0,0,8,8" Command="{Binding ViewAddressSpaceCommand}"
+                    ToolTip="Walk this process's virtual address space and bucket it by private/image/mapped-file, committed/reserved/free - never run automatically, only on request" />
             <!-- Round 7 #17 - only meaningful for a svchost.exe row, see IsSvchostSelected. -->
             <Button Content="Hosted services" Margin="0,0,8,8" Command="{Binding ViewHostedServicesCommand}"
                     ToolTip="Which service names live inside this svchost.exe process" />
@@ -223,6 +226,37 @@
                      instead of a redundant "commit" duplicate of private bytes. -->
                 <DataGridTextColumn Header="Private bytes" Binding="{Binding PrivateBytes, Converter={StaticResource BytesToReadableConverter}}" Width="100" />
                 <DataGridTextColumn Header="Virtual size" Binding="{Binding VirtualBytes, Converter={StaticResource BytesToReadableConverter}}" Width="100" />
+                <!-- #412: resident, non-shared memory only - a shared-DLL-heavy process's total
+                     working set (above) can look large even though most of it is pages shared
+                     with other processes. -->
+                <DataGridTextColumn Header="Private WS" Binding="{Binding PrivateWorkingSetBytes, Converter={StaticResource BytesToReadableConverter}}" Width="100" />
+                <!-- #410: per-process page-fault rate - identifies which process is actually
+                     causing paging pressure, rather than only the system-wide figure. -->
+                <DataGridTextColumn Header="Page faults" Binding="{Binding PageFaultsPerSec, StringFormat={}{0:0.0}/s}" Width="90" />
+                <!-- #409: private bytes ahead of working set by a wide margin means a meaningful
+                     chunk of this process's committed memory has been paged/trimmed out of
+                     physical RAM - not genuinely small, just not currently resident. -->
+                <DataGridTemplateColumn Header="WS/Priv gap" Width="100" SortMemberPath="WorkingSetPrivateGapBytes">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding WorkingSetPrivateGapBytes, Converter={StaticResource BytesToReadableConverter}}"
+                                       VerticalAlignment="Center"
+                                       ToolTip="Private bytes minus working set - a large gap means this much of the process's committed memory has been paged/trimmed out of physical RAM.">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsWorkingSetDivergent}" Value="True">
+                                                <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                <Setter Property="FontWeight" Value="SemiBold" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
                 <!-- #14: possible memory leak - working set has grown without ever giving memory
                      back over the whole tracked history window. See ProcessMonitorService.ComputeLeakSuspect. -->
                 <DataGridTemplateColumn Header="Mem trend" Width="90" SortMemberPath="IsLeakSuspect">
@@ -254,6 +288,65 @@
                         </Style>
                     </DataGridTextColumn.ElementStyle>
                 </DataGridTextColumn>
+                <!-- #401: recent private-bytes trend as a tiny inline sparkline - see
+                     ProcessHistoryService (persistent, cross-restart per-image-name history) and
+                     SparklinePointsConverter. -->
+                <DataGridTemplateColumn Header="Mem history" Width="72">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <Polyline Points="{Binding MemorySparkline, Converter={StaticResource SparklinePointsConverter}}"
+                                      Stroke="{DynamicResource AccentBrush}" StrokeThickness="1.5"
+                                      Width="56" Height="20" VerticalAlignment="Center" />
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <!-- #402: least-squares slope (MB/hour) and R² of the private-bytes history above -
+                     a magnitude and a confidence, distinguishing a steady climb from a sawtooth
+                     allocate/free pattern, on top of the plain "Possible leak" dot. -->
+                <DataGridTextColumn Header="Leak slope" Binding="{Binding LeakSlopeMbPerHour, StringFormat={}{0:0.00} MB/hr}" Width="100" />
+                <DataGridTextColumn Header="Leak R²" Binding="{Binding LeakRSquared, StringFormat={}{0:0.00}}" Width="70" />
+                <!-- #403: handle count climbing steadily while private bytes stay flat - the
+                     classic kernel-object-leak signature, distinct from an ordinary memory leak. -->
+                <DataGridTemplateColumn Header="Handle leak" Width="90" SortMemberPath="IsHandleLeakSuspect">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="Handle leak" Foreground="{DynamicResource WarningBrush}" FontSize="11" VerticalAlignment="Center"
+                                       ToolTip="Handle count has grown steadily while private bytes stayed roughly flat - a quick flag, not a verdict.">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsHandleLeakSuspect}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <!-- #405: thread count climbing steadily with no plateau - a thread-pool leak or
+                     unbounded worker creation. -->
+                <DataGridTemplateColumn Header="Thread runaway" Width="105" SortMemberPath="IsThreadRunawaySuspect">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="Thread runaway" Foreground="{DynamicResource WarningBrush}" FontSize="11" VerticalAlignment="Center"
+                                       ToolTip="Thread count has grown steadily with no plateau - a quick flag, not a verdict.">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsThreadRunawaySuspect}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
                 <!-- #36: per-process GPU engine utilization, via the "GPU Engine" perf-counter
                      category (the same source Task Manager's own GPU column reads). -->
                 <DataGridTemplateColumn Header="GPU" Width="80" SortMemberPath="GpuPercent">
@@ -619,6 +712,7 @@
                     <MenuItem Header="View modules" Command="{Binding ViewModulesCommand}" />
                     <MenuItem Header="View environment" Command="{Binding ViewEnvironmentCommand}" />
                     <MenuItem Header="View handle types" Command="{Binding ViewHandleTypesCommand}" />
+                    <MenuItem Header="Address space" Command="{Binding ViewAddressSpaceCommand}" />
                     <MenuItem Header="Hosted services (svchost)" Command="{Binding ViewHostedServicesCommand}" />
                     <Separator />
                     <MenuItem Header="Scan unbacked memory" Command="{Binding ViewUnbackedMemoryCommand}" />
@@ -641,6 +735,10 @@
                          second, independently-built wait-chain view (richer node/status detail via
                          AnalyzeWaitChainDetailedCommand) alongside item 64's simpler one above. -->
                     <MenuItem Header="Analyze wait chain (detailed)..." Command="{Binding AnalyzeWaitChainDetailedCommand}" />
+                    <!-- #406: pinned leak-watch list - see LeakWatchViewModel and the Memory
+                         tab's "Leak watch list" panel. -->
+                    <MenuItem Header="Watch for leaks" Command="{Binding ToggleLeakWatchCommand}"
+                              ToolTip="Add or remove this process (by name) from the Memory tab's pinned leak-watch list, sampled every 5 seconds" />
                 </ContextMenu>
             </DataGrid.ContextMenu>
         </DataGrid>
@@ -1115,77 +1213,6 @@
                 </StackPanel>
             </Border>
 
-            <!-- Item 64: wait chain result - an indented list, matching Resource Monitor's own
-                 "Analyze Wait Chain" display. Collapsed when nothing's been analysed yet. -->
-            <Border Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Margin="0,0,0,6">
-                <Border.Style>
-                    <Style TargetType="Border">
-                        <Setter Property="Visibility" Value="Visible" />
-                        <Style.Triggers>
-                            <DataTrigger Binding="{Binding WaitChainResults.Count}" Value="0">
-                                <Setter Property="Visibility" Value="Collapsed" />
-                            </DataTrigger>
-                        </Style.Triggers>
-                    </Style>
-                </Border.Style>
-                <StackPanel>
-                    <TextBlock Text="Wait chain" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
-                    <ScrollViewer MaxHeight="180" VerticalScrollBarVisibility="Auto">
-                        <ItemsControl ItemsSource="{Binding WaitChainResults}">
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate>
-                                    <TextBlock Text="{Binding}" FontSize="11.5" FontFamily="Consolas" TextTrimming="CharacterEllipsis" Margin="0,0,0,2" />
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </ScrollViewer>
-                </StackPanel>
-            </Border>
-
-            <!-- #271: Wait Chain Traversal result - populated on demand via
-                 AnalyzeWaitChainDetailedCommand (context menu, or #272's inline "Analyze" link on a
-                 flagged row). A second, independently-built wait-chain view alongside item 64's
-                 simpler one above. -->
-            <Border Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Margin="0,0,0,6">
-                <Border.Style>
-                    <Style TargetType="Border">
-                        <Setter Property="Visibility" Value="Visible" />
-                        <Style.Triggers>
-                            <MultiDataTrigger>
-                                <MultiDataTrigger.Conditions>
-                                    <Condition Binding="{Binding WaitChainNodes.Count}" Value="0" />
-                                    <Condition Binding="{Binding WaitChainStatusText, Converter={StaticResource StringNotEmptyConverter}}" Value="False" />
-                                </MultiDataTrigger.Conditions>
-                                <Setter Property="Visibility" Value="Collapsed" />
-                            </MultiDataTrigger>
-                        </Style.Triggers>
-                    </Style>
-                </Border.Style>
-                <StackPanel>
-                    <TextBlock Text="Wait chain analysis (detailed)" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
-                    <TextBlock Text="{Binding WaitChainStatusText}" FontSize="11.5" TextWrapping="Wrap" Margin="0,0,0,4">
-                        <TextBlock.Style>
-                            <Style TargetType="TextBlock">
-                                <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
-                            </Style>
-                        </TextBlock.Style>
-                    </TextBlock>
-                    <ItemsControl ItemsSource="{Binding WaitChainNodes}">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <TextBlock FontSize="11.5" FontFamily="Consolas" TextWrapping="Wrap" Margin="0,0,0,2">
-                                    <Run Text="{Binding IndentLevel, Mode=OneWay, StringFormat=\{0\}: }" Foreground="{DynamicResource TextSecondaryBrush}" />
-                                    <Run Text="{Binding Description, Mode=OneWay}" />
-                                </TextBlock>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                </StackPanel>
-            </Border>
-
-            <!-- #261: thread state/wait-reason breakdown for the selected process - auto-populates
-                 on selection (like the CPU-affinity editor below) and refreshes each tick from
-                 ResponsivenessViewModel's shared scheduler sweep, no button needed. -->
             <Border Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
                 <Border.Style>
                     <Style TargetType="Border">
@@ -1215,6 +1242,62 @@
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <Border Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Visibility" Value="Visible" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding SelectedProcessAddressSpace}" Value="{x:Null}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,6">
+                        <Run Text="Address space — " />
+                        <Run Text="{Binding SelectedProcessAddressSpace.ProcessName, Mode=OneWay}" FontWeight="SemiBold" />
+                        <Run Text=" (PID " /><Run Text="{Binding SelectedProcessAddressSpace.Pid, Mode=OneWay}" /><Run Text=")" />
+                    </TextBlock>
+                    <TextBlock Text="{Binding SelectedProcessAddressSpace.Error}" Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" Margin="0,0,0,6">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding SelectedProcessAddressSpace.Error}" Value="{x:Null}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <ItemsControl ItemsSource="{Binding SelectedProcessAddressSpace.Buckets}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Background="{DynamicResource BgPanelBrush}" CornerRadius="4" Padding="8,4" Margin="0,0,8,6">
+                                    <TextBlock FontSize="11.5">
+                                        <Run Text="{Binding Category, Mode=OneWay}" FontWeight="SemiBold" />
+                                        <Run Text=": " />
+                                        <Run Text="{Binding TotalBytes, Converter={StaticResource BytesToReadableConverter}, Mode=OneWay}" />
+                                        <Run Text=" (" /><Run Text="{Binding RegionCount, Mode=OneWay}" /><Run Text=" regions)" />
+                                    </TextBlock>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock FontSize="11.5" Margin="0,4,0,0" Foreground="{DynamicResource TextSecondaryBrush}">
+                        <Run Text="Largest contiguous free block: " />
+                        <Run Text="{Binding SelectedProcessAddressSpace.LargestFreeBlockBytes, Converter={StaticResource BytesToReadableConverter}, Mode=OneWay}" FontWeight="SemiBold" />
+                        <Run Text=" — a small largest-block figure despite a large total free figure above points to fragmentation, not a leak." />
+                    </TextBlock>
                 </StackPanel>
             </Border>
         </StackPanel>

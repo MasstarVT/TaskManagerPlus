@@ -465,10 +465,36 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" Text="System snapshot" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
-                        <Button Grid.Column="1" Content="Save snapshot" Command="{Binding SaveSnapshotCommand}" Margin="0,0,8,0" />
-                        <Button Grid.Column="2" Content="Compare to snapshot..." Command="{Binding CompareSnapshotCommand}" />
+                        <Button Grid.Column="1" Command="{Binding SaveSnapshotCommand}" Margin="0,0,8,0">
+                            <TextBlock>
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="Save snapshot" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsCapturingSnapshot}" Value="True">
+                                                <Setter Property="Text" Value="Saving..." />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Button>
+                        <Button Grid.Column="2" Command="{Binding CompareSnapshotCommand}">
+                            <TextBlock>
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="Compare to snapshot..." />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsCapturingSnapshot}" Value="True">
+                                                <Setter Property="Text" Value="Comparing..." />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Button>
                     </Grid>
-                    <TextBlock Text="Captures installed software, services, and startup items - save one now as a baseline, then compare against it later to see what changed."
+                    <TextBlock Text="Captures installed software, services, startup items, driver inventory, and driver store contents - save one now as a baseline, then compare against it later to see what changed."
                                Style="{StaticResource SubStat}" Margin="0,-2,0,8" TextWrapping="Wrap" />
                     <TextBlock Text="{Binding SnapshotStatusText}" Margin="0,0,0,8" TextWrapping="Wrap">
                         <TextBlock.Style>
@@ -538,6 +564,36 @@
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
                                     <TextBlock FontSize="12" Foreground="{DynamicResource DangerBrush}" Text="{Binding StringFormat=- startup item: {0}}" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <!-- #486: driver inventory (#453) + driver store (#479) added/removed - same
+                             shape as every other row above, just two more categories. -->
+                        <ItemsControl ItemsSource="{Binding SnapshotDiff.DriversAdded}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock FontSize="12" Foreground="{DynamicResource SuccessBrush}" Text="{Binding StringFormat=+ driver: {0}}" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <ItemsControl ItemsSource="{Binding SnapshotDiff.DriversRemoved}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock FontSize="12" Foreground="{DynamicResource DangerBrush}" Text="{Binding StringFormat=- driver: {0}}" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <ItemsControl ItemsSource="{Binding SnapshotDiff.DriverStorePackagesAdded}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock FontSize="12" Foreground="{DynamicResource SuccessBrush}" Text="{Binding StringFormat=+ driver store package: {0}}" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <ItemsControl ItemsSource="{Binding SnapshotDiff.DriverStorePackagesRemoved}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock FontSize="12" Foreground="{DynamicResource DangerBrush}" Text="{Binding StringFormat=- driver store package: {0}}" />
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
@@ -628,6 +684,35 @@
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
                                     <TextBlock FontSize="12" Foreground="{DynamicResource DangerBrush}" Text="{Binding StringFormat=- startup item: {0}}" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <!-- #486: driver inventory (#453) + driver store (#479) added/removed. -->
+                        <ItemsControl ItemsSource="{Binding SnapshotAbDiff.DriversAdded}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock FontSize="12" Foreground="{DynamicResource SuccessBrush}" Text="{Binding StringFormat=+ driver: {0}}" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <ItemsControl ItemsSource="{Binding SnapshotAbDiff.DriversRemoved}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock FontSize="12" Foreground="{DynamicResource DangerBrush}" Text="{Binding StringFormat=- driver: {0}}" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <ItemsControl ItemsSource="{Binding SnapshotAbDiff.DriverStorePackagesAdded}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock FontSize="12" Foreground="{DynamicResource SuccessBrush}" Text="{Binding StringFormat=+ driver store package: {0}}" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <ItemsControl ItemsSource="{Binding SnapshotAbDiff.DriverStorePackagesRemoved}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock FontSize="12" Foreground="{DynamicResource DangerBrush}" Text="{Binding StringFormat=- driver store package: {0}}" />
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>

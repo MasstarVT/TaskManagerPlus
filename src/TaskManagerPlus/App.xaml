@@ -27,6 +27,7 @@
             <conv:PercentToWidthConverter x:Key="PercentToWidthConverter" />
             <conv:PercentToStarWidthConverter x:Key="PercentToStarWidthConverter" />
             <conv:BugcheckCodeToDescriptionConverter x:Key="BugcheckCodeToDescriptionConverter" />
+            <conv:ProblemCodeToDescriptionConverter x:Key="ProblemCodeToDescriptionConverter" />
             <conv:StabilityIndexToBrushConverter x:Key="StabilityIndexToBrushConverter" />
             <conv:IntEqualsConverter x:Key="IntEqualsConverter" />
             <conv:BoolToVisibilityConverter x:Key="BoolToVisibilityConverter" />
@@ -40,6 +41,7 @@
             <conv:StringToVisibilityConverter x:Key="StringToVisibilityConverter" />
             <conv:HeatCellCountToBrushConverter x:Key="HeatCellCountToBrushConverter" />
             <conv:TimelineSourceToBrushConverter x:Key="TimelineSourceToBrushConverter" />
+            <conv:SparklinePointsConverter x:Key="SparklinePointsConverter" />
         </ResourceDictionary>
     </Application.Resources>
 </Application>

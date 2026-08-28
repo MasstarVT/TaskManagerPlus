@@ -323,6 +323,31 @@
                     <Run Text="{Binding DataContext.AppPathsModeText, RelativeSource={RelativeSource AncestorType=Window}, Mode=OneTime}" FontWeight="SemiBold" />
                 </TextBlock>
 
+                <TextBlock Text="LEAK ALERTS" FontSize="10.5" FontWeight="Bold" Foreground="{DynamicResource TextTertiaryBrush}"
+                           Margin="0,0,0,14" />
+                <TextBlock Text="Fires a toast the first time a process crosses one of these, edge-triggered the same way the CPU/Memory/temperature thresholds on the Summary tab work. Both are 'quick flag, not a verdict' - see the Memory tab's Leak growth summary and Processes tab's Leak slope/Handles columns for the underlying figures."
+                           Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,14" />
+
+                <!-- #414: "any process grows more than X MB over Y minutes" -->
+                <CheckBox Content="Alert on rapid private-bytes growth"
+                          IsChecked="{Binding DataContext.Summary.LeakGrowthAlertEnabled, RelativeSource={RelativeSource AncestorType=Window}}" Margin="0,0,0,8" />
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
+                    <TextBlock Text="More than" VerticalAlignment="Center" Margin="0,0,6,0" Style="{StaticResource SubStat}" />
+                    <TextBox Width="60" Text="{Binding DataContext.Summary.LeakGrowthAlertMb, RelativeSource={RelativeSource AncestorType=Window}, UpdateSourceTrigger=LostFocus}" />
+                    <TextBlock Text="MB over" VerticalAlignment="Center" Margin="6,0,6,0" Style="{StaticResource SubStat}" />
+                    <TextBox Width="50" Text="{Binding DataContext.Summary.LeakGrowthAlertMinutes, RelativeSource={RelativeSource AncestorType=Window}, UpdateSourceTrigger=LostFocus}" />
+                    <TextBlock Text="minutes" VerticalAlignment="Center" Margin="6,0,0,0" Style="{StaticResource SubStat}" />
+                </StackPanel>
+
+                <!-- #414: "any process exceeds N handles" -->
+                <CheckBox Content="Alert on high handle count"
+                          IsChecked="{Binding DataContext.Summary.LeakHandleCountAlertEnabled, RelativeSource={RelativeSource AncestorType=Window}}" Margin="0,0,0,8" />
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,22">
+                    <TextBlock Text="More than" VerticalAlignment="Center" Margin="0,0,6,0" Style="{StaticResource SubStat}" />
+                    <TextBox Width="70" Text="{Binding DataContext.Summary.LeakHandleCountAlertThreshold, RelativeSource={RelativeSource AncestorType=Window}, UpdateSourceTrigger=LostFocus}" />
+                    <TextBlock Text="handles" VerticalAlignment="Center" Margin="6,0,0,0" Style="{StaticResource SubStat}" />
+                </StackPanel>
+
                 <TextBlock Text="POLLING INTERVALS" FontSize="10.5" FontWeight="Bold" Foreground="{DynamicResource TextTertiaryBrush}"
                            Margin="0,0,0,14" />
                 <TextBlock Text="Lower = more responsive, higher = lighter background load (useful on battery). Defaults match every prior release."

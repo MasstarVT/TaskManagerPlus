@@ -661,6 +661,14 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
     public Axis[] WheaDailyXAxes { get; }
     public Axis[] WheaDailyYAxes { get; }
 
+    // #488: corrected WHEA errors per day over the same lookback window - the exact same
+    // ColumnSeries/Axis setup as DailyEventSeries above, just fed from a different daily bucket.
+    public ObservableCollection<double> DailyWheaCorrectedCounts { get; } = new();
+    private readonly ColumnSeries<double> _dailyWheaCorrectedColumns;
+    public ISeries[] DailyWheaCorrectedSeries { get; }
+    public Axis[] DailyWheaCorrectedXAxes { get; }
+    public Axis[] DailyWheaCorrectedYAxes { get; }
+
     // ---- #187: driver load failures ----
     public ObservableCollection<DriverFailureEvent> DriverFailures { get; } = new();
 
@@ -703,6 +711,40 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
     /// EventAnomalyDetectionService.ComputeDensityHeatmap's remarks for why "day" is chronological,
     /// not a folded 1-31 day-of-month bucket.</summary>
     public ObservableCollection<ErrorDensityHeatmapCell> ErrorDensityHeatmap { get; } = new();
+
+    // #427: the classic pool-starvation event signature (Srv 2019/2020, event 333, and
+    // Resource-Exhaustion-Detector entries) - see EventLogService.ReadPoolExhaustionEvents.
+    public ObservableCollection<PoolExhaustionEvent> PoolExhaustionEvents { get; } = new();
+
+    // #439: out-of-memory incidents (Resource-Exhaustion-Detector event 2004), each carrying the
+    // ranked top commit consumers Windows itself recorded at the moment - see
+    // EventLogService.ReadOutOfMemoryIncidents.
+    public ObservableCollection<OutOfMemoryIncident> OutOfMemoryIncidents { get; } = new();
+
+    // #447: corrected-memory-error events (WHEA-Logger 47) - the same figure the System Specs
+    // memory section shows, surfaced here too since a corrected-error trend is as much a
+    // stability signal as a hardware-inventory fact.
+    public ObservableCollection<CorrectedMemoryErrorEvent> CorrectedMemoryErrors { get; } = new();
+
+    // #464: boot-start/system-start driver load failures (SCM 7000/7001/7026, kernel PnP event
+    // 219) - the same figure the Devices & Drivers tab shows (EventLogService.
+    // ReadBootDriverLoadFailures is read independently by each tab, no ViewModel coupling). This
+    // tab had no distinct pre-existing "boot section" to fold this into, so it's its own small card.
+    public ObservableCollection<BootDriverLoadFailure> BootDriverLoadFailures { get; } = new();
+
+    // #487: every Microsoft-Windows-WHEA-Logger record found (any event ID) - the broad "hardware
+    // errors" view; #447's CorrectedMemoryErrors above stays as its own narrower event-47 slice.
+    public ObservableCollection<WheaHardwareErrorEvent> WheaHardwareErrors { get; } = new();
+
+    // #492: crash/TDR/unexpected-shutdown events preceded by a WHEA hardware error within the
+    // correlation window - see EventLogService.BuildHardwareErrorCorrelations.
+    public ObservableCollection<HardwareErrorCorrelation> HardwareErrorCorrelations { get; } = new();
+
+    private int _correctedMemoryErrorCount;
+    public int CorrectedMemoryErrorCount { get => _correctedMemoryErrorCount; private set => SetProperty(ref _correctedMemoryErrorCount, value); }
+
+    private string _lastCorrectedMemoryErrorText = "None in the last 30 days";
+    public string LastCorrectedMemoryErrorText { get => _lastCorrectedMemoryErrorText; private set => SetProperty(ref _lastCorrectedMemoryErrorText, value); }
 
     private bool _isLoading;
     public bool IsLoading { get => _isLoading; private set => SetProperty(ref _isLoading, value); }
@@ -1639,6 +1681,39 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
             },
         };
 
+        // #488: same ColumnSeries setup as DailyEventColumns above.
+        _dailyWheaCorrectedColumns = new ColumnSeries<double>
+        {
+            Values = DailyWheaCorrectedCounts,
+            Fill = new SolidColorPaint(SKColors.OrangeRed.WithAlpha(200)),
+            Stroke = null,
+            MaxBarWidth = 12,
+        };
+        DailyWheaCorrectedSeries = new ISeries[] { _dailyWheaCorrectedColumns };
+        DailyWheaCorrectedXAxes = new[]
+        {
+            new Axis
+            {
+                Labels = Array.Empty<string>(),
+                LabelsRotation = 0,
+                MinStep = 1,
+                ForceStepToMin = true,
+                LabelsPaint = new SolidColorPaint(AxisTextColor),
+                SeparatorsPaint = null,
+            },
+        };
+        DailyWheaCorrectedYAxes = new[]
+        {
+            new Axis
+            {
+                MinLimit = 0,
+                MinStep = 1,
+                Labeler = v => $"{v:0}",
+                LabelsPaint = new SolidColorPaint(AxisTextColor),
+                SeparatorsPaint = new SolidColorPaint(AxisSeparatorColor) { StrokeThickness = 1 },
+            },
+        };
+
         // Round 16, item 48: WER-archive-derived long-horizon crash history - same ColumnSeries
         // approach as the Reliability History chart above, minus the second Microsoft-index line
         // (there's no equivalent long-horizon Microsoft series to overlay here).
@@ -2038,6 +2113,10 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
         WheaDailyXAxes[0].LabelsPaint = new SolidColorPaint(textSk);
         WheaDailyYAxes[0].LabelsPaint = new SolidColorPaint(textSk);
         WheaDailyYAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
+
+        DailyWheaCorrectedXAxes[0].LabelsPaint = new SolidColorPaint(textSk);
+        DailyWheaCorrectedYAxes[0].LabelsPaint = new SolidColorPaint(textSk);
+        DailyWheaCorrectedYAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
     }
 
     private async Task RefreshAsync()
@@ -3357,6 +3436,47 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
         }
 
         LogCoverageText = BuildLogCoverageText(snapshot.LogHealth);
+
+        // #500: feed the faulting-module names seen this refresh into the session-lifetime bridge
+        // the Devices & Drivers tab's known-problem-driver matcher (and, transitively, the Summary
+        // Health Check card) reads - see StabilityCrashSummaryState's remarks.
+        StabilityCrashSummaryState.Report(snapshot.RecentEvents
+            .Where(e => !string.IsNullOrWhiteSpace(e.FaultingModule))
+            .Select(e => e.FaultingModule!));
+
+        // #427
+        PoolExhaustionEvents.Clear();
+        foreach (var e in snapshot.PoolExhaustionEvents) PoolExhaustionEvents.Add(e);
+
+        // #439
+        OutOfMemoryIncidents.Clear();
+        foreach (var e in snapshot.OutOfMemoryIncidents) OutOfMemoryIncidents.Add(e);
+
+        // #447
+        CorrectedMemoryErrors.Clear();
+        foreach (var e in snapshot.CorrectedMemoryErrors) CorrectedMemoryErrors.Add(e);
+        CorrectedMemoryErrorCount = snapshot.CorrectedMemoryErrorCount;
+        LastCorrectedMemoryErrorText = snapshot.LastCorrectedMemoryError is { } last
+            ? $"Last: {last:g}" : "None in the last 30 days";
+
+        // #464
+        BootDriverLoadFailures.Clear();
+        foreach (var f in snapshot.BootDriverLoadFailures) BootDriverLoadFailures.Add(f);
+
+        // #487
+        WheaHardwareErrors.Clear();
+        foreach (var e in snapshot.WheaHardwareErrors) WheaHardwareErrors.Add(e);
+
+        // #488
+        DailyWheaCorrectedCounts.Clear();
+        foreach (var d in snapshot.DailyWheaCorrectedCounts) DailyWheaCorrectedCounts.Add(d.Count);
+        DailyWheaCorrectedXAxes[0].Labels = snapshot.DailyWheaCorrectedCounts
+            .Select((d, i) => i % 5 == 0 ? d.Date.ToString("M/d") : string.Empty)
+            .ToArray();
+
+        // #492
+        HardwareErrorCorrelations.Clear();
+        foreach (var c in snapshot.HardwareErrorCorrelations) HardwareErrorCorrelations.Add(c);
 
         StabilityIndex = ComputeStabilityIndex(snapshot);
 

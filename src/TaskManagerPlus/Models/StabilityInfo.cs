@@ -415,6 +415,75 @@ public sealed class StabilitySnapshot
     /// <summary>Round 15, item 34: the live TdrDelay/TdrDdiDelay/TdrLevel registry settings that
     /// actually control TDR's timeout behavior on this machine.</summary>
     public TdrRegistrySettings? TdrSettings { get; init; }
+
+    /// <summary>#427: the classic pool-starvation event signature (Srv 2019/2020, event 333, and
+    /// Resource-Exhaustion-Detector entries) found within the lookback window, most recent first -
+    /// see EventLogService.ReadPoolExhaustionEvents.</summary>
+    public List<PoolExhaustionEvent> PoolExhaustionEvents { get; init; } = new();
+
+    /// <summary>#439: Resource-Exhaustion-Detector event 2004 specifically (the "Windows
+    /// successfully diagnosed a low virtual memory condition" entry, which also records the
+    /// ranked top commit consumers at that moment) - a separate, more specific query from
+    /// ReadLowMemoryEvents (which counts every event ID from this provider) and
+    /// ReadPoolExhaustionEvents (which folds this provider's events into the pool-exhaustion list
+    /// without parsing the consumer list) - see EventLogService.ReadOutOfMemoryIncidents.</summary>
+    public List<OutOfMemoryIncident> OutOfMemoryIncidents { get; init; } = new();
+
+    /// <summary>#447: Microsoft-Windows-WHEA-Logger corrected-memory-error events (event ID 47)
+    /// within the lookback window - see EventLogService.ReadCorrectedMemoryErrors. Also read
+    /// independently by SystemSpecsService for the System Specs memory section, so both tabs stay
+    /// in sync without a ViewModel-to-ViewModel dependency.</summary>
+    public int CorrectedMemoryErrorCount { get; init; }
+    public DateTime? LastCorrectedMemoryError { get; init; }
+    public List<CorrectedMemoryErrorEvent> CorrectedMemoryErrors { get; init; } = new();
+
+    /// <summary>#451: how many of RecentEvents' Kernel-Power 41 bugcheck codes match the small
+    /// memory-related STOP code set - see EventLogService.MemoryRelatedBugcheckCodes.</summary>
+    public int MemoryRelatedBugcheckCount { get; init; }
+
+    /// <summary>#464: boot-start/system-start driver load failures (SCM 7000/7001/7026, kernel PnP
+    /// event 219) within the lookback window - see EventLogService.ReadBootDriverLoadFailures. Also
+    /// read independently by the Devices &amp; Drivers tab, the same dual-read pattern
+    /// CorrectedMemoryErrors above already uses.</summary>
+    public List<BootDriverLoadFailure> BootDriverLoadFailures { get; init; } = new();
+
+    /// <summary>#487: every Microsoft-Windows-WHEA-Logger record found (any event ID) within the
+    /// lookback window, decoded via CperDecoder where possible - see
+    /// EventLogService.ReadWheaHardwareErrors. CorrectedMemoryErrors above stays as its own
+    /// narrower, message-text-based read of just event 47; this broad list includes event 47's
+    /// records too (now cross-checked against their own binary payload).</summary>
+    public List<WheaHardwareErrorEvent> WheaHardwareErrors { get; init; } = new();
+
+    /// <summary>#488: corrected-severity WHEA records per day across the lookback window, oldest
+    /// first - the same zero-filled daily-bucket shape as DailyCounts above, just filtered to
+    /// WheaHardwareErrors entries whose decoded Severity is Corrected.</summary>
+    public List<DailyEventCount> DailyWheaCorrectedCounts { get; init; } = new();
+
+    /// <summary>#492: crash/TDR/unexpected-shutdown events with at least one WHEA hardware-error
+    /// record in the preceding correlation window - see
+    /// EventLogService.BuildHardwareErrorCorrelations. A correlation, not a claimed cause.</summary>
+    public List<HardwareErrorCorrelation> HardwareErrorCorrelations { get; init; } = new();
+}
+
+/// <summary>#439: one process from event 2004's ranked "consumed the most virtual memory" list.</summary>
+public sealed class OomTopConsumer
+{
+    public string ProcessName { get; init; } = string.Empty;
+    public int Pid { get; init; }
+    public long Bytes { get; init; }
+}
+
+/// <summary>#439: one Resource-Exhaustion-Detector event 2004 entry - Windows' own record of which
+/// processes were consuming the most committed memory at the moment it detected a low-virtual-
+/// memory condition. TopConsumers is parsed out of the event's own formatted message text via a
+/// best-effort regex (the message format isn't a documented, versioned contract, mirroring
+/// EventLogService.ExtractBugcheckCode's same caveat for a different event) - when parsing finds
+/// nothing, RawMessage is shown instead so nothing is fabricated, just less structured.</summary>
+public sealed class OutOfMemoryIncident
+{
+    public DateTime TimeCreated { get; init; }
+    public List<OomTopConsumer> TopConsumers { get; init; } = new();
+    public string RawMessage { get; init; } = string.Empty;
 }
 
 /// <summary>#66 (Round 10): repeated application crashes grouped by faulting module, with a count -
@@ -564,4 +633,18 @@ public sealed class KnownBadIdScorecardRow
     public string NextStep { get; init; } = string.Empty;
     public string SeverityLabel { get; init; } = string.Empty;
     public int SeverityRank { get; init; }
+}
+
+/// <summary>#427: one entry from the System log matching the classic pool-starvation signature -
+/// `Srv` event 2019 (nonpaged pool exhausted) / 2020 (paged pool exhausted), event 333 (registry
+/// couldn't flush changes to disk, a common secondary symptom of pool/disk exhaustion), or a
+/// Microsoft-Windows-Resource-Exhaustion-Detector entry - see EventLogService.ReadPoolExhaustionEvents.
+/// Explanation is a fixed, plain-English sentence keyed off EventId/ProviderName, not anything
+/// parsed out of the event's own message text.</summary>
+public sealed class PoolExhaustionEvent
+{
+    public DateTime TimeCreated { get; init; }
+    public string ProviderName { get; init; } = string.Empty;
+    public int EventId { get; init; }
+    public string Explanation { get; init; } = string.Empty;
 }

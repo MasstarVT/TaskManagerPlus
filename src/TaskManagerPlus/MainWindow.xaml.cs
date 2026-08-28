@@ -40,6 +40,12 @@ public partial class MainWindow : Window
         SourceInitialized += (_, _) => { ApplyNativeWindowChrome(); InitializeTrayIcon(); InitializeGlobalHotkey(); };
         StateChanged += MainWindow_StateChanged;
         PreviewKeyDown += MainWindow_PreviewKeyDown;
+
+        // #486: Devices & Drivers' "System snapshot & driver diff..." button jumps to the Summary
+        // tab's existing snapshot UI - the same thin, event-based cross-tab coupling SelectTabByName's
+        // other callers (the `--tab` launch flag, Ctrl+1..9) already use, rather than either
+        // ViewModel needing a direct reference to the other.
+        _viewModel.DevicesDrivers.OpenSnapshotUiRequested += (_, _) => SelectTabByName("Summary");
     }
 
     /// <summary>#107: stops the Events tab's live-tail "Follow" subscription whenever the tab

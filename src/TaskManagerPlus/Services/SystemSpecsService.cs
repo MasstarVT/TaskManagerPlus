@@ -2,6 +2,7 @@ using System.IO;
 using System.Management;
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
+using LibreHardwareMonitor.Hardware;
 using Microsoft.Win32;
 using Microsoft.Win32.SafeHandles;
 using TaskManagerPlus.Models;
@@ -28,7 +29,7 @@ public sealed class SystemSpecsService
         var (cpuName, physicalCores, logicalProcessors, maxClockGhz) = ReadCpu();
         var memoryModules = ReadMemoryModules();
         long ramTotal = memoryModules.Sum(m => m.CapacityBytes);
-        var totalMemorySlots = ReadTotalMemorySlots();
+        var (totalMemorySlots, maxCapacityBytes, errorCorrectionText) = ReadMemoryArrayInfo();
         var hwIds = ReadHardwareIdentifiers();
 
         // #732: bcdedit's hypervisorlaunchtype is read once here (via the same BcdInspectorService
@@ -36,6 +37,24 @@ public sealed class SystemSpecsService
         // value off the current loader entry the parser already exposes.
         var bcdStore = await BcdInspectorService.ReadAsync();
         string? hypervisorLaunchType = bcdStore.CurrentEntry?.Get("hypervisorlaunchtype");
+
+        // #443/#444: cross-module comparisons - mutate IsMismatched/MismatchReason/ChannelLabel on
+        // the list built above in place (see MemoryModuleInfo's remarks for why those three fields
+        // are settable rather than init-only).
+        MemoryDiagnosticsService.DetectMismatches(memoryModules);
+        var (channelText, channelWarning) = MemoryDiagnosticsService.CheckChannelPopulation(memoryModules);
+        var (eccText, _) = MemoryDiagnosticsService.DescribeEcc(errorCorrectionText, memoryModules);
+
+        // #447/#449: independent, dedicated targeted event-log reads - see EventLogService's
+        // remarks on why these are public methods rather than only reachable through the
+        // Stability tab's own full Query().
+        var eventLog = new EventLogService();
+        var correctedMemoryErrors = eventLog.ReadCorrectedMemoryErrors();
+        var memoryDiagnosticResult = eventLog.ReadMemoryDiagnosticResult();
+        int memoryRelatedBugchecks = eventLog.ReadMemoryRelatedBugcheckCount();
+
+        var ramHealth = MemoryDiagnosticsService.BuildRamHealth(
+            memoryModules, channelWarning, correctedMemoryErrors.Count, memoryDiagnosticResult, memoryRelatedBugchecks);
 
         return new SystemSpecs
         {
@@ -63,6 +82,17 @@ public sealed class SystemSpecsService
             RamTotalBytes = ramTotal,
             MemoryModules = memoryModules,
             TotalMemorySlots = totalMemorySlots,
+            MemoryTimingsText = ReadMemoryTimingsText(),
+            MemoryArrayMaxCapacityBytes = maxCapacityBytes,
+            MemoryArrayErrorCorrectionText = errorCorrectionText,
+            MemoryEccStatusText = eccText,
+            MemoryChannelText = channelText,
+            MemoryChannelWarning = channelWarning,
+            CorrectedMemoryErrorCount = correctedMemoryErrors.Count,
+            LastCorrectedMemoryError = correctedMemoryErrors.Count > 0 ? correctedMemoryErrors[0].TimeCreated : null,
+            CorrectedMemoryErrors = correctedMemoryErrors,
+            MemoryDiagnosticResult = memoryDiagnosticResult,
+            RamHealth = ramHealth,
 
             Gpus = ReadGpus(),
             Disks = ReadDisks(),
@@ -300,32 +330,166 @@ public sealed class SystemSpecsService
         {
             // return whatever was gathered before the failure
         }
+
+        // #440: merge in the raw-SMBIOS-only fields (part number, serial, rank, voltages, form
+        // factor, memory technology), matched to the WMI row above by DeviceLocator - the one
+        // identifier both sources report the same way. A WMI module with no SMBIOS match (raw
+        // table unreadable, or a locator string that genuinely doesn't line up) simply keeps its
+        // defaults for every field below, i.e. "Unknown", never a guess.
+        var smbiosByLocator = SmbiosMemoryService.ReadMemoryDevices()
+            .Where(d => !string.IsNullOrWhiteSpace(d.DeviceLocator))
+            .GroupBy(d => d.DeviceLocator, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+
+        foreach (var m in modules)
+        {
+            if (smbiosByLocator.TryGetValue(m.Location, out var s))
+            {
+                ApplySmbiosData(m, s);
+            }
+            // #444: channel label, from whichever locator strings are available - independent of
+            // whether an SMBIOS match was found, since WMI's own DeviceLocator/BankLocator already
+            // carry the same vendor slot-naming convention.
+        }
+
         return modules.OrderBy(m => m.Location, StringComparer.OrdinalIgnoreCase).ToList();
     }
 
-    /// <summary>Total physical RAM slots on the motherboard (#16), compared against the populated-
-    /// module count above to show "N of M slots populated" - a quick, otherwise invisible signal
-    /// that there's headroom to add more RAM without an upgrade.</summary>
-    private static int? ReadTotalMemorySlots()
+    /// <summary>
+    /// #441: CAS latency / primary timings via LibreHardwareMonitorLib's SPD reader, where the
+    /// chipset is supported. There is no WMI/registry source for this at all (SPD timing data only
+    /// exists on the physical DIMM's tiny EEPROM, read over SMBus - the same reason
+    /// SensorMonitorService is this app's one third-party dependency in the first place), so this
+    /// opens a second, independent, short-lived Computer instance (the same one-shot "sample once
+    /// and dispose" shape CliDumpService already uses, rather than reusing the Energy & Thermals
+    /// tab's continuously-polling instance) and looks for any Memory-hardware-type sensor whose
+    /// name hints at a timing/latency reading, the same FindByNameContains-style lookup
+    /// EnergyThermalsViewModel already uses for CPU/GPU sensor names that aren't standardized
+    /// across vendors. Degrades to "Unknown - ..." (never a guess) whenever the driver can't open,
+    /// or - the common case on the LibreHardwareMonitorLib version this app currently references,
+    /// which doesn't expose SPD timing sensors on any backend - no matching sensor is found at all.
+    /// </summary>
+    private static string ReadMemoryTimingsText()
     {
         try
         {
-            using var searcher = new ManagementObjectSearcher("SELECT MemoryDevices FROM Win32_PhysicalMemoryArray");
-            foreach (ManagementObject mo in searcher.Get())
-                return System.Convert.ToInt32(mo["MemoryDevices"] ?? 0);
+            using var sensors = new SensorMonitorService();
+            if (!sensors.IsAvailable)
+                return "Unknown - the hardware sensor driver couldn't be opened on this system.";
+
+            var timingReadings = sensors.Sample()
+                .Where(r => r.HardwareType == HardwareType.Memory && r.Value is float v && v != 0f)
+                .Where(r =>
+                    r.SensorName.Contains("CAS", StringComparison.OrdinalIgnoreCase) ||
+                    r.SensorName.Contains("Latency", StringComparison.OrdinalIgnoreCase) ||
+                    r.SensorName.Contains("Timing", StringComparison.OrdinalIgnoreCase) ||
+                    r.SensorName.Contains("tRCD", StringComparison.OrdinalIgnoreCase) ||
+                    r.SensorName.Contains("tRP", StringComparison.OrdinalIgnoreCase) ||
+                    r.SensorName.Contains("tRAS", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            return timingReadings.Count == 0
+                ? "Unknown - not exposed by this app's sensor library (LibreHardwareMonitorLib) for this chipset."
+                : string.Join(", ", timingReadings.Select(r => $"{r.SensorName} {r.Value:0.#}"));
         }
         catch
         {
-            // Class unavailable on this system - "N modules installed" alone, no slot count.
+            return "Unknown - couldn't read SPD/timing sensors.";
         }
-        return null;
     }
 
-    // SMBIOSMemoryType codes from the SMBIOS spec (DMTF), limited to the generations still in use.
+    /// <summary>Copies #440's SMBIOS-only fields onto an existing WMI-sourced MemoryModuleInfo row
+    /// (mutating in place - see that class' remarks on why PartNumber/SerialNumber/etc. plus the
+    /// #443/#444 fields are settable). Also fills the #444 channel label here (from whichever of
+    /// WMI's/SMBIOS' DeviceLocator/BankLocator strings are non-empty), since both sources use the
+    /// same underlying vendor slot-naming convention regardless of which one supplied it.</summary>
+    private static void ApplySmbiosData(MemoryModuleInfo m, SmbiosMemoryDevice s)
+    {
+        m.PartNumber = s.PartNumber;
+        m.SerialNumber = s.SerialNumber;
+        m.BankLocator = s.BankLocator;
+        m.FormFactor = s.FormFactor;
+        m.MemoryTechnology = s.MemoryTechnology;
+        m.RankCount = s.RankCount;
+        m.MinVoltageV = s.MinVoltageV;
+        m.MaxVoltageV = s.MaxVoltageV;
+        m.ConfiguredVoltageV = s.ConfiguredVoltageV;
+        m.TotalWidthBits = s.TotalWidthBits;
+        m.DataWidthBits = s.DataWidthBits;
+        m.ChannelLabel = MemoryDiagnosticsService.ExtractChannelLabel(m.Location, s.BankLocator);
+    }
+
+    /// <summary>#16/#445/#446: the memory array's slot count (populated-vs-total, #16), maximum
+    /// supported capacity (#445 - Win32_PhysicalMemoryArray.MaxCapacity, falling back to the
+    /// 64-bit ExtendedMaxCapacity field when the 32-bit MaxCapacity saturates the same way
+    /// AdapterRAM does for GPU VRAM), and the array's documented ECC/error-correction type (#446) -
+    /// bundled into one query since all three come off the same single WMI class/instance.</summary>
+    private static (int? Slots, long? MaxCapacityBytes, string ErrorCorrectionText) ReadMemoryArrayInfo()
+    {
+        try
+        {
+            using var searcher = new ManagementObjectSearcher(
+                "SELECT MemoryDevices, MaxCapacity, ExtendedMaxCapacity, MemoryErrorCorrection FROM Win32_PhysicalMemoryArray");
+            foreach (ManagementObject mo in searcher.Get())
+            {
+                int? slots = null;
+                try { slots = System.Convert.ToInt32(mo["MemoryDevices"] ?? 0); } catch { /* leave null */ }
+
+                long? maxCapacityBytes = null;
+                try
+                {
+                    // MaxCapacity is in KB and, like AdapterRAM for GPU VRAM, is a 32-bit field
+                    // that saturates at 0x80000000 KB (~2 TB) on a board whose real maximum is
+                    // larger - ExtendedMaxCapacity (KB, 64-bit) is the documented escape hatch for
+                    // exactly that case, and is used whenever MaxCapacity reports that sentinel.
+                    uint maxCapacityKb = System.Convert.ToUInt32(mo["MaxCapacity"] ?? 0u);
+                    if (maxCapacityKb == 0x80000000 && mo["ExtendedMaxCapacity"] is not null)
+                    {
+                        ulong extendedKb = System.Convert.ToUInt64(mo["ExtendedMaxCapacity"]);
+                        if (extendedKb > 0) maxCapacityBytes = (long)(extendedKb * 1024UL);
+                    }
+                    else if (maxCapacityKb > 0)
+                    {
+                        maxCapacityBytes = (long)maxCapacityKb * 1024L;
+                    }
+                }
+                catch { /* leave null */ }
+
+                string errorCorrectionText = "Unknown";
+                try { errorCorrectionText = MemoryErrorCorrectionName(System.Convert.ToInt32(mo["MemoryErrorCorrection"] ?? 0)); } catch { /* leave Unknown */ }
+
+                return (slots, maxCapacityBytes, errorCorrectionText);
+            }
+        }
+        catch
+        {
+            // Class unavailable on this system - no slot count/max capacity/ECC type known.
+        }
+        return (null, null, "Unknown");
+    }
+
+    // CIM_PhysicalMemoryArray.MemoryErrorCorrection - a documented DMTF enum, #446.
+    private static string MemoryErrorCorrectionName(int code) => code switch
+    {
+        1 => "Other",
+        2 => "Unknown",
+        3 => "None",
+        4 => "Parity",
+        5 => "Single-bit ECC",
+        6 => "Multi-bit ECC",
+        7 => "CRC",
+        _ => "Unknown",
+    };
+
+    // SMBIOSMemoryType codes from the SMBIOS spec (DMTF Table 80 "Memory Type"), limited to the
+    // DDR generations still in use - the same raw code space SmbiosMemoryService.MemoryTypeName
+    // decodes in full for #440. (Pre-existing values here previously used 20/21 for DDR/DDR2 -
+    // the DMTF spec's actual codes are 18/19 (0x12/0x13); 24/26/34 for DDR3/DDR4/DDR5 were already
+    // correct. Corrected alongside #440 since the two tables need to agree.)
     private static string DdrGenerationName(int smBiosType) => smBiosType switch
     {
-        20 => "DDR",
-        21 => "DDR2",
+        18 => "DDR",
+        19 => "DDR2",
         24 => "DDR3",
         26 => "DDR4",
         34 => "DDR5",

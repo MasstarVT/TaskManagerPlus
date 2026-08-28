@@ -20,9 +20,19 @@ public static class SnapshotService
     /// <summary>Round 12, #94: `idleCpuTempC` is optional and supplied by the caller (SummaryViewModel
     /// already knows the live EnergyThermals/Performance state at the moment "Save snapshot" is
     /// clicked; this static service has no sensor access of its own) - see SystemSnapshot.IdleCpuTempC's
-    /// remarks for the idle-gating this relies on the caller to have already applied.</summary>
-    public static SystemSnapshot Capture(double? idleCpuTempC = null)
+    /// remarks for the idle-gating this relies on the caller to have already applied.
+    ///
+    /// #486: also gathers driver inventory (#453) and driver store contents (#479) - genuinely
+    /// slower than every other field here (driverquery.exe plus pnputil /enum-drivers, both a few
+    /// seconds), which is why this is CaptureAsync rather than the plain synchronous method it used
+    /// to be; SummaryViewModel's SaveSnapshotCommand/CompareSnapshotCommand are AsyncRelayCommand
+    /// for exactly this reason. Still a single explicit user action (Save/Compare snapshot), so
+    /// this is squarely within CLAUDE.md's on-demand-action convention rather than a timer.</summary>
+    public static async Task<SystemSnapshot> CaptureAsync(double? idleCpuTempC = null)
     {
+        var driverInventory = await DriverInventoryService.ListAsync();
+        var driverStore = await DriverStoreService.ListAsync();
+
         return new SystemSnapshot
         {
             CapturedAt = DateTime.Now,
@@ -34,6 +44,14 @@ public static class SnapshotService
             // file instead of inventing a second one.
             ServiceConfigs = ServiceControlService.ReadServiceConfigs(),
             IdleCpuTempC = idleCpuTempC,
+            DriverInventory = driverInventory
+                .Select(d => $"{d.ServiceName} — {(string.IsNullOrEmpty(d.InfName) ? "no INF" : d.InfName)} {d.DriverVersion}".TrimEnd())
+                .OrderBy(s => s, StringComparer.OrdinalIgnoreCase)
+                .ToList(),
+            DriverStorePackages = driverStore.Packages
+                .Select(p => $"{p.PublishedName} — {p.OriginalName} ({p.Provider}) {p.DriverVersionText}".TrimEnd())
+                .OrderBy(s => s, StringComparer.OrdinalIgnoreCase)
+                .ToList(),
         };
     }
 
@@ -122,6 +140,11 @@ public static class SnapshotService
         var (softwareAdded, softwareRemoved) = DiffSet(baseline.InstalledSoftware, current.InstalledSoftware);
         var (servicesAdded, servicesRemoved) = DiffSet(baseline.Services, current.Services);
         var (startupAdded, startupRemoved) = DiffSet(baseline.StartupItems, current.StartupItems);
+        // #486: same DiffSet shape for driver inventory/driver store - both lists just default to
+        // empty on a snapshot file saved before this field existed, so diffing against one shows
+        // everything in the newer snapshot as "added" rather than throwing on a missing field.
+        var (driversAdded, driversRemoved) = DiffSet(baseline.DriverInventory, current.DriverInventory);
+        var (storeAdded, storeRemoved) = DiffSet(baseline.DriverStorePackages, current.DriverStorePackages);
 
         return new SnapshotDiff
         {
@@ -132,6 +155,10 @@ public static class SnapshotService
             ServicesRemoved = servicesRemoved,
             StartupAdded = startupAdded,
             StartupRemoved = startupRemoved,
+            DriversAdded = driversAdded,
+            DriversRemoved = driversRemoved,
+            DriverStorePackagesAdded = storeAdded,
+            DriverStorePackagesRemoved = storeRemoved,
         };
     }
 }

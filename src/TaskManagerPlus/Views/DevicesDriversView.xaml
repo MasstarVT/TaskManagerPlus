@@ -1,0 +1,2176 @@
+<UserControl x:Class="TaskManagerPlus.Views.DevicesDriversView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:TaskManagerPlus.ViewModels"
+             d:DataContext="{d:DesignInstance Type=vm:DevicesDriversViewModel}"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- #468: sub-tab strip - this tab's second top-level view (the device tree) is distinct
+             from the driver-inventory grid below, so a simple two-button strip switches between
+             them rather than restructuring either view. -->
+        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="16,12,16,0">
+            <Button Content="Driver inventory" Padding="10,5" Command="{Binding ShowDriverInventoryViewCommand}">
+                <Button.Style>
+                    <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsDeviceTreeViewActive}" Value="False">
+                                <Setter Property="Background" Value="{DynamicResource AccentBrush}" />
+                                <Setter Property="Foreground" Value="White" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Button.Style>
+            </Button>
+            <Button Content="Device tree" Padding="10,5" Margin="8,0,0,0" Command="{Binding ShowDeviceTreeViewCommand}">
+                <Button.Style>
+                    <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsDeviceTreeViewActive}" Value="True">
+                                <Setter Property="Background" Value="{DynamicResource AccentBrush}" />
+                                <Setter Property="Foreground" Value="White" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Button.Style>
+            </Button>
+            <!-- #479: this tab's third top-level view. -->
+            <Button Content="Driver store" Padding="10,5" Margin="8,0,0,0" Command="{Binding ShowDriverStoreViewCommand}">
+                <Button.Style>
+                    <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsDriverStoreViewActive}" Value="True">
+                                <Setter Property="Background" Value="{DynamicResource AccentBrush}" />
+                                <Setter Property="Foreground" Value="White" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Button.Style>
+            </Button>
+            <!-- #493-496: this tab's FOURTH top-level view. -->
+            <Button Content="Filter drivers" Padding="10,5" Margin="8,0,0,0" Command="{Binding ShowFilterDriversViewCommand}">
+                <Button.Style>
+                    <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsFilterDriversViewActive}" Value="True">
+                                <Setter Property="Background" Value="{DynamicResource AccentBrush}" />
+                                <Setter Property="Foreground" Value="White" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Button.Style>
+            </Button>
+            <!-- #486: jumps to the Summary tab's existing snapshot/diff UI, which now also covers
+                 driver inventory + driver store contents - see SnapshotService. -->
+            <Button Content="System snapshot &amp; driver diff..." Padding="10,5" Margin="16,0,0,0"
+                    Command="{Binding OpenSnapshotUiCommand}"
+                    ToolTip="Opens the Summary tab's snapshot/compare UI, which now also diffs driver inventory and driver store contents against a saved baseline." />
+        </StackPanel>
+
+    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="16">
+        <ScrollViewer.Style>
+            <Style TargetType="ScrollViewer">
+                <Setter Property="Visibility" Value="Visible" />
+                <Style.Triggers>
+                    <DataTrigger Binding="{Binding IsDeviceTreeViewActive}" Value="True">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                    </DataTrigger>
+                    <DataTrigger Binding="{Binding IsDriverStoreViewActive}" Value="True">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                    </DataTrigger>
+                    <DataTrigger Binding="{Binding IsFilterDriversViewActive}" Value="True">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                    </DataTrigger>
+                </Style.Triggers>
+            </Style>
+        </ScrollViewer.Style>
+        <StackPanel>
+
+            <!-- #453: header - refresh, last-loaded status, #461's third-party filter toggle. -->
+            <Grid Margin="0,0,0,12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0">
+                    <TextBlock Text="Driver inventory" Style="{StaticResource CardTitle}" Margin="0" FontSize="15" />
+                    <TextBlock Text="{Binding LastRefreshedText}" Style="{StaticResource SubStat}" Margin="0,2,0,0" />
+                </StackPanel>
+                <!-- #461: hides everything whose file-version company name is Microsoft, leaving
+                     only third-party kernel code - ON by default. -->
+                <CheckBox Grid.Column="1" Content="Third-party drivers only" VerticalAlignment="Center"
+                          Margin="0,0,16,0" Foreground="{DynamicResource TextSecondaryBrush}"
+                          IsChecked="{Binding ThirdPartyOnly}" />
+                <Button Grid.Column="2" Style="{StaticResource PrimaryButton}" Command="{Binding RefreshCommand}">
+                    <TextBlock>
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Text" Value="Refresh" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsLoading}" Value="True">
+                                        <Setter Property="Text" Value="Loading..." />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </Button>
+            </Grid>
+
+            <TextBlock Text="{Binding RefreshErrorText}" Foreground="{DynamicResource DangerBrush}"
+                       TextWrapping="Wrap" Margin="0,0,0,10">
+                <TextBlock.Style>
+                    <Style TargetType="TextBlock">
+                        <Setter Property="Visibility" Value="Visible" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding RefreshErrorText}" Value="{x:Null}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </TextBlock.Style>
+            </TextBlock>
+
+            <!-- #456: code-integrity bypass detection - security posture row, only visually
+                 flagged when something's actually worth a look. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsSecurityPostureConcerning}" Value="True">
+                                <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
+                                <Setter Property="BorderBrush" Value="{DynamicResource DangerBrush}" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Code-integrity / driver-signing posture" Style="{StaticResource CardTitle}" />
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap"
+                               Text="bcdedit boot-configuration flags that relax Driver Signature Enforcement, cross-checked against Microsoft-Windows-CodeIntegrity's own blocked/unverified-image log. A flag here is worth understanding, not necessarily a problem - test signing is sometimes on deliberately during driver development." />
+                    <UniformGrid Columns="4" Margin="0,0,0,4">
+                        <StackPanel Margin="0,0,10,0">
+                            <TextBlock Text="Test signing" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
+                            <TextBlock FontSize="13.5" FontWeight="SemiBold">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="Off" />
+                                        <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding TestSigningEnabled}" Value="True">
+                                                <Setter Property="Text" Value="On" />
+                                                <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </StackPanel>
+                        <StackPanel Margin="0,0,10,0">
+                            <TextBlock Text="Integrity checks disabled" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
+                            <TextBlock FontSize="13.5" FontWeight="SemiBold">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="No" />
+                                        <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding NoIntegrityChecksEnabled}" Value="True">
+                                                <Setter Property="Text" Value="Yes" />
+                                                <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </StackPanel>
+                        <StackPanel Margin="0,0,10,0">
+                            <TextBlock Text="Signature enforcement disabled" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
+                            <TextBlock FontSize="13.5" FontWeight="SemiBold">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="No" />
+                                        <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding DriverSignatureEnforcementDisabled}" Value="True">
+                                                <Setter Property="Text" Value="Yes" />
+                                                <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </StackPanel>
+                        <StackPanel>
+                            <TextBlock Text="Blocked/unverified images (30d)" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
+                            <TextBlock Text="{Binding CodeIntegrityBlockedEventCount}" FontSize="13.5" FontWeight="SemiBold">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding CodeIntegrityBlockedEventCount, Converter={StaticResource IntEqualsConverter}, ConverterParameter=0}" Value="False">
+                                                <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                            <TextBlock Text="{Binding LastCodeIntegrityBlockedEventText}" FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        </StackPanel>
+                    </UniformGrid>
+
+                    <ItemsControl ItemsSource="{Binding CodeIntegrityRecentMessages}" Margin="0,8,0,0">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding}" FontSize="10.5" TextWrapping="Wrap" Margin="0,0,0,4"
+                                           Foreground="{DynamicResource TextSecondaryBrush}" />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #454: bulk catalog-aware signature verification - opt-in, gated behind a button
+                 since checking every driver's signature can take a while. -->
+            <Grid Margin="0,0,0,10">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="{Binding VerifyAllProgressText}" VerticalAlignment="Center"
+                           Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5" />
+                <Button Grid.Column="1" Command="{Binding VerifyAllCommand}" Padding="10,4">
+                    <TextBlock>
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Text" Value="Verify all signatures" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsVerifyingAll}" Value="True">
+                                        <Setter Property="Text" Value="Verifying..." />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </Button>
+            </Grid>
+
+            <!-- #453/#458/#460/#461: main inventory grid. -->
+            <DataGrid Height="360" ItemsSource="{Binding DriversView}" SelectedItem="{Binding SelectedDriver}" IsReadOnly="True">
+                <DataGrid.RowStyle>
+                    <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsUnsignedOrTestSigned}" Value="True">
+                                <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </DataGrid.RowStyle>
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="Device name" Binding="{Binding DisplayName}" Width="2*" />
+                    <DataGridTextColumn Header="Provider" Binding="{Binding Provider}" Width="1.3*" />
+                    <DataGridTextColumn Header="INF" Binding="{Binding InfName}" Width="1.1*" />
+                    <DataGridTextColumn Header="Version" Binding="{Binding DriverVersion}" Width="90" />
+                    <DataGridTextColumn Header="Date" Binding="{Binding DriverDate, StringFormat={}{0:d}, TargetNullValue=Unknown}" Width="80" />
+                    <DataGridTextColumn Header="Class" Binding="{Binding DeviceClass}" Width="90" />
+                    <!-- #460: kernel start type + load-order group/tag. -->
+                    <DataGridTextColumn Header="Start type" Binding="{Binding StartTypeText}" Width="1.4*" />
+                    <DataGridTemplateColumn Header="State" Width="80" SortMemberPath="State">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding State}" VerticalAlignment="Center">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding State}" Value="Running">
+                                                    <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <!-- #458: Exact / Compatible / Generic hardware-ID match quality. -->
+                    <DataGridTemplateColumn Header="Match" Width="90" SortMemberPath="MatchQuality">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding MatchQuality}" VerticalAlignment="Center" ToolTip="#458: Exact = real vendor driver. Compatible/Generic = running on a fallback compatible-ID match, e.g. Microsoft Basic Display/Storage/Audio.">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding MatchQuality}" Value="Generic">
+                                                    <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <!-- #454/#455: catalog-aware signature status - "Not checked" until Verify/
+                         Verify all runs; unsigned/test-signed highlighted red (the row itself is
+                         also tinted, see DataGrid.RowStyle above). -->
+                    <DataGridTemplateColumn Header="Signature" Width="1.3*" SortMemberPath="SignatureStatus">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding SignatureStatus}" VerticalAlignment="Center">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding SignatureStatus}" Value="Signed">
+                                                    <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding IsUnsignedOrTestSigned}" Value="True">
+                                                    <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                    <Setter Property="FontWeight" Value="SemiBold" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <!-- #457: signer common name + WHQL vs. vendor-signed. -->
+                    <DataGridTemplateColumn Header="Signer" Width="1.5*" SortMemberPath="SignerName">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                    <TextBlock Text="{Binding SignerName}" FontSize="11.5" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                    <TextBlock Text=" (WHQL)" FontSize="10.5" FontWeight="SemiBold" VerticalAlignment="Center"
+                                               Foreground="{DynamicResource SuccessBrush}"
+                                               Visibility="{Binding IsWhql, Converter={StaticResource BoolToVisibilityConverter}}" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTextColumn Header="Path" Binding="{Binding FilePath}" Width="2.5*" />
+                    <DataGridTemplateColumn Header="" Width="70">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <Button Content="Verify" Padding="6,2" FontSize="10.5"
+                                        Command="{Binding DataContext.VerifyCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                        CommandParameter="{Binding}" />
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                </DataGrid.Columns>
+            </DataGrid>
+
+            <!-- #459: per-device installed-file detail pane, populated when a row above is selected. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="{Binding SelectedDriver.DisplayName, StringFormat=Installed files - {0}, TargetNullValue='Installed files'}"
+                                   Style="{StaticResource CardTitle}" Margin="0" />
+                    </Grid>
+                    <TextBlock Text="{Binding SelectedDriverFilesStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" />
+                    <ItemsControl ItemsSource="{Binding SelectedDriverFiles}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="2*" />
+                                        <ColumnDefinition Width="70" />
+                                        <ColumnDefinition Width="80" />
+                                        <ColumnDefinition Width="110" />
+                                        <ColumnDefinition Width="60" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="{Binding FilePath}" FontSize="11.5" TextTrimming="CharacterEllipsis" ToolTip="{Binding FilePath}" VerticalAlignment="Center" />
+                                    <TextBlock Grid.Column="1" Text="{Binding Version, TargetNullValue=Unknown}" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" />
+                                    <TextBlock Grid.Column="2" Text="{Binding SizeBytes, Converter={StaticResource BytesToReadableConverter}, TargetNullValue=Unknown}" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" />
+                                    <TextBlock Grid.Column="3" Text="{Binding SignatureStatus}" FontSize="11" VerticalAlignment="Center">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding SignatureStatus}" Value="Signed">
+                                                        <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding SignatureStatus}" Value="Unsigned">
+                                                        <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                    <Button Grid.Column="4" Content="Verify" Padding="6,2" FontSize="10.5"
+                                            Command="{Binding DataContext.VerifyFileCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                            CommandParameter="{Binding}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #466: driver version consistency across identical devices - collapsed entirely
+                 when no inconsistent groups were found (the common, healthy case). -->
+            <Border Margin="0,16,0,0">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Setter Property="BorderBrush" Value="{DynamicResource WarningBrush}" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding VersionConsistencyIssues.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Driver version inconsistency" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Two or more devices sharing the same hardware ID are bound to different driver versions - e.g. one of a matched pair of NICs still running an older driver."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+                    <ItemsControl ItemsSource="{Binding VersionConsistencyIssues}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Padding="10,8" Margin="0,0,0,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
+                                    <StackPanel>
+                                        <TextBlock FontSize="11.5" FontWeight="SemiBold" Text="{Binding HardwareId}" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock FontSize="11" Foreground="{DynamicResource WarningBrush}" Margin="0,2,0,4">
+                                            <Run Text="Versions: " /><Run Text="{Binding DistinctVersionsText}" />
+                                        </TextBlock>
+                                        <ItemsControl ItemsSource="{Binding Devices}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Grid Margin="0,0,0,2">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <TextBlock Grid.Column="0" Text="{Binding DeviceName}" FontSize="11" TextTrimming="CharacterEllipsis" />
+                                                        <TextBlock Grid.Column="1" Text="{Binding DriverVersion, TargetNullValue=Unknown}" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                                    </Grid>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #462/#463 (setupapi half): driver install timeline, parsed from setupapi.dev.log -
+                 gated behind Load since that file can be tens of MB. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Driver install timeline" Style="{StaticResource CardTitle}" Margin="0" />
+                        <CheckBox Grid.Column="1" Content="Last 30 days" VerticalAlignment="Center" Margin="0,0,12,0"
+                                  Foreground="{DynamicResource TextSecondaryBrush}" IsChecked="{Binding TimelineLast30DaysOnly}" />
+                        <Button Grid.Column="2" Padding="10,4" Command="{Binding LoadTimelineCommand}">
+                            <TextBlock>
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="Load" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsLoadingTimeline}" Value="True">
+                                                <Setter Property="Text" Value="Loading..." />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Button>
+                    </Grid>
+                    <TextBlock Text="{Binding TimelineStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" />
+                    <DataGrid Height="200" ItemsSource="{Binding InstallTimeline}" IsReadOnly="True">
+                        <DataGrid.RowStyle>
+                            <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsFailure}" Value="True">
+                                        <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </DataGrid.RowStyle>
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Time" Binding="{Binding Timestamp, StringFormat={}{0:g}}" Width="140" />
+                            <DataGridTextColumn Header="Category" Binding="{Binding Category}" Width="2*" />
+                            <DataGridTextColumn Header="Target" Binding="{Binding Target}" Width="3*" />
+                            <DataGridTextColumn Header="Exit status" Binding="{Binding ExitStatus}" Width="1.3*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- #463: install problems - setupapi.dev.log failures (from the Load above) plus
+                 Kernel-PnP/Configuration events (a cheap targeted query already run as part of
+                 this tab's own Refresh). -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <TextBlock Text="Install problems" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Driver install/configure failures - setupapi.dev.log errors (click Load above) and Microsoft-Windows-Kernel-PnP/Configuration events (411/442/400-series; this channel is disabled by default on many systems)."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+
+                    <TextBlock Text="setupapi.dev.log failures" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,4" />
+                    <ItemsControl ItemsSource="{Binding InstallFailures}" MaxHeight="180" Margin="0,0,0,10">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Padding="8,6" Margin="0,0,0,6" Background="{DynamicResource DangerMutedBrush}" CornerRadius="6">
+                                    <StackPanel>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" FontSize="11.5" FontWeight="SemiBold" Foreground="{DynamicResource DangerBrush}"
+                                                       Text="{Binding Category}" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Grid.Column="1" Text="{Binding Timestamp, StringFormat={}{0:g}, Mode=OneWay}"
+                                                       FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        </Grid>
+                                        <TextBlock Text="{Binding Target}" FontSize="10.5" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        <TextBlock FontSize="11" TextWrapping="Wrap" Margin="0,3,0,0">
+                                            <Run Text="{Binding ErrorCode, TargetNullValue='Unknown code'}" FontWeight="SemiBold" />
+                                            <Run Text=" - " /><Run Text="{Binding ErrorText}" />
+                                        </TextBlock>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="No setupapi.dev.log failures found - click Load above to parse the log." Margin="0,0,0,10">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding InstallFailures.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
+                    <TextBlock Text="Kernel-PnP/Configuration events" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,4" />
+                    <ItemsControl ItemsSource="{Binding PnpConfigurationFailures}" MaxHeight="180">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" FontSize="11.5" TextWrapping="Wrap" ToolTip="{Binding Message}">
+                                        <Run Text="Event " /><Run Text="{Binding EventId, Mode=OneWay}" />
+                                        <Run Text=" (" /><Run Text="{Binding Level}" /><Run Text=") - " />
+                                        <Run Text="{Binding Message}" />
+                                    </TextBlock>
+                                    <TextBlock Grid.Column="1" Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}"
+                                               FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="No Kernel-PnP/Configuration events found (or the channel is disabled on this system).">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding PnpConfigurationFailures.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- #491: WHEA hardware-error-reporting policy - a machine with WHEA logging suppressed
+                 will silently hide the evidence every hardware-error feature in this app (and
+                 Reliability Monitor) depends on, so this is worth surfacing even though "nothing
+                 configured" is the common, healthy case. -->
+            <Border Margin="0,16,0,0">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding WheaPolicy.IsConcerning}" Value="True">
+                                <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
+                                <Setter Property="BorderBrush" Value="{DynamicResource DangerBrush}" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="WHEA hardware-error-reporting policy" Style="{StaticResource CardTitle}" />
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap"
+                               Text="HKLM\SYSTEM\CurrentControlSet\Control\WHEA\Policy (and \Policies) - Windows-side overrides for how WHEA handles hardware errors. This can only show whether a Windows-side policy override is set, not whether a specific error source is enabled at the firmware/ACPI level - if hardware error logging is suppressed some other way, every hardware-error feature in this app (and Windows' own Reliability Monitor) loses its evidence silently, with no error shown anywhere." />
+                    <TextBlock Text="No policy overrides found under either key - WHEA is running with its default (fully enabled) configuration." Margin="0,0,0,6">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <MultiDataTrigger>
+                                        <MultiDataTrigger.Conditions>
+                                            <Condition Binding="{Binding WheaPolicy.PolicyKeyFound}" Value="False" />
+                                            <Condition Binding="{Binding WheaPolicy.PoliciesKeyFound}" Value="False" />
+                                        </MultiDataTrigger.Conditions>
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </MultiDataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <ItemsControl ItemsSource="{Binding WheaPolicy.Values}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Padding="8,6" Margin="0,0,0,6" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
+                                    <StackPanel>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" FontSize="11.5" FontWeight="SemiBold" Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Grid.Column="1" Text="{Binding ValueText}" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        </Grid>
+                                        <TextBlock Text="{Binding Description}" FontSize="10.5" TextWrapping="Wrap" Margin="0,2,0,0">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsConcerning}" Value="True">
+                                                            <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding Description}" Value="{x:Null}">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #465: best-effort logman NT Kernel Logger driver-load capture. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <TextBlock Text="Watch driver loads" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="{Binding DriverLoadTraceStatusText}" Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+                    <StackPanel Orientation="Horizontal">
+                        <Button Content="Start capture" Padding="10,4" Command="{Binding StartDriverLoadTraceCommand}">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsDriverLoadTraceRunning}" Value="True">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                        <Button Content="Stop capture" Padding="10,4" Command="{Binding StopDriverLoadTraceCommand}">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsDriverLoadTraceRunning}" Value="True">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                    </StackPanel>
+                    <TextBlock Margin="0,8,0,0" FontSize="11" TextWrapping="Wrap"
+                               Visibility="{Binding DriverLoadTraceFilePath, Converter={StaticResource NullToVisibilityConverter}}">
+                        <Run Text="Trace saved: " /><Run Text="{Binding DriverLoadTraceFilePath}" />
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- #467 (class-wide half): UpperFilters/LowerFilters for every device setup class -
+                 gated behind Load (a full Control\Class sweep). -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Class filter drivers" Style="{StaticResource CardTitle}" Margin="0" />
+                        <Button Grid.Column="1" Padding="10,4" Command="{Binding LoadClassFiltersCommand}">
+                            <TextBlock>
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="Load" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsLoadingClassFilters}" Value="True">
+                                                <Setter Property="Text" Value="Scanning..." />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Button>
+                    </Grid>
+                    <TextBlock Text="{Binding ClassFiltersStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" />
+                    <DataGrid Height="200" ItemsSource="{Binding ClassFilters}" IsReadOnly="True">
+                        <DataGrid.RowStyle>
+                            <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding ServiceExists}" Value="False">
+                                        <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </DataGrid.RowStyle>
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Class" Binding="{Binding ClassName}" Width="1.6*" />
+                            <DataGridTextColumn Header="Filter driver" Binding="{Binding FilterName}" Width="1.6*" />
+                            <DataGridTextColumn Header="Position" Binding="{Binding FilterKindText}" Width="80" />
+                            <DataGridTemplateColumn Header="Service" Width="140" SortMemberPath="ServiceExists">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock VerticalAlignment="Center" FontWeight="SemiBold">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Text" Value="OK" />
+                                                    <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding ServiceExists}" Value="False">
+                                                            <Setter Property="Text" Value="Missing service" />
+                                                            <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- #497: Driver Verifier status - registry-configured state + verifier /query's
+                 active-this-boot state. -->
+            <Border Margin="0,16,0,0">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding VerifierStatus.IsActiveThisBoot}" Value="True">
+                                <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
+                                <Setter Property="BorderBrush" Value="{DynamicResource DangerBrush}" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Driver Verifier" Style="{StaticResource CardTitle}" Margin="0" />
+                        <Button Grid.Column="1" Padding="10,4" Command="{Binding LoadVerifierStatusCommand}">
+                            <TextBlock>
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="Load" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsLoadingVerifierStatus}" Value="True">
+                                                <Setter Property="Text" Value="Querying..." />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Button>
+                    </Grid>
+                    <TextBlock Text="{Binding VerifierStatusText}" Margin="0,0,0,8" TextWrapping="Wrap">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding VerifierStatusText}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
+                    <StackPanel Visibility="{Binding VerifierStatus, Converter={StaticResource NullToVisibilityConverter}}">
+                        <UniformGrid Columns="2" Margin="0,0,0,10">
+                            <StackPanel Margin="0,0,10,8">
+                                <TextBlock Text="Configured (registry)" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                <TextBlock FontSize="13.5" FontWeight="SemiBold">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Text" Value="Off" />
+                                            <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding VerifierStatus.IsConfigured}" Value="True">
+                                                    <Setter Property="Text" Value="On" />
+                                                    <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </StackPanel>
+                            <StackPanel Margin="0,0,0,8">
+                                <TextBlock Text="Active this boot" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                <TextBlock FontSize="13.5" FontWeight="SemiBold">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Text" Value="No" />
+                                            <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding VerifierStatus.IsActiveThisBoot}" Value="True">
+                                                    <Setter Property="Text" Value="Yes" />
+                                                    <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </StackPanel>
+                            <StackPanel Margin="0,0,10,0">
+                                <TextBlock Text="Configured drivers" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                <TextBlock FontSize="12.5" TextWrapping="Wrap">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Text" Value="{Binding VerifierStatus.ConfiguredDriverNames, Converter={StaticResource StringListJoinConverter}}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding VerifierStatus.VerifiesAllDrivers}" Value="True">
+                                                    <Setter Property="Text" Value="All (non-Microsoft) drivers - VerifyDrivers=*" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </StackPanel>
+                            <StackPanel>
+                                <TextBlock Text="Active this boot" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                <TextBlock Text="{Binding VerifierStatus.ActiveDriverNames, Converter={StaticResource StringListJoinConverter}}" FontSize="12.5" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </UniformGrid>
+                        <ItemsControl ItemsSource="{Binding VerifierStatus.EnabledChecks}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <WrapPanel />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="4" Padding="7,3" Margin="0,0,6,6">
+                                        <TextBlock Text="{Binding}" FontSize="11" />
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+
+                    <!-- #498: opens the mandatory warning/typed-confirmation setup wizard. -->
+                    <Button Content="Set up Driver Verifier..." Style="{StaticResource DangerButton}" Padding="10,5"
+                            Margin="0,12,0,0" HorizontalAlignment="Left" Command="{Binding OpenVerifierSetupWizardCommand}" />
+                </StackPanel>
+            </Border>
+
+            <!-- #499: recovery helper, adjacent to #498's setup panel above. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <TextBlock Text="Driver Verifier recovery" Style="{StaticResource CardTitle}" />
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap"
+                               Text="If the machine is bugchecking on every normal boot because of Driver Verifier: boot into Safe Mode (hold Shift while restarting from the sign-in screen's Power menu, or interrupt boot 3 times to reach Windows Recovery, then Troubleshoot &gt; Advanced options &gt; Startup Settings &gt; Safe Mode), run this app from there (or run `verifier /reset` directly from an elevated command prompt), then restart normally. The Safe Mode toggle below can force that boot mode in advance, from a still-working machine." />
+
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                        <Button Padding="10,4" Command="{Binding ResetVerifierCommand}" Margin="0,0,8,0">
+                            <TextBlock Text="Reset Driver Verifier (verifier /reset)" />
+                        </Button>
+                    </StackPanel>
+
+                    <TextBlock FontSize="11.5" Margin="0,0,0,6" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}">
+                        <Run Text="Forced Safe Mode boot: " />
+                        <Run FontWeight="SemiBold">
+                            <Run.Style>
+                                <Style TargetType="Run">
+                                    <Setter Property="Text" Value="Off" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsSafeBootConfigured}" Value="True">
+                                            <Setter Property="Text" Value="{Binding SafeBootModeText, StringFormat='On ({0})'}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Run.Style>
+                        </Run>
+                    </TextBlock>
+                    <StackPanel Orientation="Horizontal">
+                        <Button Content="Force Safe Mode boot" Padding="10,4" Margin="0,0,8,0" Command="{Binding EnableSafeBootCommand}" />
+                        <Button Content="Clear forced Safe Mode boot" Padding="10,4" Command="{Binding DisableSafeBootCommand}" />
+                    </StackPanel>
+
+                    <TextBlock Text="{Binding VerifierActionStatusText}" Style="{StaticResource SubStat}" Margin="0,10,0,0" TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+
+            <!-- #500: known-problem-driver matching - quick flag, not a verdict. Also surfaced on
+                 the Summary tab's Health Check card via KnownProblemDriverSummaryState. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Known-problem driver matches" Style="{StaticResource CardTitle}" Margin="0" />
+                        <Button Grid.Column="1" Padding="10,4" Command="{Binding ScanKnownProblemDriversCommand}">
+                            <TextBlock>
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="Scan" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsScanningKnownProblemDrivers}" Value="True">
+                                                <Setter Property="Text" Value="Scanning..." />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Button>
+                    </Grid>
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap"
+                               Text="Matches loaded kernel modules and (once the Stability tab has been used this session) its faulting-module data against a maintained JSON list of drivers with documented crash/stutter/incompatibility histories (editable without a rebuild - see the app's settings folder). Each match is a quick flag worth a manual check, not a confirmed diagnosis." />
+                    <TextBlock Text="{Binding KnownProblemDriversStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" />
+                    <ItemsControl ItemsSource="{Binding KnownProblemMatches}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Padding="10,8" Margin="0,0,0,8" Background="{DynamicResource DangerMutedBrush}"
+                                        BorderBrush="{DynamicResource DangerBrush}" BorderThickness="1" CornerRadius="6">
+                                    <StackPanel>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" FontWeight="SemiBold" FontSize="12.5">
+                                                <Run Text="{Binding FileName}" /><Run Text="  -  " /><Run Text="{Binding Category}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                            </TextBlock>
+                                            <TextBlock Grid.Column="1" Text="{Binding MatchSourceText}" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        </Grid>
+                                        <TextBlock Text="{Binding Description}" FontSize="11.5" TextWrapping="Wrap" Margin="0,4,0,0" />
+
+                                        <!-- Evidence link - a plain Button styled as a link (same
+                                             OpenUpdateUrlCommand-style "shell out to open a URL"
+                                             convention MainViewModel already uses), reaching the
+                                             ViewModel from this item template's own DataContext via
+                                             the ancestor UserControl - CLAUDE.md's cross-view-model
+                                             binding convention. Falls back to plain text when this
+                                             match has no evidence link, rather than a dead/fabricated one. -->
+                                        <TextBlock Text="No evidence link available." FontSize="11" Foreground="{DynamicResource TextTertiaryBrush}" Margin="0,4,0,0">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding EvidenceUrl}" Value="{x:Null}">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                        <Button HorizontalAlignment="Left" Padding="0" Margin="0,4,0,0" Background="Transparent" BorderThickness="0"
+                                                Cursor="Hand" Foreground="{DynamicResource AccentBrush}"
+                                                Command="{Binding DataContext.OpenEvidenceLinkCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                CommandParameter="{Binding EvidenceUrl}">
+                                            <Button.Style>
+                                                <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding EvidenceUrl}" Value="{x:Null}">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Button.Style>
+                                            <TextBlock Text="{Binding EvidenceUrl}" FontSize="11" TextDecorations="Underline" TextWrapping="Wrap" />
+                                        </Button>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+        </StackPanel>
+    </ScrollViewer>
+
+    <!-- #468/#469/#471: the device-tree view - this tab's second top-level view, device-centric
+         and grouped by setup class, distinct from the driver-file-centric inventory grid above. -->
+    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="16">
+        <ScrollViewer.Style>
+            <Style TargetType="ScrollViewer">
+                <Setter Property="Visibility" Value="Collapsed" />
+                <Style.Triggers>
+                    <DataTrigger Binding="{Binding IsDeviceTreeViewActive}" Value="True">
+                        <Setter Property="Visibility" Value="Visible" />
+                    </DataTrigger>
+                </Style.Triggers>
+            </Style>
+        </ScrollViewer.Style>
+        <StackPanel>
+
+            <!-- #468: header - Load, status, #471's non-present toggle. -->
+            <Grid Margin="0,0,0,12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0">
+                    <TextBlock Text="Device tree by class" Style="{StaticResource CardTitle}" Margin="0" FontSize="15" />
+                    <TextBlock Text="{Binding DeviceTreeStatusText}" Style="{StaticResource SubStat}" Margin="0,2,0,0" />
+                </StackPanel>
+                <!-- #471: SetupDiGetClassDevs(DIGCF_ALLCLASSES) without DIGCF_PRESENT - the one gap
+                     Win32_PnPEntity alone can't fill (it only ever lists present devices).
+                     #473: filter chip for devices problem-code 22 flags as manually disabled. -->
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="0,0,16,0">
+                    <CheckBox Content="Show non-present devices" VerticalAlignment="Center"
+                              Margin="0,0,16,0" Foreground="{DynamicResource TextSecondaryBrush}"
+                              IsChecked="{Binding ShowNonPresentDevices}" />
+                    <CheckBox Content="Disabled devices only" VerticalAlignment="Center"
+                              Foreground="{DynamicResource TextSecondaryBrush}"
+                              IsChecked="{Binding ShowDisabledOnly}"
+                              ToolTip="#473: shows only devices Device Manager's own problem code 22 (CONFIGFLAG_DISABLED) flags as manually disabled." />
+                </StackPanel>
+                <Button Grid.Column="2" Style="{StaticResource PrimaryButton}" Command="{Binding LoadDeviceTreeCommand}">
+                    <TextBlock>
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Text" Value="Load" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsLoadingDeviceTree}" Value="True">
+                                        <Setter Property="Text" Value="Loading..." />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </Button>
+            </Grid>
+
+            <!-- #468/#469: grouped-by-class device list - click a row to select it below.
+                 #472/#474/#475: right-click for Enable/Disable/Restart/Remove on whichever row is
+                 selected - right-clicking a ListBoxItem selects it first, same as every other
+                 Selector-derived control's ContextMenu in this app (ProcessesView/ServicesView). -->
+            <ListBox ItemsSource="{Binding DeviceTreeView}" SelectedItem="{Binding SelectedDeviceNode}"
+                     Height="360" Background="Transparent" BorderThickness="0"
+                     ScrollViewer.VerticalScrollBarVisibility="Auto" Margin="0,0,0,8">
+                <ListBox.ContextMenu>
+                    <ContextMenu>
+                        <MenuItem Header="Enable device" Command="{Binding EnableDeviceCommand}">
+                            <MenuItem.Style>
+                                <Style TargetType="MenuItem">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding SelectedDeviceNode.IsPresent}" Value="False">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding SelectedDeviceNode}" Value="{x:Null}">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </MenuItem.Style>
+                        </MenuItem>
+                        <MenuItem Header="Disable device" Command="{Binding DisableDeviceCommand}">
+                            <MenuItem.Style>
+                                <Style TargetType="MenuItem">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding SelectedDeviceNode.IsPresent}" Value="False">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding SelectedDeviceNode}" Value="{x:Null}">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </MenuItem.Style>
+                        </MenuItem>
+                        <MenuItem Header="Restart device" Command="{Binding RestartDeviceCommand}"
+                                  ToolTip="#475: pnputil /restart-device - reloads the driver without a reboot.">
+                            <MenuItem.Style>
+                                <Style TargetType="MenuItem">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding SelectedDeviceNode.IsPresent}" Value="False">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding SelectedDeviceNode}" Value="{x:Null}">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </MenuItem.Style>
+                        </MenuItem>
+                        <!-- #483: only shown when a previous driver version was actually detected
+                             as retained for this device - see DriverRollbackService.Check. -->
+                        <MenuItem Header="Roll back driver..." Command="{Binding RollbackDriverCommand}"
+                                  ToolTip="{Binding SelectedDeviceRollbackReasonText}">
+                            <MenuItem.Style>
+                                <Style TargetType="MenuItem">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding SelectedDeviceRollbackAvailable}" Value="False">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </MenuItem.Style>
+                        </MenuItem>
+                        <Separator />
+                        <MenuItem Header="Remove device entry" Command="{Binding RemoveDeviceCommand}"
+                                  ToolTip="#472: pnputil /remove-device - only for a non-present ('ghost') device.">
+                            <MenuItem.Style>
+                                <Style TargetType="MenuItem">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding SelectedDeviceNode.IsPresent}" Value="True">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding SelectedDeviceNode}" Value="{x:Null}">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </MenuItem.Style>
+                        </MenuItem>
+                    </ContextMenu>
+                </ListBox.ContextMenu>
+                <ListBox.GroupStyle>
+                    <GroupStyle>
+                        <GroupStyle.ContainerStyle>
+                            <Style TargetType="{x:Type GroupItem}">
+                                <Setter Property="Template">
+                                    <Setter.Value>
+                                        <ControlTemplate TargetType="{x:Type GroupItem}">
+                                            <Expander IsExpanded="True" Margin="0,0,0,4"
+                                                      Background="{DynamicResource BgElevatedBrush}"
+                                                      Foreground="{DynamicResource TextPrimaryBrush}" BorderThickness="0">
+                                                <Expander.Header>
+                                                    <TextBlock FontSize="12.5" FontWeight="SemiBold" Margin="4,2">
+                                                        <Run Text="{Binding Name}" /><Run Text=" (" /><Run Text="{Binding ItemCount}" /><Run Text=")" />
+                                                    </TextBlock>
+                                                </Expander.Header>
+                                                <ItemsPresenter Margin="8,2,0,6" />
+                                            </Expander>
+                                        </ControlTemplate>
+                                    </Setter.Value>
+                                </Setter>
+                            </Style>
+                        </GroupStyle.ContainerStyle>
+                    </GroupStyle>
+                </ListBox.GroupStyle>
+                <ListBox.ItemContainerStyle>
+                    <Style TargetType="ListBoxItem">
+                        <Setter Property="Padding" Value="6,4" />
+                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                        <Setter Property="Template">
+                            <Setter.Value>
+                                <ControlTemplate TargetType="ListBoxItem">
+                                    <Border x:Name="Bd" Padding="{TemplateBinding Padding}" Background="Transparent" CornerRadius="4">
+                                        <ContentPresenter />
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsSelected" Value="True">
+                                            <Setter TargetName="Bd" Property="Background" Value="{DynamicResource AccentMutedBrush}" />
+                                        </Trigger>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter TargetName="Bd" Property="Background" Value="{DynamicResource BgElevatedBrush}" />
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </Setter.Value>
+                        </Setter>
+                    </Style>
+                </ListBox.ItemContainerStyle>
+                <ListBox.ItemTemplate>
+                    <DataTemplate>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <!-- #472: multi-select for "Remove checked" below - only ever visible for
+                                 a non-present row (present devices have nothing to remove here). -->
+                            <CheckBox Grid.Column="0" VerticalAlignment="Center" Margin="0,0,8,0"
+                                      IsChecked="{Binding IsCheckedForRemoval}">
+                                <CheckBox.Style>
+                                    <Style TargetType="CheckBox">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsPresent}" Value="False">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </CheckBox.Style>
+                            </CheckBox>
+                            <StackPanel Grid.Column="1">
+                                <TextBlock FontSize="12" TextTrimming="CharacterEllipsis">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Text" Value="{Binding Name}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsPresent}" Value="False">
+                                                    <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                                    <Setter Property="FontStyle" Value="Italic" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                                <TextBlock FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" TextTrimming="CharacterEllipsis">
+                                    <Run Text="{Binding Manufacturer}" /><Run Text=" · " /><Run Text="{Binding Service, TargetNullValue='no driver'}" />
+                                </TextBlock>
+                            </StackPanel>
+                            <Border Grid.Column="2" CornerRadius="10" Padding="7,2" VerticalAlignment="Center" Margin="6,0,0,0">
+                                <Border.Style>
+                                    <Style TargetType="Border">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding HasProblem}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                                <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding IsPresent}" Value="False">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                                <Setter Property="Background" Value="{DynamicResource BgElevatedBrush}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Border.Style>
+                                <TextBlock FontSize="10" FontWeight="SemiBold">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Text" Value="{Binding ConfigManagerErrorCode, Converter={StaticResource ProblemCodeToDescriptionConverter}}" />
+                                            <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding HasProblem}" Value="False">
+                                                    <Setter Property="Text" Value="Not present" />
+                                                    <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </Border>
+                        </Grid>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+
+            <!-- #472: multi-select removal toolbar - acts on every currently-checked non-present
+                 row above; the context menu's "Remove device entry" is the single-device shortcut. -->
+            <Grid Margin="0,0,0,10">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="{Binding DeviceActionStatusText}" VerticalAlignment="Center"
+                           Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5" TextTrimming="CharacterEllipsis" />
+                <Button Grid.Column="1" Padding="10,4" Command="{Binding RemoveCheckedDevicesCommand}">
+                    <TextBlock>
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Text" Value="Remove checked" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsPerformingDeviceAction}" Value="True">
+                                        <Setter Property="Text" Value="Working..." />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </Button>
+            </Grid>
+
+            <!-- #469: decoded problem-code detail + #467 per-device filters, for whichever device
+                 is selected above. -->
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel>
+                    <TextBlock Text="{Binding SelectedDeviceNode.Name, TargetNullValue='Select a device above for details'}"
+                               Style="{StaticResource CardTitle}" TextWrapping="Wrap" />
+                    <StackPanel Visibility="{Binding SelectedDeviceNode, Converter={StaticResource NullToVisibilityConverter}}">
+                        <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,2,0,10" TextWrapping="Wrap"
+                                   Text="{Binding SelectedDeviceNode.DeviceId}" />
+                        <UniformGrid Columns="2" Margin="0,0,0,10">
+                            <StackPanel Margin="0,0,8,6">
+                                <TextBlock Text="Class" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                <TextBlock Text="{Binding SelectedDeviceNode.ClassName}" FontSize="12.5" />
+                            </StackPanel>
+                            <StackPanel Margin="0,0,0,6">
+                                <TextBlock Text="Manufacturer" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                <TextBlock Text="{Binding SelectedDeviceNode.Manufacturer}" FontSize="12.5" />
+                            </StackPanel>
+                            <StackPanel Margin="0,0,8,6">
+                                <TextBlock Text="Bound driver (service)" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                <TextBlock Text="{Binding SelectedDeviceNode.Service, TargetNullValue=None}" FontSize="12.5" />
+                            </StackPanel>
+                            <StackPanel Margin="0,0,0,6">
+                                <TextBlock Text="Status" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                <TextBlock Text="{Binding SelectedDeviceNode.Status}" FontSize="12.5" />
+                            </StackPanel>
+                        </UniformGrid>
+                        <TextBlock Text="Hardware IDs" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        <TextBlock Text="{Binding SelectedDeviceNode.HardwareIdsText}" FontSize="11.5" TextWrapping="Wrap" Margin="0,0,0,10" />
+
+                        <!-- #469: decoded problem code + next step - only shown for a device that
+                             actually has one. -->
+                        <Border Padding="10,8" CornerRadius="6" Background="{DynamicResource DangerMutedBrush}" Margin="0,0,0,10">
+                            <Border.Style>
+                                <Style TargetType="Border">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding SelectedDeviceNode.HasProblem}" Value="True">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Border.Style>
+                            <StackPanel>
+                                <TextBlock FontSize="12.5" FontWeight="SemiBold" Foreground="{DynamicResource DangerBrush}"
+                                           Text="{Binding SelectedDeviceNode.ConfigManagerErrorCode, Converter={StaticResource ProblemCodeToDescriptionConverter}}" />
+                                <TextBlock FontSize="11.5" TextWrapping="Wrap" Margin="0,4,0,0"
+                                           Text="{Binding SelectedDeviceNode.ConfigManagerErrorCode, Converter={StaticResource ProblemCodeToDescriptionConverter}, ConverterParameter=Cause}" />
+                                <TextBlock FontSize="11.5" TextWrapping="Wrap" Margin="0,4,0,0" FontStyle="Italic">
+                                    <Run Text="Next step: " />
+                                    <Run Text="{Binding SelectedDeviceNode.ConfigManagerErrorCode, Converter={StaticResource ProblemCodeToDescriptionConverter}, ConverterParameter=NextStep}" />
+                                </TextBlock>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- #483: rollback availability - only shown when a previous driver
+                             version was actually detected as retained for this device (see
+                             DriverRollbackService.Check's remarks for the two signals it checks). -->
+                        <Border Padding="10,8" CornerRadius="6" Background="{DynamicResource AccentMutedBrush}" Margin="0,0,0,10">
+                            <Border.Style>
+                                <Style TargetType="Border">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding SelectedDeviceRollbackAvailable}" Value="True">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Border.Style>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0">
+                                    <TextBlock FontSize="12.5" FontWeight="SemiBold" Text="A previous driver version may be available to roll back to" />
+                                    <TextBlock FontSize="11" TextWrapping="Wrap" Margin="0,2,0,0"
+                                               Foreground="{DynamicResource TextSecondaryBrush}"
+                                               Text="{Binding SelectedDeviceRollbackReasonText}" />
+                                </StackPanel>
+                                <Button Grid.Column="1" Content="Roll back driver..." Padding="10,4" VerticalAlignment="Center"
+                                        Margin="10,0,0,0" Command="{Binding RollbackDriverCommand}"
+                                        ToolTip="Opens this device's driver properties (Device Manager) - use the Driver tab's own &quot;Roll Back Driver&quot; button there; this app doesn't perform the rollback itself." />
+                            </Grid>
+                        </Border>
+
+                        <!-- #467 (per-device half): UpperFilters/LowerFilters under this device's
+                             own Enum key. -->
+                        <TextBlock Text="Per-device filter drivers" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,4" />
+                        <ItemsControl ItemsSource="{Binding SelectedDeviceFilters}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Margin="0,0,0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" FontSize="11.5">
+                                            <Run Text="{Binding FilterName}" /><Run Text=" (" /><Run Text="{Binding FilterKindText}" /><Run Text=")" />
+                                        </TextBlock>
+                                        <TextBlock Grid.Column="1" FontSize="11" FontWeight="SemiBold">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Text" Value="OK" />
+                                                    <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding ServiceExists}" Value="False">
+                                                            <Setter Property="Text" Value="Missing service" />
+                                                            <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <TextBlock Text="No filter drivers on this device.">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding SelectedDeviceFilters.Count}" Value="0">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- #476/#477: resource map (IRQ/I-O/memory/DMA + conflict flags) and MSI-vs-line-based
+                 interrupt mode - one shared Load button, gated the same way Class filter drivers
+                 above is (a full WMI+registry pull, not free enough for the timer-less tab's own
+                 implicit Refresh). -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Resources" Style="{StaticResource CardTitle}" Margin="0" />
+                        <Button Grid.Column="1" Padding="10,4" Command="{Binding LoadResourcesCommand}">
+                            <TextBlock>
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="Load" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsLoadingResources}" Value="True">
+                                                <Setter Property="Text" Value="Loading..." />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Button>
+                    </Grid>
+                    <TextBlock Text="{Binding ResourcesStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" />
+
+                    <TextBlock Text="IRQ / I-O / memory / DMA assignments" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,4" />
+                    <DataGrid Height="220" ItemsSource="{Binding DeviceResources}" IsReadOnly="True" Margin="0,0,0,12">
+                        <DataGrid.RowStyle>
+                            <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsFlagged}" Value="True">
+                                        <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </DataGrid.RowStyle>
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Device" Binding="{Binding DeviceName}" Width="2*" />
+                            <DataGridTextColumn Header="Kind" Binding="{Binding KindText}" Width="60" />
+                            <DataGridTextColumn Header="Range" Binding="{Binding RangeText}" Width="1.4*" />
+                            <DataGridTextColumn Header="Shareable" Binding="{Binding ShareableText}" Width="90" />
+                            <DataGridTemplateColumn Header="Flag" Width="2.5*" SortMemberPath="FlagText">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding FlagText}" FontSize="11" TextWrapping="Wrap" VerticalAlignment="Center"
+                                                   Foreground="{DynamicResource WarningBrush}" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+
+                    <!-- #476: devices reporting problem code 12 ("insufficient resources") - collapsed
+                         entirely when none, the common/healthy case. -->
+                    <Border Padding="10,8" CornerRadius="6" Background="{DynamicResource DangerMutedBrush}" Margin="0,0,0,12">
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding InsufficientResourceDevices.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                        <StackPanel>
+                            <TextBlock FontSize="12.5" FontWeight="SemiBold" Foreground="{DynamicResource DangerBrush}"
+                                       Text="Devices reporting insufficient resources (problem code 12)" TextWrapping="Wrap" />
+                            <ItemsControl ItemsSource="{Binding InsufficientResourceDevices}" Margin="0,4,0,0">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock FontSize="11" TextWrapping="Wrap" Margin="0,0,0,2">
+                                            <Run Text="{Binding Name}" FontWeight="SemiBold" /><Run Text=" - " /><Run Text="{Binding ClassName}" />
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- #477: MSI vs. line-based interrupt mode - read-only, only devices with
+                         something actually configured under Interrupt Management are listed. -->
+                    <TextBlock Text="Interrupt mode (MSI vs. line-based)" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,4" />
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,-2,0,8" TextWrapping="Wrap"
+                               Text="Read-only - changing either of these is a manual registry edit outside this app's scope. Only devices with an Interrupt Management value actually set are listed here." />
+                    <DataGrid Height="200" ItemsSource="{Binding InterruptModes}" IsReadOnly="True">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Device" Binding="{Binding DeviceName}" Width="2*" />
+                            <DataGridTextColumn Header="Mode" Binding="{Binding ModeText}" Width="1.3*" />
+                            <DataGridTextColumn Header="Affinity policy" Binding="{Binding AffinityPolicyText}" Width="1.6*" />
+                            <DataGridTextColumn Header="Line sharing" Binding="{Binding SharingText}" Width="2*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- #478: wake-armed / wake-capable devices (powercfg /devicequery) combined with a
+                 best-effort per-device "Windows allowed to power this off" read. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Wake &amp; power management" Style="{StaticResource CardTitle}" Margin="0" />
+                        <Button Grid.Column="1" Padding="10,4" Command="{Binding LoadWakePowerCommand}">
+                            <TextBlock>
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="Load" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsLoadingWakePower}" Value="True">
+                                                <Setter Property="Text" Value="Loading..." />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Button>
+                    </Grid>
+                    <TextBlock Text="{Binding WakePowerStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" />
+                    <DataGrid Height="220" ItemsSource="{Binding WakeDevices}" IsReadOnly="True">
+                        <DataGrid.RowStyle>
+                            <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsWakeArmed}" Value="True">
+                                        <Setter Property="Background" Value="{DynamicResource AccentMutedBrush}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </DataGrid.RowStyle>
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Device" Binding="{Binding DeviceName}" Width="2.2*" />
+                            <DataGridTemplateColumn Header="Wake armed" Width="90" SortMemberPath="IsWakeArmed">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock VerticalAlignment="Center" FontWeight="SemiBold">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Text" Value="No" />
+                                                    <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsWakeArmed}" Value="True">
+                                                            <Setter Property="Text" Value="Yes" />
+                                                            <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridCheckBoxColumn Header="Wake from any" Binding="{Binding CanWakeFromAny}" Width="100" />
+                            <DataGridCheckBoxColumn Header="Wake programmable" Binding="{Binding CanWakeProgrammable}" Width="130" />
+                            <DataGridTextColumn Header="Windows may power off" Binding="{Binding AllowComputerToTurnOffText}" Width="150">
+                                <DataGridTextColumn.HeaderStyle>
+                                    <Style TargetType="DataGridColumnHeader">
+                                        <Setter Property="ToolTip"
+                                                Value="Best-effort read of the 'Allow the computer to turn off this device to save power' checkbox - an undocumented registry convention, not a published API, so 'Unknown' just means no matching present device or no PNPCapabilities value was found." />
+                                    </Style>
+                                </DataGridTextColumn.HeaderStyle>
+                            </DataGridTextColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
+        </StackPanel>
+    </ScrollViewer>
+
+    <!-- #479/#480/#481/#482/#484/#485: the driver store view - this tab's third top-level view. -->
+    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="16">
+        <ScrollViewer.Style>
+            <Style TargetType="ScrollViewer">
+                <Setter Property="Visibility" Value="Collapsed" />
+                <Style.Triggers>
+                    <DataTrigger Binding="{Binding IsDriverStoreViewActive}" Value="True">
+                        <Setter Property="Visibility" Value="Visible" />
+                    </DataTrigger>
+                </Style.Triggers>
+            </Style>
+        </ScrollViewer.Style>
+        <StackPanel>
+
+            <!-- #479: header - Load, status. -->
+            <Grid Margin="0,0,0,12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0">
+                    <TextBlock Text="Driver store" Style="{StaticResource CardTitle}" Margin="0" FontSize="15" />
+                    <TextBlock Text="{Binding DriverStoreStatusText}" Style="{StaticResource SubStat}" Margin="0,2,0,0" TextWrapping="Wrap" />
+                </StackPanel>
+                <Button Grid.Column="1" Style="{StaticResource PrimaryButton}" Command="{Binding LoadDriverStoreCommand}">
+                    <TextBlock>
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Text" Value="Load" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsLoadingDriverStore}" Value="True">
+                                        <Setter Property="Text" Value="Loading..." />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </Button>
+            </Grid>
+
+            <!-- #482/#485: export/install buttons - independent of the grid below (neither needs
+                 the driver store to already be loaded, though a successful install/delete does
+                 trigger a reload once it finishes). -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Backup &amp; install" Style="{StaticResource CardTitle}" />
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap"
+                               Text="Export every third-party driver package to a folder (pnputil /export-driver), or install every .inf found under a folder (pnputil /add-driver ... /subdirs /install)." />
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                        <Button Padding="10,4" Command="{Binding ExportDriversCommand}" Margin="0,0,8,0">
+                            <TextBlock>
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="Export third-party drivers..." />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsExportingDrivers}" Value="True">
+                                                <Setter Property="Text" Value="Exporting..." />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Button>
+                        <Button Padding="10,4" Command="{Binding InstallDriverPackageCommand}">
+                            <TextBlock>
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="Install driver package(s)..." />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsInstallingDriverPackage}" Value="True">
+                                                <Setter Property="Text" Value="Installing..." />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Button>
+                    </StackPanel>
+
+                    <!-- #482: indeterminate busy bar - neither export nor install streams
+                         granular, easily-parseable progress on stdout, so this is the "simple
+                         running... state" CLAUDE.md's on-demand-action convention calls for. -->
+                    <ProgressBar Height="4" IsIndeterminate="True" Margin="0,0,0,8">
+                        <ProgressBar.Style>
+                            <Style TargetType="ProgressBar">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsExportingDrivers}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding IsInstallingDriverPackage}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </ProgressBar.Style>
+                    </ProgressBar>
+
+                    <TextBlock Text="{Binding ExportDriversStatusText}" Margin="0,0,0,4" TextWrapping="Wrap">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding ExportDriversStatusText}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <TextBlock Text="{Binding InstallDriverStatusText}" Margin="0,0,0,4" TextWrapping="Wrap">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding InstallDriverStatusText}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
+                    <!-- #485: full tool output, shown verbatim in a scrollable read-only box. -->
+                    <Expander Header="Install output" Margin="0,4,0,0">
+                        <Expander.Style>
+                            <Style TargetType="Expander">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding InstallDriverOutputText}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Expander.Style>
+                        <TextBox Text="{Binding InstallDriverOutputText, Mode=OneWay}" IsReadOnly="True"
+                                 TextWrapping="Wrap" FontFamily="Consolas" FontSize="11" MaxHeight="220"
+                                 VerticalScrollBarVisibility="Auto" Background="{DynamicResource BgElevatedBrush}"
+                                 BorderThickness="0" Padding="8" Margin="0,6,0,0" />
+                    </Expander>
+                </StackPanel>
+            </Border>
+
+            <!-- #481: multi-select delete toolbar - acts on every currently-checked row in the
+                 grid below. -->
+            <Grid Margin="0,0,0,10">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="{Binding DriverStoreActionStatusText}" VerticalAlignment="Center"
+                           Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5" TextTrimming="CharacterEllipsis" />
+                <Button Grid.Column="1" Padding="10,4" Command="{Binding DeleteCheckedDriverPackagesCommand}">
+                    <TextBlock>
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Text" Value="Delete checked" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsPerformingDriverStoreAction}" Value="True">
+                                        <Setter Property="Text" Value="Working..." />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </Button>
+            </Grid>
+
+            <!-- #479/#480/#484: the driver store grid itself - stale (older-than-newest-in-group)
+                 rows tinted, matching the driver-inventory grid's own unsigned-row tint above. -->
+            <DataGrid Height="420" ItemsSource="{Binding DriverStore}" IsReadOnly="True" AutoGenerateColumns="False"
+                      CanUserAddRows="False">
+                <DataGrid.Columns>
+                    <!-- #481: checkbox column, disabled outright for any package #484 flags as
+                         in use - the actual hard refusal happens in code (defense in depth), this
+                         just makes it impossible to check one via the UI at all. -->
+                    <DataGridTemplateColumn Header="" Width="34">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <CheckBox IsChecked="{Binding IsCheckedForDeletion, UpdateSourceTrigger=PropertyChanged}"
+                                          HorizontalAlignment="Center" VerticalAlignment="Center"
+                                          ToolTip="{Binding InUseText}">
+                                    <CheckBox.Style>
+                                        <Style TargetType="CheckBox">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsInUse}" Value="True">
+                                                    <Setter Property="IsEnabled" Value="False" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </CheckBox.Style>
+                                </CheckBox>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTextColumn Header="Published" Binding="{Binding PublishedName}" Width="80" />
+                    <DataGridTextColumn Header="Original INF" Binding="{Binding OriginalName}" Width="1.3*" />
+                    <DataGridTextColumn Header="Provider" Binding="{Binding Provider}" Width="1.2*" />
+                    <DataGridTextColumn Header="Class" Binding="{Binding ClassName}" Width="1*" />
+                    <DataGridTextColumn Header="Version" Binding="{Binding DriverVersionText}" Width="1.5*" />
+                    <DataGridTextColumn Header="Signer" Binding="{Binding SignerName}" Width="1.3*" />
+                    <DataGridTextColumn Header="Size" Binding="{Binding SizeBytes, Converter={StaticResource BytesToReadableConverter}, TargetNullValue=Unknown}" Width="90" />
+                    <!-- #480 -->
+                    <DataGridTemplateColumn Header="Stale" Width="60" SortMemberPath="IsStale">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <TextBlock VerticalAlignment="Center" FontWeight="SemiBold"
+                                           ToolTip="Older than the newest package sharing this original INF + provider - a candidate for cleanup, not a verdict (the newest version might itself be the one causing a problem).">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Text" Value="No" />
+                                            <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsStale}" Value="True">
+                                                    <Setter Property="Text" Value="Yes" />
+                                                    <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <!-- #484 -->
+                    <DataGridTemplateColumn Header="In use" Width="1.8*" SortMemberPath="IsInUse">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding InUseText}" FontSize="11" TextTrimming="CharacterEllipsis"
+                                           ToolTip="{Binding InUseText}" VerticalAlignment="Center">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsInUse}" Value="True">
+                                                    <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
+                                                    <Setter Property="FontWeight" Value="SemiBold" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                </DataGrid.Columns>
+            </DataGrid>
+
+        </StackPanel>
+    </ScrollViewer>
+
+    <!-- #493-496: "Filter drivers" - this tab's FOURTH top-level view. -->
+    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="16">
+        <ScrollViewer.Style>
+            <Style TargetType="ScrollViewer">
+                <Setter Property="Visibility" Value="Collapsed" />
+                <Style.Triggers>
+                    <DataTrigger Binding="{Binding IsFilterDriversViewActive}" Value="True">
+                        <Setter Property="Visibility" Value="Visible" />
+                    </DataTrigger>
+                </Style.Triggers>
+            </Style>
+        </ScrollViewer.Style>
+        <StackPanel>
+
+            <TextBlock Text="Filter drivers" Style="{StaticResource CardTitle}" Margin="0,0,0,12" FontSize="15" />
+
+            <!-- #493/#494: minifilter stack + AV-altitude-range flag. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsAvMinifilterFlagConcerning}" Value="True">
+                                <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
+                                <Setter Property="BorderBrush" Value="{DynamicResource DangerBrush}" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Minifilter stack (fltmc filters/instances)" Style="{StaticResource CardTitle}" Margin="0" />
+                        <Button Grid.Column="1" Padding="10,4" Command="{Binding LoadMinifiltersCommand}">
+                            <TextBlock>
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="Load" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsLoadingMinifilters}" Value="True">
+                                                <Setter Property="Text" Value="Scanning..." />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Button>
+                    </Grid>
+                    <TextBlock Text="{Binding MinifiltersStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,6" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding AvMinifilterFlagText}" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,0,0,10">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsAvMinifilterFlagConcerning}" Value="True">
+                                        <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <DataGrid Height="240" ItemsSource="{Binding Minifilters}" IsReadOnly="True">
+                        <DataGrid.RowStyle>
+                            <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding Category}" Value="AntiVirus">
+                                        <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </DataGrid.RowStyle>
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Filter name" Binding="{Binding Name}" Width="1.5*" />
+                            <DataGridTextColumn Header="Altitude" Binding="{Binding AltitudeText}" Width="90" />
+                            <DataGridTextColumn Header="Frame" Binding="{Binding Frame}" Width="60" />
+                            <DataGridTextColumn Header="Instances" Binding="{Binding InstanceCount}" Width="70" />
+                            <DataGridTextColumn Header="Category" Binding="{Binding CategoryText}" Width="130" />
+                            <DataGridTextColumn Header="Attached volumes" Binding="{Binding AttachedVolumes, Converter={StaticResource StringListJoinConverter}}" Width="1.3*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- #495: legacy (non-minifilter) file-system filters + disk/volume-class orphans. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Legacy (non-minifilter) file-system filters" Style="{StaticResource CardTitle}" Margin="0" />
+                        <Button Grid.Column="1" Padding="10,4" Command="{Binding LoadLegacyFiltersCommand}">
+                            <TextBlock>
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="Load" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsLoadingLegacyFilters}" Value="True">
+                                                <Setter Property="Text" Value="Scanning..." />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Button>
+                    </Grid>
+                    <TextBlock Text="{Binding LegacyFiltersStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" />
+                    <DataGrid Height="160" ItemsSource="{Binding LegacyFilters}" IsReadOnly="True" Margin="0,0,0,16">
+                        <DataGrid.RowStyle>
+                            <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsOrphaned}" Value="True">
+                                        <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </DataGrid.RowStyle>
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Service" Binding="{Binding ServiceName}" Width="1.2*" />
+                            <DataGridTextColumn Header="Display name" Binding="{Binding DisplayName}" Width="1.6*" />
+                            <DataGridTextColumn Header="Start type" Binding="{Binding StartTypeText}" Width="90" />
+                            <DataGridTemplateColumn Header="Status" Width="140" SortMemberPath="IsOrphaned">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock VerticalAlignment="Center" FontWeight="SemiBold">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Text" Value="OK" />
+                                                    <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsOrphaned}" Value="True">
+                                                            <Setter Property="Text" Value="Orphaned (.sys missing)" />
+                                                            <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+
+                    <TextBlock Text="Disk/volume class filters (UpperFilters/LowerFilters)" Style="{StaticResource CardTitle}" />
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,-4,0,8" TextWrapping="Wrap"
+                               Text="The DiskDrive and Volume device setup classes' own filter entries, from the same scan the Driver inventory view's Class filter drivers card runs (#467) - use that view's Load button if this is empty. Orphaned rows mean the filter's service key is gone, or the service key survives but its .sys no longer exists on disk." />
+                    <DataGrid Height="160" ItemsSource="{Binding DiskVolumeClassFiltersView}" IsReadOnly="True">
+                        <DataGrid.RowStyle>
+                            <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsOrphaned}" Value="True">
+                                        <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </DataGrid.RowStyle>
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Class" Binding="{Binding ClassName}" Width="1.1*" />
+                            <DataGridTextColumn Header="Filter driver" Binding="{Binding FilterName}" Width="1.3*" />
+                            <DataGridTextColumn Header="Position" Binding="{Binding FilterKindText}" Width="70" />
+                            <DataGridTextColumn Header="Scope" Binding="{Binding ScopeText}" Width="90" />
+                            <DataGridTemplateColumn Header="Status" Width="150" SortMemberPath="IsOrphaned">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock VerticalAlignment="Center" FontWeight="SemiBold">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Text" Value="OK" />
+                                                    <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsOrphaned}" Value="True">
+                                                            <Setter Property="Text" Value="Orphaned" />
+                                                            <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- #496: NDIS lightweight filter bindings + the Winsock LSP catalog. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Network filters (NDIS lightweight filters + Winsock catalog)" Style="{StaticResource CardTitle}" Margin="0" />
+                        <Button Grid.Column="1" Padding="10,4" Command="{Binding LoadNetworkFiltersCommand}">
+                            <TextBlock>
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="Load" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsLoadingNetworkFilters}" Value="True">
+                                                <Setter Property="Text" Value="Scanning..." />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Button>
+                    </Grid>
+                    <TextBlock Text="{Binding NetworkFiltersStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" />
+
+                    <TextBlock Text="Network components bound to adapters (filters + less-common protocols)" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4" />
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,6" TextWrapping="Wrap"
+                               Text="Everything bound directly above each adapter (NDIS UpperBind), minus the expected base protocols (TCP/IP, NetBT, ...) - the registry doesn't cleanly distinguish a lightweight filter from a less-common protocol driver, so this list can include both." />
+                    <DataGrid Height="150" ItemsSource="{Binding NetworkFilters}" IsReadOnly="True" Margin="0,0,0,16">
+                        <DataGrid.RowStyle>
+                            <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsThirdParty}" Value="True">
+                                        <Setter Property="Background" Value="{DynamicResource AccentMutedBrush}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </DataGrid.RowStyle>
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Display name" Binding="{Binding DisplayName}" Width="1.4*" />
+                            <DataGridTextColumn Header="Service" Binding="{Binding FilterServiceName}" Width="1*" />
+                            <DataGridTextColumn Header="Component ID" Binding="{Binding ComponentId}" Width="1*" />
+                            <DataGridTemplateColumn Header="Publisher" Width="100">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock VerticalAlignment="Center">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Text" Value="Unknown" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsThirdParty}" Value="True">
+                                                            <Setter Property="Text" Value="Third-party" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding IsThirdParty}" Value="False">
+                                                            <Setter Property="Text" Value="Microsoft" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTextColumn Header="Bound adapters" Binding="{Binding BoundAdapters, Converter={StaticResource StringListJoinConverter}}" Width="1.4*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+
+                    <TextBlock Text="Winsock catalog (netsh winsock show catalog)" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4" />
+                    <DataGrid Height="180" ItemsSource="{Binding WinsockCatalog}" IsReadOnly="True">
+                        <DataGrid.RowStyle>
+                            <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsThirdParty}" Value="True">
+                                        <Setter Property="Background" Value="{DynamicResource AccentMutedBrush}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </DataGrid.RowStyle>
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Type" Binding="{Binding EntryType}" Width="1.1*" />
+                            <DataGridTextColumn Header="Description" Binding="{Binding Description}" Width="1.6*" />
+                            <DataGridTextColumn Header="Provider path" Binding="{Binding ProviderPath}" Width="1.6*" />
+                            <DataGridTemplateColumn Header="Publisher" Width="100">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock VerticalAlignment="Center">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Text" Value="Microsoft" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsThirdParty}" Value="True">
+                                                            <Setter Property="Text" Value="Third-party" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
+        </StackPanel>
+    </ScrollViewer>
+    </Grid>
+</UserControl>

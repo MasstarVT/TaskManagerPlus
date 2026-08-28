@@ -78,10 +78,67 @@ public sealed class HardwareSnapshot
     /// running": this memory looks used but is instantly reclaimable under pressure.</summary>
     public long StandbyListBytes { get; init; }
 
+    /// <summary>#434: the three priority tiers that sum to StandbyListBytes above, read
+    /// separately so the Memory tab can chart the composition instead of only the total - a
+    /// standby list dominated by Reserve (lowest priority, first to be reclaimed) reads very
+    /// differently from one dominated by Core (highest priority, reclaimed last).</summary>
+    public long StandbyCoreBytes { get; init; }
+    public long StandbyNormalBytes { get; init; }
+    public long StandbyReserveBytes { get; init; }
+
+    /// <summary>#432: Memory\Pages Input/sec and Memory\Pages Output/sec - the actual page-file
+    /// read/write I/O rate (as opposed to HardFaultsPerSec above, which is "Memory\Pages/sec",
+    /// a slightly different combined figure). Output/sec doubles as the modified-page-writer's
+    /// flush rate for #436, since Windows exposes no separate "writer flush rate" counter.</summary>
+    public double PagesInputPerSec { get; init; }
+    public double PagesOutputPerSec { get; init; }
+
+    /// <summary>#432: "LogicalDisk\Avg. Disk Queue Length" for the specific volume hosting the
+    /// (first configured) page file - null when there's no page file, the drive letter couldn't be
+    /// resolved, or the counter instance isn't available, in which case the thrashing detector
+    /// below just weighs its other two signals instead of treating "unknown" as "zero".</summary>
+    public double? PageFileVolumeQueueLength { get; init; }
+
+    /// <summary>#437: Memory\System Cache Resident Bytes - the file-system-cache component of
+    /// Cache Bytes above (Cache Bytes = System Cache Resident + System Driver Resident + System
+    /// Code Resident), read directly rather than derived by subtraction since these three are
+    /// independently-sampled counters that can disagree slightly at the margins.</summary>
+    public long SystemCacheResidentBytes { get; init; }
+
     /// <summary>Kernel pool usage (Memory\Pool Nonpaged|Paged Bytes) - a slow, sustained climb
     /// here (rather than a stable baseline) usually points to a leaking driver, not an app.</summary>
     public long PoolNonpagedBytes { get; init; }
     public long PoolPagedBytes { get; init; }
+
+    /// <summary>#422: Memory\Pool Nonpaged Allocs - the *count* of outstanding nonpaged pool
+    /// allocations, alongside PoolNonpagedBytes' byte total above; a count climbing faster than
+    /// the byte total points at many small leaked allocations rather than a few large ones.</summary>
+    public long PoolNonpagedAllocs { get; init; }
+
+    /// <summary>#422: Memory\System Driver Resident|Total Bytes - the RAM drivers hold that never
+    /// shows up in any process's own working set. Resident is the subset currently paged in
+    /// (actually occupying physical RAM right now); Total also counts the pageable portion that
+    /// may currently be paged out - a large gap between the two is normal, not a leak signal on
+    /// its own.</summary>
+    public long SystemDriverResidentBytes { get; init; }
+    public long SystemDriverTotalBytes { get; init; }
+
+    /// <summary>#422: Memory\System Code Resident Bytes - the resident portion of the OS's own
+    /// pageable kernel-mode code (as opposed to driver code above).</summary>
+    public long SystemCodeResidentBytes { get; init; }
+
+    /// <summary>#423: Memory\Modified Page List Bytes - pages that have been changed since being
+    /// read from disk and are waiting to be written back before they can move to the standby
+    /// list. A real, separate "where did my RAM go" category from the reclaimable-but-clean
+    /// standby list above.</summary>
+    public long ModifiedListBytes { get; init; }
+
+    /// <summary>#423: installed physical RAM (summed Win32_PhysicalMemory.Capacity) minus
+    /// GlobalMemoryStatusEx's own total - the chunk of RAM the platform (BIOS/UEFI, chipset,
+    /// integrated GPU shared memory, etc.) reserves before Windows ever sees it. Read once via
+    /// WMI, like ReadPageFileTotalMb below - it only changes with a hardware/firmware config
+    /// change, not per tick.</summary>
+    public long HardwareReservedBytes { get; init; }
 
     public double DiskActivePercent { get; init; }
     public double DiskReadBytesPerSec { get; init; }

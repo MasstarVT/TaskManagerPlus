@@ -49,6 +49,16 @@ public sealed class SystemSpecs
     /// "N of M slots populated".</summary>
     public int? TotalMemorySlots { get; init; }
 
+    /// <summary>#441: CAS latency / primary timings, read via LibreHardwareMonitorLib's Memory
+    /// hardware-type sensors where the chipset's SPD reader is supported - see
+    /// SystemSpecsService.ReadMemoryTimingsText. LibreHardwareMonitorLib 0.9.6 does not expose SPD
+    /// timing sensors on any chipset backend at the time this was written, so this reads
+    /// "Unknown - ..." on every system tested; the lookup itself is real (by sensor name hint, the
+    /// same pattern SensorMonitorService.FindByNameContains uses elsewhere), not a hardcoded
+    /// string, so it starts reporting real figures automatically if a future LibreHardwareMonitorLib
+    /// version adds SPD/timing sensors for a given board.</summary>
+    public string MemoryTimingsText { get; init; } = "Unknown";
+
     // Graphics
     public IReadOnlyList<GpuInfo> Gpus { get; init; } = Array.Empty<GpuInfo>();
 
@@ -111,6 +121,39 @@ public sealed class SystemSpecs
     /// <summary>#733: firmware boot mode (UEFI vs legacy BIOS) and the system disk's partition
     /// style - see FirmwareDiskInfo's remarks.</summary>
     public FirmwareDiskInfo FirmwareDisk { get; init; } = new();
+
+    /// <summary>#445: the memory array's maximum supported capacity (Win32_PhysicalMemoryArray.
+    /// MaxCapacity/ExtendedMaxCapacity) - null when that class/field isn't available, same tier as
+    /// TotalMemorySlots above.</summary>
+    public long? MemoryArrayMaxCapacityBytes { get; init; }
+
+    /// <summary>#446: Win32_PhysicalMemoryArray.MemoryErrorCorrection, as plain text ("None",
+    /// "Single-bit ECC", ...) - "Unknown" when the class/field isn't available or reports the
+    /// documented "Unknown" code itself.</summary>
+    public string MemoryArrayErrorCorrectionText { get; init; } = "Unknown";
+
+    /// <summary>#446: the combined ECC verdict text (array-level field + per-module SMBIOS width
+    /// evidence) - see MemoryDiagnosticsService.DescribeEcc. What the System Specs card actually
+    /// displays; MemoryArrayErrorCorrectionText above is kept as the raw WMI value.</summary>
+    public string MemoryEccStatusText { get; init; } = "Unknown";
+
+    /// <summary>#444: channel-population summary text and whether every populated module landed on
+    /// the same channel - see MemoryDiagnosticsService.CheckChannelPopulation.</summary>
+    public string MemoryChannelText { get; init; } = string.Empty;
+    public bool MemoryChannelWarning { get; init; }
+
+    /// <summary>#447: corrected-memory-error events (Microsoft-Windows-WHEA-Logger, event ID 47)
+    /// found within EventLogService's lookback window - see EventLogService.ReadCorrectedMemoryErrors.</summary>
+    public int CorrectedMemoryErrorCount { get; init; }
+    public DateTime? LastCorrectedMemoryError { get; init; }
+    public IReadOnlyList<CorrectedMemoryErrorEvent> CorrectedMemoryErrors { get; init; } = Array.Empty<CorrectedMemoryErrorEvent>();
+
+    /// <summary>#449: the most recent Windows Memory Diagnostic (mdsched.exe) result, null when
+    /// none was ever found in the retained System log ("never run", not "passed").</summary>
+    public LatestMemoryDiagnosticResult? MemoryDiagnosticResult { get; init; }
+
+    /// <summary>#451: single RAM health rollup - see RamHealthSummary's remarks.</summary>
+    public RamHealthSummary RamHealth { get; init; } = new();
 }
 
 /// <summary>One active display (#60) - resolution/refresh rate from Win32_VideoController's current
@@ -268,6 +311,51 @@ public sealed class MemoryModuleInfo
 
     public string Manufacturer { get; init; } = string.Empty;
     public string MemoryType { get; init; } = string.Empty;
+
+    // #440: SMBIOS Type 17 extras WMI drops entirely - merged in by SystemSpecsService.ReadMemoryModules
+    // via SmbiosMemoryService, matched to this WMI-sourced row by DeviceLocator. Every field below
+    // stays at its default ("Unknown"/null) when no matching SMBIOS structure was found (raw table
+    // unreadable, or a DeviceLocator that didn't match anything WMI reported) - never a guess.
+    // Settable (not init) for the same reason IsMismatched/ChannelLabel below are: this WMI row is
+    // constructed first, then SystemSpecsService.ApplySmbiosData fills these in as a second pass
+    // once the matching SMBIOS structure (if any) has been found.
+    public string PartNumber { get; set; } = string.Empty;
+    public string SerialNumber { get; set; } = string.Empty;
+    public string BankLocator { get; set; } = string.Empty;
+    public string FormFactor { get; set; } = "Unknown";
+    public string MemoryTechnology { get; set; } = "Unknown";
+    public int? RankCount { get; set; }
+    public double? MinVoltageV { get; set; }
+    public double? MaxVoltageV { get; set; }
+    public double? ConfiguredVoltageV { get; set; }
+
+    /// <summary>Total data-transfer width including ECC/check bits, vs. DataWidthBits below - #446's
+    /// per-module ECC evidence (TotalWidthBits &gt; DataWidthBits, e.g. 72 vs. 64, means this specific
+    /// module carries check bits). Both null when SMBIOS data wasn't available for this module.</summary>
+    public int? TotalWidthBits { get; set; }
+    public int? DataWidthBits { get; set; }
+
+    /// <summary>True when this module's own width fields indicate ECC, false when they indicate no
+    /// ECC, null when the width fields aren't available at all (no SMBIOS match) - kept distinct
+    /// from a hardcoded false so "Unknown" and "confirmed non-ECC" never render the same way.</summary>
+    public bool? HasEccWidth => TotalWidthBits.HasValue && DataWidthBits.HasValue
+        ? TotalWidthBits.Value > DataWidthBits.Value
+        : null;
+
+    /// <summary>#443: "quick flag, not a verdict" - true when this module differs from the other
+    /// populated slots in a way SystemSpecsService.ReadMemoryModules flagged (part number, capacity,
+    /// rated speed, rank, or manufacturer). Settable (not init) rather than the rest of this class'
+    /// init-only fields: SystemSpecsService.ReadMemoryModules fills the rest of each row in first,
+    /// then a second pass (MemoryDiagnosticsService.DetectMismatches) assigns this and the two
+    /// fields below once every module in the array is known - a mismatch is inherently a
+    /// cross-module comparison, not a fact any single WMI/SMBIOS row carries on its own.</summary>
+    public bool IsMismatched { get; set; }
+    public string MismatchReason { get; set; } = string.Empty;
+
+    /// <summary>#444: best-effort channel label parsed from DeviceLocator/BankLocator (e.g. "A", "B") -
+    /// empty when no recognizable channel letter could be parsed, in which case this module is
+    /// excluded from the channel-population check rather than guessed into a bucket.</summary>
+    public string ChannelLabel { get; set; } = string.Empty;
 }
 
 /// <summary>A single video adapter, as reported by Win32_VideoController.</summary>

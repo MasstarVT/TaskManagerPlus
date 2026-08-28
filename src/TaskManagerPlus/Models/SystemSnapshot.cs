@@ -28,6 +28,17 @@ public sealed class SystemSnapshot
     /// available - an older snapshot file with no such field also just leaves this null, the same
     /// missing-field-degrades-gracefully shape ServiceConfigs above already established.</summary>
     public double? IdleCpuTempC { get; init; }
+
+    /// <summary>#486: driver inventory (#453's data) at capture time - one identity string per
+    /// kernel driver ("ServiceName — InfName Version"), reusing the join DriverInventoryService.
+    /// ListAsync already computes rather than re-deriving driver identity here. An older snapshot
+    /// file with no such field just leaves this empty, the same missing-field-degrades-gracefully
+    /// shape ServiceConfigs/IdleCpuTempC above already established.</summary>
+    public List<string> DriverInventory { get; init; } = new();
+
+    /// <summary>#486: driver store contents (#479's data) at capture time - one identity string
+    /// per package ("PublishedName — OriginalName (Provider) Version").</summary>
+    public List<string> DriverStorePackages { get; init; } = new();
 }
 
 /// <summary>One service's StartType + logon account at the moment a baseline was captured (Round 7 #16).</summary>
@@ -49,8 +60,18 @@ public sealed class SnapshotDiff
     public List<string> StartupAdded { get; init; } = new();
     public List<string> StartupRemoved { get; init; } = new();
 
+    /// <summary>#486: driver inventory (#453) and driver store (#479) added/removed - the same
+    /// added/removed shape as every other list above, diffed the same way (SnapshotService.Diff's
+    /// shared DiffSet helper).</summary>
+    public List<string> DriversAdded { get; init; } = new();
+    public List<string> DriversRemoved { get; init; } = new();
+    public List<string> DriverStorePackagesAdded { get; init; } = new();
+    public List<string> DriverStorePackagesRemoved { get; init; } = new();
+
     public bool HasChanges =>
         SoftwareAdded.Count > 0 || SoftwareRemoved.Count > 0 ||
         ServicesAdded.Count > 0 || ServicesRemoved.Count > 0 ||
-        StartupAdded.Count > 0 || StartupRemoved.Count > 0;
+        StartupAdded.Count > 0 || StartupRemoved.Count > 0 ||
+        DriversAdded.Count > 0 || DriversRemoved.Count > 0 ||
+        DriverStorePackagesAdded.Count > 0 || DriverStorePackagesRemoved.Count > 0;
 }

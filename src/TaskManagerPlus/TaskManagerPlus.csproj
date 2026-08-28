@@ -5,6 +5,10 @@
     <TargetFramework>net8.0-windows</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- #452: MemoryPatternTestService uses NativeMemory.Alloc + pointer-based Span<byte> access
+         over an unmanaged allocation (so a multi-gigabyte pattern-test request isn't capped by
+         .NET's ~2 GB single managed-object limit) - the only unsafe code in this project. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <UseWPF>true</UseWPF>
     <!-- Round 12, #85: System tray icon (System.Windows.Forms.NotifyIcon) - WPF has no tray-icon
          API of its own; UseWindowsForms pulls in the WinForms subset of the Windows Desktop
@@ -45,6 +49,25 @@
   <ItemGroup>
     <Using Remove="System.Drawing" />
     <Using Remove="System.Windows.Forms" />
+  </ItemGroup>
+
+  <!-- #418: curated pool-tag-to-description dictionary, embedded so PoolTagInspectionService can
+       read it with GetManifestResourceStream regardless of working directory (portable mode
+       runs from a USB drive, not always the exe's own folder). -->
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\pooltag.txt">
+      <LogicalName>pooltag.txt</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+
+  <!-- #500: curated known-problem-driver seed list, embedded the same way #418's pooltag.txt is -
+       KnownProblemDriverService copies it into AppPaths.SettingsDirectory on first run (only when
+       no file exists there yet) so the maintained list can be edited/replaced afterward without a
+       rebuild. -->
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\known-problem-drivers.json">
+      <LogicalName>known-problem-drivers.json</LogicalName>
+    </EmbeddedResource>
   </ItemGroup>
 
 </Project>

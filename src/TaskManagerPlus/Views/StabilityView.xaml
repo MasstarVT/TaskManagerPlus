@@ -526,6 +526,56 @@
                 </StackPanel>
             </Border>
 
+            <!-- #492: crash/TDR/unexpected-shutdown events preceded by a WHEA hardware error
+                 within a short window (5 minutes) - see EventLogService.
+                 BuildHardwareErrorCorrelations. A correlation, not a claimed cause: a hardware
+                 error shortly before a crash is worth a look, not proof the two are related.
+                 Collapsed entirely when none are found. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Setter Property="BorderBrush" Value="{DynamicResource WarningBrush}" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding HardwareErrorCorrelations.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Hardware error correlation" Style="{StaticResource CardTitle}" />
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap"
+                               Text="Crash/TDR/unexpected-shutdown events that had a WHEA hardware-error record in the 5 minutes beforehand. This is a correlation, not a cause - a hardware error shortly before a crash is worth a look, not proof the two are related; the crash could be unrelated, and a genuinely-related error can also precede its crash by longer than this window." />
+                    <ItemsControl ItemsSource="{Binding HardwareErrorCorrelations}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Padding="10,8" Margin="0,0,0,8" Background="{DynamicResource DangerMutedBrush}" CornerRadius="6">
+                                    <StackPanel>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" FontSize="12.5" FontWeight="SemiBold" Foreground="{DynamicResource DangerBrush}"
+                                                       Text="{Binding CrashDescription}" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Grid.Column="1" Text="{Binding CrashTime, StringFormat={}{0:g}, Mode=OneWay}"
+                                                       FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        </Grid>
+                                        <TextBlock FontSize="11.5" TextWrapping="Wrap" Margin="0,4,0,0">
+                                            <Run Text="Preceded by: " /><Run Text="{Binding HardwareErrorDescription}" />
+                                            <Run Text=" - " /><Run Text="{Binding GapText}" />
+                                        </TextBlock>
+                                        <TextBlock FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,2,0,0">
+                                            <Run Text="{Binding HardwareErrorsInWindow, Mode=OneWay}" /><Run Text=" hardware error(s) found in the correlation window." />
+                                        </TextBlock>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
             <!-- #1/#169: Reliability History - daily Critical/Error counts over the lookback window
                  (this app's own bar series, left axis), the same "crash/failure events over time"
                  chart Windows' own Reliability Monitor shows, bucketed from the same event query as
@@ -1001,6 +1051,241 @@
                                         </StackPanel>
                                     </Grid>
                                 </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #488: corrected WHEA errors per day over the same lookback window - the exact same
+                 ColumnSeries chart style as Reliability History above. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Corrected hardware error trend" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Corrected-severity WHEA-Logger records per day, last 30 days (any source - memory, PCI Express, machine check, ...)." Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+                    <lvc:CartesianChart Series="{Binding DailyWheaCorrectedSeries}" XAxes="{Binding DailyWheaCorrectedXAxes}" YAxes="{Binding DailyWheaCorrectedYAxes}"
+                                         Height="160" TooltipPosition="Top" LegendPosition="Hidden" Background="Transparent" />
+                </StackPanel>
+            </Border>
+
+            <!-- #487/#489/#490: every WHEA-Logger hardware-error record found, decoded from the
+                 record's own binary CPER payload where possible - error source, severity, and (for
+                 PCI Express / processor machine-check records) the reporting device and status
+                 bits are read directly off the hardware's own report, not guessed from message
+                 text. #447's corrected-memory-error card below has its own narrower, dedicated
+                 view; those same records will also show up in this broad list. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Hardware errors (WHEA)" Style="{StaticResource CardTitle}" />
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap"
+                               Text="Every Microsoft-Windows-WHEA-Logger record found in the last 30 days, decoded from the record's own binary error data (UEFI CPER) where possible - source, severity, and (for PCI Express / processor machine-check records) the reporting device and status bits are read directly off the hardware's own report, presented as what was reported, not an interpretation of it. When a record's binary payload can't be decoded, its severity is estimated from the event's level instead (marked below)." />
+                    <ItemsControl ItemsSource="{Binding WheaHardwareErrors}" MaxHeight="420">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Expander Margin="0,0,0,8" Foreground="{DynamicResource TextPrimaryBrush}" BorderThickness="0">
+                                    <Expander.Style>
+                                        <Style TargetType="Expander">
+                                            <Setter Property="Background" Value="{DynamicResource BgElevatedBrush}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Severity}" Value="Fatal">
+                                                    <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Expander.Style>
+                                    <Expander.Header>
+                                        <Grid Margin="4,2">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" FontSize="12.5" FontWeight="SemiBold" TextTrimming="CharacterEllipsis">
+                                                <Run Text="{Binding Component}" /><Run Text=" · event " /><Run Text="{Binding EventId, Mode=OneWay}" />
+                                            </TextBlock>
+                                            <Border Grid.Column="1" CornerRadius="10" Padding="8,2" Margin="0,0,10,0" VerticalAlignment="Center">
+                                                <Border.Style>
+                                                    <Style TargetType="Border">
+                                                        <Setter Property="Background" Value="{DynamicResource BgElevatedBrush}" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding Severity}" Value="Fatal">
+                                                                <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Border.Style>
+                                                <TextBlock Text="{Binding Severity}" FontSize="11" FontWeight="SemiBold">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock">
+                                                            <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding Severity}" Value="Fatal">
+                                                                    <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                                </DataTrigger>
+                                                                <DataTrigger Binding="{Binding Severity}" Value="Corrected">
+                                                                    <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+                                            </Border>
+                                            <TextBlock Grid.Column="2" Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}"
+                                                       FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        </Grid>
+                                    </Expander.Header>
+                                    <StackPanel Margin="4,4,4,8">
+                                        <TextBlock Text="Severity estimated from the event's level - the binary error record wasn't available to decode." FontSize="10" FontStyle="Italic"
+                                                   Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,6" TextWrapping="Wrap">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding StructuredDecodeSucceeded}" Value="False">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                        <TextBlock Text="{Binding RawMessage}" FontSize="10.5" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,6" />
+
+                                        <!-- #489: PCI Express AER detail. -->
+                                        <StackPanel Margin="0,0,0,6" Visibility="{Binding Pcie, Converter={StaticResource NullToVisibilityConverter}}">
+                                            <TextBlock FontSize="11" FontWeight="SemiBold" Text="PCI Express (AER)" Margin="0,0,0,2" />
+                                            <TextBlock FontSize="11" TextWrapping="Wrap">
+                                                <Run Text="{Binding Pcie.BdfText}" FontFamily="Consolas" />
+                                                <Run Text=" · " />
+                                                <Run Text="{Binding Pcie.FriendlyDeviceName, TargetNullValue=device not matched to a currently-present device}" />
+                                            </TextBlock>
+                                            <TextBlock FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,2,0,0">
+                                                <Run Text="Vendor " /><Run Text="{Binding Pcie.VendorIdText}" />
+                                                <Run Text=" · Device " /><Run Text="{Binding Pcie.DeviceIdText}" />
+                                                <Run Text=" · " /><Run Text="{Binding Pcie.SeverityClassText}" />
+                                            </TextBlock>
+                                            <TextBlock FontSize="10.5" TextWrapping="Wrap" Margin="0,2,0,0" Foreground="{DynamicResource DangerBrush}"
+                                                       Text="{Binding Pcie.StatusFlags, Converter={StaticResource StringListJoinConverter}}" />
+                                        </StackPanel>
+
+                                        <!-- #490: machine-check detail - "the hardware reported this," not an interpretation. -->
+                                        <StackPanel Visibility="{Binding MachineCheck, Converter={StaticResource NullToVisibilityConverter}}">
+                                            <TextBlock FontSize="11" FontWeight="SemiBold" Text="Machine check" Margin="0,0,0,2" />
+                                            <TextBlock FontSize="11" TextWrapping="Wrap">
+                                                <Run Text="Bank " /><Run Text="{Binding MachineCheck.BankText}" />
+                                                <Run Text=" · APIC ID " /><Run Text="{Binding MachineCheck.ApicIdText}" />
+                                            </TextBlock>
+                                            <TextBlock FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,2,0,0">
+                                                <Run Text="MCi_STATUS: " /><Run Text="{Binding MachineCheck.RawMciStatusText}" />
+                                            </TextBlock>
+                                            <TextBlock FontSize="10.5" TextWrapping="Wrap" Margin="0,2,0,0">
+                                                <Run Text="Uncorrected: " /><Run Text="{Binding MachineCheck.UncorrectedText}" />
+                                                <Run Text=" · Context corrupt: " /><Run Text="{Binding MachineCheck.ProcessorContextCorruptText}" />
+                                                <Run Text=" · Overflow: " /><Run Text="{Binding MachineCheck.OverflowText}" />
+                                            </TextBlock>
+                                            <TextBlock Text="These flags are what the processor itself reported, read from the error record - not this app's interpretation of a symptom." FontSize="10" FontStyle="Italic"
+                                                       Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,0" TextWrapping="Wrap" />
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Expander>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="No WHEA hardware-error records found in the last 30 days.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding WheaHardwareErrors.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- #447: corrected-memory-error events (Microsoft-Windows-WHEA-Logger, event ID 47) -
+                 the same figure the System Specs memory section shows (EventLogService.
+                 ReadCorrectedMemoryErrors is called independently by each tab). Collapsed entirely
+                 when none are found - occasional corrected ECC errors don't always happen, and a
+                 clean history is the common, unremarkable case. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding CorrectedMemoryErrorCount}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Corrected memory errors (WHEA)" Style="{StaticResource CardTitle}" Margin="0" />
+                        <TextBlock Grid.Column="1" Text="{Binding LastCorrectedMemoryErrorText}" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" />
+                    </Grid>
+                    <TextBlock Text="Windows' own hardware-error log reported these as corrected in hardware - occasional corrected errors happen on healthy ECC systems, but a high or climbing count is worth a closer look. DIMM/address hints are best-effort, parsed from the event's own text."
+                               Style="{StaticResource SubStat}" Margin="0,0,0,10" TextWrapping="Wrap" />
+                    <ItemsControl ItemsSource="{Binding CorrectedMemoryErrors}" MaxHeight="200">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" FontSize="11.5">
+                                        <Run Text="{Binding DimmHint, TargetNullValue=Unknown module}" />
+                                        <Run Text=" · " /><Run Text="{Binding PhysicalAddressHint, TargetNullValue=address not reported}" />
+                                    </TextBlock>
+                                    <TextBlock Grid.Column="1" Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}"
+                                               FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #464: boot-start/system-start driver load failures (SCM 7000/7001/7026, kernel PnP
+                 event 219) - this tab had no pre-existing distinct "boot section" to fold this
+                 into, so it's its own small card. Collapsed entirely when none are found, same
+                 pattern as the WHEA card above. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding BootDriverLoadFailures.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Boot-time driver load failures" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Boot-start/system-start drivers the Service Control Manager or kernel PnP manager reported as failed to load, last 30 days."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+                    <ItemsControl ItemsSource="{Binding BootDriverLoadFailures}" MaxHeight="220">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" FontSize="11.5" TextTrimming="CharacterEllipsis">
+                                        <Run Text="{Binding DriverName, TargetNullValue=Unknown}" FontWeight="SemiBold" />
+                                        <Run Text=" · event " /><Run Text="{Binding EventId, Mode=OneWay}" />
+                                        <Run Text=" · " /><Run Text="{Binding ProviderName}" />
+                                    </TextBlock>
+                                    <TextBlock Grid.Column="1" Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}"
+                                               FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                </Grid>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
@@ -3875,6 +4160,438 @@
                             <DataGridTextColumn Header="End reason" Binding="{Binding EndReason}" Width="2*" />
                         </DataGrid.Columns>
                     </DataGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- #488: corrected WHEA errors per day over the same lookback window - the exact same
+                 ColumnSeries chart style as Reliability History above. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Corrected hardware error trend" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Corrected-severity WHEA-Logger records per day, last 30 days (any source - memory, PCI Express, machine check, ...)." Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+                    <lvc:CartesianChart Series="{Binding DailyWheaCorrectedSeries}" XAxes="{Binding DailyWheaCorrectedXAxes}" YAxes="{Binding DailyWheaCorrectedYAxes}"
+                                         Height="160" TooltipPosition="Top" LegendPosition="Hidden" Background="Transparent" />
+                </StackPanel>
+            </Border>
+
+            <!-- #487/#489/#490: every WHEA-Logger hardware-error record found, decoded from the
+                 record's own binary CPER payload where possible - error source, severity, and (for
+                 PCI Express / processor machine-check records) the reporting device and status
+                 bits are read directly off the hardware's own report, not guessed from message
+                 text. #447's corrected-memory-error card below has its own narrower, dedicated
+                 view; those same records will also show up in this broad list. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Hardware errors (WHEA)" Style="{StaticResource CardTitle}" />
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap"
+                               Text="Every Microsoft-Windows-WHEA-Logger record found in the last 30 days, decoded from the record's own binary error data (UEFI CPER) where possible - source, severity, and (for PCI Express / processor machine-check records) the reporting device and status bits are read directly off the hardware's own report, presented as what was reported, not an interpretation of it. When a record's binary payload can't be decoded, its severity is estimated from the event's level instead (marked below)." />
+                    <ItemsControl ItemsSource="{Binding WheaHardwareErrors}" MaxHeight="420">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Expander Margin="0,0,0,8" Foreground="{DynamicResource TextPrimaryBrush}" BorderThickness="0">
+                                    <Expander.Style>
+                                        <Style TargetType="Expander">
+                                            <Setter Property="Background" Value="{DynamicResource BgElevatedBrush}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Severity}" Value="Fatal">
+                                                    <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Expander.Style>
+                                    <Expander.Header>
+                                        <Grid Margin="4,2">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" FontSize="12.5" FontWeight="SemiBold" TextTrimming="CharacterEllipsis">
+                                                <Run Text="{Binding Component}" /><Run Text=" · event " /><Run Text="{Binding EventId, Mode=OneWay}" />
+                                            </TextBlock>
+                                            <Border Grid.Column="1" CornerRadius="10" Padding="8,2" Margin="0,0,10,0" VerticalAlignment="Center">
+                                                <Border.Style>
+                                                    <Style TargetType="Border">
+                                                        <Setter Property="Background" Value="{DynamicResource BgElevatedBrush}" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding Severity}" Value="Fatal">
+                                                                <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Border.Style>
+                                                <TextBlock Text="{Binding Severity}" FontSize="11" FontWeight="SemiBold">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock">
+                                                            <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding Severity}" Value="Fatal">
+                                                                    <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                                </DataTrigger>
+                                                                <DataTrigger Binding="{Binding Severity}" Value="Corrected">
+                                                                    <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+                                            </Border>
+                                            <TextBlock Grid.Column="2" Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}"
+                                                       FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        </Grid>
+                                    </Expander.Header>
+                                    <StackPanel Margin="4,4,4,8">
+                                        <TextBlock Text="Severity estimated from the event's level - the binary error record wasn't available to decode." FontSize="10" FontStyle="Italic"
+                                                   Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,6" TextWrapping="Wrap">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding StructuredDecodeSucceeded}" Value="False">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                        <TextBlock Text="{Binding RawMessage}" FontSize="10.5" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,6" />
+
+                                        <!-- #489: PCI Express AER detail. -->
+                                        <StackPanel Margin="0,0,0,6" Visibility="{Binding Pcie, Converter={StaticResource NullToVisibilityConverter}}">
+                                            <TextBlock FontSize="11" FontWeight="SemiBold" Text="PCI Express (AER)" Margin="0,0,0,2" />
+                                            <TextBlock FontSize="11" TextWrapping="Wrap">
+                                                <Run Text="{Binding Pcie.BdfText}" FontFamily="Consolas" />
+                                                <Run Text=" · " />
+                                                <Run Text="{Binding Pcie.FriendlyDeviceName, TargetNullValue=device not matched to a currently-present device}" />
+                                            </TextBlock>
+                                            <TextBlock FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,2,0,0">
+                                                <Run Text="Vendor " /><Run Text="{Binding Pcie.VendorIdText}" />
+                                                <Run Text=" · Device " /><Run Text="{Binding Pcie.DeviceIdText}" />
+                                                <Run Text=" · " /><Run Text="{Binding Pcie.SeverityClassText}" />
+                                            </TextBlock>
+                                            <TextBlock FontSize="10.5" TextWrapping="Wrap" Margin="0,2,0,0" Foreground="{DynamicResource DangerBrush}"
+                                                       Text="{Binding Pcie.StatusFlags, Converter={StaticResource StringListJoinConverter}}" />
+                                        </StackPanel>
+
+                                        <!-- #490: machine-check detail - "the hardware reported this," not an interpretation. -->
+                                        <StackPanel Visibility="{Binding MachineCheck, Converter={StaticResource NullToVisibilityConverter}}">
+                                            <TextBlock FontSize="11" FontWeight="SemiBold" Text="Machine check" Margin="0,0,0,2" />
+                                            <TextBlock FontSize="11" TextWrapping="Wrap">
+                                                <Run Text="Bank " /><Run Text="{Binding MachineCheck.BankText}" />
+                                                <Run Text=" · APIC ID " /><Run Text="{Binding MachineCheck.ApicIdText}" />
+                                            </TextBlock>
+                                            <TextBlock FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,2,0,0">
+                                                <Run Text="MCi_STATUS: " /><Run Text="{Binding MachineCheck.RawMciStatusText}" />
+                                            </TextBlock>
+                                            <TextBlock FontSize="10.5" TextWrapping="Wrap" Margin="0,2,0,0">
+                                                <Run Text="Uncorrected: " /><Run Text="{Binding MachineCheck.UncorrectedText}" />
+                                                <Run Text=" · Context corrupt: " /><Run Text="{Binding MachineCheck.ProcessorContextCorruptText}" />
+                                                <Run Text=" · Overflow: " /><Run Text="{Binding MachineCheck.OverflowText}" />
+                                            </TextBlock>
+                                            <TextBlock Text="These flags are what the processor itself reported, read from the error record - not this app's interpretation of a symptom." FontSize="10" FontStyle="Italic"
+                                                       Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,0" TextWrapping="Wrap" />
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Expander>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="No WHEA hardware-error records found in the last 30 days.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding WheaHardwareErrors.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- #447: corrected-memory-error events (Microsoft-Windows-WHEA-Logger, event ID 47) -
+                 the same figure the System Specs memory section shows (EventLogService.
+                 ReadCorrectedMemoryErrors is called independently by each tab). Collapsed entirely
+                 when none are found - occasional corrected ECC errors don't always happen, and a
+                 clean history is the common, unremarkable case. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding CorrectedMemoryErrorCount}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Corrected memory errors (WHEA)" Style="{StaticResource CardTitle}" Margin="0" />
+                        <TextBlock Grid.Column="1" Text="{Binding LastCorrectedMemoryErrorText}" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" />
+                    </Grid>
+                    <TextBlock Text="Windows' own hardware-error log reported these as corrected in hardware - occasional corrected errors happen on healthy ECC systems, but a high or climbing count is worth a closer look. DIMM/address hints are best-effort, parsed from the event's own text."
+                               Style="{StaticResource SubStat}" Margin="0,0,0,10" TextWrapping="Wrap" />
+                    <ItemsControl ItemsSource="{Binding CorrectedMemoryErrors}" MaxHeight="200">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" FontSize="11.5">
+                                        <Run Text="{Binding DimmHint, TargetNullValue=Unknown module}" />
+                                        <Run Text=" · " /><Run Text="{Binding PhysicalAddressHint, TargetNullValue=address not reported}" />
+                                    </TextBlock>
+                                    <TextBlock Grid.Column="1" Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}"
+                                               FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #464: boot-start/system-start driver load failures (SCM 7000/7001/7026, kernel PnP
+                 event 219) - this tab had no pre-existing distinct "boot section" to fold this
+                 into, so it's its own small card. Collapsed entirely when none are found, same
+                 pattern as the WHEA card above. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding BootDriverLoadFailures.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Boot-time driver load failures" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Boot-start/system-start drivers the Service Control Manager or kernel PnP manager reported as failed to load, last 30 days."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+                    <ItemsControl ItemsSource="{Binding BootDriverLoadFailures}" MaxHeight="220">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" FontSize="11.5" TextTrimming="CharacterEllipsis">
+                                        <Run Text="{Binding DriverName, TargetNullValue=Unknown}" FontWeight="SemiBold" />
+                                        <Run Text=" · event " /><Run Text="{Binding EventId, Mode=OneWay}" />
+                                        <Run Text=" · " /><Run Text="{Binding ProviderName}" />
+                                    </TextBlock>
+                                    <TextBlock Grid.Column="1" Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}"
+                                               FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #3: minidump files, timestamp + best-effort bugcheck code correlated from a
+                 nearby Kernel-Power 41 event - see EventLogService.ReadMinidumps. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Minidumps" Style="{StaticResource CardTitle}" />
+                    <ItemsControl ItemsSource="{Binding Minidumps}" Margin="0,8,0,0">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="{Binding FileName}" FontSize="12.5" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Grid.Column="1" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}">
+                                        <Run Text="{Binding Timestamp, StringFormat={}{0:g}, Mode=OneWay}" />
+                                        <!-- #65: bugcheck-code-to-plain-English lookup, instead of a bare hex code. -->
+                                        <Run Text=" · " /><Run Text="{Binding BugcheckCode, Converter={StaticResource BugcheckCodeToDescriptionConverter}, Mode=OneWay}" />
+                                    </TextBlock>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="No minidump files found.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding Minidumps.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- Round 10, #66: repeated application crashes grouped by faulting module, with a
+                 count - see FaultingModuleSummary's remarks. A different lens on the same events
+                 the flat grid below shows, purpose-built for "which module keeps crashing" instead
+                 of scrolling a dozen near-identical rows. Collapsed entirely when nothing has a
+                 faulting module (the common case for a quiet system). -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding CrashesByModule.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Crashes by faulting module" Style="{StaticResource CardTitle}" />
+                    <ItemsControl ItemsSource="{Binding CrashesByModule}" Margin="0,8,0,0">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock Text="{Binding Module}" FontSize="12.5" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Style="{StaticResource SubStat}">
+                                            <Run Text="Last seen " /><Run Text="{Binding LastSeen, StringFormat={}{0:g}, Mode=OneWay}" />
+                                        </TextBlock>
+                                    </StackPanel>
+                                    <Border Grid.Column="1" Background="{DynamicResource DangerMutedBrush}" CornerRadius="10" Padding="8,2" VerticalAlignment="Center">
+                                        <TextBlock Foreground="{DynamicResource DangerBrush}" FontSize="11.5" FontWeight="SemiBold">
+                                            <Run Text="{Binding Count, Mode=OneWay}" /><Run Text="×" />
+                                        </TextBlock>
+                                    </Border>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #427: the classic pool-starvation event signature (Srv 2019/2020, event 333,
+                 Resource-Exhaustion-Detector) with a plain-English explanation per row - the
+                 strongest possible evidence of a kernel leak this app can surface. Collapsed
+                 entirely when none are found, same pattern as the faulting-module card above. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding PoolExhaustionEvents.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Pool-exhaustion event history" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Srv 2019/2020 (nonpaged/paged pool exhausted), event 333 (registry flush failure), and Windows' own resource-exhaustion detector - the strongest evidence available that a driver is leaking kernel memory."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+                    <ItemsControl ItemsSource="{Binding PoolExhaustionEvents}" Margin="0,0,0,0">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Padding="10,8" Margin="0,0,0,8" Background="{DynamicResource DangerMutedBrush}" CornerRadius="6">
+                                    <StackPanel>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" FontSize="12.5" FontWeight="SemiBold" Foreground="{DynamicResource DangerBrush}">
+                                                <Run Text="{Binding ProviderName}" /><Run Text=" · event " /><Run Text="{Binding EventId, Mode=OneWay}" />
+                                            </TextBlock>
+                                            <TextBlock Grid.Column="1" Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}"
+                                                       FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        </Grid>
+                                        <TextBlock Text="{Binding Explanation}" FontSize="11.5" TextWrapping="Wrap" Margin="0,4,0,0" />
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #439: out-of-memory incidents (Resource-Exhaustion-Detector event 2004) - each one
+                 expandable to the ranked top commit consumers Windows itself recorded at the
+                 moment it diagnosed the low-virtual-memory condition. Collapsed entirely when none
+                 are found, same pattern as the faulting-module/pool-exhaustion cards above. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding OutOfMemoryIncidents.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Out-of-memory incidents" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Windows' own resource-exhaustion detector, event 2004 - logged when the system diagnosed a low-virtual-memory condition, along with the processes it saw consuming the most committed memory at that moment. Those processes are often just the largest visible consumers at the time, not necessarily the root cause."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+                    <ItemsControl ItemsSource="{Binding OutOfMemoryIncidents}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Expander Margin="0,0,0,8" Background="{DynamicResource DangerMutedBrush}"
+                                          Foreground="{DynamicResource TextPrimaryBrush}" BorderThickness="0">
+                                    <Expander.Header>
+                                        <Grid Margin="4,2">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" FontSize="12.5" FontWeight="SemiBold" Foreground="{DynamicResource DangerBrush}" Text="Low virtual memory diagnosed" />
+                                            <TextBlock Grid.Column="1" Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}"
+                                                       FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        </Grid>
+                                    </Expander.Header>
+                                    <StackPanel Margin="4,4,4,8">
+                                        <ItemsControl ItemsSource="{Binding TopConsumers}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Grid Margin="0,2">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <TextBlock Grid.Column="0" FontSize="11.5">
+                                                            <Run Text="{Binding ProcessName}" /><Run Text=" · PID " /><Run Text="{Binding Pid, Mode=OneWay}" />
+                                                        </TextBlock>
+                                                        <TextBlock Grid.Column="1" Text="{Binding Bytes, Converter={StaticResource BytesToReadableConverter}}"
+                                                                   FontSize="11.5" FontWeight="SemiBold" />
+                                                    </Grid>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                        <TextBlock Text="{Binding RawMessage}" FontSize="10.5" TextWrapping="Wrap"
+                                                   Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,0">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding TopConsumers.Count}" Value="0">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </StackPanel>
+                                </Expander>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
                 </StackPanel>
             </Border>
 

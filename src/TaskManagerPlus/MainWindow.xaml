@@ -413,6 +413,28 @@
                     </TabItem.Tag>
                     <views:EventsView DataContext="{Binding Events}" />
                 </TabItem>
+
+                <!-- #453: Devices & Drivers - small hand-drawn chip/circuit-board glyph, same
+                     minimal stroke style as the neighboring icons. -->
+                <TabItem Header="Devices &amp; Drivers">
+                    <TabItem.Tag>
+                        <Viewbox Width="16" Height="16">
+                            <Canvas Width="16" Height="16">
+                                <Rectangle Style="{StaticResource NavIconStroke}" Canvas.Left="4" Canvas.Top="4" Width="8" Height="8" RadiusX="1" RadiusY="1" />
+                                <Rectangle Style="{StaticResource NavIconFill}" Canvas.Left="6.5" Canvas.Top="6.5" Width="3" Height="3" />
+                                <Line Style="{StaticResource NavIconStroke}" X1="6" Y1="0.5" X2="6" Y2="4" />
+                                <Line Style="{StaticResource NavIconStroke}" X1="10" Y1="0.5" X2="10" Y2="4" />
+                                <Line Style="{StaticResource NavIconStroke}" X1="6" Y1="12" X2="6" Y2="15.5" />
+                                <Line Style="{StaticResource NavIconStroke}" X1="10" Y1="12" X2="10" Y2="15.5" />
+                                <Line Style="{StaticResource NavIconStroke}" X1="0.5" Y1="6" X2="4" Y2="6" />
+                                <Line Style="{StaticResource NavIconStroke}" X1="0.5" Y1="10" X2="4" Y2="10" />
+                                <Line Style="{StaticResource NavIconStroke}" X1="12" Y1="6" X2="15.5" Y2="6" />
+                                <Line Style="{StaticResource NavIconStroke}" X1="12" Y1="10" X2="15.5" Y2="10" />
+                            </Canvas>
+                        </Viewbox>
+                    </TabItem.Tag>
+                    <views:DevicesDriversView DataContext="{Binding DevicesDrivers}" />
+                </TabItem>
             </TabControl>
 
             <views:SettingsPanel Grid.Column="1" DataContext="{Binding Theme}">

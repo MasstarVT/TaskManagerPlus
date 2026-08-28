@@ -10,7 +10,14 @@ namespace TaskManagerPlus.ViewModels;
 public sealed class MainViewModel : ObservableObject, IDisposable
 {
     public ThemeViewModel Theme { get; } = new();
-    public ProcessesViewModel Processes { get; } = new();
+
+    // #401/#406: cross-restart per-process history and the pinned leak-watch sampler - both
+    // field-initialized (no dependencies of their own) so they're ready before ProcessesViewModel
+    // needs them below.
+    public ProcessHistoryService ProcessHistory { get; } = new();
+    public LeakWatchViewModel LeakWatch { get; } = new();
+
+    public ProcessesViewModel Processes { get; }
     public PerformanceViewModel Performance { get; } = new();
     public ServicesViewModel Services { get; } = new();
     public StartupViewModel Startup { get; } = new();
@@ -21,6 +28,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     // DispatcherTimer) since event-log scans/registry sweeps/DISM calls aren't cheap enough to
     // repeat on a tick, the same tradeoff every other on-demand tab in this app already makes.
     public WindowsHealthViewModel WindowsHealth { get; } = new();
+
+    // #453: Devices & Drivers - on-demand like Stability/SystemSpecs above (driverquery + a full
+    // Win32_PnPSignedDriver sweep + per-row registry reads aren't cheap enough to repeat on a tick).
+    public DevicesDriversViewModel DevicesDrivers { get; } = new();
 
     public SummaryViewModel Summary { get; }
 
@@ -240,6 +251,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     public MainViewModel()
     {
+        // Processes now needs ProcessHistory/LeakWatch (both already field-initialized above) for
+        // #401/#406, so it's constructed here rather than as a field initializer of its own.
+        Processes = new ProcessesViewModel(ProcessHistory, LeakWatch);
+
         // EnergyThermals now needs to be constructed before Cpu/Storage (both take a reference
         // to it - Cpu for its thermal-throttle flag, Storage for its per-drive temperature list -
         // see each view-model's remarks) and before Summary as before (#64's Health Check card).
@@ -258,7 +273,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Processes.Responsiveness = Responsiveness;
         EnergyThermals = new EnergyThermalsViewModel(Performance);
         Cpu = new CpuViewModel(Performance, EnergyThermals, Processes, Responsiveness);
-        Memory = new MemoryViewModel(Performance, Processes);
+        Memory = new MemoryViewModel(Performance, Processes, LeakWatch, ProcessHistory);
         Storage = new StorageViewModel(Performance, EnergyThermals, Processes);
         // #221: Responsiveness is a field initializer (declared/constructed before this
         // constructor body runs - see its own declaration above), so it's already a real instance
@@ -270,7 +285,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         // #295: Responsiveness is a field initializer (constructed above), so it's already a real
         // instance here - Summary reads Responsiveness.SystemScore directly rather than
         // duplicating the composite-score math. #storage: likewise for the DriveHealthVerdict tile.
-        Summary = new SummaryViewModel(Performance, Processes, Services, EnergyThermals, SystemSpecs, Network, Stability, Responsiveness, Storage);
+        Summary = new SummaryViewModel(Performance, Processes, Services, EnergyThermals, SystemSpecs, Network, Stability, Responsiveness, Storage, ProcessHistory);
         Search = new GlobalSearchViewModel(Processes, Services, Startup, SystemSpecs);
         Events = new EventsViewModel(Processes, Services);
 
@@ -480,6 +495,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Theme.ThemeModeChanged -= ApplyAxisThemeToLogging;
         Theme.ThemeModeChanged -= ApplyAxisThemeToResponsiveness;
         Processes.Dispose();
+        Memory.Dispose();
         Performance.Dispose();
         Services.Dispose();
         EnergyThermals.Dispose();
@@ -491,6 +507,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Summary.Dispose();
         Stability.Dispose();
         Events.Dispose();
+        LeakWatch.Dispose();
+        ProcessHistory.Flush();
         _miniDashboard?.Close();
         RemoteMonitor.Dispose();
         Hotkey.Dispose();

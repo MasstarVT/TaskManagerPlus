@@ -14,6 +14,8 @@ namespace TaskManagerPlus.ViewModels;
 public sealed class ProcessesViewModel : ObservableObject, IDisposable
 {
     private readonly ProcessMonitorService _monitor = new();
+    private readonly ProcessHistoryService _processHistory;
+    private readonly LeakWatchViewModel _leakWatch;
     private readonly DispatcherTimer _timer;
     private bool _isRefreshing;
 
@@ -32,6 +34,11 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
     /// per-process wait-reason breakdown below, without a second syscall sweep on this tab's own
     /// faster poll interval.</summary>
     public ResponsivenessViewModel? Responsiveness { get; set; }
+
+    // #404: edge-triggered GDI/USER quota toasts - one toast per pid per threshold crossing, not
+    // one every tick a sustained warning stays above the threshold. See CheckGdiUserQuotaAlerts.
+    private readonly HashSet<int> _gdiAlertedPids = new();
+    private readonly HashSet<int> _userAlertedPids = new();
 
     public ObservableCollection<ProcessRow> Processes { get; } = new();
     public ICollectionView ProcessesView { get; }
@@ -105,6 +112,7 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
                 WaitChainResults.Clear();
                 WaitChainNodes.Clear();
                 WaitChainStatusText = string.Empty;
+                SelectedProcessAddressSpace = null;
                 LoadAffinityForSelection();
                 RefreshSelectedWaitBreakdown();
                 OnPropertyChanged(nameof(IsSvchostRowSelected));
@@ -206,6 +214,13 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
     /// WaitChainStatusText rather than WaitChainResults) since both exist side by side.</summary>
     public AsyncRelayCommand AnalyzeWaitChainDetailedCommand { get; }
 
+    /// <summary>#408: SelectedProcess's address-space breakdown from the most recent on-demand
+    /// walk - null until ViewAddressSpaceCommand runs (or after the selection changes, so a stale
+    /// walk from a previous process is never shown as if it were current). See
+    /// AddressSpaceInspectionService.</summary>
+    private AddressSpaceSummary? _selectedProcessAddressSpace;
+    public AddressSpaceSummary? SelectedProcessAddressSpace { get => _selectedProcessAddressSpace; private set => SetProperty(ref _selectedProcessAddressSpace, value); }
+
     private string _fileLockPath = string.Empty;
     public string FileLockPath { get => _fileLockPath; set => SetProperty(ref _fileLockPath, value); }
 
@@ -242,11 +257,20 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
     public RelayCommand DecodeEncodedCommandCommand { get; }
     /// <summary>Round 17, #864: "Scan this process's image file" context-menu item.</summary>
     public AsyncRelayCommand ScanWithDefenderCommand { get; }
+
+    /// <summary>#408: single-process, on-demand VirtualQueryEx address-space walk - never on a
+    /// tick, see AddressSpaceInspectionService's remarks.</summary>
+    public RelayCommand ViewAddressSpaceCommand { get; }
     public RelayCommand TrimWorkingSetCommand { get; }
     public RelayCommand SuspendCommand { get; }
     public RelayCommand ResumeCommand { get; }
     public RelayCommand ApplyAffinityCommand { get; }
     public RelayCommand SetPriorityCommand { get; }
+
+    /// <summary>#406: right-click "Watch for leaks" - adds/removes SelectedProcess's image name
+    /// from the pinned leak-watch list (LeakWatchViewModel), which then samples it independently
+    /// at a fixed 5s interval and charts it on the Memory tab.</summary>
+    public RelayCommand ToggleLeakWatchCommand { get; }
 
     private string _filterText = string.Empty;
     public string FilterText
@@ -311,8 +335,11 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
     private bool _measureResponseTime;
     public bool MeasureResponseTime { get => _measureResponseTime; set => SetProperty(ref _measureResponseTime, value); }
 
-    public ProcessesViewModel()
+    public ProcessesViewModel(ProcessHistoryService processHistory, LeakWatchViewModel leakWatch)
     {
+        _processHistory = processHistory;
+        _leakWatch = leakWatch;
+
         ProcessesView = CollectionViewSource.GetDefaultView(Processes);
         ProcessesView.Filter = FilterPredicate;
 
@@ -331,6 +358,7 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
         ViewPrivilegesCommand = new RelayCommand(_ => _ = LoadSelectedProcessPrivilegesAsync(), _ => SelectedProcess is not null);
         DecodeEncodedCommandCommand = new RelayCommand(_ => DecodeEncodedCommand(), _ => HasEncodedCommand());
         ScanWithDefenderCommand = new AsyncRelayCommand(ScanSelectedWithDefenderAsync, () => !string.IsNullOrWhiteSpace(SelectedProcess?.FilePath));
+        ViewAddressSpaceCommand = new RelayCommand(_ => _ = LoadSelectedProcessAddressSpaceAsync(), _ => SelectedProcess is not null);
         TrimWorkingSetCommand = new RelayCommand(_ => TrimWorkingSet(), _ => SelectedProcess is not null);
         SuspendCommand = new RelayCommand(_ => SetSuspended(true), _ => SelectedProcess is not null);
         ResumeCommand = new RelayCommand(_ => SetSuspended(false), _ => SelectedProcess is not null);
@@ -350,6 +378,7 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
         // dump file" isn't limited to not-responding processes either.
         CreateMiniDumpCommand = new RelayCommand(_ => CreateProcessDump(ProcessDumpService.DumpKind.Mini), _ => SelectedProcess is not null);
         CreateFullDumpCommand = new RelayCommand(_ => CreateProcessDump(ProcessDumpService.DumpKind.Full), _ => SelectedProcess is not null);
+        ToggleLeakWatchCommand = new RelayCommand(_ => ToggleLeakWatch(), _ => SelectedProcess is not null);
 
         // Round 12, #100: configurable poll interval - see PollIntervalSettingsService's remarks.
         _timer = new DispatcherTimer(DispatcherPriority.Background)
@@ -409,7 +438,17 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
         _isRefreshing = true;
         try
         {
-            var latest = await Task.Run(() => _monitor.Sample(MeasureResponseTime));
+            // #401: history recording (and its regression-based #402/#403/#405 fields) runs here,
+            // inside the same background Task.Run as the sample itself - the rows aren't yet
+            // attached to the UI-bound Processes collection, so mutating them off the UI thread
+            // is safe, the same reasoning ProcessMonitorService.Sample already relies on for its
+            // own per-row computed fields.
+            var latest = await Task.Run(() =>
+            {
+                var rows = _monitor.Sample(MeasureResponseTime);
+                _processHistory.RecordSample(rows);
+                return rows;
+            });
             // #274/#275/#276/#277: shared .NET CLR perf-counter sample, on this same tick - see
             // DotNetPerfCounterService's remarks for why this is one dictionary build per tick
             // rather than a per-process query.
@@ -432,6 +471,7 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
             // still-selected pid rather than only refreshing on selection change, so the panel
             // catches up once a new sweep lands.
             RefreshSelectedWaitBreakdown();
+            CheckGdiUserQuotaAlerts();
         }
         catch
         {
@@ -583,6 +623,20 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
                 existing.IoPriorityText = fresh.IoPriorityText;
                 existing.IsBackgroundIoPriority = fresh.IsBackgroundIoPriority;
                 existing.MemoryPriorityText = fresh.MemoryPriorityText;
+                existing.IsGdiQuotaWarning = fresh.IsGdiQuotaWarning;
+                existing.IsUserQuotaWarning = fresh.IsUserQuotaWarning;
+                // #409/#410/#412
+                existing.PageFaultsPerSec = fresh.PageFaultsPerSec;
+                existing.PrivateWorkingSetBytes = fresh.PrivateWorkingSetBytes;
+                existing.WorkingSetPrivateGapBytes = fresh.WorkingSetPrivateGapBytes;
+                existing.IsWorkingSetDivergent = fresh.IsWorkingSetDivergent;
+                // #401/#402/#403/#405: regression-derived fields computed by
+                // ProcessHistoryService.RecordSample just before this merge ran.
+                existing.MemorySparkline = fresh.MemorySparkline;
+                existing.LeakSlopeMbPerHour = fresh.LeakSlopeMbPerHour;
+                existing.LeakRSquared = fresh.LeakRSquared;
+                existing.IsHandleLeakSuspect = fresh.IsHandleLeakSuspect;
+                existing.IsThreadRunawaySuspect = fresh.IsThreadRunawaySuspect;
                 // CommandLine/FilePath/StartTime/User/ParentPid/ParentName don't change for the
                 // lifetime of a pid - no need to reassign them every tick like the values above
                 // that actually vary.
@@ -1160,6 +1214,29 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
             FileLockResults.Add($"{owner.AppName} (PID {owner.Pid}){(owner.Restartable ? "" : " - not restartable")}");
     }
 
+    /// <summary>#408: on-demand single-process address-space walk - see
+    /// AddressSpaceInspectionService's remarks for why this is strictly button-triggered.</summary>
+    private async Task LoadSelectedProcessAddressSpaceAsync()
+    {
+        var target = SelectedProcess;
+        if (target is null) return;
+        int pid = target.Pid;
+
+        SelectedProcessAddressSpace = null;
+        StatusMessage = $"Scanning address space for {target.Name} (PID {pid})...";
+
+        var summary = await Task.Run(() => AddressSpaceInspectionService.Walk(pid));
+
+        // The selection (or the whole app) may have moved on while this ran in the background.
+        if (SelectedProcess?.Pid != pid) return;
+
+        SelectedProcessAddressSpace = summary;
+        StatusMessage = summary.Error is not null
+            ? $"Couldn't read address space for {target.Name}: {summary.Error}"
+            : $"Address space for {summary.ProcessName} (PID {summary.Pid}): {summary.TotalRegionsScanned:N0} regions scanned" +
+              (summary.WasCapped ? " (stopped early - the walk hit its scan cap)." : ".");
+    }
+
     /// <summary>Round 7 #4: trims the selected process's working set - see
     /// ProcessControlService.TrimWorkingSet (EmptyWorkingSet).</summary>
     private void TrimWorkingSet()
@@ -1249,6 +1326,61 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
         if (success) _ = RefreshAsync();
     }
 
+    /// <summary>#406: toggles SelectedProcess's image name in the pinned leak-watch list.</summary>
+    private void ToggleLeakWatch()
+    {
+        var target = SelectedProcess;
+        if (target is null) return;
+
+        bool wasWatched = _leakWatch.IsWatched(target.Name);
+        bool ok = _leakWatch.Toggle(target.Name);
+
+        StatusMessage = !ok
+            ? $"Can't watch {target.Name}: the leak-watch list is full - unwatch something else first."
+            : wasWatched
+                ? $"Stopped watching {target.Name} for leaks."
+                : $"Watching {target.Name} for leaks - see the Memory tab's Leak watch list.";
+    }
+
+    /// <summary>#404: fires a toast the first tick a process's GDI or USER handle count reaches
+    /// the quota warning threshold, and again if it drops back under and later re-crosses -
+    /// edge-triggered per pid so a sustained warning doesn't spam a toast every tick. Pids no
+    /// longer present (process exited) are dropped from both tracking sets so they don't leak
+    /// forever.</summary>
+    private void CheckGdiUserQuotaAlerts()
+    {
+        var livePids = new HashSet<int>();
+        foreach (var row in Processes)
+        {
+            livePids.Add(row.Pid);
+
+            if (row.IsGdiQuotaWarning)
+            {
+                if (_gdiAlertedPids.Add(row.Pid))
+                    ToastService.Show("GDI object quota warning",
+                        $"{row.Name} (PID {row.Pid}) is using {row.GdiHandleCount:N0} of {GdiQuotaService.GdiQuota:N0} GDI objects - 80%+ of its quota.");
+            }
+            else
+            {
+                _gdiAlertedPids.Remove(row.Pid);
+            }
+
+            if (row.IsUserQuotaWarning)
+            {
+                if (_userAlertedPids.Add(row.Pid))
+                    ToastService.Show("USER object quota warning",
+                        $"{row.Name} (PID {row.Pid}) is using {row.UserHandleCount:N0} of {GdiQuotaService.UserQuota:N0} USER objects - 80%+ of its quota.");
+            }
+            else
+            {
+                _userAlertedPids.Remove(row.Pid);
+            }
+        }
+
+        _gdiAlertedPids.RemoveWhere(pid => !livePids.Contains(pid));
+        _userAlertedPids.RemoveWhere(pid => !livePids.Contains(pid));
+    }
+
     public void Dispose()
     {
         _timer.Stop();
@@ -1261,5 +1393,6 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
         }
         _trackedProcesses.Clear();
         _dotNetCounters.Dispose();
+        _processHistory.Flush();
     }
 }

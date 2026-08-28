@@ -1,0 +1,123 @@
+# TaskManagerPlus curated pool tag dictionary (#418)
+#
+# This is a small, hand-curated subset (not the full WDK pooltag.txt, which runs to several
+# thousand entries and isn't always redistributable) covering the most common/well-known kernel
+# pool tags a home/dev machine is likely to actually see in the #416 "Kernel pool by tag" grid.
+# Compiled from public Windows-internals documentation and widely-published pool-leak-diagnosis
+# references, on a best-effort basis - treat a match here as a helpful pointer, not a guaranteed-
+# authoritative identification (some tags are reused by more than one component in practice).
+# A tag with no entry below simply shows no description in the grid - never a guessed one.
+#
+# Format: one entry per line, "TAG=Description (Component)". Tags are exactly 4 characters,
+# spaces significant (the object manager and many drivers pad short tags with trailing spaces).
+# Lines starting with # are comments.
+
+File=File objects (I/O manager)
+Proc=Process objects (kernel)
+Thre=Thread objects (kernel)
+Sect=Section objects (memory manager)
+Sema=Semaphore objects (kernel)
+Muta=Mutant/mutex objects (kernel)
+Even=Event objects (kernel)
+Evnt=Event objects (kernel, alternate tag)
+Time=Timer objects (kernel)
+Toke=Token objects (security)
+Job =Job objects (kernel)
+Port=ALPC/LPC port objects (kernel)
+Devi=Device objects (I/O manager)
+Driv=Driver objects (I/O manager)
+Irp =I/O request packets (I/O manager)
+MDL =Memory descriptor lists (memory manager)
+Key =Registry key objects (configuration manager)
+Cm  =Configuration manager (registry) internal structures
+Cmcb=Configuration manager registry callback structures
+Cmvi=Configuration manager registry value/instance structures
+MmSt=Mm section object prototype PTEs (memory manager)
+Mm  =Generic memory manager allocations
+MmCa=Memory manager control area structures
+MmCm=Memory manager control area/mapping structures
+MmSc=Memory manager segment structures
+Vad =Virtual address descriptors (memory manager)
+Vadl=Virtual address descriptor long form (memory manager)
+Ntfx=NTFS (generic structures)
+NtFs=NTFS file system driver structures
+Ntfr=NTFS restart/recovery structures
+FMfn=Filter manager file name structures
+FMfi=Filter manager file instance structures
+FMic=Filter manager instance context structures
+FMsl=Filter manager stream list control blocks
+Fs  =File system generic allocations
+FSrl=File system runtime library (Rtl) structures
+CcSc=Cache manager shared cache map structures
+CcVa=Cache manager VACB (virtual address control block) structures
+CcPv=Cache manager private cache map structures
+CcWq=Cache manager work queue structures
+AFD =AFD.sys (Winsock Ancillary Function Driver) buffers
+AfdE=AFD.sys endpoint structures
+AfdC=AFD.sys connection structures
+Ndis=NDIS (Network Driver Interface Specification) allocations
+Tcp =TCP/IP protocol driver structures
+Tcpc=TCP/IP connection structures
+Ip6 =IPv6 protocol driver structures
+Ipin=IP packet/input structures
+Wsk =Winsock kernel (WSK) allocations
+Fwpm=Windows Filtering Platform (WFP) management structures
+Fwps=Windows Filtering Platform (WFP) shim/session structures
+USBD=USB driver stack allocations
+Usbh=USB hub driver structures
+HIDC=HID class driver structures
+Gdi =GDI (graphics device interface) objects
+GLCT=Win32k GDI object context structures
+Ntf0=Win32k window/desktop structures
+Win3=Win32k session/window station structures
+Vi  =Video/display driver miniport allocations
+DxgK=DirectX graphics kernel (dxgkrnl.sys) allocations
+Powe=Power manager structures
+PoWo=Power manager work item structures
+PnP0=Plug and Play manager structures
+PnpD=Plug and Play device relations structures
+Ex  =Generic executive allocations (ExAllocatePool with no specific tag)
+LSel=Lookaside list entries (generic)
+Ntfy=Directory notification structures (I/O manager)
+Fltm=Filter manager generic structures
+CM25=Configuration manager hive structures
+Perf=Performance counter/perflib structures
+Etwb=Event tracing (ETW) buffer structures
+LSwt=Lock manager wait block structures
+Se  =Security reference monitor structures
+SeAc=Security access token/ACL structures
+Vpb =Volume parameter block structures (I/O manager)
+Vol =Volume manager structures
+Disk=Disk class driver structures
+Part=Partition manager structures
+Scsi=SCSI port/miniport driver structures
+Stor=Storport driver stack structures
+Raw =Raw file system driver structures
+Cdrm=CD-ROM file system structures
+Fat =FAT file system driver structures
+Mup =Multiple UNC Provider (network redirector dispatch) structures
+Mrxs=SMB redirector (mrxsmb) structures
+Srv =SMB server (srv2.sys) structures
+LanS=SMB server work item structures
+Pipe=Named pipe file system structures
+Mslt=Mailslot file system structures
+Vga =VGA/legacy display driver structures
+Kbdc=Keyboard class driver structures
+Mouc=Mouse class driver structures
+Cmci=WMI/COM+ event structures
+Wmi =Windows Management Instrumentation structures
+Nsi =Network Store Interface structures
+Ip  =IP packet structures (legacy IPv4 stack)
+Arp =ARP cache structures
+Ntc =Kernel Transaction Manager (KTM) structures
+TmRm=Transaction manager resource manager structures
+Ccb =I/O completion context blocks
+IoCp=I/O completion port structures
+Wait=Wait block structures (kernel dispatcher)
+Apc =Asynchronous procedure call structures
+Dpc =Deferred procedure call structures
+Sesn=Terminal Services session structures
+Vfs =Volume filter/shadow-copy structures
+VssD=Volume Shadow Copy Service driver structures
+Bttf=BitLocker filter driver structures
+FvEc=BitLocker (FVE) encryption context structures

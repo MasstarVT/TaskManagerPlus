@@ -324,4 +324,63 @@ public sealed class ProcessRow : ObservableObject
 
     private string _responsivenessScoreTooltip = "Not enough data yet to compute a responsiveness score for this process.";
     public string ResponsivenessScoreTooltip { get => _responsivenessScoreTooltip; set => SetProperty(ref _responsivenessScoreTooltip, value); }
+
+    /// <summary>#401: recent private-bytes samples (oldest first) for this image name, from the
+    /// persistent cross-restart history - see ProcessHistoryService. Replaced wholesale each tick
+    /// (not mutated in place) so the Processes grid's sparkline column re-renders on the
+    /// PropertyChanged this setter raises, same as every other per-tick field on this row.</summary>
+    private IReadOnlyList<double> _memorySparkline = Array.Empty<double>();
+    public IReadOnlyList<double> MemorySparkline { get => _memorySparkline; set => SetProperty(ref _memorySparkline, value); }
+
+    /// <summary>#402: least-squares slope of this image name's private-bytes history, in
+    /// MB/hour, and the fit's R² (0-1) - a magnitude and a confidence, distinguishing a steady
+    /// climb from a sawtooth allocate/free pattern, on top of the plain IsLeakSuspect dot above.
+    /// See ProcessHistoryService.Regress.</summary>
+    private double _leakSlopeMbPerHour;
+    public double LeakSlopeMbPerHour { get => _leakSlopeMbPerHour; set => SetProperty(ref _leakSlopeMbPerHour, value); }
+
+    private double _leakRSquared;
+    public double LeakRSquared { get => _leakRSquared; set => SetProperty(ref _leakRSquared, value); }
+
+    /// <summary>#403: handle count has grown steadily while private bytes stayed flat - the
+    /// classic kernel-object-leak signature. See ProcessHistoryService.ApplyComputedFields.</summary>
+    private bool _isHandleLeakSuspect;
+    public bool IsHandleLeakSuspect { get => _isHandleLeakSuspect; set => SetProperty(ref _isHandleLeakSuspect, value); }
+
+    /// <summary>#405: thread count has grown steadily with no plateau - a thread-pool leak or
+    /// unbounded worker creation. See ProcessHistoryService.ApplyComputedFields.</summary>
+    private bool _isThreadRunawaySuspect;
+    public bool IsThreadRunawaySuspect { get => _isThreadRunawaySuspect; set => SetProperty(ref _isThreadRunawaySuspect, value); }
+
+    /// <summary>#404: GdiHandleCount/UserHandleCount above are at or past 80% of the per-process
+    /// quota Windows enforces (GdiQuotaService) - past this, GDI/USER object creation starts
+    /// failing outright. See ProcessMonitorService.Sample.</summary>
+    private bool _isGdiQuotaWarning;
+    public bool IsGdiQuotaWarning { get => _isGdiQuotaWarning; set => SetProperty(ref _isGdiQuotaWarning, value); }
+
+    private bool _isUserQuotaWarning;
+    public bool IsUserQuotaWarning { get => _isUserQuotaWarning; set => SetProperty(ref _isUserQuotaWarning, value); }
+
+    /// <summary>#410: Process\Page Faults/sec for this specific instance (not the system-wide
+    /// Memory\Page Faults/sec figure the Memory tab already shows) - identifies which process is
+    /// actually causing paging pressure. See ProcessPerfCounterService.</summary>
+    private double _pageFaultsPerSec;
+    public double PageFaultsPerSec { get => _pageFaultsPerSec; set => SetProperty(ref _pageFaultsPerSec, value); }
+
+    /// <summary>#412: Process V2\Working Set - Private - the resident portion of memory this
+    /// process doesn't share with any other process, as opposed to MemoryBytes (total working
+    /// set, which includes shared DLL pages) - so a shared-DLL-heavy process isn't misread as a
+    /// memory hog. See ProcessPerfCounterService.</summary>
+    private long _privateWorkingSetBytes;
+    public long PrivateWorkingSetBytes { get => _privateWorkingSetBytes; set => SetProperty(ref _privateWorkingSetBytes, value); }
+
+    /// <summary>#409: PrivateBytes minus MemoryBytes (working set) - a large positive gap means a
+    /// meaningful chunk of this process's committed memory has been paged/trimmed out of physical
+    /// RAM (it's still "owned" but not currently resident), rather than genuinely small. See
+    /// ProcessMonitorService's remarks for the threshold this flag uses.</summary>
+    private long _workingSetPrivateGapBytes;
+    public long WorkingSetPrivateGapBytes { get => _workingSetPrivateGapBytes; set => SetProperty(ref _workingSetPrivateGapBytes, value); }
+
+    private bool _isWorkingSetDivergent;
+    public bool IsWorkingSetDivergent { get => _isWorkingSetDivergent; set => SetProperty(ref _isWorkingSetDivergent, value); }
 }

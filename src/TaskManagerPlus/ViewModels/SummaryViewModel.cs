@@ -29,6 +29,7 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
     private readonly StabilityViewModel _stability;
     private readonly ResponsivenessViewModel _responsiveness;
     private readonly StorageViewModel _storage;
+    private readonly ProcessHistoryService _processHistory;
     private readonly DispatcherTimer _healthTimer;
 
     /// <summary>Round 10, #67: exposed publicly (the field above stays for this class's own
@@ -107,12 +108,26 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
     public bool TempAlertEnabled { get => _alertThresholds.TempEnabled; set { _alertThresholds.TempEnabled = value; OnPropertyChanged(); PersistAlertThresholds(); } }
     public double TempAlertThreshold { get => _alertThresholds.TempC; set { _alertThresholds.TempC = value; OnPropertyChanged(); PersistAlertThresholds(); } }
 
-    /// <summary>Round 17, #355: re-reads alerts.json and writes only this VM's own Cpu/Memory/Temp
-    /// fields back onto it, rather than blindly overwriting the whole file with this VM's
-    /// (possibly stale) in-memory copy - StorageViewModel now also persists to the same file (its
-    /// own FreeSpace* fields), so a naive whole-object save here could otherwise clobber a
-    /// concurrent edit made through the Storage tab's own threshold controls. See
-    /// StorageViewModel.PersistAlertThresholds for its half of this same merge-on-save fix.</summary>
+    // #414: leak-specific threshold alerts, configured in the Settings drawer alongside the
+    // CPU/Memory/temp thresholds above - same AlertThresholds.json file, same edge-triggered
+    // toast pattern (CheckLeakGrowthAlerts/CheckLeakHandleCountAlerts below), just keyed by image
+    // name (growth) or pid (handle count) instead of a single system-wide value.
+    private readonly HashSet<string> _leakGrowthAlertedNames = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<int> _leakHandleAlertedPids = new();
+
+    public bool LeakGrowthAlertEnabled { get => _alertThresholds.LeakGrowthEnabled; set { _alertThresholds.LeakGrowthEnabled = value; OnPropertyChanged(); PersistAlertThresholds(); } }
+    public double LeakGrowthAlertMb { get => _alertThresholds.LeakGrowthMb; set { _alertThresholds.LeakGrowthMb = value; OnPropertyChanged(); PersistAlertThresholds(); } }
+    public double LeakGrowthAlertMinutes { get => _alertThresholds.LeakGrowthMinutes; set { _alertThresholds.LeakGrowthMinutes = value; OnPropertyChanged(); PersistAlertThresholds(); } }
+    public bool LeakHandleCountAlertEnabled { get => _alertThresholds.LeakHandleCountEnabled; set { _alertThresholds.LeakHandleCountEnabled = value; OnPropertyChanged(); PersistAlertThresholds(); } }
+    public double LeakHandleCountAlertThreshold { get => _alertThresholds.LeakHandleCountThreshold; set { _alertThresholds.LeakHandleCountThreshold = value; OnPropertyChanged(); PersistAlertThresholds(); } }
+
+    /// <summary>Round 17, #355: re-reads alerts.json and writes only this VM's own fields back onto
+    /// it, rather than blindly overwriting the whole file with this VM's (possibly stale) in-memory
+    /// copy - StorageViewModel now also persists to the same file (its own FreeSpace* fields), so a
+    /// naive whole-object save here could otherwise clobber a concurrent edit made through the
+    /// Storage tab's own threshold controls. See StorageViewModel.PersistAlertThresholds for its
+    /// half of this same merge-on-save fix. #414's leak thresholds are this VM's own fields too, so
+    /// they're merged back the same way as Cpu/Memory/Temp rather than saved separately.</summary>
     private void PersistAlertThresholds()
     {
         var onDisk = AlertThresholdsService.Load();
@@ -122,6 +137,11 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         onDisk.MemoryPercent = _alertThresholds.MemoryPercent;
         onDisk.TempEnabled = _alertThresholds.TempEnabled;
         onDisk.TempC = _alertThresholds.TempC;
+        onDisk.LeakGrowthEnabled = _alertThresholds.LeakGrowthEnabled;
+        onDisk.LeakGrowthMb = _alertThresholds.LeakGrowthMb;
+        onDisk.LeakGrowthMinutes = _alertThresholds.LeakGrowthMinutes;
+        onDisk.LeakHandleCountEnabled = _alertThresholds.LeakHandleCountEnabled;
+        onDisk.LeakHandleCountThreshold = _alertThresholds.LeakHandleCountThreshold;
         AlertThresholdsService.Save(onDisk);
     }
 
@@ -136,9 +156,17 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
 
     // #93/#94: baseline capture + "what changed" comparison - one save/compare pair covers both
     // suggestions, since a saved baseline IS the comparison point for a later diff. See
-    // SnapshotService's remarks.
-    public RelayCommand SaveSnapshotCommand { get; }
-    public RelayCommand CompareSnapshotCommand { get; }
+    // SnapshotService's remarks. AsyncRelayCommand rather than RelayCommand since #486 extended
+    // SnapshotService.Capture into an async CaptureAsync (driver inventory/driver store
+    // enumeration genuinely takes a few seconds, unlike the rest of what a snapshot captures).
+    public AsyncRelayCommand SaveSnapshotCommand { get; }
+    public AsyncRelayCommand CompareSnapshotCommand { get; }
+
+    private bool _isCapturingSnapshot;
+    /// <summary>#486: true while SaveSnapshotCommand/CompareSnapshotCommand's own CaptureAsync
+    /// call is running - drives the two buttons' "Saving.../Comparing..." text, the same busy-flag
+    /// shape every on-demand Load button elsewhere in this app already uses.</summary>
+    public bool IsCapturingSnapshot { get => _isCapturingSnapshot; private set => SetProperty(ref _isCapturingSnapshot, value); }
 
     // Round 12, #99: clipboard-friendly one-line(ish) system summary - distinct from
     // GenerateReport/GenerateHtmlReport above (a full multi-section file), this is a handful of
@@ -207,7 +235,7 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
     public SummaryViewModel(PerformanceViewModel performance, ProcessesViewModel processes,
         ServicesViewModel services, EnergyThermalsViewModel energyThermals,
         SystemSpecsViewModel systemSpecs, NetworkViewModel network, StabilityViewModel stability,
-        ResponsivenessViewModel responsiveness, StorageViewModel storage)
+        ResponsivenessViewModel responsiveness, StorageViewModel storage, ProcessHistoryService processHistory)
     {
         Performance = performance;
         Processes = processes;
@@ -218,11 +246,12 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         _stability = stability;
         _responsiveness = responsiveness;
         _storage = storage;
+        _processHistory = processHistory;
 
         GenerateReportCommand = new RelayCommand(_ => GenerateReport());
         GenerateHtmlReportCommand = new RelayCommand(_ => GenerateHtmlReport());
-        SaveSnapshotCommand = new RelayCommand(_ => SaveSnapshot());
-        CompareSnapshotCommand = new RelayCommand(_ => CompareSnapshot());
+        SaveSnapshotCommand = new AsyncRelayCommand(SaveSnapshotAsync);
+        CompareSnapshotCommand = new AsyncRelayCommand(CompareSnapshotAsync);
         CopySummaryCommand = new RelayCommand(_ => CopySummary());
         LoadSnapshotACommand = new RelayCommand(_ => LoadSnapshotAb(isA: true));
         LoadSnapshotBCommand = new RelayCommand(_ => LoadSnapshotAb(isA: false));
@@ -270,6 +299,73 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
             CheckOne(TempAlertEnabled, temp, TempAlertThreshold, ref _tempAlerted,
                 "CPU temperature threshold", v => $"CPU temperature is {v:0}°C (threshold {TempAlertThreshold:0}°C)");
         }
+
+        CheckLeakGrowthAlerts();
+        CheckLeakHandleCountAlerts();
+    }
+
+    /// <summary>#414: "any process grows more than X MB over Y minutes" - projects the #402
+    /// per-image-name private-bytes slope (already computed by ProcessHistoryService on every
+    /// Processes-tab tick) over the configured window, the same straight-line extrapolation #415's
+    /// growth summary uses. Edge-triggered per image name (not per pid, matching the leak-watch/
+    /// leak-slope columns, which are also tracked by name) - a fit-confidence floor keeps a noisy,
+    /// barely-positive slope from tripping the alert just because it happens to cross the raw MB
+    /// figure.</summary>
+    private const double LeakGrowthMinRSquaredToAlert = 0.5;
+
+    private void CheckLeakGrowthAlerts()
+    {
+        if (!LeakGrowthAlertEnabled) { _leakGrowthAlertedNames.Clear(); return; }
+
+        var liveNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var row in Processes.Processes)
+        {
+            if (string.IsNullOrEmpty(row.Name)) continue;
+            liveNames.Add(row.Name);
+
+            double projectedGrowthMb = row.LeakSlopeMbPerHour * (LeakGrowthAlertMinutes / 60.0);
+            bool exceeds = row.LeakRSquared >= LeakGrowthMinRSquaredToAlert && projectedGrowthMb >= LeakGrowthAlertMb;
+
+            if (exceeds)
+            {
+                if (_leakGrowthAlertedNames.Add(row.Name))
+                    ToastService.Show("Leak growth threshold",
+                        $"{row.Name} has grown roughly {projectedGrowthMb:0} MB over the last {LeakGrowthAlertMinutes:0} minutes (threshold {LeakGrowthAlertMb:0} MB) - a projection from its current growth rate, not a confirmed leak.",
+                        isCritical: true);
+            }
+            else
+            {
+                _leakGrowthAlertedNames.Remove(row.Name);
+            }
+        }
+        _leakGrowthAlertedNames.RemoveWhere(n => !liveNames.Contains(n));
+    }
+
+    /// <summary>#414: "any process exceeds N handles" - a flat ceiling independent of the
+    /// slope-based #403 handle-leak heuristic, so a process that jumps straight to a huge handle
+    /// count (rather than climbing steadily enough to fit a regression) still gets caught.
+    /// Edge-triggered per pid, matching CheckGdiUserQuotaAlerts' shape in ProcessesViewModel.</summary>
+    private void CheckLeakHandleCountAlerts()
+    {
+        if (!LeakHandleCountAlertEnabled) { _leakHandleAlertedPids.Clear(); return; }
+
+        var livePids = new HashSet<int>();
+        foreach (var row in Processes.Processes)
+        {
+            livePids.Add(row.Pid);
+            if (row.HandleCount >= LeakHandleCountAlertThreshold)
+            {
+                if (_leakHandleAlertedPids.Add(row.Pid))
+                    ToastService.Show("Handle count threshold",
+                        $"{row.Name} (PID {row.Pid}) has {row.HandleCount:N0} open handles (threshold {LeakHandleCountAlertThreshold:0}).",
+                        isCritical: true);
+            }
+            else
+            {
+                _leakHandleAlertedPids.Remove(row.Pid);
+            }
+        }
+        _leakHandleAlertedPids.RemoveWhere(pid => !livePids.Contains(pid));
     }
 
     private static void CheckOne(bool enabled, double value, double threshold, ref bool alerted, string title, Func<double, string> message)
@@ -380,8 +476,39 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         Line("|---|---|---|---|");
         foreach (var p in Processes.Processes.OrderByDescending(p => p.MemoryBytes).Take(10))
             Line($"| {p.Name} | {p.Pid} | {Formatting.FormatBytes(p.MemoryBytes)} | {p.CpuPercent:0.0} |");
+        Line();
+
+        AppendLeakEvidenceMarkdown(Line);
 
         return sb.ToString();
+    }
+
+    /// <summary>#407: "Memory leak evidence" report section - built entirely from the recorded,
+    /// cross-restart per-image-name history (#401/#402/#403/#405), not a live snapshot, so it
+    /// reflects the trend observed over whatever window this app has actually been running and
+    /// watching, not just the instant the report was generated.</summary>
+    private void AppendLeakEvidenceMarkdown(Action<string> line)
+    {
+        line("## Memory leak evidence");
+        line("Derived from recorded per-process history (private bytes/handles/threads), not a live snapshot. " +
+             "A steady climb over the observation window is a quick flag worth a second look, not a confirmed leak.");
+        line("");
+
+        var top = _processHistory.GetTopGrowthSummaries(8);
+        if (top.Count == 0)
+        {
+            line("Not enough history recorded yet.");
+            return;
+        }
+
+        line("| Process | Private bytes slope (MB/hr) | R² | Handle slope (/hr) | Handle R² | Thread slope (/hr) | Observation window |");
+        line("|---|---|---|---|---|---|---|");
+        foreach (var s in top)
+        {
+            string window = $"{s.FirstSampleUtc.ToLocalTime():g} to {s.LastSampleUtc.ToLocalTime():g} ({s.SampleCount} samples)";
+            line($"| {s.ImageName} | {s.PrivateBytesSlopeMbPerHour:0.00} | {s.PrivateBytesRSquared:0.00} | " +
+                 $"{s.HandleSlopePerHour:0.0} | {s.HandleRSquared:0.00} | {s.ThreadSlopePerHour:0.0} | {window} |");
+        }
     }
 
     /// <summary>#97: the HTML twin of GenerateReport() above - same underlying data, rendered as
@@ -467,8 +594,36 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
             Line($"<tr><td>{Esc(p.Name)}</td><td>{p.Pid}</td><td>{p.CpuPercent:0.0}</td><td>{Esc(Formatting.FormatBytes(p.MemoryBytes))}</td></tr>");
         Line("</table>");
 
+        AppendLeakEvidenceHtml(Line, Esc);
+
         Line("</body></html>");
         return sb.ToString();
+    }
+
+    /// <summary>#407: HTML twin of AppendLeakEvidenceMarkdown above - same underlying recorded
+    /// history, rendered as a table matching the rest of this report's style.</summary>
+    private void AppendLeakEvidenceHtml(Action<string> line, Func<string, string> esc)
+    {
+        line("<h2>Memory leak evidence</h2>");
+        line("<p class=\"muted\">Derived from recorded per-process history (private bytes/handles/threads), not a live snapshot. " +
+             "A steady climb over the observation window is a quick flag worth a second look, not a confirmed leak.</p>");
+
+        var top = _processHistory.GetTopGrowthSummaries(8);
+        if (top.Count == 0)
+        {
+            line("<p>Not enough history recorded yet.</p>");
+            return;
+        }
+
+        line("<table><tr><th>Process</th><th>Private bytes slope (MB/hr)</th><th>R²</th><th>Handle slope (/hr)</th>" +
+             "<th>Handle R²</th><th>Thread slope (/hr)</th><th>Observation window</th></tr>");
+        foreach (var s in top)
+        {
+            string window = $"{esc(s.FirstSampleUtc.ToLocalTime().ToString("g"))} to {esc(s.LastSampleUtc.ToLocalTime().ToString("g"))} ({s.SampleCount} samples)";
+            line($"<tr><td>{esc(s.ImageName)}</td><td>{s.PrivateBytesSlopeMbPerHour:0.00}</td><td>{s.PrivateBytesRSquared:0.00}</td>" +
+                 $"<td>{s.HandleSlopePerHour:0.0}</td><td>{s.HandleRSquared:0.00}</td><td>{s.ThreadSlopePerHour:0.0}</td><td>{window}</td></tr>");
+        }
+        line("</table>");
     }
 
     /// <summary>Renders one history buffer (0-100 range, 60 samples) as a small inline SVG
@@ -522,8 +677,9 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>#93: "record how my PC looks when healthy" - captures installed software,
-    /// services, and startup items to a JSON file the user picks.</summary>
-    private void SaveSnapshot()
+    /// services, startup items, and (#486) driver inventory/driver store contents to a JSON file
+    /// the user picks.</summary>
+    private async Task SaveSnapshotAsync()
     {
         var snapshotsDir = AppPaths.GetPath("Snapshots");
         try { Directory.CreateDirectory(snapshotsDir); } catch { /* SaveFileDialog still works without a pre-created folder */ }
@@ -538,14 +694,21 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         };
         if (dialog.ShowDialog() != true) return;
 
+        IsCapturingSnapshot = true;
+        SnapshotStatusText = "Capturing snapshot (including driver inventory/driver store - this can take a few seconds)...";
         try
         {
-            SnapshotService.Save(SnapshotService.Capture(CaptureIdleCpuTempOrNull()), dialog.FileName);
+            var snapshot = await SnapshotService.CaptureAsync(CaptureIdleCpuTempOrNull());
+            SnapshotService.Save(snapshot, dialog.FileName);
             SnapshotStatusText = $"Snapshot saved: {Path.GetFileName(dialog.FileName)}";
         }
         catch (Exception ex)
         {
             SnapshotStatusText = $"Couldn't save snapshot: {ex.Message}";
+        }
+        finally
+        {
+            IsCapturingSnapshot = false;
         }
     }
 
@@ -574,8 +737,8 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>#94: "what changed" - loads a previously saved baseline and diffs it against the
-    /// system's current state.</summary>
-    private void CompareSnapshot()
+    /// system's current state (including, since #486, driver inventory/driver store contents).</summary>
+    private async Task CompareSnapshotAsync()
     {
         var dialog = new OpenFileDialog
         {
@@ -593,22 +756,31 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
             return;
         }
 
-        var current = SnapshotService.Capture(CaptureIdleCpuTempOrNull());
-        var diff = SnapshotService.Diff(baseline, current);
-        SnapshotDiff = diff;
-        SnapshotStatusText = diff.HasChanges
-            ? $"Compared against {baseline.CapturedAt:g} - changes found."
-            : $"Compared against {baseline.CapturedAt:g} - no changes found.";
+        IsCapturingSnapshot = true;
+        SnapshotStatusText = "Capturing the current system's state to compare (including driver inventory/driver store - this can take a few seconds)...";
+        try
+        {
+            var current = await SnapshotService.CaptureAsync(CaptureIdleCpuTempOrNull());
+            var diff = SnapshotService.Diff(baseline, current);
+            SnapshotDiff = diff;
+            SnapshotStatusText = diff.HasChanges
+                ? $"Compared against {baseline.CapturedAt:g} - changes found."
+                : $"Compared against {baseline.CapturedAt:g} - no changes found.";
 
-        IdleTempTrendText = BuildIdleTempTrendText(baseline.IdleCpuTempC, current.IdleCpuTempC);
+            IdleTempTrendText = BuildIdleTempTrendText(baseline.IdleCpuTempC, current.IdleCpuTempC);
 
-        // Round 12, #98: cross-references this same diff against the reboot-pending flag
-        // SystemSpecsService.ReadRebootPending already computes (Round 11) - a derived rollup,
-        // no new registry reads, just correlating two outputs SummaryViewModel already has. Lives
-        // as its own Health Check line (RefreshHealthIssues, below) rather than duplicated logic
-        // here, since that's the one place already re-evaluated on a timer whenever RebootPending
-        // could change (a Windows Update finishing installing in the background, for instance).
-        RefreshHealthIssues();
+            // Round 12, #98: cross-references this same diff against the reboot-pending flag
+            // SystemSpecsService.ReadRebootPending already computes (Round 11) - a derived rollup,
+            // no new registry reads, just correlating two outputs SummaryViewModel already has. Lives
+            // as its own Health Check line (RefreshHealthIssues, below) rather than duplicated logic
+            // here, since that's the one place already re-evaluated on a timer whenever RebootPending
+            // could change (a Windows Update finishing installing in the background, for instance).
+            RefreshHealthIssues();
+        }
+        finally
+        {
+            IsCapturingSnapshot = false;
+        }
     }
 
     /// <summary>Round 11, #69: builds LeftTiles/RightTiles from TileCatalog, applying whatever
@@ -810,6 +982,16 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         if (Performance.PageFilePercent >= 90)
             issues.Add(new HealthIssue { Message = $"Page file is {Performance.PageFilePercent:0}% full", IsCritical = false });
 
+        // #420: nonpaged pool exhaustion is a hard bugcheck risk, not just a slowdown - see
+        // PerformanceViewModel.IsNonpagedPoolWarning/PoolLimitsService for what the limit is
+        // (a documented registry override when set, a clearly-labeled RAM-based estimate otherwise).
+        if (Performance.IsNonpagedPoolWarning)
+            issues.Add(new HealthIssue
+            {
+                Message = $"Nonpaged pool usage is high: {Performance.PoolNonpagedGb:0.00} GB of {(Performance.PoolNonpagedLimitIsEstimate ? "an estimated " : "")}{Performance.PoolNonpagedLimitGb:0.0} GB ({Performance.PoolNonpagedPercent:0}%) - a leaking driver risks a hard crash, not just a slowdown",
+                IsCritical = Performance.PoolNonpagedPercent >= 95,
+            });
+
         // Round 8 #41: swap-thrash - sustained heavy paging (hard faults) together with very
         // little free RAM is a much stronger "the system is thrashing" signal than either figure
         // alone; either one by itself happens routinely under ordinary load (a hard-fault burst
@@ -846,6 +1028,14 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
                 IsCritical = false,
             });
 
+        // #451: RAM health rollup (mismatched DIMMs, ECC-corrected errors, memory diagnostic
+        // result, XMP state, channel population, memory-related bugchecks) - see
+        // MemoryDiagnosticsService.BuildRamHealth / SystemSpecsViewModel.RamHealthVerdictText.
+        // Never critical on its own here - it's an aggregation of several individually-informational
+        // signals, not a confirmed hardware failure.
+        if (_systemSpecs.RamHealthIsWarning)
+            issues.Add(new HealthIssue { Message = $"RAM health check: {string.Join("; ", _systemSpecs.RamHealthFindings.Take(2))}", IsCritical = false });
+
         // Round 11, #73: Windows Update/servicing reboot pending - see
         // SystemSpecsService.ReadRebootPending for which registry keys are checked.
         if (_systemSpecs.RebootPending)
@@ -878,6 +1068,51 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         var defender = Processes.Processes.FirstOrDefault(p => p.Name.Equals("MsMpEng", StringComparison.OrdinalIgnoreCase));
         if (defender is not null && defender.CpuPercent >= 20)
             issues.Add(new HealthIssue { Message = $"Windows Defender may be actively scanning (MsMpEng at {defender.CpuPercent:0}% CPU)", IsCritical = false });
+
+        // #455: "N unsigned/test-signed drivers found" - reads the Devices & Drivers tab's own
+        // session-lifetime cache (DriverSignatureSummaryState) rather than triggering a scan of its
+        // own; that tab is on-demand (CLAUDE.md), so this rule stays silent until the user has
+        // actually opened it and run a signature check at least once this session.
+        if (DriverSignatureSummaryState.HasScanned && DriverSignatureSummaryState.UnsignedOrTestSignedCount > 0)
+        {
+            int n = DriverSignatureSummaryState.UnsignedOrTestSignedCount;
+            issues.Add(new HealthIssue
+            {
+                Message = $"{n} unsigned/test-signed driver{(n == 1 ? "" : "s")} found - see the Devices & Drivers tab",
+                IsCritical = false,
+            });
+        }
+
+        // #470: "N devices showing a problem code" - reads the Devices & Drivers tab's own
+        // session-lifetime cache (DeviceProblemSummaryState) rather than triggering a device-tree
+        // scan of its own, the same "stay silent until the on-demand tab has actually been used
+        // this session" shape #455's driver-signature rule above already uses. No tray-alert push
+        // here either - #455 is the precedent for this exact category of Health Check entry, and
+        // it doesn't push to tray, so this doesn't invent new tray plumbing either.
+        if (DeviceProblemSummaryState.HasScanned && DeviceProblemSummaryState.ProblemDeviceCount > 0)
+        {
+            int n = DeviceProblemSummaryState.ProblemDeviceCount;
+            issues.Add(new HealthIssue
+            {
+                Message = $"{n} device{(n == 1 ? "" : "s")} showing a problem code - see the Devices & Drivers tab's device tree",
+                IsCritical = false,
+            });
+        }
+
+        // #500: "N known-problem driver(s) found" - reads the Devices & Drivers tab's own
+        // session-lifetime cache (KnownProblemDriverSummaryState) rather than triggering a scan of
+        // its own, the same "stay silent until the on-demand tab has actually been used this
+        // session" shape #455/#470's rules above already use. A quick flag, not a verdict - see
+        // KnownProblemDriverMatch's remarks.
+        if (KnownProblemDriverSummaryState.HasScanned && KnownProblemDriverSummaryState.MatchCount > 0)
+        {
+            int n = KnownProblemDriverSummaryState.MatchCount;
+            issues.Add(new HealthIssue
+            {
+                Message = $"{n} known-problem driver match{(n == 1 ? "" : "es")} found - see the Devices & Drivers tab (quick flag, not a verdict)",
+                IsCritical = false,
+            });
+        }
 
         // #67: anomaly highlighting - flags CPU/RAM/Disk usage that's a statistical outlier vs.
         // its own last-minute history, even without a fixed threshold. Requires both a meaningful

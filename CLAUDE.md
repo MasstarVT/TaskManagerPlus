@@ -5,10 +5,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 Task Manager Plus — a Windows Task Manager replacement written in C# / WPF
-(.NET 8). Sixteen top-level tabs (Summary, CPU, Memory, Storage, Network,
+(.NET 8). Seventeen top-level tabs (Summary, CPU, Memory, Storage, Network,
 GPU, Energy & Thermals, Responsiveness, Processes, Services, Startup,
-System Specs, Stability, Security, Windows Health, Events), live
-color-theming (six palette families + saturation + high-contrast +
+System Specs, Stability, Security, Windows Health, Events, Devices &
+Drivers), live color-theming (six palette families + saturation + high-contrast +
 color-blind-safe alerts), a CSV/HTML/Markdown logging & reporting system,
 a system tray icon with a global hotkey, and an optional LAN-visible
 remote monitor endpoint. Navigation is a TMOG-style top horizontal tab
@@ -77,12 +77,12 @@ container — everything is `new`'d directly). Layers:
   pattern because sensor/GPU-engine enumeration is a genuinely separate,
   heavier data source than the fixed `HardwareMonitorService` counter array.
   `StartupViewModel`, `SystemSpecsViewModel`, `StabilityViewModel`,
-  `SecurityViewModel`, `WindowsHealthViewModel`, and `EventsViewModel` are
-  on-demand instead (an initial load plus a manual Refresh command, or
-  purely selection/button-driven with no initial load at all for
-  `EventsViewModel`) since their underlying queries (registry/WMI
-  inventory sweeps, event-log scans, DISM/SFC runs) aren't cheap enough to
-  repeat on a tick. `SecurityViewModel`
+  `SecurityViewModel`, `WindowsHealthViewModel`, `EventsViewModel`, and
+  `DevicesDriversViewModel` are on-demand instead (an initial load plus a
+  manual Refresh command, or purely selection/button-driven with no
+  initial load at all for `EventsViewModel`) since their underlying
+  queries (registry/WMI inventory sweeps, event-log scans, DISM/SFC runs)
+  aren't cheap enough to repeat on a tick. `SecurityViewModel`
   (Round 14, #801-900) is the most extreme case of
   this — a single large on-demand ViewModel piling up one
   `ObservableCollection`/`IsLoading` flag/`AsyncRelayCommand` trio per
@@ -100,9 +100,21 @@ container — everything is `new`'d directly). Layers:
   `BrowserHijackCheckService`, plus supporting services for hashing
   (`FileHashService`), quarantine (`QuarantineService`), the action journal
   (`SecurityActionJournalService`), System Restore points
-  (`RestorePointService`), and evidence bundles (`EvidenceBundleService`).
+  (`RestorePointService`), and evidence bundles (`SecurityEvidenceBundleService`).
   Every heuristic in this tab is explicitly framed as "quick flag, not a
   verdict" in both code comments and UI copy — see the house rule below.
+  `DevicesDriversViewModel` is the largest on-demand ViewModel besides
+  `SecurityViewModel` — it composes several independently-loaded sections
+  (driver inventory, device tree, resources/power, driver store, filter
+  drivers, Driver Verifier) behind a handful of `Is*ViewActive` bool
+  properties that switch which section's XAML is visible, rather than a
+  real `TabControl`/enum — a pragmatic pattern that has scaled to four
+  sections but would be worth promoting to an enum or nested TabControl if
+  a fifth is added. Its own Driver Verifier controls call
+  `DriverVerifierControlService`, a separate, independently-built service
+  from the Stability tab's `DriverVerifierService` guided wizard — see
+  that class's own remarks for why the two coexist rather than share one
+  implementation.
   `LoggingViewModel` owns a timer but samples nothing itself — it just reads
   already-polled state off `PerformanceViewModel`/`EnergyThermalsViewModel`.
   `ResponsivenessViewModel` (the Responsiveness tab, lag/stutter/freeze
@@ -327,6 +339,15 @@ per file:
   `Quarantine\<timestamp>\` (moved-never-deleted flagged files, #899) and
   `EvidenceBundles\<timestamp>\` (exported report+diff+hashes+event
   excerpts for a helper/forum post, #900).
+- **Maintained reference lists (embedded seed → editable settings-dir
+  copy)**: a curated, updatable-without-a-rebuild reference list (the pool
+  tag dictionary, the known-problem-driver list) ships as an embedded
+  resource under `Resources/` and is copied to a same-named file under
+  `AppPaths.SettingsDirectory` the first time it's needed if no copy exists
+  there yet; the service then always reads from the settings-dir copy, so a
+  user (or a future update mechanism) can replace it without a rebuild.
+  Both existing lists are explicitly labelled in-code and in the UI as a
+  curated/partial subset, never a complete authority.
 - **On-demand vs. polled**: anything that takes more than a trivial
   registry/perf-counter read (event-log scans, recursive file-system
   walks, registry-tree sweeps, network calls) is gated behind an explicit

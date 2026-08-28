@@ -45,11 +45,95 @@ public sealed class VolumeRow
         new[] { RecycleBinText, ShadowCopyText, TrimText }.Where(s => !string.IsNullOrEmpty(s)));
 }
 
+/// <summary>#440/#442/#443/#446: one row in the richer per-module memory grid - replaces the plain
+/// SpecRow the Memory modules card used to bind to, since a DIMM now carries far more than a
+/// title/subtitle/size (part number, serial, rank, voltages, form factor, technology, ECC and
+/// mismatch flags). Every *Text field is pre-formatted here (not in the view) the same way
+/// SystemSpecsViewModel.Apply already formats every other card's text, so the XAML stays plain
+/// bindings.</summary>
+public sealed class MemoryModuleRow
+{
+    public string Location { get; init; } = string.Empty;
+    public string SizeText { get; init; } = string.Empty;
+    public string SpeedText { get; init; } = string.Empty;
+    public string ManufacturerText { get; init; } = string.Empty;
+    public string PartNumberText { get; init; } = string.Empty;
+    public string SerialNumberText { get; init; } = string.Empty;
+    public string FormFactorAndTechnologyText { get; init; } = string.Empty;
+    public string RankAndVoltageText { get; init; } = string.Empty;
+    public string ChannelText { get; init; } = string.Empty;
+
+    /// <summary>#442: "XMP/EXPO profile may be available: ..." - empty (hidden) when the module is
+    /// already running at its rated speed.</summary>
+    public string XmpHintText { get; init; } = string.Empty;
+
+    /// <summary>#443: "quick flag, not a verdict" - see MemoryModuleInfo.MismatchReason.</summary>
+    public bool IsMismatched { get; init; }
+    public string MismatchText { get; init; } = string.Empty;
+}
+
+/// <summary>#445: one physical DIMM slot on the board - populated (with a short module summary) or
+/// empty, for the slot-map/upgrade-headroom strip. Built purely from MemoryModules + the array's
+/// TotalMemorySlots, no new query.</summary>
+public sealed class MemorySlotRow
+{
+    public int SlotNumber { get; init; }
+    public bool IsPopulated { get; init; }
+    public string SummaryText { get; init; } = string.Empty;
+}
+
 public sealed class SystemSpecsViewModel : ObservableObject
 {
     private readonly SystemSpecsService _service = new();
 
-    public ObservableCollection<SpecRow> MemoryModules { get; } = new();
+    // #440/#442/#443/#446: richer per-module memory grid - see MemoryModuleRow's remarks.
+    public ObservableCollection<MemoryModuleRow> MemoryModules { get; } = new();
+
+    // #445: populated-vs-empty slot map, built from MemoryModules + TotalMemorySlots - no new query.
+    public ObservableCollection<MemorySlotRow> MemorySlots { get; } = new();
+
+    private string _memoryArrayMaxCapacityText = string.Empty;
+    public string MemoryArrayMaxCapacityText { get => _memoryArrayMaxCapacityText; private set => SetProperty(ref _memoryArrayMaxCapacityText, value); }
+
+    // #446: ECC status - see MemoryDiagnosticsService.DescribeEcc.
+    private string _memoryEccStatusText = "Unknown";
+    public string MemoryEccStatusText { get => _memoryEccStatusText; private set => SetProperty(ref _memoryEccStatusText, value); }
+
+    // #444: channel population - see MemoryDiagnosticsService.CheckChannelPopulation.
+    private string _memoryChannelText = string.Empty;
+    public string MemoryChannelText { get => _memoryChannelText; private set => SetProperty(ref _memoryChannelText, value); }
+
+    private bool _memoryChannelWarning;
+    public bool MemoryChannelWarning { get => _memoryChannelWarning; private set => SetProperty(ref _memoryChannelWarning, value); }
+
+    // #447: corrected-memory-error events (WHEA-Logger 47) - same figure the Stability tab shows,
+    // read independently (see EventLogService.ReadCorrectedMemoryErrors's remarks).
+    private int _correctedMemoryErrorCount;
+    public int CorrectedMemoryErrorCount { get => _correctedMemoryErrorCount; private set => SetProperty(ref _correctedMemoryErrorCount, value); }
+
+    private string _lastCorrectedMemoryErrorText = "None in the last 30 days";
+    public string LastCorrectedMemoryErrorText { get => _lastCorrectedMemoryErrorText; private set => SetProperty(ref _lastCorrectedMemoryErrorText, value); }
+
+    // #448/#449: Windows Memory Diagnostic launcher + last-run result.
+    public RelayCommand RunMemoryDiagnosticCommand { get; }
+
+    private string? _memoryDiagnosticLaunchStatusText;
+    public string? MemoryDiagnosticLaunchStatusText { get => _memoryDiagnosticLaunchStatusText; private set => SetProperty(ref _memoryDiagnosticLaunchStatusText, value); }
+
+    private string _memoryDiagnosticResultText = "Never run";
+    public string MemoryDiagnosticResultText { get => _memoryDiagnosticResultText; private set => SetProperty(ref _memoryDiagnosticResultText, value); }
+
+    private bool _memoryDiagnosticFailed;
+    public bool MemoryDiagnosticFailed { get => _memoryDiagnosticFailed; private set => SetProperty(ref _memoryDiagnosticFailed, value); }
+
+    // #451: single RAM health rollup card.
+    private string _ramHealthVerdictText = "Unknown";
+    public string RamHealthVerdictText { get => _ramHealthVerdictText; private set => SetProperty(ref _ramHealthVerdictText, value); }
+
+    private bool _ramHealthIsWarning;
+    public bool RamHealthIsWarning { get => _ramHealthIsWarning; private set => SetProperty(ref _ramHealthIsWarning, value); }
+
+    public ObservableCollection<string> RamHealthFindings { get; } = new();
     public ObservableCollection<SpecRow> Gpus { get; } = new();
     public ObservableCollection<SpecRow> Disks { get; } = new();
     public ObservableCollection<VolumeRow> Volumes { get; } = new();
@@ -114,6 +198,13 @@ public sealed class SystemSpecsViewModel : ObservableObject
 
     private string _ramDetails = string.Empty;
     public string RamDetails { get => _ramDetails; private set => SetProperty(ref _ramDetails, value); }
+
+    // #441: CAS latency/primary timings - see SystemSpecsService.ReadMemoryTimingsText for why
+    // this is "Unknown" on almost every system today (LibreHardwareMonitorLib doesn't currently
+    // expose SPD timing sensors on any chipset backend), and why the lookup is still real rather
+    // than a hardcoded string.
+    private string _memoryTimingsText = "Unknown";
+    public string MemoryTimingsText { get => _memoryTimingsText; private set => SetProperty(ref _memoryTimingsText, value); }
 
     private string _secureBootText = "Unknown";
     public string SecureBootText { get => _secureBootText; private set => SetProperty(ref _secureBootText, value); }
@@ -201,6 +292,18 @@ public sealed class SystemSpecsViewModel : ObservableObject
             try { if (_hardwareIdsText.Length > 0) System.Windows.Clipboard.SetText(_hardwareIdsText); }
             catch { /* clipboard can be held by another app - best-effort */ }
         }, _ => _hardwareIdsText.Length > 0);
+
+        // #448: launches mdsched.exe, which shows its own "restart now / on next restart" dialog -
+        // this app never waits on it, so a plain synchronous RelayCommand is enough (no async work
+        // of this app's own to await).
+        RunMemoryDiagnosticCommand = new RelayCommand(_ =>
+        {
+            var (success, error) = MemoryDiagnosticLauncherService.Launch();
+            MemoryDiagnosticLaunchStatusText = success
+                ? "Windows Memory Diagnostic launched - choose \"Restart now\" or \"Check for problems the next time I start my computer\" in its window. The test itself takes 10-40 minutes and runs entirely offline (before Windows loads)."
+                : $"Couldn't launch Windows Memory Diagnostic: {error}";
+        });
+
         _ = RefreshAsync();
     }
 
@@ -209,7 +312,14 @@ public sealed class SystemSpecsViewModel : ObservableObject
         IsLoading = true;
         try
         {
-            var specs = await _service.QueryAsync();
+            // #440/#441/#447/#449/#451 added several genuinely slow synchronous reads to
+            // QueryAsync (raw SMBIOS parse, a one-shot LibreHardwareMonitorLib sample, and three
+            // targeted event-log queries) on top of its pre-existing synchronous WMI sweep -
+            // wrapped in Task.Run here (the same "keep WMI/perf-counter/event-log work off the UI
+            // thread" pattern CLAUDE.md documents and StabilityViewModel.RefreshAsync already
+            // follows for its own EventLogService.Query() call) so a Refresh click can no longer
+            // visibly freeze the UI thread.
+            var specs = await Task.Run(() => _service.QueryAsync());
             var (uptimeMonth, uptimeYear) = await Task.Run(() => BootPerformanceService.ComputeLongestUptimeRecords());
             Apply(specs);
             LongestUptimeThisMonthText = uptimeMonth is { } m ? FormatUptime(m) : "Not enough boot history yet";
@@ -264,6 +374,7 @@ public sealed class SystemSpecsViewModel : ObservableObject
         CpuDetails = $"{specs.CpuPhysicalCores} cores, {specs.CpuLogicalProcessors} logical processors  •  Max speed {specs.CpuMaxClockGhz:0.00} GHz";
 
         RamTotal = Formatting.FormatBytes(specs.RamTotalBytes);
+        MemoryTimingsText = specs.MemoryTimingsText;
         // #16: "N of M slots populated" when the slot count is known - a quick, otherwise
         // invisible signal that there's room to add more RAM without an upgrade.
         RamDetails = specs.TotalMemorySlots is { } slots && slots > 0
@@ -292,13 +403,85 @@ public sealed class SystemSpecsViewModel : ObservableObject
             // unchanged.
             string manufacturerText = JedecManufacturerLookup.Resolve(m.Manufacturer);
 
-            MemoryModules.Add(new SpecRow
+            // #440: SMBIOS extras - each piece stays blank/hidden when no SMBIOS match was found
+            // for this module (raw table unreadable, or a locator that didn't line up).
+            string formFactorTech = string.Join(" · ", new[] { m.FormFactor, m.MemoryTechnology }
+                .Where(s => !string.IsNullOrWhiteSpace(s) && s != "Unknown"));
+
+            var rankVoltageParts = new List<string>();
+            if (m.RankCount is { } rank) rankVoltageParts.Add(rank == 1 ? "Single rank" : $"{rank}-rank");
+            if (m.ConfiguredVoltageV is { } cv) rankVoltageParts.Add($"{cv:0.00} V");
+            else if (m.MaxVoltageV is { } mv) rankVoltageParts.Add($"rated max {mv:0.00} V");
+
+            MemoryModules.Add(new MemoryModuleRow
             {
-                Primary = m.Location,
-                Secondary = string.Join(" ", new[] { m.MemoryType, speedText, manufacturerText }.Where(s => !string.IsNullOrWhiteSpace(s))),
+                Location = m.Location,
                 SizeText = Formatting.FormatBytes(m.CapacityBytes),
+                SpeedText = string.Join(" ", new[] { m.MemoryType, speedText }.Where(s => !string.IsNullOrWhiteSpace(s))),
+                ManufacturerText = manufacturerText,
+                PartNumberText = string.IsNullOrWhiteSpace(m.PartNumber) ? string.Empty : $"P/N {m.PartNumber}",
+                SerialNumberText = string.IsNullOrWhiteSpace(m.SerialNumber) ? string.Empty : $"S/N {m.SerialNumber}",
+                FormFactorAndTechnologyText = formFactorTech,
+                RankAndVoltageText = string.Join(" · ", rankVoltageParts),
+                ChannelText = string.IsNullOrEmpty(m.ChannelLabel) ? string.Empty : $"Channel {m.ChannelLabel}",
+                XmpHintText = MemoryDiagnosticsService.DescribeXmpHint(m) ?? string.Empty,
+                IsMismatched = m.IsMismatched,
+                MismatchText = m.MismatchReason,
             });
         }
+
+        // #445: slot map - populated slots (one per module) followed by empty slots up to
+        // TotalMemorySlots, when that count is known; falls back to just the populated modules
+        // (no trailing empty slots) when the array's total slot count itself isn't known.
+        MemorySlots.Clear();
+        int slotNumber = 1;
+        foreach (var m in specs.MemoryModules)
+        {
+            string summary = string.Join(" · ", new[] { Formatting.FormatBytes(m.CapacityBytes), m.MemoryType }.Where(s => !string.IsNullOrWhiteSpace(s) && s != "Unknown"));
+            MemorySlots.Add(new MemorySlotRow { SlotNumber = slotNumber++, IsPopulated = true, SummaryText = summary });
+        }
+        if (specs.TotalMemorySlots is { } totalSlots)
+        {
+            while (slotNumber <= totalSlots)
+                MemorySlots.Add(new MemorySlotRow { SlotNumber = slotNumber++, IsPopulated = false, SummaryText = "Empty" });
+        }
+
+        MemoryArrayMaxCapacityText = specs.MemoryArrayMaxCapacityBytes is { } maxCap
+            ? $"Array maximum: {Formatting.FormatBytes(maxCap)}"
+            : string.Empty;
+
+        // #446/#444
+        MemoryEccStatusText = specs.MemoryEccStatusText;
+        MemoryChannelText = specs.MemoryChannelText;
+        MemoryChannelWarning = specs.MemoryChannelWarning;
+
+        // #447
+        CorrectedMemoryErrorCount = specs.CorrectedMemoryErrorCount;
+        LastCorrectedMemoryErrorText = specs.LastCorrectedMemoryError is { } lastCorrected
+            ? $"Last: {lastCorrected:g}" : "None in the last 30 days";
+
+        // #449
+        if (specs.MemoryDiagnosticResult is { } diag)
+        {
+            MemoryDiagnosticFailed = diag.Passed == false;
+            MemoryDiagnosticResultText = diag.Passed switch
+            {
+                true => $"Passed - no errors found ({diag.TimeCreated:g})",
+                false => $"Errors found ({diag.TimeCreated:g})",
+                null => $"Ran {diag.TimeCreated:g} - result text not recognized",
+            };
+        }
+        else
+        {
+            MemoryDiagnosticFailed = false;
+            MemoryDiagnosticResultText = "Never run";
+        }
+
+        // #451
+        RamHealthVerdictText = specs.RamHealth.Verdict;
+        RamHealthIsWarning = specs.RamHealth.IsWarning;
+        RamHealthFindings.Clear();
+        foreach (var f in specs.RamHealth.Findings) RamHealthFindings.Add(f);
 
         Gpus.Clear();
         foreach (var g in specs.Gpus)
