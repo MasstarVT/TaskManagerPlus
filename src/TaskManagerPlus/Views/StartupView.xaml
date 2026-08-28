@@ -2,6 +2,7 @@
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="clr-namespace:TaskManagerPlus.ViewModels"
+             xmlns:views="clr-namespace:TaskManagerPlus.Views"
              xmlns:lvc="clr-namespace:LiveChartsCore.SkiaSharpView.WPF;assembly=LiveChartsCore.SkiaSharpView.WPF"
              d:DataContext="{d:DesignInstance Type=vm:StartupViewModel}"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
@@ -9,6 +10,45 @@
              mc:Ignorable="d">
     <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16">
         <StackPanel>
+
+            <!-- #707: "this boot was Nx your normal" quick flag - a flag, not a verdict, sitting
+                 at the very top of the tab. Collapsed whenever there's no meaningful regression
+                 (or not enough same-boot-type history yet to judge against) - see
+                 BootPerformanceService.ComputeRegressionFlag. -->
+            <Border Background="{DynamicResource DangerMutedBrush}" BorderBrush="{DynamicResource DangerBrush}"
+                    BorderThickness="1" CornerRadius="8" Padding="14,10" Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding RegressionFlag}" Value="{x:Null}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" FontSize="12.5" FontWeight="SemiBold"
+                               Text="{Binding RegressionFlag.Message}" />
+                    <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" FontSize="11" Margin="0,4,0,0"
+                               Text="Quick flag, not a verdict - a one-off slow boot (e.g. an update finishing up) can look identical to a persistent slowdown." />
+                    <ItemsControl ItemsSource="{Binding RegressionFlag.DegradationRows}" Margin="0,8,0,0">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,6" Margin="0,0,8,8">
+                                    <TextBlock FontSize="11.5">
+                                        <Run Text="{Binding Name}" FontWeight="SemiBold" />
+                                        <Run Text=" — " /><Run Text="{Binding Category}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        <Run Text=": " /><Run Text="{Binding ImpactMs, Converter={StaticResource BootMsToSecondsConverter}}" />
+                                    </TextBlock>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
 
             <Grid Margin="0,0,0,12">
                 <Grid.ColumnDefinitions>
@@ -139,7 +179,51 @@
                     <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,10" TextWrapping="Wrap">
                         <Run Text="Last boot: " /><Run Text="{Binding BootBreakdown.BootTime, StringFormat={}{0:g}, Mode=OneWay}" />
                         <Run Text=" · Total " /><Run Text="{Binding BootBreakdown.TotalMs, Converter={StaticResource BootMsToSecondsConverter}, Mode=OneWay}" />
+                        <Run Text=" · " /><Run Text="{Binding BootBreakdown.Type, Converter={StaticResource BootTypeToLabelConverter}, Mode=OneWay}" />
                     </TextBlock>
+
+                    <!-- #704: firmware POST time from the ACPI FPDT - realistically "Unknown" on
+                         most systems, with SubText explaining why (see FirmwareBootTime's remarks). -->
+                    <views:VfdMeter Title="Last BIOS time" Glow="False" Margin="0,0,0,14" HorizontalAlignment="Left" Width="220"
+                                     ValueText="{Binding FirmwareBootTime.Milliseconds, Converter={StaticResource BootMsToSecondsConverter}}"
+                                     SubText="{Binding FirmwareBootTime.UnavailableReason}" AccentBrush="{DynamicResource AccentBrush}" />
+
+                    <!-- #703: main-path/post-boot/other phases as a stacked bar rather than a
+                         plain sorted list, with fixed reference markers at Microsoft's own
+                         "healthy boot" guidance - main path under ~20s (150px here), post-boot
+                         under ~10s more (225px cumulative) - see BootPhaseMsToWidthConverter's
+                         remarks for the 40s/300px scale these marker positions are computed from. -->
+                    <StackPanel Margin="0,0,0,14">
+                        <StackPanel.Style>
+                            <Style TargetType="StackPanel">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding BootBreakdown.MainPathBootMs}" Value="{x:Null}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </StackPanel.Style>
+                        <TextBlock Text="Boot phases vs. healthy-boot reference" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                        <Grid Height="26" Width="300" HorizontalAlignment="Left">
+                            <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="4" />
+                            <StackPanel Orientation="Horizontal">
+                                <Border Background="{DynamicResource AccentBrush}" CornerRadius="4,0,0,4"
+                                        Width="{Binding BootBreakdown.MainPathBootMs, Converter={StaticResource BootPhaseMsToWidthConverter}}" />
+                                <Border Background="{DynamicResource WarningBrush}"
+                                        Width="{Binding BootBreakdown.PostBootMs, Converter={StaticResource BootPhaseMsToWidthConverter}}" />
+                                <Border Background="{DynamicResource BorderBrush2}" CornerRadius="0,4,4,0"
+                                        Width="{Binding BootBreakdown.OtherMs, Converter={StaticResource BootPhaseMsToWidthConverter}}" />
+                            </StackPanel>
+                            <Rectangle Width="2" Fill="{DynamicResource DangerBrush}" HorizontalAlignment="Left" Margin="150,0,0,0" ToolTip="~20s healthy-boot target for main path" />
+                            <Rectangle Width="2" Fill="{DynamicResource DangerBrush}" HorizontalAlignment="Left" Margin="225,0,0,0" ToolTip="~10s more healthy-boot target for post-boot (30s cumulative)" />
+                        </Grid>
+                        <TextBlock Style="{StaticResource SubStat}" Margin="0,4,0,0" TextWrapping="Wrap">
+                            <Run Text="Main path " /><Run Text="{Binding BootBreakdown.MainPathBootMs, Converter={StaticResource BootMsToSecondsConverter}}" FontWeight="SemiBold" />
+                            <Run Text=" · Post-boot " /><Run Text="{Binding BootBreakdown.PostBootMs, Converter={StaticResource BootMsToSecondsConverter}}" FontWeight="SemiBold" />
+                            <Run Text=" · red lines mark Microsoft's healthy-boot reference" />
+                        </TextBlock>
+                    </StackPanel>
+
                     <ItemsControl ItemsSource="{Binding BootBreakdown.Components}" Margin="0,0,0,12">
                         <ItemsControl.ItemsPanel>
                             <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
@@ -156,6 +240,41 @@
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
+
+                    <!-- #701: sibling degradation events (101/102/103/106/109/110) that belong to
+                         this specific boot - "what slowed this boot down". Collapsed when the
+                         channel has nothing for this boot (a genuinely clean boot, or the channel
+                         isn't available). -->
+                    <StackPanel Margin="0,0,0,12">
+                        <StackPanel.Style>
+                            <Style TargetType="StackPanel">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding ThisBootDegradations.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </StackPanel.Style>
+                        <TextBlock Text="What slowed this boot down" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                        <ItemsControl ItemsSource="{Binding ThisBootDegradations}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,6" Margin="0,0,8,8" MaxWidth="260">
+                                        <StackPanel>
+                                            <TextBlock FontSize="11.5" FontWeight="SemiBold" Text="{Binding Name}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Name}" />
+                                            <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}">
+                                                <Run Text="{Binding Category}" />
+                                                <Run Text=" · " /><Run Text="{Binding ImpactMs, Converter={StaticResource BootMsToSecondsConverter}}" />
+                                            </TextBlock>
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
 
                     <!-- #90: boot time trend, one point per session this app has been run in -
                          collapsed until there are at least two recorded boots to compare. -->
@@ -175,7 +294,65 @@
                         <TextBlock Text="Trend across sessions" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
                         <lvc:CartesianChart Series="{Binding BootHistorySeries}" XAxes="{Binding BootHistoryXAxes}" YAxes="{Binding BootHistoryYAxes}"
                                              Height="120" TooltipPosition="Top" LegendPosition="Hidden" Background="Transparent" />
+                        <!-- #706: median boot time split by boot type - the single most common
+                             reason a user's perceived boot time swings wildly (a Fast Startup
+                             resume vs. a full restart). Collapsed until at least one boot has a
+                             known type. -->
+                        <TextBlock Text="{Binding BootTypeStatsText}" Margin="0,8,0,0" TextWrapping="Wrap">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding BootTypeStatsText}" Value="{x:Null}">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
                     </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- #702: slow-boot culprit board - the 101/102/103/109 rows from above, grouped by
+                 name across every boot the channel still retains and ranked by summed
+                 degradation time, so a driver that costs a few seconds on every boot outranks a
+                 one-off long stall. Collapsed when the channel has nothing to rank. -->
+            <Border Margin="0,20,0,0" BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,1,0,0" Padding="0,16,0,0">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding SlowBootCulprits.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Slow-boot culprit board" Style="{StaticResource CardTitle}" Margin="0,0,0,4" />
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,10" TextWrapping="Wrap"
+                               Text="Ranked by total time cost across every boot still retained in the event log - a repeat offender outranks a one-off stall." />
+                    <ItemsControl ItemsSource="{Binding SlowBootCulprits}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,8" Margin="0,0,0,6">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Grid.Column="0">
+                                            <TextBlock FontSize="12.5" FontWeight="SemiBold" TextTrimming="CharacterEllipsis">
+                                                <Run Text="{Binding Name}" /><Run Text="  " /><Run Text="{Binding Category}" Foreground="{DynamicResource TextSecondaryBrush}" FontWeight="Normal" />
+                                            </TextBlock>
+                                            <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Text="{Binding AppearedText}" />
+                                        </StackPanel>
+                                        <TextBlock Grid.Column="1" VerticalAlignment="Center" FontWeight="SemiBold" FontSize="13"
+                                                    Text="{Binding TotalDegradationMs, Converter={StaticResource BootMsToSecondsConverter}}" />
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
                 </StackPanel>
             </Border>
 

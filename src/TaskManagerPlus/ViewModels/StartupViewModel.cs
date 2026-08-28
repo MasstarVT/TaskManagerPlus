@@ -84,6 +84,34 @@ public sealed class StartupViewModel : ObservableObject
     public Axis[] BootHistoryXAxes { get; }
     public Axis[] BootHistoryYAxes { get; }
 
+    // #701: "what slowed this boot down" - the 101/102/103/106/109/110 degradation-family rows
+    // that belong to the most recent boot only (see BootPerformanceService.FilterForBoot).
+    public ObservableCollection<BootDegradationEvent> ThisBootDegradations { get; } = new();
+
+    // #702: slow-boot culprit board, ranked by summed degradation time across every boot the
+    // Diagnostics-Performance channel still retains.
+    public ObservableCollection<BootCulprit> SlowBootCulprits { get; } = new();
+
+    // #704: firmware POST time from the ACPI FPDT - see FirmwareBootTime's remarks for why this
+    // realistically shows "Unknown" on most systems, and why that's still an honest result.
+    private FirmwareBootTime? _firmwareBootTime;
+    public FirmwareBootTime? FirmwareBootTime { get => _firmwareBootTime; private set => SetProperty(ref _firmwareBootTime, value); }
+
+    // #706: median boot time per boot-type bucket ("Fast Startup resume: 9s · full restart: 71s").
+    public ObservableCollection<BootTypeStat> BootTypeStats { get; } = new();
+
+    private string? _bootTypeStatsText;
+    /// <summary>Precomposed caption joining every bucket in BootTypeStats with " · ", e.g.
+    /// "Fast Startup resume: 9s (12) · Full restart: 71s (3)" - built once in the ViewModel
+    /// rather than with an XAML converter chain, matching how MeasuredDelayText/ImpactText etc.
+    /// are already precomposed elsewhere on this tab.</summary>
+    public string? BootTypeStatsText { get => _bootTypeStatsText; private set => SetProperty(ref _bootTypeStatsText, value); }
+
+    // #707: "this boot was 2.4x your normal" quick flag, null when there's no meaningful
+    // regression (or not enough same-boot-type history yet to judge against).
+    private BootRegressionFlag? _regressionFlag;
+    public BootRegressionFlag? RegressionFlag { get => _regressionFlag; private set => SetProperty(ref _regressionFlag, value); }
+
     public StartupViewModel()
     {
         _bootHistoryLine = new LineSeries<double>
@@ -174,11 +202,45 @@ public sealed class StartupViewModel : ObservableObject
             var breakdown = BootPerformanceService.ReadLatest();
             var history = BootPerformanceService.RecordAndLoadHistory(breakdown);
 
+            // #701: this boot's own slice of the degradation-event family, bounded to events at
+            // or after this boot's timestamp (there's no "next boot" yet - this is the current
+            // session).
+            var allDegradations = BootPerformanceService.ReadDegradationEvents();
+            var thisBootDegradations = breakdown is not null
+                ? BootPerformanceService.FilterForBoot(allDegradations, breakdown.BootTime, null)
+                : new List<BootDegradationEvent>();
+
+            // #702: ranked culprit board across every boot the channel still retains.
+            var culprits = BootPerformanceService.BuildCulpritBoard();
+
+            // #704: firmware POST time (realistically "Unknown" on most systems - see
+            // FirmwareBootTime's remarks).
+            var firmware = BootPerformanceService.ReadFirmwareBootTime();
+
+            // #706/#707: boot-type-split stats and the regression flag, both derived from the
+            // same persisted history #705 tags with a boot type as it's recorded.
+            var typeStats = BootPerformanceService.ComputeBootTypeStats(history);
+            var regressionFlag = BootPerformanceService.ComputeRegressionFlag(history, thisBootDegradations);
+
             System.Windows.Application.Current?.Dispatcher.Invoke(() =>
             {
                 BootBreakdown = breakdown;
                 BootHistoryMs.Clear();
                 foreach (var h in history) BootHistoryMs.Add(h.TotalMs);
+
+                ThisBootDegradations.Clear();
+                foreach (var d in thisBootDegradations) ThisBootDegradations.Add(d);
+
+                SlowBootCulprits.Clear();
+                foreach (var c in culprits) SlowBootCulprits.Add(c);
+
+                FirmwareBootTime = firmware;
+
+                BootTypeStats.Clear();
+                foreach (var s in typeStats) BootTypeStats.Add(s);
+                BootTypeStatsText = typeStats.Count == 0 ? null : string.Join(" · ", typeStats.Select(s => s.Text));
+
+                RegressionFlag = regressionFlag;
             });
         });
     }
