@@ -69,6 +69,12 @@ public static class AutorunsService
         AddBrowserHelperObjectItems(entries, findings);
         AddComHijackItems(entries, findings);
         AddShellVerbHijackItems(entries, findings);
+        AddCodecAutoPlayScreensaverItems(entries, findings);
+        AddScheduledTaskSecurityFindings(findings);
+        AddBitsJobItems(entries, findings);
+        AddOfficeAddinItems(entries, findings);
+        AddProvisionedAppxPackageItems(entries);
+        AddShortcutTamperingItems(entries, findings);
 
         return entries
             .OrderBy(e => e.Category, StringComparer.OrdinalIgnoreCase)
@@ -2313,6 +2319,726 @@ public static class AutorunsService
         {
             // Key inaccessible (or absent - unusual for these well-known ProgIDs, but possible on a
             // heavily locked-down or non-standard install) - contribute nothing.
+        }
+    }
+
+    // #830: Drivers32 codecs, AutoPlay handlers, and the per-user screensaver executable - three
+    // small, easily-overlooked auto-loaded/auto-launched locations. Unlike most persistence
+    // categories in this file, all three are common and expected to be non-empty on a normal
+    // system, so no finding is raised unless the resolved binary is actually unsigned.
+    private static void AddCodecAutoPlayScreensaverItems(List<AutorunEntry> items, List<SecurityFinding> findings)
+    {
+        AddDrivers32Items(items, findings);
+        AddAutoPlayHandlerItems(items);
+        AddScreensaverItem(items, findings);
+    }
+
+    private static void AddDrivers32Items(List<AutorunEntry> items, List<SecurityFinding> findings)
+    {
+        const string keyPath = @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Drivers32";
+        try
+        {
+            using var key = Registry.LocalMachine.OpenSubKey(keyPath);
+            if (key is null) return;
+
+            string location = $@"HKLM\{keyPath}";
+            foreach (var valueName in key.GetValueNames())
+            {
+                var dllName = key.GetValue(valueName) as string;
+                if (string.IsNullOrWhiteSpace(dllName)) continue;
+
+                var displayName = string.IsNullOrEmpty(valueName) ? "(default)" : valueName;
+                var resolved = System.IO.Path.IsPathRooted(dllName) ? dllName : System.IO.Path.Combine(Environment.SystemDirectory, dllName);
+                AddUnsignedOnlyEntry(items, findings, "Codec", displayName, dllName, resolved, $@"{location}\{valueName}",
+                    $"Codec \"{displayName}\" (\"{dllName}\") doesn't carry a valid Authenticode signature.");
+            }
+        }
+        catch
+        {
+            // Key inaccessible (or absent) - contribute nothing.
+        }
+    }
+
+    /// <summary>AutoPlay handler subkeys reference a ProgID/shell verb, not a DLL/exe path
+    /// directly, so there's no resolved binary to check a signature on here - listed only, per
+    /// #830's own "keep it simple" scope note (subkey name plus whatever string values are found).</summary>
+    private static void AddAutoPlayHandlerItems(List<AutorunEntry> items)
+    {
+        const string keyPath = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\AutoplayHandlers\Handlers";
+        try
+        {
+            using var key = Registry.LocalMachine.OpenSubKey(keyPath);
+            if (key is null) return;
+
+            string location = $@"HKLM\{keyPath}";
+            foreach (var subName in key.GetSubKeyNames())
+            {
+                try
+                {
+                    using var sub = key.OpenSubKey(subName);
+                    if (sub is null) continue;
+
+                    var parts = new List<string>();
+                    foreach (var valueName in sub.GetValueNames())
+                    {
+                        if (sub.GetValue(valueName) is string s && !string.IsNullOrWhiteSpace(s))
+                            parts.Add($"{valueName}={s}");
+                    }
+
+                    items.Add(new AutorunEntry
+                    {
+                        Category = "AutoPlay Handler",
+                        Name = subName,
+                        RawCommand = string.Join("; ", parts),
+                        ResolvedPath = string.Empty,
+                        Publisher = "Unknown",
+                        SignatureStatus = "Unknown",
+                        Location = $@"{location}\{subName}",
+                        Enabled = true,
+                    });
+                }
+                catch
+                {
+                    // One bad subkey shouldn't stop the rest.
+                }
+            }
+        }
+        catch
+        {
+            // Key inaccessible (or absent) - contribute nothing.
+        }
+    }
+
+    private static void AddScreensaverItem(List<AutorunEntry> items, List<SecurityFinding> findings)
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(@"Control Panel\Desktop");
+            var raw = key?.GetValue("SCRNSAVE.EXE") as string;
+            if (string.IsNullOrWhiteSpace(raw)) return; // no screensaver configured - the common case
+
+            var resolved = System.IO.Path.IsPathRooted(raw) ? raw : System.IO.Path.Combine(Environment.SystemDirectory, raw);
+            AddUnsignedOnlyEntry(items, findings, "Screensaver", System.IO.Path.GetFileName(raw), raw, resolved, @"HKCU\Control Panel\Desktop\SCRNSAVE.EXE",
+                $"The configured screensaver \"{raw}\" runs automatically after the idle timeout and doesn't carry a valid Authenticode signature.");
+        }
+        catch
+        {
+            // Key inaccessible (or absent - no screensaver configured) - contribute nothing.
+        }
+    }
+
+    /// <summary>Shared helper for the several #830/#833 categories that only produce a finding
+    /// when the resolved binary is unsigned (Low severity) - every entry here is otherwise common
+    /// and expected, unlike most of this file's other persistence categories.</summary>
+    private static void AddUnsignedOnlyEntry(List<AutorunEntry> items, List<SecurityFinding> findings, string category, string name, string rawCommand, string resolvedPath, string location, string reason)
+    {
+        bool exists = !string.IsNullOrWhiteSpace(resolvedPath) && System.IO.File.Exists(resolvedPath);
+        var status = exists ? SignatureCheckService.GetStatus(resolvedPath) : "Unknown";
+        var entry = new AutorunEntry
+        {
+            Category = category,
+            Name = name,
+            RawCommand = rawCommand,
+            ResolvedPath = resolvedPath,
+            Publisher = "Unknown",
+            SignatureStatus = status,
+            Location = location,
+            Enabled = true,
+        };
+        items.Add(entry);
+
+        if (!exists || !status.Equals("Unsigned", StringComparison.OrdinalIgnoreCase)) return;
+
+        findings.Add(new SecurityFinding
+        {
+            Severity = FindingSeverity.Low,
+            Title = $"Unsigned {category.ToLowerInvariant()}: {name}",
+            Reason = reason,
+            Path = location,
+            WhatDisablingDoes = "Removing this registration/file stops it from being used; only do this for one you don't recognize. Quick flag, not a verdict.",
+            RelatedEntry = entry,
+        });
+    }
+
+    // #831: scheduled-task security lens - findings-only pass (no new AutorunEntry rows; these
+    // tasks are already visible on the Startup tab's own Scheduled Tasks grid) over the aggregated
+    // per-task XML data ScheduledTaskService.QuerySecurityInfoAsync reads in one shell-out. Flags,
+    // per task: the Hidden flag; registration outside \Microsoft\Windows\; an action that runs a
+    // script host (powershell/wscript/cscript/mshta/rundll32); an action executable living in a
+    // user-writable location (same heuristic as #821's BuildUserWritableRoots); and running as
+    // SYSTEM while registered outside \Microsoft\ at all. One combined finding per flagged task
+    // (not one per issue) - same "list what's wrong, then one finding" shape #820/#821 already use
+    // for kernel drivers/service hygiene. NOTE: the "XML in System32\Tasks has no matching registry
+    // entry (or vice versa)" cross-check is intentionally NOT implemented here - see this chunk's
+    // report for why (Implemented-partially).
+    private static readonly string[] ScheduledTaskScriptHosts = { "powershell", "wscript", "cscript", "mshta", "rundll32" };
+
+    private static void AddScheduledTaskSecurityFindings(List<SecurityFinding> findings)
+    {
+        List<ScheduledTaskXmlInfo> tasks;
+        try
+        {
+            tasks = ScheduledTaskService.QuerySecurityInfoAsync().GetAwaiter().GetResult();
+        }
+        catch
+        {
+            return; // degrade to nothing, same as every other optional data source in this file
+        }
+
+        var userWritableRoots = BuildUserWritableRoots();
+
+        foreach (var task in tasks)
+        {
+            try
+            {
+                bool underMicrosoftWindows = task.FolderPath.Equals(@"\Microsoft\Windows", StringComparison.OrdinalIgnoreCase)
+                    || task.FolderPath.StartsWith(@"\Microsoft\Windows\", StringComparison.OrdinalIgnoreCase);
+                bool underMicrosoft = task.FolderPath.Equals(@"\Microsoft", StringComparison.OrdinalIgnoreCase)
+                    || task.FolderPath.StartsWith(@"\Microsoft\", StringComparison.OrdinalIgnoreCase);
+                bool isSystem = task.RunAsUser.Equals("S-1-5-18", StringComparison.OrdinalIgnoreCase)
+                    || task.RunAsUser.Contains("SYSTEM", StringComparison.OrdinalIgnoreCase);
+                bool isScriptHost = ScheduledTaskScriptHosts.Any(h => task.ActionCommand.Contains(h, StringComparison.OrdinalIgnoreCase));
+
+                var actionExePath = StartupManagerService.ExtractPath(task.ActionCommand);
+                var expandedActionPath = string.IsNullOrWhiteSpace(actionExePath) ? string.Empty : Environment.ExpandEnvironmentVariables(actionExePath);
+                bool isUserWritable = !string.IsNullOrWhiteSpace(expandedActionPath) &&
+                    userWritableRoots.Any(root => !string.IsNullOrWhiteSpace(root) && expandedActionPath.StartsWith(root, StringComparison.OrdinalIgnoreCase));
+
+                var issues = new List<string>();
+                if (task.IsHidden) issues.Add("is hidden from Task Scheduler's default view (Hidden flag set)");
+                if (!underMicrosoftWindows) issues.Add($"is registered outside \\Microsoft\\Windows\\ (folder: {task.FolderPath})");
+                if (isScriptHost) issues.Add($"runs a script host in its action (\"{task.ActionCommand}\")");
+                if (isUserWritable) issues.Add($"its action executable lives in a user-writable location (\"{expandedActionPath}\")");
+                if (isSystem && !underMicrosoft) issues.Add("runs as SYSTEM but its registered folder isn't under \\Microsoft\\");
+
+                if (issues.Count == 0) continue;
+
+                var severity = (isUserWritable || (isSystem && !underMicrosoft)) ? FindingSeverity.High
+                    : isScriptHost ? FindingSeverity.Medium
+                    : FindingSeverity.Low;
+
+                findings.Add(new SecurityFinding
+                {
+                    Severity = severity,
+                    Title = $"Scheduled task worth checking: {task.Name}",
+                    Reason = $"Task \"{task.Name}\" (look it up by this exact name on the Startup tab's Scheduled Tasks grid) {string.Join("; ", issues)}.",
+                    Path = task.Name,
+                    WhatDisablingDoes = "Disabling the task (Task Scheduler, or the Startup tab's own Scheduled Tasks grid Enable/Disable action) stops it from running without deleting its registration; only do this for one you don't recognize - plenty of legitimate first-party and third-party software registers tasks outside \\Microsoft\\Windows\\, runs script-host actions, or hides its task deliberately. Quick flag, not a verdict.",
+                });
+            }
+            catch
+            {
+                // One bad task record shouldn't stop the rest.
+            }
+        }
+    }
+
+    // #832: BITS transfer job audit - `bitsadmin.exe /list /allusers /verbose` output isn't a
+    // documented stable contract, so this parses leniently: each job's block is delimited by the
+    // next "DISPLAY:" line (bitsadmin always starts a job's block with that field), then every
+    // "LABEL: value" line within a block is captured into a dictionary and only the fields this
+    // method actually wants are read back out - an unexpected/reordered/missing field degrades
+    // that one field rather than the whole row. bitsadmin.exe is a deprecated tool (absent on some
+    // newer Windows builds/SKUs) - wrapped in one broad try/catch, degrades to empty on failure.
+    private static void AddBitsJobItems(List<AutorunEntry> items, List<SecurityFinding> findings)
+    {
+        try
+        {
+            string output = RunCapturedSync("bitsadmin.exe", "/list /allusers /verbose", TimeSpan.FromSeconds(15));
+            if (string.IsNullOrWhiteSpace(output)) return;
+
+            foreach (var block in SplitBitsJobBlocks(output))
+            {
+                var fields = ParseLabeledLines(block);
+                // DISPLAY is present on essentially every bitsadmin verbose job block - use it as
+                // the "is this actually a job block" signal, not just leftover header/footer text.
+                if (!fields.TryGetValue("DISPLAY", out var display) || string.IsNullOrWhiteSpace(display)) continue;
+
+                fields.TryGetValue("TYPE", out var type);
+                fields.TryGetValue("STATE", out var state);
+                fields.TryGetValue("OWNER", out var owner);
+                string? remote = FirstPresent(fields, "REMOTE FILE NAME", "REMOTE NAME", "REMOTE URL", "URL");
+                string? local = FirstPresent(fields, "LOCAL FILE NAME", "LOCAL NAME");
+
+                var rawParts = new List<string>();
+                if (!string.IsNullOrWhiteSpace(type)) rawParts.Add($"Type: {type}");
+                if (!string.IsNullOrWhiteSpace(remote)) rawParts.Add($"Remote: {remote}");
+                if (!string.IsNullOrWhiteSpace(local)) rawParts.Add($"Local: {local}");
+                if (!string.IsNullOrWhiteSpace(owner)) rawParts.Add($"Owner: {owner}");
+                if (!string.IsNullOrWhiteSpace(state)) rawParts.Add($"State: {state}");
+
+                var location = $"bitsadmin /list: {display}";
+                var entry = new AutorunEntry
+                {
+                    Category = "BITS Job",
+                    Name = display,
+                    RawCommand = string.Join(", ", rawParts),
+                    ResolvedPath = local ?? string.Empty,
+                    Publisher = "Unknown",
+                    SignatureStatus = "Unknown",
+                    Location = location,
+                    Enabled = true,
+                };
+                items.Add(entry);
+
+                bool suspendedOrError = !string.IsNullOrWhiteSpace(state) &&
+                    (state.Contains("SUSPEND", StringComparison.OrdinalIgnoreCase) || state.Contains("ERROR", StringComparison.OrdinalIgnoreCase));
+                if (!suspendedOrError) continue;
+
+                findings.Add(new SecurityFinding
+                {
+                    Severity = FindingSeverity.Low,
+                    Title = $"BITS job in {state} state: {display}",
+                    Reason = $"BITS transfer job \"{display}\" (owner: {(string.IsNullOrWhiteSpace(owner) ? "Unknown" : owner)}) is in state \"{state}\". BITS jobs run detached from any visible process, and this app can't reliably determine how long-lived a job actually is from bitsadmin's text output, so only the state itself is flagged here (long-lived duration math was skipped, per this item's own scope note).",
+                    Path = location,
+                    WhatDisablingDoes = "Cancelling the job (`bitsadmin /cancel <jobid>` or `bitsadmin /reset` for all of them) removes it; only do this for a job you don't recognize, since legitimate software (Windows Update, some installers) uses BITS deliberately and a suspended/errored job is often just a stalled/interrupted download waiting to resume. Quick flag, not a verdict.",
+                    RelatedEntry = entry,
+                });
+            }
+        }
+        catch
+        {
+            // bitsadmin.exe unavailable (deprecated, removed on some Windows versions/SKUs)/
+            // failed/timed out - contribute nothing, same tradeoff as this file's other
+            // shelled-out data sources.
+        }
+    }
+
+    private static List<string> SplitBitsJobBlocks(string output)
+    {
+        var blocks = new List<string>();
+        var current = new List<string>();
+        foreach (var rawLine in output.Replace("\r\n", "\n").Split('\n'))
+        {
+            if (rawLine.TrimStart().StartsWith("DISPLAY", StringComparison.OrdinalIgnoreCase) &&
+                rawLine.TrimStart()["DISPLAY".Length..].TrimStart().StartsWith(":", StringComparison.Ordinal) &&
+                current.Count > 0)
+            {
+                blocks.Add(string.Join("\n", current));
+                current.Clear();
+            }
+            current.Add(rawLine);
+        }
+        if (current.Count > 0) blocks.Add(string.Join("\n", current));
+        return blocks;
+    }
+
+    private static Dictionary<string, string> ParseLabeledLines(string block)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var rawLine in block.Split('\n'))
+        {
+            var line = rawLine.TrimEnd('\r').Trim();
+            if (line.Length == 0) continue;
+
+            int colonIdx = line.IndexOf(':');
+            if (colonIdx <= 0) continue;
+
+            var key = line[..colonIdx].Trim().ToUpperInvariant();
+            var value = line[(colonIdx + 1)..].Trim().Trim('\'', '"');
+            if (key.Length == 0 || value.Length == 0) continue;
+            if (!result.ContainsKey(key)) result[key] = value; // first occurrence wins
+        }
+        return result;
+    }
+
+    private static string? FirstPresent(Dictionary<string, string> fields, params string[] keys)
+    {
+        foreach (var k in keys)
+        {
+            if (fields.TryGetValue(k, out var v) && !string.IsNullOrWhiteSpace(v)) return v;
+        }
+        return null;
+    }
+
+    // #833: Office/Outlook COM add-in inventory - HKCU/HKLM (and Wow6432Node) Addins subkeys per
+    // Office app, LoadBehavior decoded to a friendly string and the add-in's DLL resolved through
+    // its ProgID -> CLSID -> InprocServer32 (the same CLSID resolution #826-828 already use), plus
+    // a simple directory listing of the Word/Excel STARTUP folders (both the per-user AppData
+    // copy and, when present, the Program Files copy under whatever Office version folder is
+    // actually installed - found by directory search rather than a hardcoded "OfficeNN", since
+    // that number changes across Office versions). No finding unless a resolved add-in DLL or
+    // startup-folder file is unsigned (Low severity) - both are common and expected on a system
+    // with Office installed.
+    private static readonly string[] OfficeApps = { "Word", "Excel", "Outlook", "PowerPoint" };
+
+    private static void AddOfficeAddinItems(List<AutorunEntry> items, List<SecurityFinding> findings)
+    {
+        foreach (var app in OfficeApps)
+        {
+            AddOfficeAddinRegistryItems(items, findings, Registry.CurrentUser, "HKCU", $@"SOFTWARE\Microsoft\Office\{app}\Addins", app);
+            AddOfficeAddinRegistryItems(items, findings, Registry.LocalMachine, "HKLM", $@"SOFTWARE\Microsoft\Office\{app}\Addins", app);
+            AddOfficeAddinRegistryItems(items, findings, Registry.LocalMachine, "HKLM (32-bit)", $@"SOFTWARE\Wow6432Node\Microsoft\Office\{app}\Addins", app);
+        }
+
+        AddOfficeStartupFolderItems(items, findings, Environment.ExpandEnvironmentVariables(@"%AppData%\Microsoft\Word\STARTUP"), "Word");
+        AddOfficeStartupFolderItems(items, findings, Environment.ExpandEnvironmentVariables(@"%AppData%\Microsoft\Excel\XLSTART"), "Excel");
+        foreach (var dir in FindProgramFilesOfficeFolders("STARTUP"))
+            AddOfficeStartupFolderItems(items, findings, dir, "Word (Program Files)");
+        foreach (var dir in FindProgramFilesOfficeFolders("XLSTART"))
+            AddOfficeStartupFolderItems(items, findings, dir, "Excel (Program Files)");
+    }
+
+    private static void AddOfficeAddinRegistryItems(List<AutorunEntry> items, List<SecurityFinding> findings, RegistryKey hive, string hiveLabel, string keyPath, string appName)
+    {
+        try
+        {
+            using var key = hive.OpenSubKey(keyPath);
+            if (key is null) return;
+
+            string location = $@"{hiveLabel}\{keyPath}";
+            foreach (var progId in key.GetSubKeyNames())
+            {
+                try
+                {
+                    using var sub = key.OpenSubKey(progId);
+                    if (sub is null) continue;
+
+                    string loadBehaviorText = sub.GetValue("LoadBehavior") is int lb
+                        ? lb switch
+                        {
+                            0 => "Disabled",
+                            3 or 9 => "Loads at startup",
+                            8 => "Loaded on demand",
+                            _ => "Other",
+                        }
+                        : "Unknown";
+
+                    var friendlyName = sub.GetValue("FriendlyName") as string ?? sub.GetValue("Description") as string;
+                    var displayName = string.IsNullOrWhiteSpace(friendlyName) ? progId : friendlyName;
+
+                    var dllPath = ResolveProgIdToDll(progId);
+                    bool exists = !string.IsNullOrWhiteSpace(dllPath) && System.IO.File.Exists(dllPath);
+                    var status = exists ? SignatureCheckService.GetStatus(dllPath) : "Unknown";
+                    var entryLocation = $@"{location}\{progId}";
+
+                    var entry = new AutorunEntry
+                    {
+                        Category = "Office Add-in",
+                        Name = $"{appName}: {displayName}",
+                        RawCommand = $"LoadBehavior: {loadBehaviorText}",
+                        ResolvedPath = dllPath,
+                        Publisher = "Unknown",
+                        SignatureStatus = status,
+                        Location = entryLocation,
+                        Enabled = loadBehaviorText != "Disabled",
+                    };
+                    items.Add(entry);
+
+                    if (exists && status.Equals("Unsigned", StringComparison.OrdinalIgnoreCase))
+                    {
+                        findings.Add(new SecurityFinding
+                        {
+                            Severity = FindingSeverity.Low,
+                            Title = $"Unsigned Office add-in: {appName} - {displayName}",
+                            Reason = $"The {appName} add-in \"{displayName}\" ({progId}) loads \"{dllPath}\" and doesn't carry a valid Authenticode signature. LoadBehavior: {loadBehaviorText}.",
+                            Path = entryLocation,
+                            WhatDisablingDoes = "Setting LoadBehavior to 0 (via regedit, or disabling the add-in from within the Office app's own Add-ins dialog) stops it from loading; only do this for one you don't recognize. Quick flag, not a verdict.",
+                            RelatedEntry = entry,
+                        });
+                    }
+                }
+                catch
+                {
+                    // One bad subkey shouldn't stop the rest.
+                }
+            }
+        }
+        catch
+        {
+            // Key inaccessible (or absent - the common case without the matching Office app
+            // installed) - contribute nothing.
+        }
+    }
+
+    private static string ResolveProgIdToDll(string progId)
+    {
+        try
+        {
+            using var progIdKey = Registry.ClassesRoot.OpenSubKey($@"{progId}\CLSID");
+            var clsid = progIdKey?.GetValue(null) as string;
+            if (string.IsNullOrWhiteSpace(clsid)) return string.Empty;
+
+            var (_, dll) = ResolveClsidToNameAndDll(clsid.Trim());
+            return dll;
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+
+    private static IEnumerable<string> FindProgramFilesOfficeFolders(string subFolderName)
+    {
+        var roots = new[]
+        {
+            Environment.GetEnvironmentVariable("ProgramFiles"),
+            Environment.GetEnvironmentVariable("ProgramFiles(x86)"),
+        };
+
+        foreach (var root in roots)
+        {
+            if (string.IsNullOrWhiteSpace(root)) continue;
+
+            var officeRoot = System.IO.Path.Combine(root, "Microsoft Office", "root");
+            if (!System.IO.Directory.Exists(officeRoot)) continue;
+
+            string[] versionDirs;
+            try { versionDirs = System.IO.Directory.GetDirectories(officeRoot, "Office*"); }
+            catch { continue; }
+
+            foreach (var versionDir in versionDirs)
+            {
+                var candidate = System.IO.Path.Combine(versionDir, subFolderName);
+                if (System.IO.Directory.Exists(candidate)) yield return candidate;
+            }
+        }
+    }
+
+    private static void AddOfficeStartupFolderItems(List<AutorunEntry> items, List<SecurityFinding> findings, string folderPath, string label)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(folderPath) || !System.IO.Directory.Exists(folderPath)) return;
+
+            foreach (var file in System.IO.Directory.GetFiles(folderPath))
+            {
+                var fileName = System.IO.Path.GetFileName(file);
+                if (fileName.Equals("desktop.ini", StringComparison.OrdinalIgnoreCase)) continue;
+
+                AddUnsignedOnlyEntry(items, findings, "Office Startup Folder", $"{label}: {fileName}", file, file, file,
+                    $"\"{fileName}\" in the {label} startup folder (\"{folderPath}\") loads automatically and doesn't carry a valid Authenticode signature.");
+            }
+        }
+        catch
+        {
+            // Folder inaccessible - contribute nothing.
+        }
+    }
+
+    // #834: AppX/UWP - implemented reliably for the actionable half only. Provisioned packages
+    // (this method) reinstall for every new user profile on the machine, which is the genuinely
+    // useful/actionable half of this item, read via a single `Get-AppxProvisionedPackage -Online`
+    // PowerShell call (DISM-backed, documented cmdlet) rather than raw interop. The "auto-start"
+    // half (which AppX packages register a StartupTask and what state it's in) is
+    // Implemented-partially: reading it needs an undocumented AppModel\SystemAppData registry
+    // shape with no stable contract across Windows builds - too fragile to build against reliably
+    // here, per this item's own note. Informational rows only - no findings.
+    private static void AddProvisionedAppxPackageItems(List<AutorunEntry> items)
+    {
+        try
+        {
+            string output = RunCapturedSync("powershell.exe",
+                "-NoProfile -NonInteractive -Command \"Get-AppxProvisionedPackage -Online | Select-Object DisplayName,PackageName | ConvertTo-Csv -NoTypeInformation\"",
+                TimeSpan.FromSeconds(20));
+            if (string.IsNullOrWhiteSpace(output)) return;
+
+            var lines = output.Replace("\r\n", "\n").Split('\n').Where(l => l.Trim().Length > 0).ToList();
+            if (lines.Count < 2) return; // header only (or command failed/unavailable) - no packages to show
+
+            const string location = "Get-AppxProvisionedPackage -Online";
+            foreach (var line in lines.Skip(1))
+            {
+                var fields = ParseSimpleCsvLine(line);
+                if (fields.Count == 0 || string.IsNullOrWhiteSpace(fields[0])) continue;
+
+                items.Add(new AutorunEntry
+                {
+                    Category = "Provisioned AppX Package",
+                    Name = fields[0],
+                    RawCommand = fields.Count > 1 ? fields[1] : string.Empty,
+                    ResolvedPath = string.Empty,
+                    Publisher = "Unknown",
+                    SignatureStatus = "Unknown",
+                    Location = location,
+                    Enabled = true,
+                });
+            }
+        }
+        catch
+        {
+            // PowerShell/DISM cmdlet unavailable/failed/timed out - contribute nothing.
+        }
+    }
+
+    /// <summary>Small hand-rolled CSV-line parser (quoted fields, "" escapes an embedded quote) -
+    /// the same shape ScheduledTaskService.ParseCsvLine already uses for schtasks' own CSV output,
+    /// kept as a local copy here since PowerShell's ConvertTo-Csv output is this file's only CSV
+    /// consumer and taking a shared dependency for one dozen-line parser isn't worth it.</summary>
+    private static List<string> ParseSimpleCsvLine(string line)
+    {
+        var fields = new List<string>();
+        var current = new System.Text.StringBuilder();
+        bool inQuotes = false;
+        for (int i = 0; i < line.Length; i++)
+        {
+            char c = line[i];
+            if (inQuotes)
+            {
+                if (c == '"')
+                {
+                    if (i + 1 < line.Length && line[i + 1] == '"') { current.Append('"'); i++; }
+                    else inQuotes = false;
+                }
+                else current.Append(c);
+            }
+            else
+            {
+                if (c == '"') inQuotes = true;
+                else if (c == ',') { fields.Add(current.ToString()); current.Clear(); }
+                else current.Append(c);
+            }
+        }
+        fields.Add(current.ToString());
+        return fields;
+    }
+
+    // #835: startup shortcut target tampering - resolves every .lnk in the Start Menu, Desktop,
+    // Taskbar-pinned folder, and both Startup folders (Environment.SpecialFolder.Startup/
+    // CommonStartup - the exact same two paths StartupManagerService.Sample already scans, reused
+    // rather than re-derived) via the WScript.Shell COM object. This app has no existing
+    // .lnk-parsing code anywhere (checked: no WshShell/IShellLink/.lnk usage in Services/ before
+    // this), so this is late-bound reflection (Type.GetTypeFromProgID + InvokeMember) rather than
+    // `dynamic` - avoids taking a new Microsoft.CSharp project reference for one call site. A
+    // shortcut that throws on CreateShortcut/property access (malformed, inaccessible, or a
+    // non-file-system .lnk target) is skipped rather than failing the whole scan.
+    //
+    // ResolvedPath/Location are deliberately the .lnk file's OWN path, not its resolved target -
+    // SecurityViewModel.OpenContainingFolder opens Explorer at ResolvedPath, and the useful thing
+    // to jump to for a shortcut finding is the shortcut itself (in the Start Menu/Desktop/Startup
+    // folder it actually lives in), not the target program's install folder.
+    private static readonly string[] BrowserExeNames = { "chrome.exe", "msedge.exe", "firefox.exe", "iexplore.exe" };
+
+    private static void AddShortcutTamperingItems(List<AutorunEntry> items, List<SecurityFinding> findings)
+    {
+        var folders = new (string Path, bool Recursive)[]
+        {
+            (Environment.ExpandEnvironmentVariables(@"%AppData%\Microsoft\Windows\Start Menu\Programs"), true),
+            (Environment.ExpandEnvironmentVariables(@"%ProgramData%\Microsoft\Windows\Start Menu\Programs"), true),
+            (Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), false),
+            (Environment.ExpandEnvironmentVariables(@"%Public%\Desktop"), false),
+            (Environment.ExpandEnvironmentVariables(@"%AppData%\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar"), false),
+            (Environment.GetFolderPath(Environment.SpecialFolder.Startup), false),
+            (Environment.GetFolderPath(Environment.SpecialFolder.CommonStartup), false),
+        };
+
+        var tempRoot = Environment.GetEnvironmentVariable("TEMP") ?? string.Empty;
+        string appDataRoot;
+        try { appDataRoot = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData); }
+        catch { appDataRoot = string.Empty; }
+
+        foreach (var (folderPath, recursive) in folders)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(folderPath) || !System.IO.Directory.Exists(folderPath)) continue;
+
+                var searchOption = recursive ? System.IO.SearchOption.AllDirectories : System.IO.SearchOption.TopDirectoryOnly;
+                foreach (var lnkPath in System.IO.Directory.EnumerateFiles(folderPath, "*.lnk", searchOption))
+                {
+                    AddOneShortcutItem(items, findings, lnkPath, tempRoot, appDataRoot);
+                }
+            }
+            catch
+            {
+                // Folder inaccessible/enumeration failed - skip this folder, keep scanning the rest.
+            }
+        }
+    }
+
+    private static void AddOneShortcutItem(List<AutorunEntry> items, List<SecurityFinding> findings, string lnkPath, string tempRoot, string appDataRoot)
+    {
+        var resolved = TryResolveShortcut(lnkPath);
+        if (resolved is null) return; // malformed/inaccessible - skip, per this item's own guidance
+
+        var (target, arguments) = resolved.Value;
+        if (string.IsNullOrWhiteSpace(target) && string.IsNullOrWhiteSpace(arguments)) return;
+
+        var expandedTarget = string.IsNullOrWhiteSpace(target) ? string.Empty : Environment.ExpandEnvironmentVariables(target);
+        bool targetExists = !string.IsNullOrWhiteSpace(expandedTarget) && System.IO.File.Exists(expandedTarget);
+        var status = targetExists ? SignatureCheckService.GetStatus(expandedTarget) : "Unknown";
+
+        var entry = new AutorunEntry
+        {
+            Category = "Shortcut",
+            Name = System.IO.Path.GetFileNameWithoutExtension(lnkPath),
+            RawCommand = string.IsNullOrWhiteSpace(arguments) ? target : $"{target} {arguments}",
+            ResolvedPath = lnkPath,
+            Publisher = "Unknown",
+            SignatureStatus = status,
+            Location = lnkPath,
+            Enabled = true,
+        };
+        items.Add(entry);
+
+        bool targetIsBrowser = !string.IsNullOrWhiteSpace(expandedTarget) &&
+            BrowserExeNames.Any(b => System.IO.Path.GetFileName(expandedTarget).Equals(b, StringComparison.OrdinalIgnoreCase));
+        bool argsLookLikeUrl = !string.IsNullOrWhiteSpace(arguments) &&
+            (arguments.Contains("http", StringComparison.OrdinalIgnoreCase) || arguments.Contains("www.", StringComparison.OrdinalIgnoreCase));
+        bool targetUnderTempOrAppData = !string.IsNullOrWhiteSpace(expandedTarget) &&
+            ((!string.IsNullOrWhiteSpace(tempRoot) && expandedTarget.StartsWith(tempRoot, StringComparison.OrdinalIgnoreCase)) ||
+             (!string.IsNullOrWhiteSpace(appDataRoot) && expandedTarget.StartsWith(appDataRoot, StringComparison.OrdinalIgnoreCase)));
+
+        if (targetIsBrowser && argsLookLikeUrl)
+        {
+            findings.Add(new SecurityFinding
+            {
+                Severity = FindingSeverity.High,
+                Title = $"Browser shortcut launches a URL: {entry.Name}",
+                Reason = $"\"{lnkPath}\" launches \"{System.IO.Path.GetFileName(expandedTarget)}\" with arguments \"{arguments}\" - a browser shortcut with a URL baked into its arguments is the classic hijacked-homepage/malvertising trick, since it silently overrides whatever homepage/new-tab page is actually configured in the browser.",
+                Path = lnkPath,
+                WhatDisablingDoes = "Use this entry's \"Open containing folder\" action to find the shortcut, then right-click it and choose Properties to inspect/clear the Target field's arguments (or just delete and re-create the shortcut) if you don't recognize the URL. Quick flag, not a verdict - some legitimate app launchers do pass a URL deliberately (e.g. a \"View documentation\" shortcut).",
+                RelatedEntry = entry,
+            });
+        }
+        else if (targetUnderTempOrAppData)
+        {
+            findings.Add(new SecurityFinding
+            {
+                Severity = FindingSeverity.Medium,
+                Title = $"Shortcut target under Temp/AppData: {entry.Name}",
+                Reason = $"\"{lnkPath}\" points at \"{expandedTarget}\", under a Temp/AppData location - common for legitimately-installed AppData-based software (Electron apps, browser updaters, ...), but also a common malware drop location, so worth a glance.",
+                Path = lnkPath,
+                WhatDisablingDoes = "Use this entry's \"Open containing folder\" action to find the shortcut, then Properties to inspect its Target; delete the shortcut (and, if you don't recognize the target program, the target itself) if you don't recognize it. Quick flag, not a verdict.",
+                RelatedEntry = entry,
+            });
+        }
+    }
+
+    /// <summary>Resolves a .lnk's target path and arguments via the WScript.Shell COM object,
+    /// late-bound through reflection rather than `dynamic` - see AddShortcutTamperingItems' remarks
+    /// on why. Returns null for anything that throws (malformed/inaccessible shortcut, or a
+    /// non-file-system target COM doesn't expose as a plain path/arguments pair).</summary>
+    private static (string Target, string Arguments)? TryResolveShortcut(string lnkPath)
+    {
+        object? shell = null;
+        object? shortcut = null;
+        try
+        {
+            var shellType = Type.GetTypeFromProgID("WScript.Shell");
+            if (shellType is null) return null;
+
+            shell = Activator.CreateInstance(shellType);
+            if (shell is null) return null;
+
+            shortcut = shellType.InvokeMember("CreateShortcut", System.Reflection.BindingFlags.InvokeMethod, null, shell, new object[] { lnkPath });
+            if (shortcut is null) return null;
+
+            var shortcutType = shortcut.GetType();
+            var target = shortcutType.InvokeMember("TargetPath", System.Reflection.BindingFlags.GetProperty, null, shortcut, null) as string ?? string.Empty;
+            var arguments = shortcutType.InvokeMember("Arguments", System.Reflection.BindingFlags.GetProperty, null, shortcut, null) as string ?? string.Empty;
+            return (target, arguments);
+        }
+        catch
+        {
+            return null;
+        }
+        finally
+        {
+            if (shortcut is not null && System.Runtime.InteropServices.Marshal.IsComObject(shortcut))
+                System.Runtime.InteropServices.Marshal.ReleaseComObject(shortcut);
+            if (shell is not null && System.Runtime.InteropServices.Marshal.IsComObject(shell))
+                System.Runtime.InteropServices.Marshal.ReleaseComObject(shell);
         }
     }
 

@@ -310,11 +310,14 @@
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" VerticalAlignment="Center"
-                                   Text="Explorer shell extensions - context-menu handlers and icon overlays."
+                                   Text="Explorer shell extensions - context menu, property sheet, copy hook, drag-drop, and column handlers, plus icon overlays."
                                    Foreground="{DynamicResource TextSecondaryBrush}" />
-                        <Button Grid.Column="1" Style="{StaticResource PrimaryButton}" Command="{Binding LoadShellExtensionsCommand}">
+                        <Button Grid.Column="1" Margin="0,0,8,0" Content="Approve/Block"
+                                Command="{Binding ToggleShellExtensionApprovedCommand}" CommandParameter="{Binding SelectedShellExtension}" />
+                        <Button Grid.Column="2" Style="{StaticResource PrimaryButton}" Command="{Binding LoadShellExtensionsCommand}">
                             <TextBlock>
                                 <TextBlock.Style>
                                     <Style TargetType="TextBlock">
@@ -329,10 +332,13 @@
                             </TextBlock>
                         </Button>
                     </Grid>
-                    <DataGrid Height="220" ItemsSource="{Binding ShellExtensions}" IsReadOnly="True">
+                    <DataGrid Height="240" ItemsSource="{Binding ShellExtensions}" IsReadOnly="True"
+                              SelectedItem="{Binding SelectedShellExtension, Mode=TwoWay}">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="2*" />
                             <DataGridTextColumn Header="Category" Binding="{Binding Category}" Width="2*" />
+                            <DataGridTextColumn Header="Publisher" Binding="{Binding Publisher}" Width="120" />
+                            <DataGridTextColumn Header="Signature" Binding="{Binding SignatureStatus}" Width="90" />
                             <DataGridTextColumn Header="Approved" Binding="{Binding ApprovedText}" Width="90" />
                             <DataGridTextColumn Header="DLL" Binding="{Binding DllPath}" Width="3*" />
                         </DataGrid.Columns>

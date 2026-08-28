@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Xml.Linq;
 using TaskManagerPlus.Models;
 
 namespace TaskManagerPlus.Services;
@@ -148,6 +149,89 @@ public static class ScheduledTaskService
     }
 
     private static int ParseGroup(Group g) => g.Success && int.TryParse(g.Value, out int v) ? v : 0;
+
+    /// <summary>
+    /// #831: security-lens data schtasks' own CSV/table output never exposes at all - the per-task
+    /// Hidden flag, registered folder, run-as identity, and action command. `schtasks /query /xml
+    /// ONE` (no /tn) dumps every registered task as ONE aggregated well-formed XML document (each
+    /// &lt;Task&gt; element under a &lt;Tasks&gt; root), so this is a single shell-out for the whole
+    /// machine rather than one XML fetch per task the way ReadLogonTriggerInfoAsync above
+    /// necessarily is for its single-task /query /tn /xml call. Parsed with XDocument rather than
+    /// regex, since the output is genuinely well-formed XML here (unlike bitsadmin/fltmc's
+    /// column-padded text). Wrapped in one broad try/catch - if the aggregate document doesn't
+    /// parse (a stray console message ahead of the XML, or schtasks missing/failing entirely), the
+    /// whole scan degrades to empty rather than partially succeeding, since there's no per-task
+    /// boundary to recover at until the document itself is parsed.
+    /// </summary>
+    public static async Task<List<ScheduledTaskXmlInfo>> QuerySecurityInfoAsync()
+    {
+        var result = new List<ScheduledTaskXmlInfo>();
+        try
+        {
+            // Hundreds of tasks each carrying a full XML definition can be a larger payload than
+            // the other schtasks calls in this file - a longer timeout than the 10s default.
+            string raw = (await RunCapturedAsync("schtasks.exe", "/query /xml ONE", timeoutMs: 20000)).Output;
+            int start = raw.IndexOf("<Tasks", StringComparison.OrdinalIgnoreCase);
+            if (start < 0) return result; // unexpected output shape - degrade to empty
+            var xml = raw[start..];
+
+            var doc = XDocument.Parse(xml);
+            XNamespace ns = "http://schemas.microsoft.com/windows/2004/02/mit/task";
+
+            foreach (var taskEl in doc.Descendants(ns + "Task"))
+            {
+                try
+                {
+                    var uri = taskEl.Element(ns + "RegistrationInfo")?.Element(ns + "URI")?.Value;
+                    if (string.IsNullOrWhiteSpace(uri)) continue;
+
+                    bool isHidden = string.Equals(
+                        taskEl.Element(ns + "Settings")?.Element(ns + "Hidden")?.Value,
+                        "true", StringComparison.OrdinalIgnoreCase);
+
+                    var principal = taskEl.Element(ns + "Principals")?.Elements(ns + "Principal")?.FirstOrDefault();
+                    string runAsUser = principal?.Element(ns + "UserId")?.Value
+                        ?? principal?.Element(ns + "GroupId")?.Value
+                        ?? string.Empty;
+
+                    var actionParts = new List<string>();
+                    var actionsEl = taskEl.Element(ns + "Actions");
+                    if (actionsEl is not null)
+                    {
+                        foreach (var exec in actionsEl.Elements(ns + "Exec"))
+                        {
+                            var cmd = exec.Element(ns + "Command")?.Value ?? string.Empty;
+                            var args = exec.Element(ns + "Arguments")?.Value ?? string.Empty;
+                            if (string.IsNullOrWhiteSpace(cmd)) continue;
+                            actionParts.Add(string.IsNullOrWhiteSpace(args) ? cmd : $"{cmd} {args}");
+                        }
+                    }
+
+                    int lastSlash = uri.LastIndexOf('\\');
+                    string folderPath = lastSlash > 0 ? uri[..lastSlash] : @"\";
+
+                    result.Add(new ScheduledTaskXmlInfo
+                    {
+                        Name = uri,
+                        FolderPath = folderPath,
+                        IsHidden = isHidden,
+                        RunAsUser = runAsUser,
+                        ActionCommand = string.Join(" ; ", actionParts),
+                    });
+                }
+                catch
+                {
+                    // One malformed <Task> block shouldn't stop the rest.
+                }
+            }
+        }
+        catch
+        {
+            // schtasks unavailable/failed/timed out, or the aggregate document didn't parse -
+            // degrade to empty, same as every other optional data source in this app.
+        }
+        return result;
+    }
 
     /// <summary>
     /// Shells out and captures combined stdout+stderr, bounded by a real timeout - the same
