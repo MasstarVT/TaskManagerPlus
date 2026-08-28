@@ -575,6 +575,78 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
     private string _mtbfSummaryText = string.Empty;
     public string MtbfSummaryText { get => _mtbfSummaryText; private set => SetProperty(ref _mtbfSummaryText, value); }
 
+    // ---------------------------------------------------------------------------------------
+    // Round 21, items 96-100: "Recovery, escalation and safe operation" - the final chunk of
+    // this domain. Every action below is a genuinely dangerous or slow operation (reboot into
+    // Safe Mode, chkdsk /f scheduling a reboot, DISM taking many minutes) - gated behind an
+    // explicit button and a strongly-worded confirmation, never automatic, per this chunk's own
+    // instructions. See BootRecoveryService/RestorePointService/SystemRepairService/
+    // CrashSupportBundleService.
+    // ---------------------------------------------------------------------------------------
+
+    // Items 96/97: one shared `bcdedit /enum {current}` read - item 96's "already configured for
+    // Safe Mode?" check and item 97's plain-English audit list both read off this same result,
+    // refreshed automatically alongside VerifierStatus/CrashDumpConfig in RefreshAsync (a single
+    // bcdedit call is cheap, same tier as those two).
+    private BootConfigAudit? _bootConfigAudit;
+    public BootConfigAudit? BootConfigAudit { get => _bootConfigAudit; private set => SetProperty(ref _bootConfigAudit, value); }
+
+    private string _safeModeStatusText = string.Empty;
+    public string SafeModeStatusText { get => _safeModeStatusText; private set => SetProperty(ref _safeModeStatusText, value); }
+
+    public AsyncRelayCommand RebootToSafeModeMinimalCommand { get; }
+    public AsyncRelayCommand RebootToSafeModeNetworkCommand { get; }
+    public AsyncRelayCommand RebootToRecoveryEnvironmentCommand { get; }
+    public AsyncRelayCommand RevertSafeModeBootCommand { get; }
+
+    // Item 98: System Restore points + a best-effort "is System Protection even on" flag.
+    private SystemProtectionStatus? _systemProtectionStatus;
+    public SystemProtectionStatus? SystemProtectionStatus { get => _systemProtectionStatus; private set => SetProperty(ref _systemProtectionStatus, value); }
+
+    private string _restorePointsStatusText = string.Empty;
+    public string RestorePointsStatusText { get => _restorePointsStatusText; private set => SetProperty(ref _restorePointsStatusText, value); }
+
+    public AsyncRelayCommand CreateRestorePointFromRecoveryCommand { get; }
+    public RelayCommand LaunchRstruiCommand { get; }
+
+    // Item 99: guided repair runner - each action owns its own busy flag and result text, per
+    // this chunk's own "explicit button, live output, clear 'this takes a while' indicator"
+    // instruction; sfc/DISM are the two genuinely long-running ones (SystemRepairService's own
+    // 45-minute ceiling), chkdsk only schedules (instant), Memory Diagnostic only launches
+    // (instant, the wait happens outside Windows entirely).
+    private bool _isSfcRunning;
+    public bool IsSfcRunning { get => _isSfcRunning; private set => SetProperty(ref _isSfcRunning, value); }
+    private string _sfcResultText = string.Empty;
+    public string SfcResultText { get => _sfcResultText; private set => SetProperty(ref _sfcResultText, value); }
+    public AsyncRelayCommand RunSfcCommand { get; }
+
+    private bool _isDismRunning;
+    public bool IsDismRunning { get => _isDismRunning; private set => SetProperty(ref _isDismRunning, value); }
+    private string _dismResultText = string.Empty;
+    public string DismResultText { get => _dismResultText; private set => SetProperty(ref _dismResultText, value); }
+    public AsyncRelayCommand RunDismCommand { get; }
+
+    private string _chkdskResultText = string.Empty;
+    public string ChkdskResultText { get => _chkdskResultText; private set => SetProperty(ref _chkdskResultText, value); }
+    public AsyncRelayCommand ScheduleChkdskCommand { get; }
+
+    public RelayCommand LaunchMemoryDiagnosticCommand { get; }
+    public ObservableCollection<MemoryDiagnosticResultInfo> MemoryDiagnosticResults { get; } = new();
+
+    private string _memoryDiagnosticStatusText = "Not checked yet this session - use \"Check for results\" below (or run the diagnostic first, which restarts the machine).";
+    public string MemoryDiagnosticStatusText { get => _memoryDiagnosticStatusText; private set => SetProperty(ref _memoryDiagnosticStatusText, value); }
+
+    public AsyncRelayCommand RefreshMemoryDiagnosticResultsCommand { get; }
+
+    // Item 100: one-click crash support bundle.
+    private bool _isBuildingSupportBundle;
+    public bool IsBuildingSupportBundle { get => _isBuildingSupportBundle; private set => SetProperty(ref _isBuildingSupportBundle, value); }
+
+    private string _supportBundleStatusText = string.Empty;
+    public string SupportBundleStatusText { get => _supportBundleStatusText; private set => SetProperty(ref _supportBundleStatusText, value); }
+
+    public AsyncRelayCommand BuildSupportBundleCommand { get; }
+
     public StabilityViewModel()
     {
         RefreshCommand = new AsyncRelayCommand(RefreshAsync);
@@ -1250,7 +1322,203 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
             },
         };
 
+        // ---- Round 21, items 96/97: Safe Mode / WinRE reboot -----------------------------------
+        // Safe Mode is genuinely disruptive - it persists across every subsequent boot, not just
+        // the next one, until reverted - so the confirmation names the revert action explicitly,
+        // per this chunk's own instructions.
+        RebootToSafeModeMinimalCommand = new AsyncRelayCommand(() => RebootToSafeModeAsync(withNetworking: false));
+        RebootToSafeModeNetworkCommand = new AsyncRelayCommand(() => RebootToSafeModeAsync(withNetworking: true));
+
+        RebootToRecoveryEnvironmentCommand = new AsyncRelayCommand(async () =>
+        {
+            var confirm = System.Windows.MessageBox.Show(
+                "This restarts the machine immediately into the Windows Recovery Environment (Advanced Startup Options) - save any open work first.\n\nContinue?",
+                "Restart into Recovery Environment",
+                System.Windows.MessageBoxButton.YesNo,
+                System.Windows.MessageBoxImage.Warning);
+            if (confirm != System.Windows.MessageBoxResult.Yes) return;
+
+            var (_, message) = await BootRecoveryService.RebootToRecoveryEnvironmentAsync();
+            SafeModeStatusText = message;
+        });
+
+        RevertSafeModeBootCommand = new AsyncRelayCommand(async () =>
+        {
+            var (ok, message) = await BootRecoveryService.RevertSafeModeBootAsync();
+            SafeModeStatusText = message;
+            if (ok) await RefreshBootConfigAsync();
+        });
+
+        // ---- Item 98: System Restore points ----------------------------------------------------
+        CreateRestorePointFromRecoveryCommand = new AsyncRelayCommand(async () =>
+        {
+            RestorePointsStatusText = "Creating restore point...";
+            var (ok, message) = await Task.Run(() => RestorePointService.TryCreate("Task Manager Plus - manual restore point"));
+            RestorePointsStatusText = message;
+            if (ok) await RefreshRestorePointsAsync();
+        });
+
+        LaunchRstruiCommand = new RelayCommand(() =>
+        {
+            bool ok = RestorePointService.LaunchRstrui();
+            RestorePointsStatusText = ok ? "System Restore opened in a separate window." : "Couldn't launch rstrui.exe.";
+        });
+
+        // ---- Item 99: guided repair runner -----------------------------------------------------
+        RunSfcCommand = new AsyncRelayCommand(async () =>
+        {
+            var confirm = System.Windows.MessageBox.Show(
+                "Runs sfc /scannow - verifies and repairs Windows' own protected system files. This can take several minutes and will use noticeable CPU/disk while it runs. Continue?",
+                "Run System File Checker",
+                System.Windows.MessageBoxButton.YesNo,
+                System.Windows.MessageBoxImage.Warning);
+            if (confirm != System.Windows.MessageBoxResult.Yes) return;
+
+            IsSfcRunning = true;
+            SfcResultText = "Running sfc /scannow - this can take several minutes...";
+            try
+            {
+                var (ok, output) = await SystemRepairService.RunSfcAsync();
+                SfcResultText = (ok ? "Completed. " : "Finished with a non-zero exit code. ") + output.Trim();
+            }
+            catch (Exception ex)
+            {
+                SfcResultText = $"Couldn't run sfc: {ex.Message}";
+            }
+            finally
+            {
+                IsSfcRunning = false;
+            }
+        });
+
+        RunDismCommand = new AsyncRelayCommand(async () =>
+        {
+            var confirm = System.Windows.MessageBox.Show(
+                "Runs DISM /Online /Cleanup-Image /RestoreHealth - repairs the Windows component store itself (what sfc's own repairs draw clean copies from), downloading replacement files from Windows Update if needed. This can take several minutes and needs an internet connection to fully repair anything. Continue?",
+                "Run DISM repair",
+                System.Windows.MessageBoxButton.YesNo,
+                System.Windows.MessageBoxImage.Warning);
+            if (confirm != System.Windows.MessageBoxResult.Yes) return;
+
+            IsDismRunning = true;
+            DismResultText = "Running DISM /RestoreHealth - this can take several minutes...";
+            try
+            {
+                var (ok, output) = await SystemRepairService.RunDismRestoreHealthAsync();
+                DismResultText = (ok ? "Completed. " : "Finished with a non-zero exit code. ") + output.Trim();
+            }
+            catch (Exception ex)
+            {
+                DismResultText = $"Couldn't run DISM: {ex.Message}";
+            }
+            finally
+            {
+                IsDismRunning = false;
+            }
+        });
+
+        ScheduleChkdskCommand = new AsyncRelayCommand(async () =>
+        {
+            var confirm = System.Windows.MessageBox.Show(
+                "Schedules a full disk check (chkdsk/autochk) on the system drive for the next time this machine restarts - it runs before Windows finishes starting and can add several minutes to that next boot. This does NOT run now and does NOT restart the machine by itself. Continue?",
+                "Schedule a disk check",
+                System.Windows.MessageBoxButton.YesNo,
+                System.Windows.MessageBoxImage.Warning);
+            if (confirm != System.Windows.MessageBoxResult.Yes) return;
+
+            var (_, message) = await SystemRepairService.ScheduleChkdskOnSystemVolumeAsync();
+            ChkdskResultText = message;
+        });
+
+        LaunchMemoryDiagnosticCommand = new RelayCommand(() =>
+        {
+            var confirm = System.Windows.MessageBox.Show(
+                "Launches the Windows Memory Diagnostic tool, which restarts this machine immediately to run a memory test before Windows loads - save any open work first. Come back to this card and use \"Check for results\" after Windows starts back up. Continue?",
+                "Run Windows Memory Diagnostic",
+                System.Windows.MessageBoxButton.YesNo,
+                System.Windows.MessageBoxImage.Warning);
+            if (confirm != System.Windows.MessageBoxResult.Yes) return;
+
+            bool ok = SystemRepairService.LaunchMemoryDiagnostic();
+            MemoryDiagnosticStatusText = ok
+                ? "Windows Memory Diagnostic launched - the machine will restart shortly."
+                : "Couldn't launch mdsched.exe.";
+        });
+
+        RefreshMemoryDiagnosticResultsCommand = new AsyncRelayCommand(async () =>
+        {
+            var results = await Task.Run(() => _service.ReadMemoryDiagnosticsResults(EventLogService.LookbackDays));
+            MemoryDiagnosticResults.Clear();
+            foreach (var r in results) MemoryDiagnosticResults.Add(r);
+            MemoryDiagnosticStatusText = results.Count == 0
+                ? $"No Memory Diagnostic results found in the last {EventLogService.LookbackDays} days - either it hasn't been run recently, or the result event has already rolled off the log."
+                : $"{results.Count} result(s) found.";
+        });
+
+        // ---- Item 100: one-click crash support bundle ------------------------------------------
+        BuildSupportBundleCommand = new AsyncRelayCommand(async () =>
+        {
+            string bundleDir = AppPaths.GetPath("SupportBundles");
+            try { System.IO.Directory.CreateDirectory(bundleDir); } catch { /* SaveFileDialog still works without a pre-created folder */ }
+
+            var dialog = new Microsoft.Win32.SaveFileDialog
+            {
+                Title = "Save crash support bundle",
+                Filter = "Zip files (*.zip)|*.zip|All files (*.*)|*.*",
+                DefaultExt = ".zip",
+                FileName = $"TaskManagerPlus-CrashSupportBundle-{DateTime.Now:yyyy-MM-dd_HH-mm-ss}.zip",
+                InitialDirectory = bundleDir,
+            };
+            if (dialog.ShowDialog() != true) return;
+
+            IsBuildingSupportBundle = true;
+            SupportBundleStatusText = "Building support bundle - this can take a minute or two (system information, event log exports, driver inventory)...";
+            try
+            {
+                var selectedDumps = DumpRows.Where(d => d.IsSelected).Select(d => d.Parsed.FilePath).ToList();
+                var selectedWer = _allWerReportRows.Where(r => r.IsSelected).Select(r => r.Report.ReportFolder).ToList();
+                var clusters = CrashClusters.Select(c => c.Cluster).ToList();
+
+                var (_, message, _) = await CrashSupportBundleService.BuildAsync(
+                    selectedDumps, selectedWer, CrashDumpConfig, clusters, dialog.FileName);
+                SupportBundleStatusText = message;
+            }
+            catch (Exception ex)
+            {
+                SupportBundleStatusText = $"Couldn't build the support bundle: {ex.Message}";
+            }
+            finally
+            {
+                IsBuildingSupportBundle = false;
+            }
+        });
+
         _ = RefreshAsync();
+    }
+
+    private async Task RebootToSafeModeAsync(bool withNetworking)
+    {
+        string modeLabel = withNetworking ? "Safe Mode with Networking" : "Safe Mode (minimal)";
+        var confirm = System.Windows.MessageBox.Show(
+            $"This restarts the machine immediately into {modeLabel}, and - unlike a normal Safe Mode F8 boot - it will keep booting into Safe Mode on every restart after this one too, not just this one, until you come back to this Recovery section and use \"Revert Safe Mode boot\" to undo it.\n\n" +
+            "Save any open work first. Continue?",
+            "Reboot into Safe Mode",
+            System.Windows.MessageBoxButton.YesNo,
+            System.Windows.MessageBoxImage.Warning);
+        if (confirm != System.Windows.MessageBoxResult.Yes) return;
+
+        var (_, message) = await BootRecoveryService.RebootToSafeModeAsync(withNetworking);
+        SafeModeStatusText = message;
+    }
+
+    private async Task RefreshBootConfigAsync()
+    {
+        BootConfigAudit = await BootRecoveryService.ReadBootConfigAuditAsync();
+    }
+
+    private async Task RefreshRestorePointsAsync()
+    {
+        SystemProtectionStatus = await Task.Run(RestorePointService.ReadSystemProtectionStatus);
     }
 
     /// <summary>Item 42: null (global default) for a blank/whitespace-only target executable
@@ -1413,6 +1681,12 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
             // Round 19, items 81/82/86: Driver Verifier status - independent of everything above
             // (its own verifier.exe shell-out), applied separately, same shape as the reads above.
             await RefreshVerifierStatusAsync();
+
+            // Round 21, items 96-98: boot configuration audit + restore points - both cheap reads
+            // (one bcdedit call, one WMI enumeration), refreshed automatically here too, same
+            // cadence as VerifierStatus/CrashDumpConfig above rather than needing their own button.
+            await RefreshBootConfigAsync();
+            await RefreshRestorePointsAsync();
 
             RefreshErrorText = null;
         }

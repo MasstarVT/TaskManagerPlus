@@ -2021,4 +2021,65 @@ public sealed class EventLogService
         try { result = Convert.ToInt32(value); return true; }
         catch { return false; }
     }
+
+    // ---------------------------------------------------------------------------------------
+    // Round 21, item 99: Windows Memory Diagnostic (mdsched.exe) result readback - mdsched itself
+    // runs entirely outside Windows (before any OS loads) and only ever reports its own result
+    // once, as a toast right after the triggering reboot finishes - easy to miss, and gone for
+    // good once dismissed. The tool logs its own verdict as one event under the
+    // Microsoft-Windows-MemoryDiagnostics-Results provider on the System log (1201 = no problems
+    // found, 1101 = hardware errors were detected), so reading it back here means the Stability
+    // tab can show the answer any time after the fact, not just in the moment. Same
+    // EventLogReader/EventLogQuery shape as every other targeted provider+ID read in this file.
+    // ---------------------------------------------------------------------------------------
+
+    private const string MemoryDiagnosticsProviderName = "Microsoft-Windows-MemoryDiagnostics-Results";
+    private const int MemoryDiagnosticsNoErrorsEventId = 1201;
+    private const int MemoryDiagnosticsErrorsFoundEventId = 1101;
+
+    public List<Models.MemoryDiagnosticResultInfo> ReadMemoryDiagnosticsResults(int lookbackDays)
+    {
+        var result = new List<Models.MemoryDiagnosticResultInfo>();
+        try
+        {
+            long maxAgeMs = lookbackDays * 24L * 60 * 60 * 1000;
+            var query = new EventLogQuery("System", PathType.LogName,
+                $"*[System[Provider[@Name='{MemoryDiagnosticsProviderName}'] and (EventID={MemoryDiagnosticsNoErrorsEventId} or EventID={MemoryDiagnosticsErrorsFoundEventId}) and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]")
+            {
+                ReverseDirection = true,
+            };
+
+            using var reader = new EventLogReader(query);
+            int count = 0;
+            const int maxEvents = 50; // mdsched is a manually-launched, occasional tool - never a busy log source
+            while (count < maxEvents && reader.ReadEvent() is { } record)
+            {
+                using (record)
+                {
+                    count++;
+                    string message;
+                    try { message = record.FormatDescription() ?? string.Empty; }
+                    catch { message = string.Empty; }
+
+                    result.Add(new Models.MemoryDiagnosticResultInfo
+                    {
+                        TimeCreated = record.TimeCreated ?? DateTime.MinValue,
+                        HadErrors = record.Id == MemoryDiagnosticsErrorsFoundEventId,
+                        ResultText = message.Length > 0
+                            ? Truncate(message, 400)
+                            : (record.Id == MemoryDiagnosticsErrorsFoundEventId
+                                ? "Hardware errors were detected."
+                                : "No memory problems were detected."),
+                    });
+                }
+            }
+        }
+        catch
+        {
+            // Provider/log unavailable - degrade to "no Memory Diagnostic results found", the same
+            // as every other provider-scoped read in this file (a normal outcome when mdsched has
+            // never been run on this machine).
+        }
+        return result;
+    }
 }

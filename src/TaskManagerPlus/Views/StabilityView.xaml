@@ -2538,6 +2538,256 @@
                 </StackPanel>
             </Border>
 
+            <!-- ============================================================================
+                 Round 21, items 96-100: "Recovery, escalation and safe operation" - the final
+                 chunk of this domain. Every action in this whole section is a genuinely dangerous
+                 or slow operation (reboot into Safe Mode, chkdsk /f scheduling a reboot, DISM
+                 taking many minutes) - every button below is confirmation-gated in the ViewModel,
+                 never automatic. ============================================================ -->
+            <TextBlock Text="Recovery" Style="{StaticResource CardTitle}" FontSize="15" Margin="0,4,0,4" />
+            <TextBlock Text="Escape hatches and repair tools for when something above has already gone wrong - reboot into Safe Mode or the Recovery Environment, audit the current boot configuration, roll back with System Restore, or run Windows' own repair tools. Every action here restarts the machine, changes system files, or otherwise takes real time - each is its own explicit, confirmed button."
+                       Style="{StaticResource SubStat}" Margin="0,-2,0,12" TextWrapping="Wrap" />
+
+            <!-- Item 96: reboot into Safe Mode / WinRE, with the matching revert - essential as
+                 the escape hatch for the Driver Verifier wizard above (item 83). -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Reboot into Safe Mode or Recovery Environment" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Safe Mode loads only core drivers/services - useful when a driver or startup program is hanging or crashing the machine before you can fix it. Unlike a one-time F8 boot, this keeps booting into Safe Mode on every restart until reverted below."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+
+                    <Border Background="{DynamicResource DangerMutedBrush}" BorderBrush="{DynamicResource DangerBrush}" BorderThickness="1"
+                            CornerRadius="6" Padding="10,8" Margin="0,0,0,10">
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding BootConfigAudit.CurrentlyConfiguredForSafeMode}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                        <StackPanel>
+                            <TextBlock Foreground="{DynamicResource DangerBrush}" FontSize="12.5" FontWeight="SemiBold" TextWrapping="Wrap">
+                                <Run Text="This machine is currently configured to boot into Safe Mode (" /><Run Text="{Binding BootConfigAudit.CurrentSafebootValue, Mode=OneWay}" /><Run Text=") on every restart." />
+                            </TextBlock>
+                            <Button Content="Revert Safe Mode boot" Command="{Binding RevertSafeModeBootCommand}" Padding="10,4" Margin="0,6,0,0" HorizontalAlignment="Left" />
+                        </StackPanel>
+                    </Border>
+
+                    <WrapPanel>
+                        <Button Content="Reboot into Safe Mode" Command="{Binding RebootToSafeModeMinimalCommand}" Style="{StaticResource DangerButton}" Padding="10,4" Margin="0,0,8,8" />
+                        <Button Content="Reboot into Safe Mode with Networking" Command="{Binding RebootToSafeModeNetworkCommand}" Style="{StaticResource DangerButton}" Padding="10,4" Margin="0,0,8,8" />
+                        <Button Content="Reboot into Recovery Environment (WinRE)" Command="{Binding RebootToRecoveryEnvironmentCommand}" Style="{StaticResource DangerButton}" Padding="10,4" Margin="0,0,8,8" />
+                    </WrapPanel>
+                    <TextBlock Text="{Binding SafeModeStatusText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,4,0,0" />
+                </StackPanel>
+            </Border>
+
+            <!-- Item 97: `bcdedit /enum {current}` decoded into plain English, with warnings for
+                 the flags that weaken driver-signature enforcement or hide boot failures. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Boot configuration audit" Style="{StaticResource CardTitle}" Margin="0" />
+                        <Border Grid.Column="1" Background="{DynamicResource DangerMutedBrush}" CornerRadius="10" Padding="8,2" VerticalAlignment="Center">
+                            <Border.Style>
+                                <Style TargetType="Border">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding BootConfigAudit.HasWarnings}" Value="True">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Border.Style>
+                            <TextBlock Text="Flags found" Foreground="{DynamicResource DangerBrush}" FontSize="11.5" FontWeight="SemiBold" />
+                        </Border>
+                    </Grid>
+                    <TextBlock Text="safeboot, testsigning, nointegritychecks, debug, bootstatuspolicy and hypervisorlaunchtype from this boot entry's own bcdedit configuration - flagged when set to a value that weakens driver-signing enforcement or hides boot failures. Any of these can be a deliberate, legitimate developer/debugging setup - worth a manual check, not a verdict."
+                               Style="{StaticResource SubStat}" Margin="0,-2,0,10" TextWrapping="Wrap" />
+
+                    <TextBlock Text="{Binding BootConfigAudit.ErrorText}" Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" Margin="0,0,0,8">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding BootConfigAudit.ReadOk}" Value="False">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
+                    <ItemsControl ItemsSource="{Binding BootConfigAudit.Flags}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Border Grid.Column="0" Width="16" Height="16" CornerRadius="8" VerticalAlignment="Top" Margin="0,2,10,0">
+                                        <Border.Style>
+                                            <Style TargetType="Border">
+                                                <Setter Property="Background" Value="{DynamicResource TextTertiaryBrush}" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsWarning}" Value="True">
+                                                        <Setter Property="Background" Value="{DynamicResource DangerBrush}" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Border.Style>
+                                    </Border>
+                                    <StackPanel Grid.Column="1">
+                                        <TextBlock Text="{Binding Name}" FontSize="12.5" FontWeight="SemiBold" FontFamily="Consolas" />
+                                        <TextBlock Text="{Binding PlainEnglish}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,1,0,0" />
+                                    </StackPanel>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- Item 98: System Restore points - enumerated via the SystemRestore WMI class,
+                 with a "create now" button (reusing item 83's RestorePointService.TryCreate) and
+                 rstrui.exe launched for the actual rollback (a full rollback restarts the machine
+                 partway through, so it can't run inside this app's own process). -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="System Restore points" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="{Binding SystemProtectionStatus.ProtectionStatusText}" Style="{StaticResource SubStat}" Margin="0,-2,0,10" TextWrapping="Wrap" />
+
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                        <Button Content="Create restore point now" Command="{Binding CreateRestorePointFromRecoveryCommand}" Padding="10,4" Margin="0,0,8,0" />
+                        <Button Content="Open System Restore..." Command="{Binding LaunchRstruiCommand}" Padding="10,4" />
+                    </StackPanel>
+                    <TextBlock Text="{Binding RestorePointsStatusText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,8" />
+
+                    <ItemsControl ItemsSource="{Binding SystemProtectionStatus.RestorePoints}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock FontSize="12.5" Text="{Binding Description}" TextWrapping="Wrap" />
+                                        <TextBlock Style="{StaticResource SubStat}">
+                                            <Run Text="{Binding CreationTime, StringFormat={}{0:g}, Mode=OneWay}" />
+                                            <Run Text=" · " /><Run Text="{Binding RestorePointTypeText, Mode=OneWay}" />
+                                            <Run Text=" · #" /><Run Text="{Binding SequenceNumber, Mode=OneWay}" />
+                                        </TextBlock>
+                                    </StackPanel>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="No restore points found.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding SystemProtectionStatus.RestorePoints.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- Item 99: guided repair runner - sfc/DISM/chkdsk/mdsched, each its own explicit,
+                 confirmed button with a "this takes a while" indicator. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Guided repair runner" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Windows' own built-in repair tools. sfc and DISM can each take several minutes and use noticeable CPU/disk; chkdsk only schedules a check for the next restart; Memory Diagnostic restarts the machine immediately to test RAM before Windows loads."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,12" TextWrapping="Wrap" />
+
+                    <StackPanel Margin="0,0,0,14">
+                        <StackPanel Orientation="Horizontal">
+                            <Button Content="Run System File Checker (sfc /scannow)" Command="{Binding RunSfcCommand}" Style="{StaticResource DangerButton}" Padding="10,4" Margin="0,0,8,0" />
+                            <TextBlock Text="Running..." Foreground="{DynamicResource WarningBrush}" FontWeight="SemiBold" VerticalAlignment="Center"
+                                       Visibility="{Binding IsSfcRunning, Converter={StaticResource BoolToVisibilityConverter}}" />
+                        </StackPanel>
+                        <TextBlock Text="{Binding SfcResultText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,4,0,0" MaxHeight="120" />
+                    </StackPanel>
+
+                    <StackPanel Margin="0,0,0,14">
+                        <StackPanel Orientation="Horizontal">
+                            <Button Content="Run DISM repair (/RestoreHealth)" Command="{Binding RunDismCommand}" Style="{StaticResource DangerButton}" Padding="10,4" Margin="0,0,8,0" />
+                            <TextBlock Text="Running..." Foreground="{DynamicResource WarningBrush}" FontWeight="SemiBold" VerticalAlignment="Center"
+                                       Visibility="{Binding IsDismRunning, Converter={StaticResource BoolToVisibilityConverter}}" />
+                        </StackPanel>
+                        <TextBlock Text="{Binding DismResultText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,4,0,0" />
+                    </StackPanel>
+
+                    <StackPanel Margin="0,0,0,14">
+                        <Button Content="Schedule disk check (chkdsk) on system drive" Command="{Binding ScheduleChkdskCommand}" Style="{StaticResource DangerButton}" Padding="10,4" HorizontalAlignment="Left" />
+                        <TextBlock Text="{Binding ChkdskResultText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,4,0,0" />
+                    </StackPanel>
+
+                    <StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <Button Content="Run Windows Memory Diagnostic" Command="{Binding LaunchMemoryDiagnosticCommand}" Style="{StaticResource DangerButton}" Padding="10,4" Margin="0,0,8,0" />
+                            <Button Content="Check for results" Command="{Binding RefreshMemoryDiagnosticResultsCommand}" Padding="10,4" />
+                        </StackPanel>
+                        <TextBlock Text="{Binding MemoryDiagnosticStatusText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,4,0,4" />
+                        <ItemsControl ItemsSource="{Binding MemoryDiagnosticResults}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock FontSize="12.5" Margin="0,0,0,4" TextWrapping="Wrap">
+                                        <Run Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}" FontWeight="SemiBold" />
+                                        <Run Text=" — " />
+                                        <Run Text="{Binding ResultText, Mode=OneWay}">
+                                            <Run.Style>
+                                                <Style TargetType="Run">
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding HadErrors}" Value="True">
+                                                            <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Run.Style>
+                                        </Run>
+                                    </TextBlock>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- Item 100: one-click crash support bundle - zips the selected minidumps/WER
+                 reports (item 49's multi-select) with a system-information export, event-log
+                 exports, a driver inventory, the crash-dump-configuration read-out and a
+                 generated Markdown crash summary. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Crash support bundle" Style="{StaticResource CardTitle}" />
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap">
+                        <Run Text="Zips the selected minidumps (" /><Run Text="{Binding SelectedDumpCount, Mode=OneWay}" /><Run Text=") and WER reports (" />
+                        <Run Text="{Binding SelectedWerReportCount, Mode=OneWay}" /><Run Text=") - select rows on the Dump analysis / Error reports cards above first - together with a full system-information export, System/Application event-log exports, a verbose driver inventory, the crash-dump configuration read-out, and a generated crash summary. Produces the exact package a support forum or technician asks for." />
+                    </TextBlock>
+                    <StackPanel Orientation="Horizontal">
+                        <Button Content="Build support bundle..." Command="{Binding BuildSupportBundleCommand}" Padding="10,4" Margin="0,0,8,0" />
+                        <TextBlock Text="Building..." Foreground="{DynamicResource WarningBrush}" FontWeight="SemiBold" VerticalAlignment="Center"
+                                   Visibility="{Binding IsBuildingSupportBundle, Converter={StaticResource BoolToVisibilityConverter}}" />
+                    </StackPanel>
+                    <TextBlock Text="{Binding SupportBundleStatusText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,6,0,0" />
+                </StackPanel>
+            </Border>
+
             <!-- #1/#8: recent Critical/Error entries from the System and Application logs, last
                  30 days - a faulting-module tooltip is shown when the message matched that shape
                  (typically an Application-log app crash entry). -->
