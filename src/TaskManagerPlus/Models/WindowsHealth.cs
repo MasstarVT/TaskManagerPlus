@@ -190,3 +190,170 @@ public sealed class RemovableUpdateInfo
     public string Source { get; init; } = string.Empty;
     public bool IsDismPackage { get; init; }
 }
+
+/// <summary>#782: `dism /online /cleanup-image /analyzecomponentstore` output, parsed into
+/// display-ready fields. Sizes are kept as DISM's own formatted text ("12.86 GB") rather than
+/// re-parsed to bytes - this app doesn't control DISM's exact unit/locale formatting, so
+/// re-parsing it risks silently showing a wrong number; the raw text is never wrong. RawOutput
+/// backs the "show details" expander. See DismService.AnalyzeComponentStoreAsync.</summary>
+public sealed class ComponentStoreAnalysis
+{
+    public bool Success { get; init; }
+    public string? ErrorText { get; init; }
+    public string? ActualSizeText { get; init; }
+    public string? SharedWithWindowsText { get; init; }
+    public string? BackupsAndDisabledFeaturesText { get; init; }
+    public string? CacheAndTempDataText { get; init; }
+    public string? DateOfLastCleanupText { get; init; }
+    public int? ReclaimablePackageCount { get; init; }
+    public bool? CleanupRecommended { get; init; }
+    public string RawOutput { get; init; } = string.Empty;
+}
+
+/// <summary>#784: which of DISM's three health-check verbs a DismHealthScanResult came from -
+/// CheckHealth (instant, reads a stored corruption flag), ScanHealth (a real scan, can take
+/// minutes), RestoreHealth (attempts an actual repair, needs a repair source on failure).</summary>
+public enum DismHealthOperation
+{
+    CheckHealth,
+    ScanHealth,
+    RestoreHealth,
+}
+
+/// <summary>#784: the result of one CheckHealth/ScanHealth/RestoreHealth run. NeedsRepairSource is
+/// true specifically for RestoreHealth failing with 0x800f081f - see DismService.RunHealthScanAsync
+/// and #785's RestoreHealth source picker. DismLogTail is only populated on failure (per this
+/// item's spec: "tail of dism.log shown on failure").</summary>
+public sealed class DismHealthScanResult
+{
+    public DismHealthOperation Operation { get; init; }
+    public bool Success { get; init; }
+    public int ExitCode { get; init; }
+
+    /// <summary>true = "is repairable"/corruption found; false = "no corruption found"; null = the
+    /// tool's own output didn't say either way in a form this app recognizes (CheckHealth also
+    /// doesn't distinguish "not yet scanned" from these two, per DISM's own documented behavior).</summary>
+    public bool? IsRepairable { get; init; }
+    public string Summary { get; init; } = string.Empty;
+    public string RawOutput { get; init; } = string.Empty;
+    public double DurationSeconds { get; init; }
+    public bool NeedsRepairSource { get; init; }
+    public string? ErrorCode { get; init; }
+    public string? DismLogTail { get; init; }
+}
+
+/// <summary>#785: one image index from `dism /Get-WimInfo /WimFile:&lt;path&gt;` - lets the user
+/// pick the edition that matches this PC before RestoreHealth retries against it. See
+/// DismService.GetWimInfoAsync.</summary>
+public sealed class WimImageInfo
+{
+    public int Index { get; init; }
+    public string Name { get; init; } = string.Empty;
+    public string Description { get; init; } = string.Empty;
+    public string SizeText { get; init; } = string.Empty;
+}
+
+/// <summary>#786: one `sfc /scannow` run, with the CBS.log [SR]-line subset extracted rather than
+/// just the one-line verdict - see SfcIntegrityService.RunScanAsync. ExtractedLogPath is where that
+/// subset was written under AppPaths.SettingsDirectory (null if extraction itself failed - the
+/// verdict/lists here still stand on their own since they're parsed before the write).</summary>
+public sealed class SfcScanResult
+{
+    public bool Success { get; init; }
+    public string VerdictText { get; init; } = string.Empty;
+    public bool FoundViolations { get; init; }
+    public bool AllRepaired { get; init; }
+    public List<string> RepairedFiles { get; init; } = new();
+    public List<string> UnrepairableEntries { get; init; } = new();
+    public double DurationSeconds { get; init; }
+    public string? ExtractedLogPath { get; init; }
+    public string RawOutputTail { get; init; } = string.Empty;
+}
+
+/// <summary>#787: one persisted entry in integrity-history.json (AppPaths.SettingsDirectory) -
+/// covers both SFC and every DISM health-scan verb, so the timeline under the scan buttons can show
+/// "SFC", "DISM CheckHealth", "DISM ScanHealth", "DISM RestoreHealth" runs side by side. See
+/// SfcIntegrityService.LoadHistory/AppendAndSave/CompareToPreviousRun.</summary>
+public sealed class IntegrityHistoryEntry
+{
+    public DateTime Timestamp { get; init; }
+    public string ScanType { get; init; } = string.Empty;
+    public string Verdict { get; init; } = string.Empty;
+    public double DurationSeconds { get; init; }
+    public bool Success { get; init; }
+    public List<string> UnrepairableFiles { get; init; } = new();
+
+    public string DurationText => DurationSeconds < 60
+        ? $"{DurationSeconds:0}s"
+        : $"{(int)(DurationSeconds / 60)}m {DurationSeconds % 60:0}s";
+}
+
+/// <summary>#788: the in-place repair-install escape hatch checklist, shown after DISM
+/// /RestoreHealth fails or SFC reports unrepairable files on two scans in a row.
+/// Edition/Build/DisplayVersion/Language/Architecture are read straight from the registry (see
+/// SfcIntegrityService.ReadMatchingImageSpec) so the card names the exact ISO to go find, rather
+/// than leaving the user to guess which one matches this PC. Guidance only - this app never
+/// downloads or launches an OS installer itself.</summary>
+public sealed class RepairInstallGuidance
+{
+    public string TriggerReason { get; init; } = string.Empty;
+    public string EditionText { get; init; } = "Unknown";
+    public string BuildText { get; init; } = "Unknown";
+    public string DisplayVersionText { get; init; } = "Unknown";
+    public string LanguageText { get; init; } = "Unknown";
+    public string ArchitectureText { get; init; } = "Unknown";
+    public List<string> ChecklistItems { get; init; } = new();
+    public string SetupCommandLine { get; init; } = "setup.exe /auto upgrade";
+}
+
+/// <summary>#789: one restore point from the SystemRestore WMI class (root\default, not the usual
+/// root\cimv2 every other WMI read in this app uses). See SystemRestoreService.ReadSnapshotAsync.</summary>
+public sealed class RestorePointInfo
+{
+    public uint SequenceNumber { get; init; }
+    public string Description { get; init; } = string.Empty;
+    public string RestorePointTypeText { get; init; } = string.Empty;
+    public DateTime? CreationTime { get; init; }
+}
+
+/// <summary>#789: "System Protection is on for this volume" inferred from whether vssadmin reports
+/// a shadow-storage association for it - a quick flag, not a verdict (see
+/// SystemRestoreService.BuildVolumeProtection's remarks for why there's no simpler documented
+/// signal). ProtectionLooksOn is true when a shadow-storage association was found; null (not
+/// false) otherwise, since "no association yet" isn't proof protection itself is off.</summary>
+public sealed class VolumeProtectionStatus
+{
+    public string Volume { get; init; } = string.Empty;
+    public bool? ProtectionLooksOn { get; init; }
+    public string Detail { get; init; } = string.Empty;
+}
+
+/// <summary>#789: one volume's shadow-copy storage allocation from `vssadmin list shadowstorage` -
+/// kept as vssadmin's own formatted text per volume (Used/Allocated/Maximum), the same
+/// "don't re-parse a unit this app doesn't control the format of" tradeoff ComponentStoreAnalysis
+/// takes for DISM's sizes above.</summary>
+public sealed class ShadowStorageVolumeInfo
+{
+    public string Volume { get; init; } = string.Empty;
+    public string UsedText { get; init; } = string.Empty;
+    public string AllocatedText { get; init; } = string.Empty;
+    public string MaxText { get; init; } = string.Empty;
+}
+
+/// <summary>#789: the full Recovery-section snapshot - restore points, per-volume protection
+/// inference, shadow-storage allocation, and the documented automatic-restore-point-frequency
+/// policy value. SystemRestoreAvailable is false only when the SystemRestore WMI class itself
+/// couldn't be reached (System Restore not installed at all, e.g. some Server SKUs) - distinguished
+/// from "installed but zero points" (HasNoRestorePointsAtAll) so the UI shows the right message.</summary>
+public sealed class SystemRestoreSnapshot
+{
+    public bool SystemRestoreAvailable { get; init; } = true;
+    public List<RestorePointInfo> RestorePoints { get; init; } = new();
+    public List<VolumeProtectionStatus> VolumeProtection { get; init; } = new();
+    public List<ShadowStorageVolumeInfo> ShadowStorage { get; init; } = new();
+    public int? AutomaticFrequencyMinutes { get; init; }
+    public string? ErrorText { get; init; }
+
+    /// <summary>#789: "System Protection is off, so you have no restore points at all" flag.</summary>
+    public bool HasNoRestorePointsAtAll => SystemRestoreAvailable && RestorePoints.Count == 0;
+}

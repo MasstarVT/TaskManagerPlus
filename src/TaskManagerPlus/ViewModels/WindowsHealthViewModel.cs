@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Windows;
+using Microsoft.Win32;
 using TaskManagerPlus.Common;
 using TaskManagerPlus.Models;
 using TaskManagerPlus.Services;
@@ -166,6 +167,152 @@ public sealed class WindowsHealthViewModel : ObservableObject
 
     #endregion
 
+    #region #782 - Component store analysis
+
+    private ComponentStoreAnalysis? _componentStoreAnalysis;
+    public ComponentStoreAnalysis? ComponentStoreAnalysis { get => _componentStoreAnalysis; private set => SetProperty(ref _componentStoreAnalysis, value); }
+
+    private bool _isAnalyzingComponentStore;
+    public bool IsAnalyzingComponentStore { get => _isAnalyzingComponentStore; private set => SetProperty(ref _isAnalyzingComponentStore, value); }
+
+    private bool _showComponentStoreRawOutput;
+    public bool ShowComponentStoreRawOutput { get => _showComponentStoreRawOutput; set => SetProperty(ref _showComponentStoreRawOutput, value); }
+
+    public AsyncRelayCommand AnalyzeComponentStoreCommand { get; }
+    public RelayCommand ToggleComponentStoreRawOutputCommand { get; }
+
+    #endregion
+
+    #region #783 - Component store cleanup runner (plain + /ResetBase)
+
+    private int _cleanupProgressPercent;
+    public int CleanupProgressPercent { get => _cleanupProgressPercent; private set => SetProperty(ref _cleanupProgressPercent, value); }
+
+    private bool _isCleaningComponentStore;
+    public bool IsCleaningComponentStore { get => _isCleaningComponentStore; private set => SetProperty(ref _isCleaningComponentStore, value); }
+
+    private bool _isResetBaseRunning;
+    public bool IsResetBaseRunning { get => _isResetBaseRunning; private set => SetProperty(ref _isResetBaseRunning, value); }
+
+    private string? _cleanupResultText;
+    public string? CleanupResultText { get => _cleanupResultText; private set => SetProperty(ref _cleanupResultText, value); }
+
+    private CancellationTokenSource? _cleanupCts;
+
+    public AsyncRelayCommand RunComponentCleanupCommand { get; }
+    public AsyncRelayCommand RunComponentCleanupResetBaseCommand { get; }
+    public RelayCommand CancelComponentCleanupCommand { get; }
+
+    #endregion
+
+    #region #784 - DISM health scans (CheckHealth / ScanHealth / RestoreHealth)
+
+    private DismHealthScanResult? _checkHealthResult;
+    public DismHealthScanResult? CheckHealthResult { get => _checkHealthResult; private set => SetProperty(ref _checkHealthResult, value); }
+    private bool _isCheckingHealth;
+    public bool IsCheckingHealth { get => _isCheckingHealth; private set => SetProperty(ref _isCheckingHealth, value); }
+    public AsyncRelayCommand RunCheckHealthCommand { get; }
+
+    private DismHealthScanResult? _scanHealthResult;
+    public DismHealthScanResult? ScanHealthResult { get => _scanHealthResult; private set => SetProperty(ref _scanHealthResult, value); }
+    private bool _isScanningHealth;
+    public bool IsScanningHealth { get => _isScanningHealth; private set => SetProperty(ref _isScanningHealth, value); }
+    private int _scanHealthProgressPercent;
+    public int ScanHealthProgressPercent { get => _scanHealthProgressPercent; private set => SetProperty(ref _scanHealthProgressPercent, value); }
+    private CancellationTokenSource? _scanHealthCts;
+    public AsyncRelayCommand RunScanHealthCommand { get; }
+    public RelayCommand CancelScanHealthCommand { get; }
+
+    private DismHealthScanResult? _restoreHealthResult;
+    public DismHealthScanResult? RestoreHealthResult { get => _restoreHealthResult; private set => SetProperty(ref _restoreHealthResult, value); }
+    private bool _isRestoringHealth;
+    public bool IsRestoringHealth { get => _isRestoringHealth; private set => SetProperty(ref _isRestoringHealth, value); }
+    private int _restoreHealthProgressPercent;
+    public int RestoreHealthProgressPercent { get => _restoreHealthProgressPercent; private set => SetProperty(ref _restoreHealthProgressPercent, value); }
+    private CancellationTokenSource? _restoreHealthCts;
+    public AsyncRelayCommand RunRestoreHealthCommand { get; }
+    public RelayCommand CancelRestoreHealthCommand { get; }
+
+    #endregion
+
+    #region #785 - RestoreHealth source picker (Get-WimInfo)
+
+    public ObservableCollection<WimImageInfo> RepairSourceImages { get; } = new();
+
+    private string? _repairSourceWimPath;
+    public string? RepairSourceWimPath { get => _repairSourceWimPath; private set => SetProperty(ref _repairSourceWimPath, value); }
+
+    private bool _isLoadingRepairSourceImages;
+    public bool IsLoadingRepairSourceImages { get => _isLoadingRepairSourceImages; private set => SetProperty(ref _isLoadingRepairSourceImages, value); }
+
+    private WimImageInfo? _selectedRepairSourceImage;
+    public WimImageInfo? SelectedRepairSourceImage
+    {
+        get => _selectedRepairSourceImage;
+        set { if (SetProperty(ref _selectedRepairSourceImage, value)) RetryRestoreHealthWithSourceCommand.RaiseCanExecuteChanged(); }
+    }
+
+    public AsyncRelayCommand BrowseRepairSourceCommand { get; }
+    public AsyncRelayCommand RetryRestoreHealthWithSourceCommand { get; }
+
+    #endregion
+
+    #region #786 - sfc /scannow
+
+    private SfcScanResult? _sfcScanResult;
+    public SfcScanResult? SfcScanResult { get => _sfcScanResult; private set => SetProperty(ref _sfcScanResult, value); }
+
+    private bool _isRunningSfcScan;
+    public bool IsRunningSfcScan { get => _isRunningSfcScan; private set => SetProperty(ref _isRunningSfcScan, value); }
+
+    private int _sfcProgressPercent;
+    public int SfcProgressPercent { get => _sfcProgressPercent; private set => SetProperty(ref _sfcProgressPercent, value); }
+
+    private CancellationTokenSource? _sfcCts;
+
+    public AsyncRelayCommand RunSfcScanCommand { get; }
+    public RelayCommand CancelSfcScanCommand { get; }
+
+    #endregion
+
+    #region #787 - Integrity scan history
+
+    public ObservableCollection<IntegrityHistoryEntry> IntegrityHistory { get; } = new();
+
+    private string? _sfcComparisonText;
+    public string? SfcComparisonText { get => _sfcComparisonText; private set => SetProperty(ref _sfcComparisonText, value); }
+
+    #endregion
+
+    #region #788 - In-place repair-install guidance
+
+    private RepairInstallGuidance? _repairInstallGuidance;
+    public RepairInstallGuidance? RepairInstallGuidance { get => _repairInstallGuidance; private set => SetProperty(ref _repairInstallGuidance, value); }
+
+    #endregion
+
+    #region #789 - Restore point inventory (Recovery section)
+
+    private SystemRestoreSnapshot? _systemRestoreSnapshot;
+    public SystemRestoreSnapshot? SystemRestoreSnapshot { get => _systemRestoreSnapshot; private set => SetProperty(ref _systemRestoreSnapshot, value); }
+
+    private bool _isLoadingSystemRestore;
+    public bool IsLoadingSystemRestore { get => _isLoadingSystemRestore; private set => SetProperty(ref _isLoadingSystemRestore, value); }
+
+    public AsyncRelayCommand LoadSystemRestoreCommand { get; }
+
+    #endregion
+
+    #region #790 - Create restore point / rstrui launcher
+
+    private bool _isCreatingRestorePoint;
+    public bool IsCreatingRestorePoint { get => _isCreatingRestorePoint; private set => SetProperty(ref _isCreatingRestorePoint, value); }
+
+    public AsyncRelayCommand CreateRestorePointCommand { get; }
+    public RelayCommand LaunchRstruiCommand { get; }
+
+    #endregion
+
     public WindowsHealthViewModel()
     {
         RefreshCommand = new AsyncRelayCommand(RefreshAsync);
@@ -181,6 +328,39 @@ public sealed class WindowsHealthViewModel : ObservableObject
         ClearUpdateCacheCommand = new AsyncRelayCommand(ClearUpdateCacheAsync, () => UpdateCacheInfo is { } c && (c.DownloadCacheSizeBytes > 0 || c.DeliveryOptimizationCacheSizeBytes > 0));
         LoadRemovableUpdatesCommand = new AsyncRelayCommand(LoadRemovableUpdatesAsync);
         UninstallUpdateCommand = new AsyncRelayCommand(UninstallUpdateAsync);
+
+        AnalyzeComponentStoreCommand = new AsyncRelayCommand(AnalyzeComponentStoreAsync, () => !IsAnalyzingComponentStore);
+        ToggleComponentStoreRawOutputCommand = new RelayCommand(() => ShowComponentStoreRawOutput = !ShowComponentStoreRawOutput);
+
+        RunComponentCleanupCommand = new AsyncRelayCommand(() => RunComponentCleanupAsync(resetBase: false), () => !IsCleaningComponentStore && !IsResetBaseRunning);
+        RunComponentCleanupResetBaseCommand = new AsyncRelayCommand(() => RunComponentCleanupAsync(resetBase: true), () => !IsCleaningComponentStore && !IsResetBaseRunning);
+        CancelComponentCleanupCommand = new RelayCommand(() => _cleanupCts?.Cancel(), () => IsCleaningComponentStore || IsResetBaseRunning);
+
+        RunCheckHealthCommand = new AsyncRelayCommand(RunCheckHealthAsync, () => !IsCheckingHealth);
+        RunScanHealthCommand = new AsyncRelayCommand(RunScanHealthAsync, () => !IsScanningHealth);
+        CancelScanHealthCommand = new RelayCommand(() => _scanHealthCts?.Cancel(), () => IsScanningHealth);
+        RunRestoreHealthCommand = new AsyncRelayCommand(() => RunRestoreHealthAsync(null), () => !IsRestoringHealth);
+        CancelRestoreHealthCommand = new RelayCommand(() => _restoreHealthCts?.Cancel(), () => IsRestoringHealth);
+
+        BrowseRepairSourceCommand = new AsyncRelayCommand(BrowseRepairSourceAsync, () => !IsLoadingRepairSourceImages);
+        RetryRestoreHealthWithSourceCommand = new AsyncRelayCommand(RetryRestoreHealthWithSourceAsync, () => SelectedRepairSourceImage is not null && !IsRestoringHealth);
+
+        RunSfcScanCommand = new AsyncRelayCommand(RunSfcScanAsync, () => !IsRunningSfcScan);
+        CancelSfcScanCommand = new RelayCommand(() => _sfcCts?.Cancel(), () => IsRunningSfcScan);
+
+        LoadSystemRestoreCommand = new AsyncRelayCommand(LoadSystemRestoreAsync);
+        CreateRestorePointCommand = new AsyncRelayCommand(CreateRestorePointAsync, () => !IsCreatingRestorePoint);
+        LaunchRstruiCommand = new RelayCommand(SystemRestoreService.LaunchRstrui);
+
+        // #787: integrity-history.json is a small local file (same cost as ThemeService's theme.json
+        // or PollIntervalSettingsService's own JSON) - cheap enough to load up front, unlike every
+        // other action on this tab, so the timeline and #788's repair-install guidance already
+        // reflect prior sessions' scans the moment the tab opens rather than staying empty until the
+        // user runs a brand new scan.
+        var priorHistory = SfcIntegrityService.LoadHistory();
+        foreach (var h in priorHistory.OrderByDescending(h => h.Timestamp)) IntegrityHistory.Add(h);
+        SfcComparisonText = SfcIntegrityService.CompareToPreviousRun(priorHistory, "SFC");
+        UpdateRepairInstallGuidance();
 
         _ = RefreshAsync();
     }
@@ -536,6 +716,299 @@ public sealed class WindowsHealthViewModel : ObservableObject
         finally
         {
             IsUninstallingUpdate = false;
+        }
+    }
+
+    /// <summary>#782: `dism /online /cleanup-image /analyzecomponentstore` - read-only, so no
+    /// confirmation, matching CheckHealth/LoadServicingPackages' own "read-only diagnostic, just a
+    /// button" treatment.</summary>
+    private async Task AnalyzeComponentStoreAsync()
+    {
+        IsAnalyzingComponentStore = true;
+        try
+        {
+            ComponentStoreAnalysis = await DismService.AnalyzeComponentStoreAsync();
+        }
+        finally
+        {
+            IsAnalyzingComponentStore = false;
+        }
+    }
+
+    /// <summary>#783: plain `/StartComponentCleanup` (reversible) or `/StartComponentCleanup
+    /// /ResetBase` (permanent) - both confirmed first since both delete files from the component
+    /// store, but with deliberately different wording/icon: ResetBase's dialog spells out the exact,
+    /// irreversible effect (can never uninstall a currently installed update/driver afterward) and
+    /// - per #790's cross-reference - points at "Create a restore point" in the Recovery section
+    /// below as a suggested pre-step (a restore point doesn't undo ResetBase itself, but is still
+    /// worth having before any repair session). Progress streamed into CleanupProgressPercent;
+    /// cancellable via CancelComponentCleanupCommand/_cleanupCts.</summary>
+    private async Task RunComponentCleanupAsync(bool resetBase)
+    {
+        string message = resetBase
+            ? "This runs:\n\n  dism /online /cleanup-image /startcomponentcleanup /resetbase\n\n" +
+              "PERMANENT: afterward you can no longer uninstall ANY Windows update or driver that's " +
+              "currently installed - the update itself stays installed and working, but its prior " +
+              "version is gone from the component store for good. This cannot be undone.\n\n" +
+              "Consider creating a restore point first (see \"Create a restore point\" in the Recovery " +
+              "section below) before continuing - it won't undo this specific effect, but it's a " +
+              "reasonable safety net before any repair session.\n\nRun /ResetBase now?"
+            : "This runs:\n\n  dism /online /cleanup-image /startcomponentcleanup\n\n" +
+              "Removes superseded versions of components from the WinSxS store. Reversible - Windows " +
+              "can still uninstall any currently installed update afterward. Run cleanup now?";
+
+        var confirm = MessageBox.Show(message,
+            resetBase ? "Component store cleanup - /ResetBase (PERMANENT)" : "Component store cleanup",
+            MessageBoxButton.YesNo, resetBase ? MessageBoxImage.Stop : MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        if (resetBase) IsResetBaseRunning = true; else IsCleaningComponentStore = true;
+        CleanupProgressPercent = 0;
+        CleanupResultText = null;
+        _cleanupCts = new CancellationTokenSource();
+        CancelComponentCleanupCommand.RaiseCanExecuteChanged();
+        try
+        {
+            var progress = new Progress<int>(p => CleanupProgressPercent = p);
+            var (success, output, exitCode) = await DismService.StartComponentCleanupAsync(resetBase, progress, _cleanupCts.Token).ConfigureAwait(true);
+            string tail = output.Length > 1500 ? output[^1500..] : output;
+            CleanupResultText = success
+                ? resetBase ? "/ResetBase cleanup finished." : "Component store cleanup finished."
+                : $"Cleanup failed (exit code {exitCode}):\n{tail}";
+
+            if (success)
+                ComponentStoreAnalysis = await DismService.AnalyzeComponentStoreAsync().ConfigureAwait(true);
+        }
+        finally
+        {
+            IsCleaningComponentStore = false;
+            IsResetBaseRunning = false;
+            _cleanupCts = null;
+            CancelComponentCleanupCommand.RaiseCanExecuteChanged();
+        }
+    }
+
+    /// <summary>#784: CheckHealth (instant, reads a stored flag) - no progress/cancel needed, same
+    /// as this tab's other quick read-only checks.</summary>
+    private async Task RunCheckHealthAsync()
+    {
+        IsCheckingHealth = true;
+        try
+        {
+            var result = await DismService.CheckHealthAsync().ConfigureAwait(true);
+            CheckHealthResult = result;
+            AppendIntegrityHistory("DISM CheckHealth", result.Summary, result.Success, result.DurationSeconds,
+                result.IsRepairable == true ? new List<string> { "Component store corruption flagged (CheckHealth gives no per-file detail)" } : new List<string>());
+        }
+        finally
+        {
+            IsCheckingHealth = false;
+        }
+    }
+
+    /// <summary>#784: ScanHealth - a real scan, can take minutes. Progress streamed into
+    /// ScanHealthProgressPercent; cancellable via CancelScanHealthCommand/_scanHealthCts.</summary>
+    private async Task RunScanHealthAsync()
+    {
+        IsScanningHealth = true;
+        ScanHealthProgressPercent = 0;
+        _scanHealthCts = new CancellationTokenSource();
+        CancelScanHealthCommand.RaiseCanExecuteChanged();
+        try
+        {
+            var progress = new Progress<int>(p => ScanHealthProgressPercent = p);
+            var result = await DismService.ScanHealthAsync(progress, _scanHealthCts.Token).ConfigureAwait(true);
+            ScanHealthResult = result;
+            AppendIntegrityHistory("DISM ScanHealth", result.Summary, result.Success, result.DurationSeconds,
+                result.IsRepairable == true ? new List<string> { "Component store corruption found" } : new List<string>());
+        }
+        finally
+        {
+            IsScanningHealth = false;
+            _scanHealthCts = null;
+            CancelScanHealthCommand.RaiseCanExecuteChanged();
+        }
+    }
+
+    /// <summary>#784/#785: RestoreHealth - attempts an actual repair, optionally against the
+    /// #785-picked WIM source (sourceArg is the pre-built `/Source:WIM:"&lt;path&gt;":&lt;index&gt;
+    /// /LimitAccess` argument, or null for the plain Windows-Update-backed attempt). On success or
+    /// failure alike, re-evaluates #788's repair-install guidance (a fresh failure is the more urgent
+    /// trigger for that card). Progress into RestoreHealthProgressPercent; cancellable via
+    /// CancelRestoreHealthCommand/_restoreHealthCts.</summary>
+    private async Task RunRestoreHealthAsync(string? sourceArg)
+    {
+        IsRestoringHealth = true;
+        RestoreHealthProgressPercent = 0;
+        _restoreHealthCts = new CancellationTokenSource();
+        CancelRestoreHealthCommand.RaiseCanExecuteChanged();
+        try
+        {
+            var progress = new Progress<int>(p => RestoreHealthProgressPercent = p);
+            var result = await DismService.RestoreHealthAsync(sourceArg, progress, _restoreHealthCts.Token).ConfigureAwait(true);
+            RestoreHealthResult = result;
+            AppendIntegrityHistory("DISM RestoreHealth", result.Summary, result.Success, result.DurationSeconds,
+                result.Success ? new List<string>() : new List<string> { $"RestoreHealth failed{(result.ErrorCode is { } code ? $" ({code})" : string.Empty)}" });
+            UpdateRepairInstallGuidance();
+
+            if (result.NeedsRepairSource)
+                StatusMessage = "DISM /RestoreHealth needs a repair source (error 0x800f081f) - use \"Browse for repair source\" below to pick a mounted ISO's install.wim/install.esd.";
+        }
+        finally
+        {
+            IsRestoringHealth = false;
+            _restoreHealthCts = null;
+            CancelRestoreHealthCommand.RaiseCanExecuteChanged();
+        }
+    }
+
+    /// <summary>#785: browse to a mounted ISO's sources\install.wim/install.esd and list its image
+    /// indexes via `Get-WimInfo`, so RetryRestoreHealthWithSourceAsync can build a `/Source:WIM:...`
+    /// argument that names the matching edition instead of guessing index 1.</summary>
+    private async Task BrowseRepairSourceAsync()
+    {
+        var dialog = new OpenFileDialog
+        {
+            Title = "Browse for a repair source (install.wim or install.esd from a mounted ISO)",
+            Filter = "Windows image files (*.wim;*.esd)|*.wim;*.esd|All files (*.*)|*.*",
+        };
+        if (dialog.ShowDialog() != true) return;
+
+        IsLoadingRepairSourceImages = true;
+        RepairSourceImages.Clear();
+        SelectedRepairSourceImage = null;
+        try
+        {
+            var (success, images, error) = await DismService.GetWimInfoAsync(dialog.FileName).ConfigureAwait(true);
+            if (success)
+            {
+                RepairSourceWimPath = dialog.FileName;
+                foreach (var image in images) RepairSourceImages.Add(image);
+            }
+            else
+            {
+                RepairSourceWimPath = null;
+                StatusMessage = $"Couldn't read image indexes from \"{dialog.FileName}\": {error}";
+            }
+        }
+        finally
+        {
+            IsLoadingRepairSourceImages = false;
+        }
+    }
+
+    /// <summary>#785: retries RestoreHealth against the picked WIM path + image index.</summary>
+    private async Task RetryRestoreHealthWithSourceAsync()
+    {
+        if (SelectedRepairSourceImage is not { } image || RepairSourceWimPath is not { } path) return;
+        string sourceArg = $"/Source:WIM:\"{path}\":{image.Index} /LimitAccess";
+        await RunRestoreHealthAsync(sourceArg);
+    }
+
+    /// <summary>#786: `sfc /scannow` with CBS.log [SR]-line extraction - read/repair-in-place, same
+    /// "no confirmation, it's the whole point of the button" treatment as #784's DISM health scans.
+    /// Progress into SfcProgressPercent; cancellable via CancelSfcScanCommand/_sfcCts.</summary>
+    private async Task RunSfcScanAsync()
+    {
+        IsRunningSfcScan = true;
+        SfcProgressPercent = 0;
+        _sfcCts = new CancellationTokenSource();
+        CancelSfcScanCommand.RaiseCanExecuteChanged();
+        try
+        {
+            var progress = new Progress<int>(p => SfcProgressPercent = p);
+            var result = await SfcIntegrityService.RunScanAsync(progress, _sfcCts.Token).ConfigureAwait(true);
+            SfcScanResult = result;
+            AppendIntegrityHistory("SFC", result.VerdictText, result.Success, result.DurationSeconds, result.UnrepairableEntries);
+            UpdateRepairInstallGuidance();
+        }
+        finally
+        {
+            IsRunningSfcScan = false;
+            _sfcCts = null;
+            CancelSfcScanCommand.RaiseCanExecuteChanged();
+        }
+    }
+
+    /// <summary>#787: appends one scan's result to integrity-history.json (shared by SFC and every
+    /// DISM health-scan verb) and refreshes both the in-memory timeline and the SFC-vs-previous-SFC
+    /// comparison text shown under the scan buttons.</summary>
+    private void AppendIntegrityHistory(string scanType, string verdict, bool success, double durationSeconds, List<string> unrepairableFiles)
+    {
+        var entry = new IntegrityHistoryEntry
+        {
+            Timestamp = DateTime.Now,
+            ScanType = scanType,
+            Verdict = verdict,
+            DurationSeconds = durationSeconds,
+            Success = success,
+            UnrepairableFiles = unrepairableFiles,
+        };
+        var history = SfcIntegrityService.AppendAndSave(entry);
+        IntegrityHistory.Clear();
+        foreach (var h in history.OrderByDescending(h => h.Timestamp)) IntegrityHistory.Add(h);
+        SfcComparisonText = SfcIntegrityService.CompareToPreviousRun(history, "SFC");
+    }
+
+    /// <summary>#788: recomputes whether the in-place-repair-install guidance card should show. A
+    /// RestoreHealth failure earlier in this session takes priority (the more urgent, immediate
+    /// trigger); otherwise falls back to the persisted history's own "two unrepairable SFC scans in a
+    /// row" signal, so the card still shows on a fresh tab open even if that state was reached in an
+    /// earlier session.</summary>
+    private void UpdateRepairInstallGuidance()
+    {
+        if (RestoreHealthResult is { Success: false } rh)
+        {
+            RepairInstallGuidance = SfcIntegrityService.BuildGuidance(
+                $"DISM /RestoreHealth failed (exit code {rh.ExitCode}{(rh.ErrorCode is { } code ? $", {code}" : string.Empty)}).");
+            return;
+        }
+
+        var history = SfcIntegrityService.LoadHistory();
+        RepairInstallGuidance = SfcIntegrityService.HasRepeatedUnrepairableSfcFailures(history)
+            ? SfcIntegrityService.BuildGuidance("sfc /scannow reported unrepairable files on the two most recent scans in a row.")
+            : null;
+    }
+
+    /// <summary>#789: restore point inventory, per-volume System Protection inference, shadow-storage
+    /// allocation and the automatic-frequency policy readout - all four bundled in one snapshot call.</summary>
+    private async Task LoadSystemRestoreAsync()
+    {
+        IsLoadingSystemRestore = true;
+        try
+        {
+            SystemRestoreSnapshot = await SystemRestoreService.ReadSnapshotAsync().ConfigureAwait(true);
+        }
+        finally
+        {
+            IsLoadingSystemRestore = false;
+        }
+    }
+
+    /// <summary>#790: creates a MODIFY_SETTINGS-type restore point via the SystemRestore WMI class -
+    /// confirmed first (it does mutate system state / shadow-storage usage), then reloads the Recovery
+    /// snapshot so the new point shows up in the inventory immediately.</summary>
+    private async Task CreateRestorePointAsync()
+    {
+        var confirm = MessageBox.Show(
+            "This creates a new System Restore point via Windows' own SystemRestore WMI class - the " +
+            "same action as Control Panel's \"Create a restore point\" button. Windows may skip it if " +
+            "System Protection is off for the system volume, or if one was created very recently. " +
+            "Create a restore point now?",
+            "Create a restore point", MessageBoxButton.YesNo, MessageBoxImage.Question);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        IsCreatingRestorePoint = true;
+        try
+        {
+            string description = $"Task Manager Plus - manual restore point {DateTime.Now:yyyy-MM-dd HH:mm}";
+            var (success, message) = await SystemRestoreService.CreateRestorePointAsync(description).ConfigureAwait(true);
+            StatusMessage = success ? "Restore point created." : $"Couldn't create restore point: {message}";
+            if (success) await LoadSystemRestoreAsync();
+        }
+        finally
+        {
+            IsCreatingRestorePoint = false;
         }
     }
 }
