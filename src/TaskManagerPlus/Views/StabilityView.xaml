@@ -138,12 +138,265 @@
                 </Grid>
             </Border>
 
+            <!-- =================================================================================
+                 Round 20, items 89-95: "Clustering crashes over time and correlating with
+                 changes" - a unified layer over EVERY per-source card below (bugchecks, live
+                 kernel reports, WER reports, application crashes/hangs, service failures, TDRs,
+                 WHEA errors, unexpected shutdowns). Item 89 calls this out as "the new default
+                 view of the Stability tab", so it's placed first (right after the top verdict/
+                 alert banners, ahead of the still-useful per-source "raw source" cards, which
+                 remain below rather than being folded into an expander).
+                 ================================================================================= -->
+
+            <!-- Item 90: crash signature clusters - displayed above the timeline per item 90's own
+                 instruction, turning "thirty rows" into "three distinct problems". -->
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel>
+                    <TextBlock Text="Crash signature clusters" Style="{StaticResource CardTitle}" />
+                    <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,-8,0,10">
+                        <Run Text="Kernel faults clustered by bugcheck code + blamed module + parameter shape; user-mode crashes/hangs clustered by WER bucket." />
+                    </TextBlock>
+
+                    <ItemsControl ItemsSource="{Binding CrashClusters}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="8" Padding="12,10" Margin="0,0,0,8">
+                                    <StackPanel>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" Text="{Binding Cluster.Title}" FontSize="12.5" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                            <Border Grid.Column="1" Background="{DynamicResource DangerBrush}" CornerRadius="10" Padding="8,2" Margin="8,0,0,0" VerticalAlignment="Top">
+                                                <Border.Style>
+                                                    <Style TargetType="Border">
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding Cluster.IsKernelFault}" Value="False">
+                                                                <Setter Property="Background" Value="{DynamicResource WarningBrush}" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Border.Style>
+                                                <TextBlock Text="{Binding Cluster.Count}" FontSize="11" FontWeight="SemiBold" Foreground="White" />
+                                            </Border>
+                                        </Grid>
+                                        <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,3,0,0" Text="{Binding Cluster.Description}" />
+                                        <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,1,0,0">
+                                            <Run Text="First seen: " /><Run Text="{Binding Cluster.FirstSeen, StringFormat={}{0:g}, Mode=OneWay}" />
+                                            <Run Text=" · Last seen: " /><Run Text="{Binding Cluster.LastSeen, StringFormat={}{0:g}, Mode=OneWay}" />
+                                        </TextBlock>
+                                        <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,1,0,0" Text="{Binding Cluster.CadenceText}" />
+
+                                        <!-- Items 92-94: on-demand "what changed" panel - only computed the moment this
+                                             Expander is actually opened (see CrashClusterViewModel.IsWhatChangedExpanded). -->
+                                        <Expander Header="What changed before this started (48h lookback)"
+                                                  IsExpanded="{Binding IsWhatChangedExpanded, Mode=TwoWay}" Margin="0,8,0,0" FontSize="12">
+                                            <StackPanel Margin="0,6,0,0">
+                                                <TextBlock Text="Checking driver installs, Windows Updates and application installs…" Style="{StaticResource SubStat}"
+                                                           Visibility="{Binding IsLoadingWhatChanged, Converter={StaticResource BoolToVisibilityConverter}}" />
+
+                                                <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource DangerBrush}">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding WhatChanged.ComputedOk}" Value="False">
+                                                                    <Setter Property="Visibility" Value="Visible" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                    <Run Text="Could not check what changed: " /><Run Text="{Binding WhatChanged.ErrorText, Mode=OneWay}" />
+                                                </TextBlock>
+
+                                                <ItemsControl ItemsSource="{Binding WhatChanged.Entries}">
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate>
+                                                            <Grid Margin="0,0,0,5">
+                                                                <Grid.ColumnDefinitions>
+                                                                    <ColumnDefinition Width="Auto" />
+                                                                    <ColumnDefinition Width="*" />
+                                                                </Grid.ColumnDefinitions>
+                                                                <Border Grid.Column="0" Background="{DynamicResource BgPanelBrush}" CornerRadius="8" Padding="7,2" Margin="0,0,8,0" VerticalAlignment="Top">
+                                                                    <TextBlock Text="{Binding Category}" FontSize="10.5" FontWeight="SemiBold" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                                                </Border>
+                                                                <StackPanel Grid.Column="1">
+                                                                    <TextBlock FontSize="12" TextWrapping="Wrap">
+                                                                        <Run Text="{Binding Timestamp, StringFormat={}{0:g}, Mode=OneWay}" FontWeight="SemiBold" />
+                                                                        <Run Text=" — " /><Run Text="{Binding Description}" />
+                                                                    </TextBlock>
+                                                                    <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Text="{Binding Detail}"
+                                                                               Visibility="{Binding Detail, Converter={StaticResource NullToVisibilityConverter}}" />
+                                                                </StackPanel>
+                                                            </Grid>
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+
+                                                <TextBlock Text="No driver, Windows Update or application install found in the 48 hours before this cluster started."
+                                                           TextWrapping="Wrap">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                            <Style.Triggers>
+                                                                <MultiDataTrigger>
+                                                                    <MultiDataTrigger.Conditions>
+                                                                        <Condition Binding="{Binding WhatChanged.ComputedOk}" Value="True" />
+                                                                        <Condition Binding="{Binding WhatChanged.Entries.Count}" Value="0" />
+                                                                    </MultiDataTrigger.Conditions>
+                                                                    <Setter Property="Visibility" Value="Visible" />
+                                                                </MultiDataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+                                            </StackPanel>
+                                        </Expander>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="No clustered kernel or user-mode faults found in the current lookback window.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding CrashClusters.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- Item 91: uptime-at-crash histogram + MTBF/longest-streak - boot times reused from
+                 item 6's own shutdown timeline pairing walk, no second boot-time query. -->
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel>
+                    <TextBlock Text="Uptime before crashing (MTBF)" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="{Binding MtbfSummaryText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,-8,0,10" />
+                    <lvc:CartesianChart Series="{Binding UptimeHistogramSeries}" XAxes="{Binding UptimeHistogramXAxes}" YAxes="{Binding UptimeHistogramYAxes}"
+                                         Height="140" TooltipPosition="Top" Background="Transparent" />
+                </StackPanel>
+            </Border>
+
+            <!-- Item 89: the unified timeline itself - one chronological view merging every
+                 source above, with a source filter. -->
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel>
+                    <TextBlock Text="Unified crash timeline" Style="{StaticResource CardTitle}" />
+
+                    <ItemsControl ItemsSource="{Binding TimelineSourceFilters}" Margin="0,-6,0,10">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel Orientation="Horizontal" />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <CheckBox Content="{Binding Label}" IsChecked="{Binding IsChecked, Mode=TwoWay}" FontSize="11.5" Margin="0,0,12,4" />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <ItemsControl ItemsSource="{Binding FilteredTimeline}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Expander Margin="0,0,0,4" IsExpanded="{Binding IsExpanded, Mode=TwoWay}">
+                                    <Expander.Header>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <Border Grid.Column="0" Width="9" Height="9" CornerRadius="5" Margin="0,0,8,0" VerticalAlignment="Center">
+                                                <Border.Style>
+                                                    <Style TargetType="Border">
+                                                        <Setter Property="Background" Value="{DynamicResource WarningBrush}" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding Row.Severity}" Value="Critical">
+                                                                <Setter Property="Background" Value="{DynamicResource DangerBrush}" />
+                                                            </DataTrigger>
+                                                            <DataTrigger Binding="{Binding Row.Severity}" Value="Info">
+                                                                <Setter Property="Background" Value="{DynamicResource TextTertiaryBrush}" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Border.Style>
+                                            </Border>
+                                            <TextBlock Grid.Column="1" Text="{Binding Row.Timestamp, StringFormat={}{0:g}, Mode=OneWay}"
+                                                       FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,10,0" VerticalAlignment="Center" />
+                                            <TextBlock Grid.Column="2" Text="{Binding Row.Summary}" FontSize="12.5" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                        </Grid>
+                                    </Expander.Header>
+                                    <StackPanel Margin="17,6,0,0">
+                                        <TextBlock Text="{Binding Row.SourceTypeText}" Style="{StaticResource SubStat}" FontWeight="SemiBold" />
+                                        <TextBlock Text="{Binding Row.Detail}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,2,0,0"
+                                                   Visibility="{Binding Row.Detail, Converter={StaticResource NullToVisibilityConverter}}" />
+
+                                        <!-- Item 95: on-demand log-telemetry correlation, lazily loaded when this row is
+                                             expanded (see CrashTimelineRowViewModel.IsExpanded). -->
+                                        <TextBlock Text="Loading logged telemetry around this time…" Style="{StaticResource SubStat}" Margin="0,6,0,0"
+                                                   Visibility="{Binding IsLoadingLogCorrelation, Converter={StaticResource BoolToVisibilityConverter}}" />
+                                        <StackPanel Margin="0,6,0,0">
+                                            <StackPanel.Style>
+                                                <Style TargetType="StackPanel">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding LogCorrelation.HasCoverage}" Value="True">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </StackPanel.Style>
+                                            <TextBlock Text="System activity in the 2 minutes before this event" FontSize="11.5" FontWeight="SemiBold" Margin="0,0,0,4" />
+                                            <lvc:CartesianChart Series="{Binding LogSeries}" XAxes="{Binding LogXAxes}" YAxes="{Binding LogYAxes}"
+                                                                 Height="110" TooltipPosition="Top" LegendPosition="Bottom" Background="Transparent" />
+                                            <TextBlock Text="{Binding TelemetrySummaryText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,4,0,0" />
+                                        </StackPanel>
+                                        <TextBlock Text="{Binding LogCorrelation.StatusText}" TextWrapping="Wrap" Margin="0,4,0,0">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding LogCorrelation.HasCoverage}" Value="False">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </StackPanel>
+                                </Expander>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="No matching crash/fault events - try enabling more sources above, or Refresh.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding FilteredTimeline.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
             <Grid Margin="0,0,0,4">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
-                <TextBlock Grid.Column="0" Text="Crash / stability diagnostics" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" FontSize="15" />
+                <TextBlock Grid.Column="0" Text="Crash / stability diagnostics — by source" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" FontSize="15" />
                 <Button Grid.Column="1" Content="Refresh" Command="{Binding RefreshCommand}" Padding="10,4" />
             </Grid>
 

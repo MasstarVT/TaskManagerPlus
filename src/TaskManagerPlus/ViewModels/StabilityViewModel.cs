@@ -544,6 +544,37 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
     private static readonly SKColor AxisTextColor = new(0x9A, 0x9A, 0xA2);
     private static readonly SKColor AxisSeparatorColor = new(0x33, 0x33, 0x3A, 160);
 
+    // ---------------------------------------------------------------------------------------
+    // Round 20, items 89-95: "Clustering crashes over time and correlating with changes" - a
+    // unified layer over EVERY per-source collection above (bugchecks/minidumps, live kernel
+    // reports, WER reports, application crashes/hangs, service failures, TDRs, WHEA errors,
+    // unexpected shutdowns), built once per refresh as its own bundle (see
+    // BuildCorrelationBundle/ApplyCorrelationBundle) rather than re-querying anything - see
+    // CrashCorrelationService.
+    // ---------------------------------------------------------------------------------------
+
+    // Item 89: the full merged timeline plus its source-filter chips. FilteredTimeline (capped,
+    // newest first) is what the card actually binds to - rebuilt from the unfiltered
+    // _unifiedTimeline whenever a chip is toggled, the new default view of this tab per item 89.
+    private List<CrashTimelineRow> _unifiedTimeline = new();
+    private const int MaxTimelineRowsShown = 300;
+    public ObservableCollection<CrashSourceFilterOption> TimelineSourceFilters { get; } = new();
+    public ObservableCollection<CrashTimelineRowViewModel> FilteredTimeline { get; } = new();
+
+    // Item 90: kernel/user-mode fault clusters, displayed above the timeline - most frequent,
+    // then most recent, first (see CrashCorrelationService.BuildClusters).
+    public ObservableCollection<CrashClusterViewModel> CrashClusters { get; } = new();
+
+    // Item 91: uptime-at-crash histogram + MTBF/longest-streak summary text.
+    public ObservableCollection<double> UptimeHistogramCounts { get; } = new();
+    private readonly ColumnSeries<double> _uptimeHistogramColumns;
+    public ISeries[] UptimeHistogramSeries { get; }
+    public Axis[] UptimeHistogramXAxes { get; }
+    public Axis[] UptimeHistogramYAxes { get; }
+
+    private string _mtbfSummaryText = string.Empty;
+    public string MtbfSummaryText { get => _mtbfSummaryText; private set => SetProperty(ref _mtbfSummaryText, value); }
+
     public StabilityViewModel()
     {
         RefreshCommand = new AsyncRelayCommand(RefreshAsync);
@@ -1172,6 +1203,53 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
             },
         };
 
+        // Round 20, item 89: source-filter chips, all on by default - every source contributes to
+        // the timeline until the user narrows it down.
+        foreach (var (type, label) in new (CrashTimelineSourceType, string)[]
+        {
+            (CrashTimelineSourceType.Bugcheck, "Bugchecks"),
+            (CrashTimelineSourceType.LiveKernelReport, "Live kernel reports"),
+            (CrashTimelineSourceType.WerCrash, "WER crashes"),
+            (CrashTimelineSourceType.WerHang, "WER hangs"),
+            (CrashTimelineSourceType.ApplicationCrash, "Application crashes"),
+            (CrashTimelineSourceType.ApplicationHang, "Application hangs"),
+            (CrashTimelineSourceType.ServiceFailure, "Service failures"),
+            (CrashTimelineSourceType.Tdr, "GPU timeouts (TDR)"),
+            (CrashTimelineSourceType.Whea, "Hardware errors (WHEA)"),
+            (CrashTimelineSourceType.UnexpectedShutdown, "Unexpected shutdowns"),
+        })
+        {
+            var option = new CrashSourceFilterOption(type, label);
+            option.Changed += ApplyTimelineFilter;
+            TimelineSourceFilters.Add(option);
+        }
+
+        // Round 20, item 91: uptime-at-crash histogram - same ColumnSeries approach as the
+        // Reliability History / WER history charts above.
+        _uptimeHistogramColumns = new ColumnSeries<double>
+        {
+            Values = UptimeHistogramCounts,
+            Fill = new SolidColorPaint(SKColors.OrangeRed.WithAlpha(200)),
+            Stroke = null,
+            MaxBarWidth = 28,
+        };
+        UptimeHistogramSeries = new ISeries[] { _uptimeHistogramColumns };
+        UptimeHistogramXAxes = new[]
+        {
+            new Axis { Labels = Array.Empty<string>(), LabelsRotation = 0, LabelsPaint = new SolidColorPaint(AxisTextColor), SeparatorsPaint = null },
+        };
+        UptimeHistogramYAxes = new[]
+        {
+            new Axis
+            {
+                MinLimit = 0,
+                MinStep = 1,
+                Labeler = v => $"{v:0}",
+                LabelsPaint = new SolidColorPaint(AxisTextColor),
+                SeparatorsPaint = new SolidColorPaint(AxisSeparatorColor) { StrokeThickness = 1 },
+            },
+        };
+
         _ = RefreshAsync();
     }
 
@@ -1286,6 +1364,9 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
         WerHistoryXAxes[0].LabelsPaint = new SolidColorPaint(textSk);
         WerHistoryYAxes[0].LabelsPaint = new SolidColorPaint(textSk);
         WerHistoryYAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
+        UptimeHistogramXAxes[0].LabelsPaint = new SolidColorPaint(textSk);
+        UptimeHistogramYAxes[0].LabelsPaint = new SolidColorPaint(textSk);
+        UptimeHistogramYAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
     }
 
     private async Task RefreshAsync()
@@ -1315,6 +1396,13 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
             // against without a second WER scan.
             var crashBundle = await Task.Run(() => BuildCrashForensicsBundle(werBundle.HangReports));
             ApplyCrashForensicsBundle(crashBundle);
+
+            // Round 20, items 89-95: unified timeline/clusters/MTBF - a pure layer over the
+            // snapshot/bundle/werBundle/crashBundle data every step above just finished building
+            // (no new expensive query here; items 92-95's own new queries are deferred, on-demand,
+            // per-cluster/per-row - see CrashClusterViewModel/CrashTimelineRowViewModel).
+            var correlationBundle = await Task.Run(() => BuildCorrelationBundle(snapshot, bundle, werBundle, crashBundle));
+            ApplyCorrelationBundle(correlationBundle);
 
             // Round 18, items 71-80: dump configuration and capture-health checklist -
             // independent of everything above (its own registry/WMI/page-file/powercfg/
@@ -1645,6 +1733,105 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
 
         HangHistory.Clear();
         foreach (var h in bundle.HangHistory) HangHistory.Add(h);
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Round 20, items 89-95: unified timeline / clusters / MTBF - a pure layer over the plain
+    // Model lists the snapshot/bundle/werBundle/crashBundle above already hold, same
+    // "compute off the UI thread, apply on the UI thread" shape as every other bundle on this
+    // tab. See CrashCorrelationService for the actual computation.
+    // ---------------------------------------------------------------------------------------
+
+    private sealed class CorrelationBundle
+    {
+        public List<CrashTimelineRow> Timeline { get; init; } = new();
+        public List<CrashCluster> Clusters { get; init; } = new();
+        public List<UptimeAtCrashBucket> Histogram { get; init; } = new();
+        public MtbfSummary Mtbf { get; init; } = new();
+    }
+
+    private static CorrelationBundle BuildCorrelationBundle(
+        StabilitySnapshot snapshot, DumpAnalysisBundle dumpBundle, WerBundle werBundle, CrashForensicsBundle crashBundle)
+    {
+        var werCrashReports = werBundle.CrashBuckets.SelectMany(b => b.Reports).ToList();
+
+        var timeline = CrashCorrelationService.BuildTimeline(
+            minidumps: snapshot.Minidumps,
+            parsedDumps: dumpBundle.ParsedDumps,
+            liveKernelReports: dumpBundle.LiveKernelReports,
+            werCrashReports: werCrashReports,
+            werHangReports: werBundle.HangReports,
+            applicationCrashes: crashBundle.Crashes,
+            applicationHangs: crashBundle.Hangs,
+            serviceFailures: crashBundle.ServiceFailures,
+            tdrEvents: snapshot.TdrEventDetails,
+            wheaErrors: snapshot.WheaErrors,
+            unexpectedShutdowns: snapshot.UnexpectedShutdowns);
+
+        var clusters = CrashCorrelationService.BuildClusters(timeline);
+
+        // Item 91: reuses the boot markers item 6's own shutdown/restart timeline already found
+        // (EventLogService.ReadShutdownTimeline's Kernel-General/Kernel-Boot pairing walk) rather
+        // than a second boot-time query.
+        var bootTimes = snapshot.ShutdownTimeline.Where(e => e.Kind == "Boot").Select(e => e.TimeCreated).ToList();
+
+        // "A crash" for MTBF purposes means a machine-level crash (something that actually took
+        // the whole system down) - bugchecks, watchdog-triggered live kernel reports, and any
+        // unexpected shutdown this app itself classified as bugcheck-caused; BuildUptimeHistogramAndMtbf
+        // de-dupes near-simultaneous entries from these different sources describing the same event.
+        var crashTimes = snapshot.Minidumps.Select(m => m.Timestamp)
+            .Concat(dumpBundle.LiveKernelReports.Select(l => l.Timestamp))
+            .Concat(snapshot.UnexpectedShutdowns.Where(u => u.Cause == ShutdownCause.Bugcheck).Select(u => u.TimeCreated))
+            .ToList();
+
+        var (histogram, mtbf) = CrashCorrelationService.BuildUptimeHistogramAndMtbf(crashTimes, bootTimes);
+
+        return new CorrelationBundle { Timeline = timeline, Clusters = clusters, Histogram = histogram, Mtbf = mtbf };
+    }
+
+    private void ApplyCorrelationBundle(CorrelationBundle bundle)
+    {
+        _unifiedTimeline = bundle.Timeline;
+        ApplyTimelineFilter();
+
+        CrashClusters.Clear();
+        foreach (var c in bundle.Clusters) CrashClusters.Add(new CrashClusterViewModel(c));
+
+        UptimeHistogramCounts.Clear();
+        foreach (var b in bundle.Histogram) UptimeHistogramCounts.Add(b.Count);
+        UptimeHistogramXAxes[0].Labels = bundle.Histogram.Select(b => b.Label).ToArray();
+
+        MtbfSummaryText = BuildMtbfSummaryText(bundle.Mtbf);
+    }
+
+    /// <summary>Item 89: rebuilds FilteredTimeline from the unfiltered _unifiedTimeline against
+    /// whichever TimelineSourceFilters chips are currently checked - called once after every
+    /// refresh and again whenever a chip is toggled. Capped at MaxTimelineRowsShown (newest first)
+    /// so a busy 30-day window doesn't fully realize hundreds of row view models (and their own
+    /// lazy chart state) at once.</summary>
+    private void ApplyTimelineFilter()
+    {
+        var active = TimelineSourceFilters.Where(f => f.IsChecked).Select(f => f.SourceType).ToHashSet();
+        FilteredTimeline.Clear();
+        foreach (var row in _unifiedTimeline.Where(r => active.Contains(r.SourceType)).Take(MaxTimelineRowsShown))
+            FilteredTimeline.Add(new CrashTimelineRowViewModel(row));
+    }
+
+    /// <summary>Item 91: plain-English MTBF/longest-streak read-out under the uptime histogram.</summary>
+    private static string BuildMtbfSummaryText(MtbfSummary mtbf)
+    {
+        if (mtbf.CrashCount == 0) return "No kernel-level crash found in the current lookback window.";
+
+        var parts = new List<string> { $"{mtbf.CrashCount} kernel-level crash(es) across {mtbf.BootCount} known boot(s)." };
+        parts.Add(mtbf.MeanTimeBetweenFailures is { } m
+            ? $"MTBF: about {CrashCorrelationService.FormatTimeSpan(m)}."
+            : "MTBF: not enough crashes yet to compute (need at least two).");
+        if (mtbf.LongestCrashFreeStreak is { } s)
+            parts.Add($"Longest crash-free streak: {CrashCorrelationService.FormatTimeSpan(s)}.");
+        if (mtbf.UnknownUptimeCount > 0)
+            parts.Add($"{mtbf.UnknownUptimeCount} crash(es) had no matching boot record, so aren't in the histogram above.");
+
+        return string.Join(" ", parts);
     }
 
     /// <summary>Round 18, items 71-80: applies the freshly-read CrashDumpConfiguration plus its
