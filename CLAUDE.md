@@ -240,6 +240,14 @@ per file:
   a different license family from the rest of this MIT-licensed project).
   Sensor names aren't standardized across vendors, so headline readings are
   found via a name-hint search (`FindByNameContains`), not an exact lookup.
+- **True per-process network bandwidth**: no counter or WMI class attributes
+  bytes to a PID in real time, so `ProcessBandwidthEtwService` is the other
+  place the app takes a third-party dependency
+  (`Microsoft.Diagnostics.Tracing.TraceEvent`, MIT) to run a short,
+  explicitly user-initiated ETW session on the `Microsoft-Windows-Kernel-
+  Network` provider and aggregate `KERNEL_NETWORK_TASK_TCPIP` events by PID.
+  Never runs unattended — same on-demand-only rule as any other expensive
+  capture, with a visible "capture running" indicator while it's active.
 - **Elevation**: the whole app runs elevated (`app.manifest` →
   `requireAdministrator`) rather than elevating per-action, so ending other
   users' processes and controlling services just work without extra

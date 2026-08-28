@@ -2,6 +2,7 @@
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="clr-namespace:TaskManagerPlus.ViewModels"
+             xmlns:views="clr-namespace:TaskManagerPlus.Views"
              xmlns:lvc="clr-namespace:LiveChartsCore.SkiaSharpView.WPF;assembly=LiveChartsCore.SkiaSharpView.WPF"
              d:DataContext="{d:DesignInstance Type=vm:NetworkViewModel}"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
@@ -263,6 +264,48 @@
                 </StackPanel>
             </Border>
 
+            <!-- #584: link-utilization gauge - current throughput as a percent of the adapter's
+                 negotiated link speed, so "1.2 MB/s" reads as "10% of a 100 Mbit link" or "1% of
+                 gigabit". #585's adapter-throughput-reconciliation flag lands in the same card,
+                 since both are about "is this the adapter I think it is, and how much of it am I
+                 using". -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Link utilization" Style="{StaticResource CardTitle}" />
+                    <StackPanel Orientation="Horizontal" Margin="0,10,0,0"
+                                Visibility="{Binding LinkUtilization, Converter={StaticResource NullToVisibilityConverter}}">
+                        <views:VfdMeter Title="Of negotiated link speed" Glow="False" Width="150"
+                                        Percent="{Binding LinkUtilization.UtilizationPercent}"
+                                        ValueText="{Binding LinkUtilization.UtilizationPercent, StringFormat={}{0:0.#}}" Unit="%"
+                                        SubText="{Binding LinkUtilization.AdapterName}"
+                                        AccentBrush="{Binding LinkUtilization.UtilizationPercent, Converter={StaticResource PercentToBrushConverter}}" />
+                        <TextBlock Style="{StaticResource SubStat}" Margin="14,4,0,0" TextWrapping="Wrap" VerticalAlignment="Center">
+                            <Run Text="Negotiated link speed: " />
+                            <Run Text="{Binding LinkUtilization.SpeedMbps, StringFormat={}{0:0} Mbps}" FontWeight="SemiBold" />
+                        </TextBlock>
+                    </StackPanel>
+                    <TextBlock Text="No active adapter with a usable negotiated link speed was found." Margin="0,10,0,0">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding LinkUtilization}" Value="{x:Null}">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
+                    <!-- #585: adapter-throughput reconciliation flag - hidden when nothing on a
+                         non-primary adapter looks like a meaningful share of current traffic. -->
+                    <Border Background="{DynamicResource WarningBrush}" Opacity="0.15" CornerRadius="4" Padding="10,8" Margin="0,12,0,0"
+                            Visibility="{Binding AdapterTrafficFlagText, Converter={StaticResource NullToVisibilityConverter}}">
+                        <TextBlock Text="{Binding AdapterTrafficFlagText}" Style="{StaticResource SubStat}" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" />
+                    </Border>
+                </StackPanel>
+            </Border>
+
             <!-- Network chart -->
             <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
                 <StackPanel>
@@ -274,6 +317,157 @@
                                          Height="200" TooltipPosition="Top" LegendPosition="Bottom" Background="Transparent"
                                          LegendTextPaint="{Binding Performance.LegendTextPaint}" LegendBackgroundPaint="{Binding Performance.LegendBackgroundPaint}"
                                          TooltipTextPaint="{Binding Performance.TooltipTextPaint}" TooltipBackgroundPaint="{Binding Performance.TooltipBackgroundPaint}" />
+                </StackPanel>
+            </Border>
+
+            <!-- suggestions.md #579-581: on-demand speed test (internet, single-stream HTTP),
+                 bufferbloat/latency-under-load grade, and a separate LAN-only throughput test - so
+                 a slow #579 result can be told apart from a slow local Wi-Fi/LAN link, and a
+                 latency-under-load complaint ("calls stutter when someone else downloads") gets an
+                 actual A-F grade instead of a guess. Never on a timer - each is its own explicit
+                 button with its own visible "running" status text. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Speed &amp; bufferbloat tests" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="A single-stream HTTP test - a rough floor on real capacity, not a certified/ISP-comparable figure. Endpoints default to Cloudflare's public no-auth speed-test service."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+
+                    <!-- #579: download / upload. -->
+                    <TextBlock Text="Internet speed test" Style="{StaticResource SpecLabel}" Margin="0,0,0,6" />
+                    <Grid Margin="0,0,0,6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBox Grid.Column="0" Margin="0,0,8,0" VerticalContentAlignment="Center" Text="{Binding SpeedTestDownloadUrl, UpdateSourceTrigger=PropertyChanged}" />
+                        <Button Grid.Column="1" Content="Test download" Padding="10,4" Command="{Binding RunDownloadTestCommand}" />
+                    </Grid>
+                    <Grid Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBox Grid.Column="0" Margin="0,0,8,0" VerticalContentAlignment="Center" Text="{Binding SpeedTestUploadUrl, UpdateSourceTrigger=PropertyChanged}" />
+                        <Button Grid.Column="1" Content="Test upload" Padding="10,4" Command="{Binding RunUploadTestCommand}" />
+                    </Grid>
+                    <TextBlock Text="{Binding SpeedTestStatusText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,4" />
+                    <UniformGrid Columns="2" Margin="0,4,0,10">
+                        <StackPanel Margin="0,0,8,0" Visibility="{Binding LastDownloadResult, Converter={StaticResource NullToVisibilityConverter}}">
+                            <TextBlock Text="Download" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+                            <TextBlock Text="{Binding LastDownloadResult.Mbps, StringFormat={}{0:0.#} Mbps}" Style="{StaticResource BigStat}" FontSize="20" />
+                        </StackPanel>
+                        <StackPanel Margin="8,0,0,0" Visibility="{Binding LastUploadResult, Converter={StaticResource NullToVisibilityConverter}}">
+                            <TextBlock Text="Upload" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+                            <TextBlock Text="{Binding LastUploadResult.Mbps, StringFormat={}{0:0.#} Mbps}" Style="{StaticResource BigStat}" FontSize="20" />
+                        </StackPanel>
+                    </UniformGrid>
+
+                    <!-- #580: bufferbloat / latency-under-load grade. -->
+                    <TextBlock Text="Bufferbloat (latency under load)" Style="{StaticResource SpecLabel}" Margin="0,6,0,6" />
+                    <Grid Margin="0,0,0,6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBox Grid.Column="0" Margin="0,0,8,0" VerticalContentAlignment="Center" Text="{Binding BufferbloatPingHost, UpdateSourceTrigger=PropertyChanged}" />
+                        <Button Grid.Column="1" Content="Run bufferbloat test" Padding="10,4" Command="{Binding RunBufferbloatTestCommand}" />
+                    </Grid>
+                    <TextBlock Text="{Binding BufferbloatStatusText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,6" />
+                    <Grid Visibility="{Binding BufferbloatResult, Converter={StaticResource NullToVisibilityConverter}}" Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Border Grid.Column="0" CornerRadius="6" Padding="14,6" VerticalAlignment="Center" Margin="0,0,12,0">
+                            <Border.Style>
+                                <Style TargetType="Border">
+                                    <Setter Property="Background" Value="{DynamicResource SuccessBrush}" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding BufferbloatResult.Grade}" Value="C">
+                                            <Setter Property="Background" Value="{DynamicResource WarningBrush}" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding BufferbloatResult.Grade}" Value="D">
+                                            <Setter Property="Background" Value="{DynamicResource WarningBrush}" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding BufferbloatResult.Grade}" Value="F">
+                                            <Setter Property="Background" Value="{DynamicResource DangerBrush}" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding BufferbloatResult.Grade}" Value="N/A">
+                                            <Setter Property="Background" Value="{DynamicResource TextSecondaryBrush}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Border.Style>
+                            <TextBlock Text="{Binding BufferbloatResult.Grade}" FontSize="20" FontWeight="Bold" Foreground="White" />
+                        </Border>
+                        <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                            <TextBlock FontSize="12.5">
+                                <Run Text="Idle " /><Run Text="{Binding BufferbloatResult.IdleLatencyMs, StringFormat={}{0:0.#} ms}" />
+                                <Run Text="  →  Loaded " /><Run Text="{Binding BufferbloatResult.LoadedLatencyMs, StringFormat={}{0:0.#} ms}" />
+                                <Run Text="  (+" /><Run Text="{Binding BufferbloatResult.DeltaMs, StringFormat={}{0:0.#} ms}" /><Run Text=")" />
+                            </TextBlock>
+                        </StackPanel>
+                    </Grid>
+
+                    <!-- #581: LAN-only throughput - either a large SMB-share read, or a raw TCP
+                         stream to a listener started on another machine. -->
+                    <TextBlock Text="LAN throughput" Style="{StaticResource SpecLabel}" Margin="0,6,0,6" />
+                    <Grid Margin="0,0,0,6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBox Grid.Column="0" Margin="0,0,8,0" VerticalContentAlignment="Center"
+                                 Text="{Binding LanTestSmbPath, UpdateSourceTrigger=PropertyChanged}"
+                                 Tag="\\server\share\largefile.ext" />
+                        <Button Grid.Column="1" Content="Test SMB read" Padding="10,4" Command="{Binding RunLanSmbTestCommand}" />
+                    </Grid>
+                    <Grid Margin="0,0,0,6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBox Grid.Column="0" Margin="0,0,8,0" VerticalContentAlignment="Center"
+                                 Text="{Binding LanTestTcpTarget, UpdateSourceTrigger=PropertyChanged}"
+                                 Tag="192.168.1.20:5201" />
+                        <Button Grid.Column="1" Content="Test TCP stream" Padding="10,4" Command="{Binding RunLanTcpTestCommand}" />
+                    </Grid>
+                    <TextBlock Text="SMB: point at a large file on a share you can already read. TCP: host:port of a raw byte-stream listener you started on the other machine (e.g. iperf/ncat) - this app is the client side only."
+                               Style="{StaticResource SubStat}" TextWrapping="Wrap" Opacity="0.7" Margin="0,0,0,6" />
+                    <TextBlock Text="{Binding LanTestStatusText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" />
+
+                    <!-- #579's small history list, shared by #580/#581. -->
+                    <TextBlock Text="Recent test history" Style="{StaticResource SpecLabel}" Margin="0,14,0,6" />
+                    <ItemsControl ItemsSource="{Binding NetworkTestHistory}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,5">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="{Binding TimestampUtc, StringFormat='{}{0:MM/dd HH:mm}'}" FontSize="11.5" Margin="0,0,10,0" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                    <TextBlock Grid.Column="1" FontSize="12" TextWrapping="Wrap">
+                                        <Run Text="{Binding TestKind}" FontWeight="SemiBold" />
+                                        <Run Text=" — " />
+                                        <Run Text="{Binding Summary}" />
+                                    </TextBlock>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="No tests run yet.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding NetworkTestHistory.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
                 </StackPanel>
             </Border>
 
@@ -1240,11 +1434,13 @@
             <!-- Round 9, #45: historical connection-count totals by process, today and this
                  month - a persisted aggregate of the same honest connection-count proxy the live
                  "Top network processes" card above already uses, NOT real byte-level bandwidth
-                 history (Windows exposes no public API for that - see NetworkHistoryService). -->
+                 history (Windows exposes no public API for that - see NetworkHistoryService), EXCEPT
+                 (#583) for any process/day where a #582 ETW capture was actually run - those rows
+                 show the real byte totals instead, clearly distinguished with an up/down arrow. -->
             <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
                 <StackPanel>
                     <TextBlock Text="Historical connection activity" Style="{StaticResource CardTitle}" />
-                    <TextBlock Text="Daily/monthly totals of the same connection-count proxy above - not a byte-rate figure, which Windows exposes no public API for."
+                    <TextBlock Text="Daily/monthly totals of the connection-count proxy above, except where a #582 ETW capture was actually run for that process - those rows show real bytes instead (marked with ↑↓)."
                                Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
                     <Grid>
                         <Grid.ColumnDefinitions>
@@ -1257,7 +1453,30 @@
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
                                         <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,3">
-                                            <Run Text="{Binding ProcessName}" /><Run Text=": " /><Run Text="{Binding ConnectionCountTotal}" />
+                                            <Run Text="{Binding ProcessName}" /><Run Text=": " />
+                                            <Run Text="{Binding ConnectionCountTotal}">
+                                                <Run.Style>
+                                                    <Style TargetType="Run">
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding HasByteData}" Value="True">
+                                                                <Setter Property="Text" Value="{Binding BytesSentTotal, Converter={StaticResource BytesToReadableConverter}, StringFormat='↑{0}'}" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Run.Style>
+                                            </Run>
+                                            <Run Text=" ↓" Foreground="{DynamicResource TextSecondaryBrush}">
+                                                <Run.Style>
+                                                    <Style TargetType="Run">
+                                                        <Setter Property="Text" Value="" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding HasByteData}" Value="True">
+                                                                <Setter Property="Text" Value="{Binding BytesReceivedTotal, Converter={StaticResource BytesToReadableConverter}, StringFormat=' ↓{0}'}" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Run.Style>
+                                            </Run>
                                         </TextBlock>
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
@@ -1269,7 +1488,30 @@
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
                                         <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,3">
-                                            <Run Text="{Binding ProcessName}" /><Run Text=": " /><Run Text="{Binding ConnectionCountTotal}" />
+                                            <Run Text="{Binding ProcessName}" /><Run Text=": " />
+                                            <Run Text="{Binding ConnectionCountTotal}">
+                                                <Run.Style>
+                                                    <Style TargetType="Run">
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding HasByteData}" Value="True">
+                                                                <Setter Property="Text" Value="{Binding BytesSentTotal, Converter={StaticResource BytesToReadableConverter}, StringFormat='↑{0}'}" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Run.Style>
+                                            </Run>
+                                            <Run Text="" Foreground="{DynamicResource TextSecondaryBrush}">
+                                                <Run.Style>
+                                                    <Style TargetType="Run">
+                                                        <Setter Property="Text" Value="" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding HasByteData}" Value="True">
+                                                                <Setter Property="Text" Value="{Binding BytesReceivedTotal, Converter={StaticResource BytesToReadableConverter}, StringFormat=' ↓{0}'}" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Run.Style>
+                                            </Run>
                                         </TextBlock>
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
@@ -2131,6 +2373,109 @@
                             </TextBlock>
                         </StackPanel>
                     </Expander>
+                </StackPanel>
+            </Border>
+
+            <!-- suggestions.md #582/#583: true per-process bandwidth via a short, explicit ETW
+                 capture on the Microsoft-Windows-Kernel-Network provider - the real
+                 bytes-per-process measurement the connection-count list below explicitly can't
+                 provide. New section above that list, per this item's own text. Never automatic -
+                 an explicit Start/Stop button pair with a visible "capture running" note while
+                 active. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" Style="{StaticResource TitleRow}" Margin="0">
+                            <Border Width="9" Height="9" CornerRadius="4.5" Margin="0,0,8,0" VerticalAlignment="Center">
+                                <Border.Style>
+                                    <Style TargetType="Border">
+                                        <Setter Property="Background" Value="{DynamicResource TextSecondaryBrush}" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsEtwCapturing}" Value="True">
+                                                <Setter Property="Background" Value="{DynamicResource DangerBrush}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Border.Style>
+                            </Border>
+                            <TextBlock Text="Per-process bandwidth (ETW capture)" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Orientation="Horizontal">
+                            <Button Padding="10,4">
+                                <Button.Style>
+                                    <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                        <Setter Property="Content" Value="Start capture" />
+                                        <Setter Property="Command" Value="{Binding StartEtwCaptureCommand}" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsEtwCapturing}" Value="True">
+                                                <Setter Property="Content" Value="Stop capture" />
+                                                <Setter Property="Command" Value="{Binding StopEtwCaptureCommand}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Button.Style>
+                            </Button>
+                        </StackPanel>
+                    </Grid>
+                    <TextBlock Text="Real send/receive bytes per process, traced live from the kernel network stack - not a proxy, unlike the connection-count list below. Runs only while a capture is active; stop it to see results."
+                               Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" />
+
+                    <!-- Explicit "capture running" note, per this item's own text. -->
+                    <Border Background="{DynamicResource DangerBrush}" Opacity="0.15" CornerRadius="4" Padding="10,6" Margin="0,0,0,8"
+                            Visibility="{Binding IsEtwCapturing, Converter={StaticResource BoolToVisibilityConverter}}">
+                        <TextBlock Text="{Binding EtwCaptureStatusText}" Style="{StaticResource SubStat}" Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" />
+                    </Border>
+                    <TextBlock Text="{Binding EtwCaptureStatusText}" TextWrapping="Wrap" Margin="0,0,0,8">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsEtwCapturing}" Value="True">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
+                    <ItemsControl ItemsSource="{Binding EtwBandwidthResults}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" FontSize="12.5">
+                                        <Run Text="{Binding ProcessName}" FontWeight="SemiBold" />
+                                        <Run Text=" (PID " /><Run Text="{Binding Pid}" /><Run Text=")" />
+                                    </TextBlock>
+                                    <TextBlock Grid.Column="1" FontSize="12.5" Foreground="{DynamicResource TextSecondaryBrush}">
+                                        <Run Text="{Binding BytesSent, Converter={StaticResource BytesToReadableConverter}, StringFormat='↑ {0}'}" />
+                                        <Run Text="   " />
+                                        <Run Text="{Binding BytesReceived, Converter={StaticResource BytesToReadableConverter}, StringFormat='↓ {0}'}" />
+                                    </TextBlock>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="No capture results yet - click Start capture, let it run for a few seconds while there's network activity, then Stop.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding EtwBandwidthResults.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <TextBlock Text="#583: completed captures are also persisted into the History Today/This Month lists below as a real data-volume series, alongside the existing connection-count totals."
+                               Style="{StaticResource SubStat}" Margin="0,8,0,0" TextWrapping="Wrap" Opacity="0.7" />
                 </StackPanel>
             </Border>
 
@@ -3276,6 +3621,238 @@
                         <Button Content="Reset NetBIOS name cache" Padding="8,5" Command="{Binding ResetNetBiosCacheCommand}" />
                     </UniformGrid>
                     <TextBlock Text="{Binding StackResetStatusText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,10,0,0" />
+                </StackPanel>
+            </Border>
+
+            <!-- suggestions.md #586-590 "SMB and network drives": share latency (#586), mapped-drive
+                 inventory with an on-demand reachability test and confirmed Disconnect (#587),
+                 negotiated dialect/signing/encryption per connection (#588), an on-demand SMBClient
+                 event scan (#589), and Offline Files/CSC state, hidden entirely when not in use
+                 (#590). "The PC is slow" very often means one unresponsive network share silently
+                 stalling Explorer, a file dialog, or a save - nothing else on this tab surfaces that. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Network drives" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Refresh" Padding="10,4" Command="{Binding RefreshNetworkDrivesCommand}" />
+                    </Grid>
+                    <TextBlock Text="{Binding NetworkDrivesStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,12" TextWrapping="Wrap" />
+
+                    <!-- #586: per-connected-share latency/queue-depth, charting the slow ones. -->
+                    <TextBlock Text="Share latency" Style="{StaticResource SpecLabel}" Margin="0,0,0,6" />
+                    <DataGrid ItemsSource="{Binding SmbShareLatencies}" AutoGenerateColumns="False" IsReadOnly="True" HeadersVisibility="Column"
+                              MaxHeight="220" Margin="0,0,0,4">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Share" Binding="{Binding ShareName}" Width="1.3*" />
+                            <DataGridTextColumn Header="Avg read" Binding="{Binding AvgReadLatencyMs, StringFormat={}{0:0.#} ms}" Width="0.9*" />
+                            <DataGridTextColumn Header="Avg write" Binding="{Binding AvgWriteLatencyMs, StringFormat={}{0:0.#} ms}" Width="0.9*" />
+                            <DataGridTextColumn Header="Queue depth" Binding="{Binding AvgDataQueueLength, StringFormat={}{0:0.##}}" Width="1.0*" />
+                            <DataGridTextColumn Header="Throughput" Binding="{Binding DataBytesPerSec, Converter={StaticResource BytesToReadableConverter}, ConverterParameter=rate}" Width="1.0*" />
+                            <DataGridTemplateColumn Header="" Width="0.7*">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="Slow" Foreground="{DynamicResource WarningBrush}" FontWeight="SemiBold" FontSize="11.5" VerticalAlignment="Center"
+                                                   Visibility="{Binding LooksSlow, Converter={StaticResource BoolToVisibilityConverter}}" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <TextBlock Text="No connected SMB shares (or the SMB Client Shares performance counters aren't available on this machine).">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding SmbShareLatencies.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
+                    <!-- #587: mapped-drive inventory - HKCU\Network + live `net use`, with an
+                         on-demand reachability test and a confirmed Disconnect. -->
+                    <TextBlock Text="Mapped drives" Style="{StaticResource SpecLabel}" Margin="0,16,0,6" />
+                    <DataGrid ItemsSource="{Binding MappedDrives}" AutoGenerateColumns="False" IsReadOnly="True" HeadersVisibility="Column"
+                              MaxHeight="260" Margin="0,0,0,4">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Drive" Binding="{Binding DriveLetter}" Width="0.6*" />
+                            <DataGridTextColumn Header="Path" Binding="{Binding RemotePath}" Width="1.8*" />
+                            <DataGridTextColumn Header="State" Binding="{Binding ConnectionState}" Width="1.1*" />
+                            <DataGridCheckBoxColumn Header="Reconnect" Binding="{Binding ReconnectAtLogon}" Width="0.8*" />
+                            <DataGridTextColumn Header="Reachability" Binding="{Binding ReachabilityText}" Width="1.4*" />
+                            <DataGridTemplateColumn Header="" Width="1.3*">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Orientation="Horizontal">
+                                            <Button Content="Test" Padding="8,3" Margin="0,0,4,0"
+                                                    Command="{Binding DataContext.TestDriveReachabilityCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                    CommandParameter="{Binding}" />
+                                            <Button Content="Disconnect" Padding="8,3"
+                                                    Command="{Binding DataContext.DisconnectMappedDriveCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                    CommandParameter="{Binding}" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <TextBlock Text="No mapped drives found (checked HKCU\Network and `net use`).">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding MappedDrives.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
+                    <!-- #588: negotiated dialect/signing/encryption per server connection. -->
+                    <TextBlock Text="SMB connections (dialect &amp; signing)" Style="{StaticResource SpecLabel}" Margin="0,16,0,6" />
+                    <ItemsControl ItemsSource="{Binding SmbConnections}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="SMB1" FontSize="10.5" FontWeight="Bold" Foreground="White" VerticalAlignment="Top"
+                                               Padding="5,1" Margin="0,1,8,0" Background="{DynamicResource DangerBrush}"
+                                               Visibility="{Binding IsSmb1, Converter={StaticResource BoolToVisibilityConverter}}" />
+                                    <StackPanel Grid.Column="1">
+                                        <TextBlock FontSize="12.5">
+                                            <Run Text="{Binding ServerName}" FontWeight="SemiBold" />
+                                            <Run Text=" \ " /><Run Text="{Binding ShareName}" />
+                                            <Run Text="   dialect " /><Run Text="{Binding Dialect}" FontWeight="SemiBold" />
+                                            <Run Text="   signed: " /><Run Text="{Binding Signed}" />
+                                            <Run Text="   encrypted: " /><Run Text="{Binding Encrypted}" />
+                                        </TextBlock>
+                                        <TextBlock Text="{Binding SigningCaveat}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Opacity="0.8" Margin="0,2,0,0"
+                                                   Visibility="{Binding SigningCaveat, Converter={StaticResource NullToVisibilityConverter}}" />
+                                    </StackPanel>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="No active SMB connections.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding SmbConnections.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
+                    <!-- #589: on-demand SMBClient Connectivity/Operational event scan. -->
+                    <Expander Background="Transparent" BorderThickness="0" Foreground="{DynamicResource TextPrimaryBrush}" IsExpanded="False" Margin="0,16,0,0">
+                        <Expander.Header>
+                            <TextBlock Text="SMB session events (drops, reconnects, timeouts)" Style="{StaticResource CardTitle}" Margin="0" FontSize="13" />
+                        </Expander.Header>
+                        <StackPanel Margin="0,8,0,0">
+                            <TextBlock Text="Scans Microsoft-Windows-SMBClient/Connectivity and /Operational for session-drop, reconnect, and timeout events - a timeline of when a share actually went away."
+                                       Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,8" Opacity="0.7" />
+                            <Grid Margin="0,0,0,8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                                    <TextBlock Text="Lookback (hours)" VerticalAlignment="Center" Margin="0,0,6,0" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                    <TextBox Width="60" VerticalContentAlignment="Center" Text="{Binding SmbEventScanWindowHours, UpdateSourceTrigger=LostFocus, StringFormat={}{0:0.#}}" />
+                                </StackPanel>
+                                <Button Grid.Column="1" Content="Scan" Padding="10,4" Command="{Binding ScanSmbEventsCommand}" />
+                            </Grid>
+                            <TextBlock Text="{Binding SmbEventScanStatusText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,8" />
+                            <ItemsControl ItemsSource="{Binding SmbClientEvents}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid Margin="0,0,0,6">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" Text="{Binding TimeUtc, StringFormat='{}{0:MM/dd HH:mm:ss}'}" FontSize="11" Margin="0,0,10,0" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Top" />
+                                            <TextBlock Grid.Column="1" FontSize="12" TextWrapping="Wrap">
+                                                <Run Text="{Binding Category}" FontWeight="SemiBold" />
+                                                <Run Text=" (ID " /><Run Text="{Binding EventId}" /><Run Text=")  " />
+                                                <Run Text="{Binding Message}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                            </TextBlock>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </Expander>
+
+                    <!-- #590: Offline Files (CSC) state - the whole section hidden when not in use. -->
+                    <StackPanel Margin="0,16,0,0" Visibility="{Binding OfflineFiles.IsInUse, Converter={StaticResource BoolToVisibilityConverter}}">
+                        <TextBlock Text="Offline Files (CSC)" Style="{StaticResource SpecLabel}" Margin="0,0,0,6" />
+                        <TextBlock TextWrapping="Wrap" Margin="0,0,0,6">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding OfflineFiles.ServiceRunning}" Value="True">
+                                            <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                            <Run Text="Service: " FontWeight="SemiBold" />
+                            <Run Text="Stopped">
+                                <Run.Style>
+                                    <Style TargetType="Run">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding OfflineFiles.ServiceRunning}" Value="True">
+                                                <Setter Property="Text" Value="Running" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Run.Style>
+                            </Run>
+                            <Run Text="   Policy: " FontWeight="SemiBold" /><Run Text="{Binding OfflineFiles.FeatureEnabled}" />
+                        </TextBlock>
+                        <ItemsControl ItemsSource="{Binding OfflineFiles.CacheEntries}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Margin="0,0,0,6">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="{Binding Name}" FontSize="12.5" TextWrapping="Wrap" VerticalAlignment="Center" />
+                                        <TextBlock Grid.Column="1" Text="Offline" FontSize="10.5" FontWeight="Bold" Foreground="White"
+                                                   Padding="5,1" Background="{DynamicResource WarningBrush}" VerticalAlignment="Center">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsOnline}" Value="False">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <TextBlock Text="A share that has silently gone offline still lets edits appear to save locally, without actually reaching the server - watch for the &quot;Offline&quot; flag above."
+                                   Style="{StaticResource SubStat}" TextWrapping="Wrap" Opacity="0.7" Margin="0,4,0,0" />
+                    </StackPanel>
                 </StackPanel>
             </Border>
 

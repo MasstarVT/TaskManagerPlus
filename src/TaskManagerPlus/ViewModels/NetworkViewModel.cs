@@ -1064,6 +1064,164 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
     public string OrphanedAdapterStatusText { get => _orphanedAdapterStatusText; private set => SetProperty(ref _orphanedAdapterStatusText, value); }
     public AsyncRelayCommand ScanOrphanedAdaptersCommand { get; }
 
+    // ---- suggestions.md #579-585: throughput, bufferbloat and per-process bandwidth --------------
+    // #579/#580/#581/#582 are all explicit user-initiated on-demand actions with their own visible
+    // "running" state, per CLAUDE.md's on-demand-vs-polled convention - none of these ever run on a
+    // timer. #584/#585 are cheap NetworkInterface reads derived from data already sampled every
+    // tick, so they ride existing tick cadences instead (#584 the shared PerformanceViewModel's own
+    // 1s sampler, via a PropertyChanged subscription wired in the constructor; #585 this ViewModel's
+    // own 15s CheckConnectivityAsync tick).
+
+    // #579: built-in HTTP speed test - a single-stream download then upload, deliberately captioned
+    // as a rough floor, not a certified figure (see SpeedTestService's remarks).
+    private string _speedTestDownloadUrl = SpeedTestService.DefaultDownloadUrl;
+    public string SpeedTestDownloadUrl { get => _speedTestDownloadUrl; set => SetProperty(ref _speedTestDownloadUrl, value); }
+
+    private string _speedTestUploadUrl = SpeedTestService.DefaultUploadUrl;
+    public string SpeedTestUploadUrl { get => _speedTestUploadUrl; set => SetProperty(ref _speedTestUploadUrl, value); }
+
+    private bool _isRunningSpeedTest;
+    public bool IsRunningSpeedTest { get => _isRunningSpeedTest; private set => SetProperty(ref _isRunningSpeedTest, value); }
+
+    private string _speedTestStatusText = "A single-stream HTTP test - a rough floor on your link's real capacity, not a certified/ISP-comparable figure.";
+    public string SpeedTestStatusText { get => _speedTestStatusText; private set => SetProperty(ref _speedTestStatusText, value); }
+
+    private SpeedTestResult? _lastDownloadResult;
+    public SpeedTestResult? LastDownloadResult { get => _lastDownloadResult; private set => SetProperty(ref _lastDownloadResult, value); }
+
+    private SpeedTestResult? _lastUploadResult;
+    public SpeedTestResult? LastUploadResult { get => _lastUploadResult; private set => SetProperty(ref _lastUploadResult, value); }
+
+    // #579's "small history list" - persisted across restarts (NetworkTestHistoryService), also
+    // where #580/#581's own results land, since all three are the same "on-demand network test"
+    // family sharing one small feed.
+    public ObservableCollection<NetworkTestHistoryEntry> NetworkTestHistory { get; } = new();
+
+    public AsyncRelayCommand RunDownloadTestCommand { get; }
+    public AsyncRelayCommand RunUploadTestCommand { get; }
+
+    // #580: bufferbloat / latency-under-load grade - runs the same ICMP ping #501's monitor uses,
+    // continuously, first idle then while #579's download saturates the link.
+    private string _bufferbloatPingHost = "1.1.1.1";
+    public string BufferbloatPingHost { get => _bufferbloatPingHost; set => SetProperty(ref _bufferbloatPingHost, value); }
+
+    private bool _isRunningBufferbloatTest;
+    public bool IsRunningBufferbloatTest { get => _isRunningBufferbloatTest; private set => SetProperty(ref _isRunningBufferbloatTest, value); }
+
+    private string _bufferbloatStatusText = "Measures how much your ping to a public host rises while a download saturates the link - the classic \"video calls stutter when someone else is downloading\" test.";
+    public string BufferbloatStatusText { get => _bufferbloatStatusText; private set => SetProperty(ref _bufferbloatStatusText, value); }
+
+    private BufferbloatResult? _bufferbloatResult;
+    public BufferbloatResult? BufferbloatResult { get => _bufferbloatResult; private set => SetProperty(ref _bufferbloatResult, value); }
+
+    public AsyncRelayCommand RunBufferbloatTestCommand { get; }
+
+    // #581: LAN throughput test - either a large SMB-share read or a raw TCP stream to a listener
+    // on another machine, so a slow #579 internet result can be separated from a slow LAN/Wi-Fi
+    // link.
+    private string _lanTestSmbPath = string.Empty;
+    public string LanTestSmbPath { get => _lanTestSmbPath; set => SetProperty(ref _lanTestSmbPath, value); }
+
+    private string _lanTestTcpTarget = string.Empty;
+    public string LanTestTcpTarget { get => _lanTestTcpTarget; set => SetProperty(ref _lanTestTcpTarget, value); }
+
+    private bool _isRunningLanTest;
+    public bool IsRunningLanTest { get => _isRunningLanTest; private set => SetProperty(ref _isRunningLanTest, value); }
+
+    private string _lanTestStatusText = "Tests throughput to something on your own local network, separate from the internet-facing speed test above.";
+    public string LanTestStatusText { get => _lanTestStatusText; private set => SetProperty(ref _lanTestStatusText, value); }
+
+    private LanThroughputResult? _lastLanTestResult;
+    public LanThroughputResult? LastLanTestResult { get => _lastLanTestResult; private set => SetProperty(ref _lastLanTestResult, value); }
+
+    public AsyncRelayCommand RunLanSmbTestCommand { get; }
+    public AsyncRelayCommand RunLanTcpTestCommand { get; }
+
+    // #582: true per-process bandwidth via a short, explicit ETW capture on the
+    // Microsoft-Windows-Kernel-Network provider - see ProcessBandwidthEtwService's remarks for why
+    // this is the one place on this tab a raw ETW dependency is justified. New section above the
+    // existing #87 top-processes-by-connection-count list.
+    private readonly ProcessBandwidthEtwService _etwBandwidth = new();
+    private readonly DispatcherTimer _etwElapsedTimer;
+
+    private bool _isEtwCapturing;
+    public bool IsEtwCapturing { get => _isEtwCapturing; private set => SetProperty(ref _isEtwCapturing, value); }
+
+    private string _etwCaptureStatusText = "Not capturing. Real per-process byte counts, unlike the connection-count list below - see that card's own caveat.";
+    public string EtwCaptureStatusText { get => _etwCaptureStatusText; private set => SetProperty(ref _etwCaptureStatusText, value); }
+
+    public ObservableCollection<EtwProcessBandwidth> EtwBandwidthResults { get; } = new();
+
+    public RelayCommand StartEtwCaptureCommand { get; }
+    public RelayCommand StopEtwCaptureCommand { get; }
+
+    // #584: link-utilization gauge - current combined throughput as a percent of the primary
+    // adapter's negotiated link speed, recomputed every time the shared Performance sampler
+    // produces a fresh throughput figure (its own 1s tick) rather than this tab's own slower one.
+    private AdapterUtilizationInfo? _linkUtilization;
+    public AdapterUtilizationInfo? LinkUtilization { get => _linkUtilization; private set => SetProperty(ref _linkUtilization, value); }
+
+    // #585: adapter-throughput reconciliation - flags traffic flowing over an adapter other than
+    // the one the user believes is active. Recomputed on this tab's own 15s tick (see
+    // AdapterTrafficService's remarks for why it needs a previous-sample delta rather than being a
+    // pure function like #584 above).
+    private readonly AdapterTrafficService _adapterTraffic = new();
+
+    private string? _adapterTrafficFlagText;
+    public string? AdapterTrafficFlagText { get => _adapterTrafficFlagText; private set => SetProperty(ref _adapterTrafficFlagText, value); }
+
+    // ---- suggestions.md #586-590: SMB and network drives -------------------------------------------
+    // New "Network drives" card - "the PC is slow" very often means one unresponsive network share
+    // silently stalling Explorer, a file dialog, or a save. #586 rides the existing 15s tick (cheap
+    // perf-counter read); #587/#588/#590 load together behind one manual Refresh (a `net use` shell,
+    // a second WMI namespace, and a service-status read are all more than a per-tick-cheap read, but
+    // still far lighter than an event-log scan) plus once at startup, the same "queried once, plus
+    // an explicit Refresh" shape #563's port-reservation read already uses; #589 is its own on-demand
+    // scan with its own lookback window, mirroring #524/#530/#541's own event-log scans elsewhere on
+    // this tab.
+
+    // #586: per-connected-share latency/queue-depth/throughput.
+    public ObservableCollection<SmbShareLatency> SmbShareLatencies { get; } = new();
+
+    // #587: mapped-drive inventory (HKCU\Network + live `net use`), with an on-demand reachability
+    // test and a confirm-first Disconnect action.
+    public ObservableCollection<MappedDriveInfo> MappedDrives { get; } = new();
+
+    private bool _isLoadingNetworkDrives;
+    public bool IsLoadingNetworkDrives { get => _isLoadingNetworkDrives; private set => SetProperty(ref _isLoadingNetworkDrives, value); }
+
+    private string _networkDrivesStatusText = "Not loaded yet.";
+    public string NetworkDrivesStatusText { get => _networkDrivesStatusText; private set => SetProperty(ref _networkDrivesStatusText, value); }
+
+    public AsyncRelayCommand RefreshNetworkDrivesCommand { get; }
+    public AsyncRelayCommand TestDriveReachabilityCommand { get; }
+    public AsyncRelayCommand DisconnectMappedDriveCommand { get; }
+
+    // #588: negotiated dialect/signing/encryption per server connection - loaded together with
+    // #587's own Refresh above (same MSFT_SmbConnection-namespace read, no extra button).
+    public ObservableCollection<SmbConnectionInfo> SmbConnections { get; } = new();
+
+    // #589: on-demand SMBClient event scan (Connectivity + Operational channels) - its own lookback
+    // window, mirroring this tab's other on-demand event-log scans.
+    private double _smbEventScanWindowHours = 24.0;
+    public double SmbEventScanWindowHours { get => _smbEventScanWindowHours; set => SetProperty(ref _smbEventScanWindowHours, Math.Clamp(value, 1.0, 720.0)); }
+
+    private bool _isScanningSmbEvents;
+    public bool IsScanningSmbEvents { get => _isScanningSmbEvents; private set => SetProperty(ref _isScanningSmbEvents, value); }
+
+    private string _smbEventScanStatusText = "Not scanned yet - the SMBClient Connectivity/Operational logs are disabled by default on most machines.";
+    public string SmbEventScanStatusText { get => _smbEventScanStatusText; private set => SetProperty(ref _smbEventScanStatusText, value); }
+
+    public ObservableCollection<SmbClientEvent> SmbClientEvents { get; } = new();
+    public AsyncRelayCommand ScanSmbEventsCommand { get; }
+
+    // #590: Offline Files (CSC) state - null hides the whole section (OfflineFilesState.IsInUse is
+    // false), per this item's own "hidden when Offline Files is not in use" text. Property named
+    // OfflineFiles (not OfflineFilesState) to avoid shadowing the OfflineFilesState type itself
+    // inside this class's own method bodies.
+    private OfflineFilesState? _offlineFiles;
+    public OfflineFilesState? OfflineFiles { get => _offlineFiles; private set => SetProperty(ref _offlineFiles, value); }
+
     public NetworkViewModel(PerformanceViewModel performance)
     {
         Performance = performance;
@@ -1340,6 +1498,46 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
 
         // #578: orphaned virtual adapter scan wiring.
         ScanOrphanedAdaptersCommand = new AsyncRelayCommand(ScanOrphanedAdaptersAsync, () => !IsScanningOrphanedAdapters);
+
+        // #579-581: on-demand speed/bufferbloat/LAN test wiring.
+        RunDownloadTestCommand = new AsyncRelayCommand(RunDownloadTestAsync, () => !IsRunningSpeedTest && !string.IsNullOrWhiteSpace(SpeedTestDownloadUrl));
+        RunUploadTestCommand = new AsyncRelayCommand(RunUploadTestAsync, () => !IsRunningSpeedTest && !string.IsNullOrWhiteSpace(SpeedTestUploadUrl));
+        RunBufferbloatTestCommand = new AsyncRelayCommand(RunBufferbloatTestAsync, () => !IsRunningBufferbloatTest);
+        RunLanSmbTestCommand = new AsyncRelayCommand(RunLanSmbTestAsync, () => !IsRunningLanTest && !string.IsNullOrWhiteSpace(LanTestSmbPath));
+        RunLanTcpTestCommand = new AsyncRelayCommand(RunLanTcpTestAsync, () => !IsRunningLanTest && !string.IsNullOrWhiteSpace(LanTestTcpTarget));
+
+        foreach (var entry in NetworkTestHistoryService.Load().Take(20)) NetworkTestHistory.Add(entry);
+
+        // #582: ETW capture start/stop wiring, plus a 1s "N seconds elapsed" ticker that only runs
+        // while a capture is actually in progress - a lightweight, dedicated timer rather than
+        // reusing this class's own 15s tick, since a capture-in-progress indicator needs to feel
+        // live.
+        StartEtwCaptureCommand = new RelayCommand(StartEtwCapture, () => !IsEtwCapturing);
+        StopEtwCaptureCommand = new RelayCommand(StopEtwCapture, () => IsEtwCapturing);
+        _etwElapsedTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(1) };
+        _etwElapsedTimer.Tick += (_, _) =>
+        {
+            if (_etwBandwidth.CaptureStartedUtc is { } startedAt)
+                EtwCaptureStatusText = $"Capture running - {(DateTime.UtcNow - startedAt).TotalSeconds:0}s elapsed. Click Stop to see per-process results.";
+        };
+
+        // #584: recompute the link-utilization gauge every time the shared sampler produces a
+        // fresh throughput figure, rather than on this tab's own slower tick.
+        Performance.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName is nameof(PerformanceViewModel.NetworkReceiveBps) or nameof(PerformanceViewModel.NetworkSendBps))
+                RecomputeLinkUtilization();
+        };
+        RecomputeLinkUtilization();
+
+        // #586-590: Network drives card wiring - one manual Refresh for #587/#588/#590 (also run
+        // once at startup, the same "queried once, plus an explicit Refresh" shape #563's
+        // port-reservation read already uses), plus #589's own on-demand event scan.
+        RefreshNetworkDrivesCommand = new AsyncRelayCommand(RefreshNetworkDrivesAsync, () => !IsLoadingNetworkDrives);
+        TestDriveReachabilityCommand = new AsyncRelayCommand(TestDriveReachabilityAsync);
+        DisconnectMappedDriveCommand = new AsyncRelayCommand(DisconnectMappedDriveAsync);
+        ScanSmbEventsCommand = new AsyncRelayCommand(ScanSmbEventsAsync, () => !IsScanningSmbEvents);
+        _ = RefreshNetworkDrivesAsync();
     }
 
     private async Task CheckConnectivityAsync()
@@ -1465,6 +1663,17 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
 
             Wifi = await WifiDiagnosticsService.ReadCurrentWifiAsync();
             RefreshWifiRadioMonitorState();
+
+            // #585: adapter-throughput reconciliation - cheap NetworkInterface reads, rides this
+            // tick rather than getting its own timer.
+            var reconciliation = await Task.Run(() => _adapterTraffic.ComputeReconciliation());
+            AdapterTrafficFlagText = reconciliation.FlagText;
+
+            // #586: per-connected-share latency/queue-depth - a single perf-counter WMI query,
+            // cheap enough to ride this tick alongside everything else above.
+            var shareLatencies = await Task.Run(SmbShareService.ReadShareLatencies);
+            SmbShareLatencies.Clear();
+            foreach (var s in shareLatencies) SmbShareLatencies.Add(s);
         }
         catch
         {
@@ -3436,6 +3645,268 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         }
     }
 
+    // ---- #579-585 helpers (throughput, bufferbloat, per-process bandwidth) -----------------------
+
+    private async Task RunDownloadTestAsync()
+    {
+        if (IsRunningSpeedTest || string.IsNullOrWhiteSpace(SpeedTestDownloadUrl)) return;
+        IsRunningSpeedTest = true;
+        SpeedTestStatusText = "Downloading a fixed-size payload...";
+        try
+        {
+            var result = await SpeedTestService.RunDownloadAsync(SpeedTestDownloadUrl);
+            LastDownloadResult = result;
+            SpeedTestStatusText = result.Succeeded
+                ? $"Download: {result.Mbps:0.#} Mbps ({Formatting.FormatBytes(result.BytesTransferred)} in {result.DurationSeconds:0.#}s) - a single-stream HTTP test, a rough floor, not a certified figure."
+                : $"Download test failed: {result.ErrorMessage}";
+            RecordTestHistory("Download", SpeedTestDownloadUrl, result.Mbps, SpeedTestStatusText, result.Succeeded);
+        }
+        finally
+        {
+            IsRunningSpeedTest = false;
+        }
+    }
+
+    private async Task RunUploadTestAsync()
+    {
+        if (IsRunningSpeedTest || string.IsNullOrWhiteSpace(SpeedTestUploadUrl)) return;
+        IsRunningSpeedTest = true;
+        SpeedTestStatusText = "Uploading a fixed-size payload...";
+        try
+        {
+            var result = await SpeedTestService.RunUploadAsync(SpeedTestUploadUrl);
+            LastUploadResult = result;
+            SpeedTestStatusText = result.Succeeded
+                ? $"Upload: {result.Mbps:0.#} Mbps ({Formatting.FormatBytes(result.BytesTransferred)} in {result.DurationSeconds:0.#}s) - a single-stream HTTP test, a rough floor, not a certified figure."
+                : $"Upload test failed: {result.ErrorMessage}";
+            RecordTestHistory("Upload", SpeedTestUploadUrl, result.Mbps, SpeedTestStatusText, result.Succeeded);
+        }
+        finally
+        {
+            IsRunningSpeedTest = false;
+        }
+    }
+
+    /// <summary>#579's "small history list", shared by #580/#581 - see NetworkTestHistoryService's
+    /// remarks for why one small feed covers all three test kinds.</summary>
+    private void RecordTestHistory(string kind, string target, double mbps, string summary, bool succeeded)
+    {
+        var entry = new NetworkTestHistoryEntry
+        {
+            TimestampUtc = DateTime.UtcNow,
+            TestKind = kind,
+            Target = target,
+            Mbps = mbps,
+            Summary = summary,
+            Succeeded = succeeded,
+        };
+        NetworkTestHistoryService.Add(entry);
+        NetworkTestHistory.Insert(0, entry);
+        while (NetworkTestHistory.Count > 20) NetworkTestHistory.RemoveAt(NetworkTestHistory.Count - 1);
+    }
+
+    /// <summary>#580: idle-then-loaded latency, graded A-F - see BufferbloatTestService's remarks
+    /// for why this is split into two awaited phases with a status-text update between them.</summary>
+    private async Task RunBufferbloatTestAsync()
+    {
+        if (IsRunningBufferbloatTest) return;
+        IsRunningBufferbloatTest = true;
+        string host = string.IsNullOrWhiteSpace(BufferbloatPingHost) ? "1.1.1.1" : BufferbloatPingHost.Trim();
+        try
+        {
+            BufferbloatStatusText = "Measuring idle latency (a few seconds)...";
+            double idle = await BufferbloatTestService.MeasureIdleLatencyAsync(host, TimeSpan.FromSeconds(4));
+
+            BufferbloatStatusText = "Saturating the link (downloading) and measuring loaded latency...";
+            var (loaded, download) = await BufferbloatTestService.MeasureLoadedLatencyAsync(host, SpeedTestDownloadUrl);
+
+            double delta = loaded - idle;
+            string grade = BufferbloatTestService.GradeFor(delta);
+            BufferbloatResult = new BufferbloatResult(idle, loaded, delta, grade, null);
+            BufferbloatStatusText = $"Idle {idle:0.#} ms → loaded {loaded:0.#} ms (+{delta:0.#} ms) - grade {grade}." +
+                (download.Succeeded ? $" Download during the test: {download.Mbps:0.#} Mbps." : string.Empty);
+            RecordTestHistory("Bufferbloat", host, download.Mbps, BufferbloatStatusText, true);
+        }
+        catch (Exception ex)
+        {
+            BufferbloatResult = new BufferbloatResult(0, 0, 0, "N/A", ex.Message);
+            BufferbloatStatusText = $"Test failed: {ex.Message}";
+        }
+        finally
+        {
+            IsRunningBufferbloatTest = false;
+        }
+    }
+
+    private async Task RunLanSmbTestAsync()
+    {
+        if (IsRunningLanTest || string.IsNullOrWhiteSpace(LanTestSmbPath)) return;
+        IsRunningLanTest = true;
+        LanTestStatusText = "Reading from the SMB share...";
+        try
+        {
+            var result = await LanThroughputService.MeasureSmbReadAsync(LanTestSmbPath);
+            LastLanTestResult = result;
+            LanTestStatusText = result.Succeeded
+                ? $"SMB read: {result.Mbps:0.#} Mbps ({Formatting.FormatBytes(result.BytesTransferred)} in {result.DurationSeconds:0.#}s)."
+                : $"SMB read test failed: {result.ErrorMessage}";
+            RecordTestHistory("LAN (SMB)", LanTestSmbPath, result.Mbps, LanTestStatusText, result.Succeeded);
+        }
+        finally
+        {
+            IsRunningLanTest = false;
+        }
+    }
+
+    private async Task RunLanTcpTestAsync()
+    {
+        if (IsRunningLanTest || string.IsNullOrWhiteSpace(LanTestTcpTarget)) return;
+        IsRunningLanTest = true;
+        LanTestStatusText = "Connecting and reading from the TCP listener (10s)...";
+        try
+        {
+            var result = await LanThroughputService.MeasureTcpAsync(LanTestTcpTarget, TimeSpan.FromSeconds(10));
+            LastLanTestResult = result;
+            LanTestStatusText = result.Succeeded
+                ? $"TCP stream: {result.Mbps:0.#} Mbps ({Formatting.FormatBytes(result.BytesTransferred)} in {result.DurationSeconds:0.#}s)."
+                : $"TCP stream test failed: {result.ErrorMessage}";
+            RecordTestHistory("LAN (TCP)", LanTestTcpTarget, result.Mbps, LanTestStatusText, result.Succeeded);
+        }
+        finally
+        {
+            IsRunningLanTest = false;
+        }
+    }
+
+    /// <summary>#582: starts a capture - see ProcessBandwidthEtwService's remarks for the session
+    /// lifecycle. Failure (permission, stale session) degrades to a status message, never a
+    /// crash.</summary>
+    private void StartEtwCapture()
+    {
+        if (IsEtwCapturing) return;
+        EtwBandwidthResults.Clear();
+        string? error = _etwBandwidth.Start();
+        if (error is not null)
+        {
+            EtwCaptureStatusText = $"Couldn't start capture: {error}";
+            return;
+        }
+        IsEtwCapturing = true;
+        _etwElapsedTimer.Start();
+        EtwCaptureStatusText = "Capture running - 0s elapsed. Click Stop to see per-process results.";
+    }
+
+    private void StopEtwCapture()
+    {
+        if (!IsEtwCapturing) return;
+        _etwElapsedTimer.Stop();
+        var results = _etwBandwidth.Stop();
+        IsEtwCapturing = false;
+
+        EtwBandwidthResults.Clear();
+        foreach (var r in results) EtwBandwidthResults.Add(r);
+
+        EtwCaptureStatusText = results.Count == 0
+            ? "Capture stopped - no TCP/UDP traffic was seen during the capture window."
+            : $"Capture stopped - {results.Count} process(es) seen, {Formatting.FormatBytes(results.Sum(r => r.TotalBytes))} total.";
+
+        // #583: persist this capture's totals into the byte-level history series.
+        NetworkHistoryService.RecordCaptureSample(results);
+    }
+
+    private void RecomputeLinkUtilization()
+    {
+        LinkUtilization = AdapterTrafficService.ComputeUtilization(Performance.NetworkReceiveBps, Performance.NetworkSendBps);
+    }
+
+    // ---- #586-590 helpers (SMB and network drives) --------------------------------------------
+
+    private async Task RefreshNetworkDrivesAsync()
+    {
+        if (IsLoadingNetworkDrives) return;
+        IsLoadingNetworkDrives = true;
+        NetworkDrivesStatusText = "Loading...";
+        try
+        {
+            var drives = await SmbShareService.ReadMappedDrivesAsync();
+            var connections = await Task.Run(SmbShareService.ReadConnections);
+            var offlineFiles = await Task.Run(OfflineFilesService.Read);
+
+            MappedDrives.Clear();
+            foreach (var d in drives) MappedDrives.Add(d);
+
+            SmbConnections.Clear();
+            foreach (var c in connections) SmbConnections.Add(c);
+
+            OfflineFiles = offlineFiles;
+
+            NetworkDrivesStatusText = $"{drives.Count} mapped drive(s), {connections.Count} active SMB connection(s).";
+        }
+        catch (Exception ex)
+        {
+            NetworkDrivesStatusText = $"Load failed: {ex.Message}";
+        }
+        finally
+        {
+            IsLoadingNetworkDrives = false;
+        }
+    }
+
+    /// <summary>#587: on-demand reachability test for one row - see SmbShareService.TestReachabilityAsync's
+    /// remarks for why this races Directory.Exists against a timeout rather than calling it
+    /// directly.</summary>
+    private static async Task TestDriveReachabilityAsync(object? parameter)
+    {
+        if (parameter is not MappedDriveInfo drive) return;
+        drive.ReachabilityText = "Testing...";
+        var (reachable, text) = await SmbShareService.TestReachabilityAsync(drive.RemotePath, TimeSpan.FromSeconds(5));
+        drive.IsReachable = reachable;
+        drive.ReachabilityText = text;
+    }
+
+    /// <summary>#587's "Disconnect" action - same MessageBox.Show confirm-first pattern used
+    /// throughout this ViewModel (e.g. RestartSelectedAdapter above) for any connection-dropping
+    /// action.</summary>
+    private async Task DisconnectMappedDriveAsync(object? parameter)
+    {
+        if (parameter is not MappedDriveInfo drive) return;
+
+        var confirm = MessageBox.Show(
+            $"Disconnect {drive.DriveLetter} ({drive.RemotePath})?\nAny unsaved work relying on this mapping may be lost.",
+            "Disconnect network drive", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        NetworkDrivesStatusText = $"Disconnecting {drive.DriveLetter}...";
+        string output = await SmbShareService.DisconnectAsync(drive.DriveLetter);
+        NetworkDrivesStatusText = output;
+        await RefreshNetworkDrivesAsync();
+    }
+
+    private async Task ScanSmbEventsAsync()
+    {
+        if (IsScanningSmbEvents) return;
+        IsScanningSmbEvents = true;
+        SmbEventScanStatusText = "Scanning...";
+        try
+        {
+            var result = await Task.Run(() => SmbClientEventLogService.Scan(TimeSpan.FromHours(SmbEventScanWindowHours)));
+            SmbClientEvents.Clear();
+            foreach (var e in result.Events) SmbClientEvents.Add(e);
+
+            SmbEventScanStatusText = !result.ConnectivityChannelAvailable && !result.OperationalChannelAvailable
+                ? "Neither SMBClient log channel could be read (both are disabled by default on most machines, or access was denied)."
+                : $"{result.Events.Count} event(s) in the last {SmbEventScanWindowHours:0.#}h.";
+        }
+        catch (Exception ex)
+        {
+            SmbEventScanStatusText = $"Scan failed: {ex.Message}";
+        }
+        finally
+        {
+            IsScanningSmbEvents = false;
+        }
+    }
+
     public void Dispose()
     {
         _timer.Stop();
@@ -3448,5 +3919,7 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         _wifiSignalMonitor.CycleCompleted -= OnWifiSignalCycleCompleted;
         _wifiSignalMonitor.Dispose();
         _wlan.Dispose();
+        _etwElapsedTimer.Stop();
+        _etwBandwidth.Dispose();
     }
 }
