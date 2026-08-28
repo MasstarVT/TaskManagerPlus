@@ -44,6 +44,16 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
     private readonly EventLogService _eventLog = new();
     private readonly DispatcherTimer _lightTimer;
 
+    // #260: needed for the run-queue-pressure card (Processor Queue Length + logical-processor
+    // count, both already sampled by PerformanceViewModel every tick) - passed in via constructor
+    // like ProcessesViewModel, rather than a second HardwareMonitorService instance.
+    private readonly PerformanceViewModel _performance;
+
+    /// <summary>#260: exposed so the XAML can bind directly to Performance.ContextSwitchesPerSec
+    /// next to the run-queue-pressure meter - the same "expose the composed sibling ViewModel"
+    /// pattern CpuViewModel.Performance already establishes.</summary>
+    public PerformanceViewModel Performance => _performance;
+
     // #235/#236/#237/#238/#243/#244: hung-window detection/probing/foreground-stall recording -
     // see HungWindowService's remarks. _processes backs #245's session-wide USER/GDI handle sum
     // (ProcessRow.GdiHandleCount/UserHandleCount, already polled by ProcessesViewModel - no new
@@ -433,9 +443,47 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
     private double? _inputToPresentMs;
     public double? InputToPresentMs { get => _inputToPresentMs; private set => SetProperty(ref _inputToPresentMs, value); }
 
-    public ResponsivenessViewModel(ProcessesViewModel processes)
+    // ----- #260-270: Scheduler, priority and thread-wait analysis ------------------------------
+
+    // #260: run-queue pressure - rides the cheap _lightTimer (a single perf-counter read already
+    // collected by PerformanceViewModel, see SampleLight).
+    public ObservableCollection<double> RunQueuePressureHistory { get; } = NewHistory(0);
+    private readonly LineSeries<double> _runQueueGlow;
+    private readonly LineSeries<double> _runQueueCore;
+    public ISeries[] RunQueuePressureSeries { get; }
+    public Axis[] RunQueuePressureYAxes { get; }
+
+    private RunQueuePressureInfo _runQueuePressure = new();
+    public RunQueuePressureInfo RunQueuePressure { get => _runQueuePressure; private set => SetProperty(ref _runQueuePressure, value); }
+
+    // #261-265/267: the shared system-wide thread sweep - see SchedulerService's remarks for why
+    // this is one syscall feeding several consumers, and why it rides its own slower cadence
+    // (_schedulerTimer) rather than the cheap _lightTimer: a full-system NtQuerySystemInformation
+    // sweep plus wait-breakdown/ranking/diffing/module-resolution over potentially several thousand
+    // threads is the single most expensive read in this whole chunk, the same reasoning that gave
+    // HungWindowService's probe cycle its own slower cadence in the prior chunk.
+    private readonly SchedulerService _scheduler = new();
+    private readonly DispatcherTimer _schedulerTimer;
+    private bool _isSchedulerSampling;
+    private List<SchedulerService.ThreadSnapshot> _lastSchedulerSweep = new();
+
+    public ObservableCollection<LongestBlockedThreadRow> LongestBlockedThreads { get; } = new();
+    public ObservableCollection<ThreadCsRateRow> BusiestThreads { get; } = new();
+    public ObservableCollection<ContextSwitchAttributionRow> ContextSwitchAttribution { get; } = new();
+    public ObservableCollection<PriorityInversionHint> PriorityInversionHints { get; } = new();
+
+    private string _schedulerStatusText = "Sampling scheduler data...";
+    public string SchedulerStatusText { get => _schedulerStatusText; private set => SetProperty(ref _schedulerStatusText, value); }
+
+    // #269: MMCSS / multimedia-scheduling audit - a fast registry+service-status read, loaded once
+    // at start-up alongside the #217-220 device-topology bundle plus its manual refresh.
+    private MmcssAuditInfo _mmcssAudit = new() { ServiceStatusText = "Loading..." };
+    public MmcssAuditInfo MmcssAudit { get => _mmcssAudit; private set => SetProperty(ref _mmcssAudit, value); }
+
+    public ResponsivenessViewModel(ProcessesViewModel processes, PerformanceViewModel performance)
     {
         _processes = processes;
+        _performance = performance;
         HiddenXAxes = new[]
         {
             new Axis { IsVisible = false, MinLimit = 0, MaxLimit = HistoryLength - 1, ShowSeparatorLines = false },
@@ -509,6 +557,36 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
         };
         CompositionDropSeries = new ISeries[] { _compDropGlow, _compDropCore };
 
+        // #260: run-queue pressure (Processor Queue Length), same glow+core pairing as every other
+        // history chart in this app.
+        RunQueuePressureYAxes = new[]
+        {
+            new Axis
+            {
+                MinLimit = 0,
+                Labeler = v => $"{v:0.#}",
+                LabelsPaint = new SolidColorPaint(AxisTextColor),
+                SeparatorsPaint = new SolidColorPaint(AxisSeparatorColor) { StrokeThickness = 1 },
+            },
+        };
+        var runQueueColor = SKColors.Goldenrod;
+        _runQueueGlow = new LineSeries<double>
+        {
+            Values = RunQueuePressureHistory,
+            Stroke = new SolidColorPaint(runQueueColor.WithAlpha(70), GlowStrokeWidth),
+            Fill = null, GeometryStroke = null, GeometryFill = null,
+            LineSmoothness = 0.3, IsHoverable = false, IsVisibleAtLegend = false,
+        };
+        _runQueueCore = new LineSeries<double>
+        {
+            Values = RunQueuePressureHistory,
+            Name = "Processor queue length",
+            Stroke = new SolidColorPaint(runQueueColor, CoreStrokeWidth),
+            Fill = new LinearGradientPaint(runQueueColor.WithAlpha(90), runQueueColor.WithAlpha(0), new SKPoint(0, 0), new SKPoint(0, 1)),
+            GeometryStroke = null, GeometryFill = null, LineSmoothness = 0.3,
+        };
+        RunQueuePressureSeries = new ISeries[] { _runQueueGlow, _runQueueCore };
+
         // #251: frame-time-vs-index scatter for the headline present-monitor app - no glow pair,
         // matching EnergyThermalsViewModel's fan-curve scatter (a point cloud doesn't read well
         // with one).
@@ -569,6 +647,14 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
 
         // #238: the foreground hook - kept alive via HungWindowService's own field, see its remarks.
         _hungWindows.StartForegroundHook();
+
+        // #261-265/267: the shared thread sweep's own slower cadence - see the field remarks
+        // above for why this doesn't ride _lightTimer. 3.5s split the difference between "fresh
+        // enough to be useful" and "not so frequent it competes with the light tick's own cost".
+        _schedulerTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(3.5) };
+        _schedulerTimer.Tick += async (_, _) => await SampleSchedulerAsync();
+        _schedulerTimer.Start();
+        _ = SampleSchedulerAsync();
 
         Watchdog = DpcWatchdogService.Read();
         _ = LoadDriverIdentitiesAsync();
@@ -631,7 +717,10 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
             // start-up-plus-manual-refresh load rather than needing their own button.
             var bootConfigTask = BootConfigTimerService.ReadAsync();
             var latencySettingsTask = LatencyPowerSettingsService.ReadLatencySensitiveSettingsAsync();
-            await Task.WhenAll(irqTask, interruptMgmtTask, problemDevicesTask, platformSettingsTask, bootConfigTask, latencySettingsTask);
+            // #269: MMCSS/multimedia-scheduling audit - same fast-read tier as everything else in
+            // this bundle (registry reads + one ServiceController status query).
+            var mmcssTask = Task.Run(MmcssService.Read);
+            await Task.WhenAll(irqTask, interruptMgmtTask, problemDevicesTask, platformSettingsTask, bootConfigTask, latencySettingsTask, mmcssTask);
 
             IrqShareRows.Clear();
             foreach (var r in irqTask.Result) IrqShareRows.Add(r);
@@ -649,6 +738,10 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
             // #241: hang-timeout registry audit - plain registry reads (no shell-out), fast enough
             // to just call inline here rather than adding a fourth Task.WhenAll entry.
             foreach (var r in HangTimeoutRegistryService.ReadAudit()) PlatformLatencySettings.Add(r);
+            // #268: Win32PrioritySeparation audit - same plain registry-read tier as #241 above.
+            PlatformLatencySettings.Add(Win32PrioritySeparationService.Read());
+
+            MmcssAudit = mmcssTask.Result;
 
             DeviceTopologyStatusText = $"Loaded — {IrqShareRows.Count} IRQ lines, {DeviceInterruptRows.Count} devices with interrupt policy, {ProblemDeviceRows.Count} problem device(s).";
         }
@@ -949,7 +1042,71 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
 
         // #256/#257: input-latency snapshot - same "cheap to recompute every tick" reasoning.
         InputLatencySnapshot = _inputLatency.GetSnapshot();
+
+        // #260: run-queue pressure - System\Processor Queue Length, already sampled every tick by
+        // PerformanceViewModel (no second PerformanceCounter instantiation needed). "Ready threads
+        // per core" is an explicit approximation (ProcessorQueueLength / logical-processor count) -
+        // Windows exposes no true per-core ready-queue counter, only this one system-wide value.
+        int logicalCount = _performance.Cores.Count > 0 ? _performance.Cores.Count : Environment.ProcessorCount;
+        RunQueuePressure = new RunQueuePressureInfo { ProcessorQueueLength = _performance.CpuQueueLength, LogicalProcessorCount = logicalCount };
+        RunQueuePressureHistory.Add(_performance.CpuQueueLength);
+        if (RunQueuePressureHistory.Count > HistoryLength) RunQueuePressureHistory.RemoveAt(0);
     }
+
+    /// <summary>#261-265/267: the shared thread sweep's own slower cadence - see the field remarks
+    /// for why this is Task.Run'd separately from _lightTimer rather than folded into SampleLight.
+    /// Guarded against overlap the same way RunProbeCycleAsync/RefreshCoreAffinityAsync are - a
+    /// full-system sweep can legitimately take longer than one tick on a very busy system.</summary>
+    private async Task SampleSchedulerAsync()
+    {
+        if (_isSchedulerSampling) return;
+        _isSchedulerSampling = true;
+        try
+        {
+            var (snapshot, longestBlocked, topRates, attribution, inversions) = await Task.Run(() =>
+            {
+                var snap = _scheduler.Sweep();
+                var kernelModules = DpcModuleMapService.GetModuleMap();
+                var longest = SchedulerService.RankLongestBlocked(snap, kernelModules);
+                var rates = _scheduler.ComputeContextSwitchRates(snap);
+                var topRates = SchedulerService.ResolveTopModules(rates, kernelModules);
+                var attrib = SchedulerService.AttributeByProcess(rates);
+                var inv = _scheduler.DetectPriorityInversions(snap);
+                return (snap, longest, topRates, attrib, inv);
+            });
+
+            _lastSchedulerSweep = snapshot;
+
+            LongestBlockedThreads.Clear();
+            foreach (var r in longestBlocked) LongestBlockedThreads.Add(r);
+
+            BusiestThreads.Clear();
+            foreach (var r in topRates) BusiestThreads.Add(r);
+
+            ContextSwitchAttribution.Clear();
+            foreach (var r in attribution) ContextSwitchAttribution.Add(r);
+
+            PriorityInversionHints.Clear();
+            foreach (var h in inversions) PriorityInversionHints.Add(h);
+
+            SchedulerStatusText = snapshot.Count == 0
+                ? "Scheduler sweep returned no data (unsupported Windows build, or a transient read failure)."
+                : $"{snapshot.Count} threads across {snapshot.Select(t => t.Pid).Distinct().Count()} processes, sampled {DateTime.Now:T}.";
+        }
+        catch (Exception ex)
+        {
+            SchedulerStatusText = $"Scheduler sample failed: {ex.Message}";
+        }
+        finally
+        {
+            _isSchedulerSampling = false;
+        }
+    }
+
+    /// <summary>#261: cheap in-memory filter over the shared sweep, for ProcessesViewModel's
+    /// per-selected-process wait-reason breakdown panel - see ProcessesViewModel.Responsiveness's
+    /// remarks for the cross-ViewModel wiring.</summary>
+    public List<ThreadWaitBreakdownRow> GetThreadWaitBreakdown(int pid) => SchedulerService.BuildWaitBreakdown(_lastSchedulerSweep, pid);
 
     /// <summary>#213: Start button - resets the session, arms IsMeasuring, and kicks off a
     /// background loop of short SampleOnceAsync captures until Stop is pressed.</summary>
@@ -1361,6 +1518,7 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
     {
         _lightTimer.Stop();
         _probeTimer.Stop();
+        _schedulerTimer.Stop();
         _measureCts?.Cancel();
         _presentCts?.Cancel();
         _vblank.Dispose();

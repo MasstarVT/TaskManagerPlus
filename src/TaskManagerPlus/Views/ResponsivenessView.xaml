@@ -748,6 +748,178 @@
             </Border>
 
             <!-- ============================================================================
+                 Scheduler, priority and thread-wait analysis (suggestions.md #260-270) - run-queue
+                 pressure, longest-blocked threads, per-thread context-switch rate, context-switch-
+                 storm attribution, a priority-inversion hint, and the MMCSS/multimedia scheduling
+                 audit, all built on one shared system-wide thread sweep (SchedulerService) that
+                 rides its own slower cadence, separate from the cheap _lightTimer above. #261's
+                 per-process wait-reason breakdown lives on the Processes tab instead (selecting a
+                 process there); #266/#267/#270 land on the Processes/CPU tabs respectively;
+                 #268's Win32PrioritySeparation row appends onto the existing "Platform latency
+                 settings" card above, no separate card needed. -->
+            <Separator Margin="0,4,0,20" />
+            <TextBlock Text="Scheduler &amp; thread-wait analysis" FontWeight="Bold" FontSize="18" Margin="0,0,0,12" />
+
+            <!-- #260/#265: run-queue pressure meter, with context-switch-storm attribution ranked
+                 underneath per the item's own framing. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Run-queue pressure" FontWeight="SemiBold" Margin="0,0,0,6" />
+                    <TextBlock Text="A sustained processor queue length well above the logical processor count means threads are waiting for CPU even when total CPU% looks fine."
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,10" />
+                    <UniformGrid Columns="3" Margin="0,0,0,10">
+                        <views:VfdMeter Title="Queue length" Glow="True" Margin="0,0,8,0"
+                                        ValueText="{Binding RunQueuePressure.ProcessorQueueLength, StringFormat={}{0:0.#}}"
+                                        SubText="{Binding RunQueuePressure.LogicalProcessorCount, StringFormat={}of {0} logical processors}">
+                            <views:VfdMeter.Style>
+                                <Style TargetType="views:VfdMeter">
+                                    <Setter Property="AccentBrush" Value="{DynamicResource AccentBrush}" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding RunQueuePressure.IsElevated}" Value="True">
+                                            <Setter Property="AccentBrush" Value="{DynamicResource WarningBrush}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </views:VfdMeter.Style>
+                        </views:VfdMeter>
+                        <views:VfdMeter Title="Ready threads/core (approx)" Glow="False" Margin="8,0,8,0"
+                                        ValueText="{Binding RunQueuePressure.ReadyThreadsPerCoreApprox, StringFormat={}{0:0.##}}"
+                                        AccentBrush="{DynamicResource TextSecondaryBrush}" />
+                        <views:VfdMeter Title="Context switches/sec" Glow="True" Margin="8,0,0,0"
+                                        ValueText="{Binding Performance.ContextSwitchesPerSec, StringFormat={}{0:N0}}"
+                                        AccentBrush="{DynamicResource AccentBrush}" />
+                    </UniformGrid>
+                    <TextBlock Text="&quot;Ready threads/core&quot; is an explicit approximation (queue length ÷ logical processor count) - Windows exposes no true per-core ready-queue counter."
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" FontStyle="Italic" TextWrapping="Wrap" Margin="0,0,0,10" />
+                    <lvc:CartesianChart Series="{Binding RunQueuePressureSeries}" XAxes="{Binding HiddenXAxes}" YAxes="{Binding RunQueuePressureYAxes}"
+                                         Height="140" TooltipPosition="Hidden" LegendPosition="Hidden" Background="Transparent" />
+
+                    <Separator Margin="0,14,0,10" />
+                    <TextBlock Text="#265: who's driving the context-switch rate" FontWeight="SemiBold" FontSize="12.5" Margin="0,0,0,4" />
+                    <DataGrid ItemsSource="{Binding ContextSwitchAttribution}" MaxHeight="200" IsReadOnly="True">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Process" Binding="{Binding ProcessName}" Width="1.4*" />
+                            <DataGridTextColumn Header="PID" Binding="{Binding Pid}" Width="70" />
+                            <DataGridTextColumn Header="Context switches/sec" Binding="{Binding ContextSwitchesPerSec, StringFormat={}{0:N0}}" Width="1.2*" />
+                            <DataGridTextColumn Header="% of total" Binding="{Binding PercentOfTotal, StringFormat={}{0:0.#}%}" Width="90" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- #262/#263: longest-blocked threads and busiest threads (context-switch rate), from
+                 the same shared sweep. #261's per-process breakdown is on the Processes tab. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Thread wait &amp; context-switch analysis" FontWeight="SemiBold" Margin="0,0,0,6" />
+                    <TextBlock Text="{Binding SchedulerStatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,10" />
+
+                    <TextBlock Text="#262: longest-blocked threads" FontWeight="SemiBold" FontSize="12.5" Margin="0,0,0,4" />
+                    <DataGrid ItemsSource="{Binding LongestBlockedThreads}" MaxHeight="220" IsReadOnly="True" Margin="0,0,0,14">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Process" Binding="{Binding ProcessName}" Width="1.3*" />
+                            <DataGridTextColumn Header="TID" Binding="{Binding ThreadId}" Width="70" />
+                            <DataGridTextColumn Header="Wait reason" Binding="{Binding WaitReasonText}" Width="1.2*" />
+                            <DataGridTextColumn Header="Waiting (approx)" Binding="{Binding WaitSecondsApprox, StringFormat={}{0:0.#}s}" Width="120" />
+                            <DataGridTextColumn Header="Start address" Binding="{Binding StartAddressText}" Width="120" />
+                            <DataGridTextColumn Header="Module" Binding="{Binding ModuleName}" Width="1.2*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+
+                    <TextBlock Text="#263: busiest threads (context-switch rate)" FontWeight="SemiBold" FontSize="12.5" Margin="0,0,0,4" />
+                    <DataGrid ItemsSource="{Binding BusiestThreads}" MaxHeight="220" IsReadOnly="True">
+                        <DataGrid.RowStyle>
+                            <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsSuspectedSpin}" Value="True">
+                                        <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </DataGrid.RowStyle>
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Process" Binding="{Binding ProcessName}" Width="1.3*" />
+                            <DataGridTextColumn Header="TID" Binding="{Binding ThreadId}" Width="70" />
+                            <DataGridTextColumn Header="Context switches/sec" Binding="{Binding ContextSwitchesPerSec, StringFormat={}{0:N0}}" Width="1.2*" />
+                            <DataGridTextColumn Header="Spin/livelock?" Binding="{Binding IsSuspectedSpin}" Width="110" />
+                            <DataGridTextColumn Header="Module" Binding="{Binding ModuleName}" Width="1.2*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <TextBlock Text="Quick flag, not a verdict: a very high context-switch rate on one thread is the signature of a spin-wait or livelock, not a confirmed diagnosis. Waiting/duration figures use an approximate clock-tick conversion, not a certified measurement."
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" FontStyle="Italic" TextWrapping="Wrap" Margin="0,8,0,0" />
+                    <TextBlock Text="#261: per-process thread wait-reason breakdown is on the Processes tab - select a process there to see its breakdown."
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" FontStyle="Italic" TextWrapping="Wrap" Margin="0,4,0,0" />
+                </StackPanel>
+            </Border>
+
+            <!-- #264: priority-inversion hint - explicitly a sampled heuristic, never a verdict. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Possible priority inversion" FontWeight="SemiBold" Margin="0,0,0,6" />
+                    <TextBlock Text="A high-priority thread has been sitting ready-to-run (not running) across several consecutive samples while a lower-priority thread keeps running - a sampled pattern over a few ticks, not a traced/proven verdict."
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8" />
+                    <ItemsControl ItemsSource="{Binding PriorityInversionHints}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding SummaryText}" FontSize="12" TextWrapping="Wrap" Foreground="{DynamicResource WarningBrush}" Margin="0,0,0,6" />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="No sustained pattern detected in the most recent sample.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding PriorityInversionHints.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- #269: MMCSS / multimedia scheduling audit. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="MMCSS &amp; multimedia scheduling" FontWeight="SemiBold" Margin="0,0,0,6" />
+                    <TextBlock Text="{Binding MmcssAudit.StatusText}" TextWrapping="Wrap" FontSize="12" Margin="0,0,0,10">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding MmcssAudit.ServiceRunning}" Value="False">
+                                        <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <TextBlock FontSize="12.5" Margin="0,0,0,2">
+                        <Run Text="Service status: " FontWeight="SemiBold" /><Run Text="{Binding MmcssAudit.ServiceStatusText, Mode=OneWay}" />
+                    </TextBlock>
+                    <TextBlock FontSize="12.5" Margin="0,0,0,2">
+                        <Run Text="SystemResponsiveness: " FontWeight="SemiBold" /><Run Text="{Binding MmcssAudit.SystemResponsivenessText, Mode=OneWay}" />
+                    </TextBlock>
+                    <TextBlock FontSize="12.5" Margin="0,0,0,10">
+                        <Run Text="NetworkThrottlingIndex: " FontWeight="SemiBold" /><Run Text="{Binding MmcssAudit.NetworkThrottlingText, Mode=OneWay}" />
+                    </TextBlock>
+                    <TextBlock Text="NetworkThrottlingIndex throttles non-multimedia network traffic whenever a registered multimedia task is active - a common, invisible cause of &quot;the network gets slow while gaming/watching video&quot; reports."
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" FontStyle="Italic" TextWrapping="Wrap" Margin="0,0,0,10" />
+                    <DataGrid ItemsSource="{Binding MmcssAudit.TaskProfiles}" MaxHeight="160" IsReadOnly="True">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Task" Binding="{Binding TaskName}" Width="1*" />
+                            <DataGridTextColumn Header="GPU priority" Binding="{Binding GpuPriority}" Width="1*" />
+                            <DataGridTextColumn Header="Priority" Binding="{Binding Priority}" Width="1*" />
+                            <DataGridTextColumn Header="Scheduling category" Binding="{Binding SchedulingCategory}" Width="1.4*" />
+                            <DataGridTextColumn Header="SFIO priority" Binding="{Binding SfioPriority}" Width="1*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- ============================================================================
                  Display & frames (suggestions.md #247-259) - DWM composition timing, vblank
                  jitter, a per-process present monitor (frame time/FPS/present mode/stutter),
                  display-mode/HAGS/Game-DVR audits, and raw-input latency/polling-rate. -->

@@ -89,4 +89,38 @@ public static class CoreAffinityService
 
         return result;
     }
+
+    /// <summary>#267: ideal-processor index for every thread of a single process - the foreground-
+    /// app-specific building block the CPU tab's hybrid-misplacement flag needs, as distinct from
+    /// ComputeIdealProcessorLoad's "which processes prefer this core" grouping above. Same
+    /// GetThreadIdealProcessorEx technique/honesty caveat (preferred core, not a live trace of
+    /// which core a thread is actually executing on right now).</summary>
+    public static List<int> ComputeIdealProcessorsFor(Process proc)
+    {
+        var result = new List<int>();
+        System.Diagnostics.ProcessThreadCollection threads;
+        try { threads = proc.Threads; }
+        catch { return result; }
+
+        foreach (ProcessThread thread in threads)
+        {
+            IntPtr handle = IntPtr.Zero;
+            try
+            {
+                handle = OpenThread(ThreadQueryInformation, false, (uint)thread.Id);
+                if (handle == IntPtr.Zero) continue;
+                if (!GetThreadIdealProcessorEx(handle, out var idealProc)) continue;
+                result.Add(idealProc.Number);
+            }
+            catch
+            {
+                // Thread exited mid-scan, or access denied - skip it.
+            }
+            finally
+            {
+                if (handle != IntPtr.Zero) CloseHandle(handle);
+            }
+        }
+        return result;
+    }
 }

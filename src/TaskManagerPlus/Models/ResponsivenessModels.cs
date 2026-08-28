@@ -597,3 +597,129 @@ public sealed class InputLatencySnapshot
 
     public string StatusText { get; init; } = string.Empty;
 }
+
+// ================================================================================================
+// #260-270 (Scheduler, priority and thread-wait analysis) - see SchedulerService/
+// ProcessPowerThrottleService/ProcessPriorityService/Win32PrioritySeparationService/MmcssService
+// for how these are populated.
+// ================================================================================================
+
+/// <summary>#260: run-queue pressure - System\Processor Queue Length plus a derived, explicitly
+/// approximate "ready threads per core" figure (Windows exposes no true per-core ready-queue
+/// counter, only this one system-wide value - see ResponsivenessViewModel.SampleLight's remarks).
+/// A sustained queue length well above the logical processor count means threads are waiting for
+/// CPU even when total CPU% looks fine.</summary>
+public sealed class RunQueuePressureInfo
+{
+    public double ProcessorQueueLength { get; init; }
+    public int LogicalProcessorCount { get; init; }
+    public double ReadyThreadsPerCoreApprox => LogicalProcessorCount > 0 ? ProcessorQueueLength / LogicalProcessorCount : 0;
+
+    /// <summary>Quick flag, not a verdict - a rough "well above core count" rule of thumb (2x),
+    /// not a documented threshold.</summary>
+    public bool IsElevated => LogicalProcessorCount > 0 && ProcessorQueueLength > LogicalProcessorCount * 2.0;
+}
+
+/// <summary>#261: one state/wait-reason bucket's thread count for a single process - see
+/// SchedulerService.BuildWaitBreakdown.</summary>
+public sealed class ThreadWaitBreakdownRow
+{
+    public string BucketName { get; init; } = string.Empty;
+    public int ThreadCount { get; init; }
+}
+
+/// <summary>#262: one thread ranked by how long it's been continuously waiting - see
+/// SchedulerService.RankLongestBlocked. WaitSecondsApprox is built from an approximate clock-tick
+/// conversion (SchedulerService.ClockTickMs) - good for ranking/rough duration, not a certified
+/// figure.</summary>
+public sealed class LongestBlockedThreadRow
+{
+    public int Pid { get; init; }
+    public string ProcessName { get; init; } = string.Empty;
+    public int ThreadId { get; init; }
+    public string WaitReasonText { get; init; } = string.Empty;
+    public double WaitSecondsApprox { get; init; }
+    public string StartAddressText { get; init; } = string.Empty;
+
+    /// <summary>Blank when the start address couldn't be resolved to any loaded module - never a guess.</summary>
+    public string ModuleName { get; init; } = string.Empty;
+}
+
+/// <summary>#263: one thread's context-switch rate since the previous sweep - a thread
+/// ping-ponging thousands of times a second is the signature of a spin-wait/livelock. A record (not
+/// a plain sealed class) so SchedulerService.ResolveTopModules can produce a module-resolved copy
+/// via `with` rather than a second constructor path.</summary>
+public sealed record ThreadCsRateRow
+{
+    public int Pid { get; init; }
+    public string ProcessName { get; init; } = string.Empty;
+    public int ThreadId { get; init; }
+    public double ContextSwitchesPerSec { get; init; }
+    public long StartAddress { get; init; }
+    public string ModuleName { get; init; } = string.Empty;
+
+    /// <summary>Quick flag, not a verdict - a rough rate cutoff (2000/sec), not a documented
+    /// threshold for "this is spinning".</summary>
+    public bool IsSuspectedSpin => ContextSwitchesPerSec >= 2000;
+}
+
+/// <summary>#265: one process's share of the system-wide context-switch rate, aggregated from
+/// #263's per-thread rates - see SchedulerService.AttributeByProcess.</summary>
+public sealed class ContextSwitchAttributionRow
+{
+    public int Pid { get; init; }
+    public string ProcessName { get; init; } = string.Empty;
+    public double ContextSwitchesPerSec { get; init; }
+    public double PercentOfTotal { get; init; }
+}
+
+/// <summary>#264: one "possible priority inversion" sample - see
+/// SchedulerService.DetectPriorityInversions. Explicitly a sampled inference over a few consecutive
+/// ticks, never a traced/proven verdict.</summary>
+public sealed class PriorityInversionHint
+{
+    public string HighPriorityProcess { get; init; } = string.Empty;
+    public int HighPriorityThreadId { get; init; }
+    public int HighPriority { get; init; }
+    public string LowerPriorityProcess { get; init; } = string.Empty;
+    public int LowerPriorityThreadId { get; init; }
+    public int LowerPriority { get; init; }
+    public int ConsecutiveSamples { get; init; }
+
+    public string SummaryText =>
+        $"{HighPriorityProcess} (tid {HighPriorityThreadId}, priority {HighPriority}) has been ready-but-not-running for {ConsecutiveSamples} consecutive samples while {LowerPriorityProcess} (tid {LowerPriorityThreadId}, priority {LowerPriority}) keeps running. Possible priority inversion — a sampled pattern, not a traced/proven one.";
+}
+
+/// <summary>#269: MMCSS service status plus the SystemResponsiveness/NetworkThrottlingIndex
+/// registry values and per-task scheduling profile - see MmcssService.Read.</summary>
+public sealed class MmcssAuditInfo
+{
+    public bool ServiceRunning { get; init; }
+    public string ServiceStatusText { get; init; } = "Unknown";
+    public int? SystemResponsiveness { get; init; }
+    public int? NetworkThrottlingIndex { get; init; }
+    public List<MmcssTaskProfileRow> TaskProfiles { get; init; } = new();
+    public string StatusText { get; init; } = string.Empty;
+
+    public string SystemResponsivenessText => SystemResponsiveness is { } v ? $"{v}%" : "Not set — Windows default (10% on desktop SKUs)";
+
+    /// <summary>0xFFFFFFFF (-1 as a signed DWORD) means throttling is disabled; absent means
+    /// Windows' documented default of 10 packets/ms applies.</summary>
+    public string NetworkThrottlingText => NetworkThrottlingIndex switch
+    {
+        null => "Not set — Windows default (throttles non-multimedia network traffic to ~10 packets/ms while multimedia plays)",
+        -1 => "Disabled (no network throttling while multimedia plays)",
+        var v => $"{v} packets/ms (Windows default is 10)",
+    };
+}
+
+/// <summary>#269: one multimedia task's ("Audio"/"Games"/"Pro Audio") MMCSS scheduling profile -
+/// see MmcssService.Read. "Unknown" means the value/subkey wasn't present, never a guess.</summary>
+public sealed class MmcssTaskProfileRow
+{
+    public string TaskName { get; init; } = string.Empty;
+    public string GpuPriority { get; init; } = "Unknown";
+    public string Priority { get; init; } = "Unknown";
+    public string SchedulingCategory { get; init; } = "Unknown";
+    public string SfioPriority { get; init; } = "Unknown";
+}

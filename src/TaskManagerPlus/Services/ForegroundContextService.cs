@@ -61,4 +61,23 @@ public static class ForegroundContextService
             return (string.Empty, string.Empty);
         }
     }
+
+    /// <summary>#267: just the foreground window's owning process ID, 0 when there's none/it
+    /// couldn't be determined - a separate method (not folded into GetForegroundContext's tuple)
+    /// so that method's existing two-element deconstruction at its one call site doesn't need to
+    /// change.</summary>
+    public static int GetForegroundProcessId()
+    {
+        try
+        {
+            IntPtr hwnd = GetForegroundWindow();
+            if (hwnd == IntPtr.Zero) return 0;
+            GetWindowThreadProcessId(hwnd, out int pid);
+            return pid;
+        }
+        catch
+        {
+            return 0;
+        }
+    }
 }

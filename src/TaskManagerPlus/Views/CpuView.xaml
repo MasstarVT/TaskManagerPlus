@@ -370,6 +370,25 @@
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
+                    <!-- #267: hybrid-CPU (P-core/E-core) misplacement flag - a plain text note next
+                         to the heatmap rather than a full P/E-tint overlay (a documented
+                         simplification, see CpuViewModel.HybridMisplacementText's remarks). Only
+                         ever shown on genuinely hybrid systems, matching this whole card's own
+                         HasHybridTopology gating. -->
+                    <TextBlock Text="{Binding HybridMisplacementText}" TextWrapping="Wrap" FontSize="11.5" Margin="0,10,0,0">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding HybridMisplacementSuspected}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                        <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
                 </StackPanel>
             </Border>
 

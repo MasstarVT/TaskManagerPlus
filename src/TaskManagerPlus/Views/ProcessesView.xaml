@@ -22,6 +22,7 @@
                 <ColumnDefinition Width="260" />
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
@@ -62,13 +63,19 @@
                       IsChecked="{Binding ShowTree}"
                       ToolTip="Show processes indented under their parent instead of a flat list" />
 
-            <TextBlock Grid.Column="3" VerticalAlignment="Center" Margin="16,0,0,0"
+            <!-- #266: EcoQoS filter - "this app is slow because Windows classified it as
+                 background" is otherwise undiagnosable in a long process list. -->
+            <CheckBox Grid.Column="3" Content="Power-throttled only" VerticalAlignment="Center" Margin="16,0,0,0"
+                      IsChecked="{Binding OnlyPowerThrottled}"
+                      ToolTip="Show only processes Windows has classified as background via EcoQoS power throttling" />
+
+            <TextBlock Grid.Column="4" VerticalAlignment="Center" Margin="16,0,0,0"
                        Foreground="{DynamicResource TextSecondaryBrush}">
                 <Run Text="{Binding ProcessCount, Mode=OneWay}" /><Run Text=" processes" />
             </TextBlock>
 
-            <Button Grid.Column="4" Content="End process tree" Margin="0,0,8,0" Command="{Binding EndProcessTreeCommand}" />
-            <Button Grid.Column="5" Content="End task" Command="{Binding EndTaskCommand}" Style="{StaticResource DangerButton}" />
+            <Button Grid.Column="5" Content="End process tree" Margin="0,0,8,0" Command="{Binding EndProcessTreeCommand}" />
+            <Button Grid.Column="6" Content="End task" Command="{Binding EndTaskCommand}" Style="{StaticResource DangerButton}" />
         </Grid>
 
         <!-- Toolbar row 2: on-demand inspectors + process-control actions for the selected process. -->
@@ -134,6 +141,10 @@
                         <DataTrigger Binding="{Binding IsDuplicateInstanceOutlier}" Value="True">
                             <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
                         </DataTrigger>
+                        <!-- #270: a process stuck in background I/O priority mode. -->
+                        <DataTrigger Binding="{Binding IsBackgroundIoPriority}" Value="True">
+                            <Setter Property="Opacity" Value="0.7" />
+                        </DataTrigger>
                     </Style.Triggers>
                 </Style>
             </DataGrid.RowStyle>
@@ -196,6 +207,47 @@
                 <DataGridTextColumn Header="USER" Binding="{Binding UserHandleCount}" Width="60" />
                 <!-- Round 7 #6: scheduling priority class. -->
                 <DataGridTextColumn Header="Priority" Binding="{Binding PriorityClassName}" Width="100" />
+                <!-- #266: EcoQoS power-throttling status - "this app is slow because Windows
+                     classified it as background" is otherwise undiagnosable. -->
+                <DataGridTemplateColumn Header="Power" Width="110" SortMemberPath="PowerThrottleText">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding PowerThrottleText}" VerticalAlignment="Center" FontSize="11.5">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsPowerThrottled}" Value="True">
+                                                <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <!-- #270: I/O and memory priority - a process stuck in Very Low/Low I/O priority
+                     ("background mode") otherwise presents only as unexplainably slow disk access. -->
+                <DataGridTemplateColumn Header="I/O priority" Width="100" SortMemberPath="IoPriorityText">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding IoPriorityText}" VerticalAlignment="Center" FontSize="11.5">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsBackgroundIoPriority}" Value="True">
+                                                <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTextColumn Header="Memory priority" Binding="{Binding MemoryPriorityText}" Width="110" />
                 <!-- Round 7 #2/#11: spawn-group size and duplicate-instance count badges. -->
                 <DataGridTemplateColumn Header="Group" Width="70" SortMemberPath="SpawnGroupSize">
                     <DataGridTemplateColumn.CellTemplate>
@@ -432,7 +484,7 @@
             </Border>
 
             <!-- Round 7 #17 -->
-            <Border Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
+            <Border Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Margin="0,0,0,6">
                 <Border.Style>
                     <Style TargetType="Border">
                         <Setter Property="Visibility" Value="Visible" />
@@ -449,6 +501,41 @@
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
                                 <TextBlock Text="{Binding}" FontSize="11.5" Margin="0,0,0,2" />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #261: thread state/wait-reason breakdown for the selected process - auto-populates
+                 on selection (like the CPU-affinity editor below) and refreshes each tick from
+                 ResponsivenessViewModel's shared scheduler sweep, no button needed. -->
+            <Border Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Visibility" Value="Visible" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding SelectedProcessWaitBreakdown.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Thread state / wait-reason breakdown" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                    <ItemsControl ItemsSource="{Binding SelectedProcessWaitBreakdown}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock FontSize="11.5" Margin="0,0,16,2">
+                                    <Run Text="{Binding BucketName, Mode=OneWay}" />
+                                    <Run Text=": " />
+                                    <Run Text="{Binding ThreadCount, Mode=OneWay}" FontWeight="SemiBold" />
+                                </TextBlock>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>

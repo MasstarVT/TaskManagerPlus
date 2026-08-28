@@ -16,8 +16,22 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
     private readonly DispatcherTimer _timer;
     private bool _isRefreshing;
 
+    /// <summary>#261: set once by MainViewModel right after ResponsivenessViewModel is constructed
+    /// (this ViewModel itself is built first, via a parameterless constructor, so there's no
+    /// circular-constructor-dependency way to pass it in up front). Gives this tab read access to
+    /// SchedulerService's shared system-wide thread sweep (owned/refreshed by
+    /// ResponsivenessViewModel on its own slower cadence - see that class's remarks) for the
+    /// per-process wait-reason breakdown below, without a second syscall sweep on this tab's own
+    /// faster poll interval.</summary>
+    public ResponsivenessViewModel? Responsiveness { get; set; }
+
     public ObservableCollection<ProcessRow> Processes { get; } = new();
     public ICollectionView ProcessesView { get; }
+
+    /// <summary>#261: thread-state/wait-reason breakdown for SelectedProcess, refreshed whenever the
+    /// selection changes and on every tick thereafter (a cheap in-memory filter over the already-
+    /// shared sweep, not a new syscall) - see RefreshSelectedWaitBreakdown.</summary>
+    public ObservableCollection<ThreadWaitBreakdownRow> SelectedProcessWaitBreakdown { get; } = new();
 
     /// <summary>Round 7 #1: process tree/hierarchy view, toggleable alongside the flat grid above -
     /// rebuilt from the same already-sampled Processes collection each tick (BuildProcessTree), no
@@ -50,6 +64,7 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
                 SelectedProcessHostedServices.Clear();
                 FileLockResults.Clear();
                 LoadAffinityForSelection();
+                RefreshSelectedWaitBreakdown();
             }
         }
     }
@@ -126,6 +141,20 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
         }
     }
 
+    /// <summary>#266: filter checkbox, same pattern as RecentlyStartedOnly above - "this app is
+    /// slow because Windows classified it as background" is otherwise undiagnosable in a long
+    /// process list.</summary>
+    private bool _onlyPowerThrottled;
+    public bool OnlyPowerThrottled
+    {
+        get => _onlyPowerThrottled;
+        set
+        {
+            if (SetProperty(ref _onlyPowerThrottled, value))
+                ProcessesView.Refresh();
+        }
+    }
+
     private int _processCount;
     public int ProcessCount { get => _processCount; private set => SetProperty(ref _processCount, value); }
 
@@ -198,6 +227,9 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
             (row.StartTime is null || DateTime.Now - row.StartTime.Value > RecentlyStartedWindow))
             return false;
 
+        if (OnlyPowerThrottled && !row.IsPowerThrottled)
+            return false;
+
         if (string.IsNullOrWhiteSpace(FilterText)) return true;
         return row.Name.Contains(FilterText, StringComparison.OrdinalIgnoreCase) ||
                row.Pid.ToString().Contains(FilterText, StringComparison.OrdinalIgnoreCase) ||
@@ -222,6 +254,12 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
 
             if (ShowTree)
                 BuildProcessTree();
+
+            // #261: the shared sweep (owned by ResponsivenessViewModel) refreshes on its own
+            // slower cadence, independent of this tab's tick - re-pull whatever's current for the
+            // still-selected pid rather than only refreshing on selection change, so the panel
+            // catches up once a new sweep lands.
+            RefreshSelectedWaitBreakdown();
         }
         catch
         {
@@ -231,6 +269,16 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
         {
             _isRefreshing = false;
         }
+    }
+
+    /// <summary>#261: cheap in-memory filter over ResponsivenessViewModel's already-shared sweep -
+    /// see Responsiveness's remarks above for why this doesn't run its own syscall.</summary>
+    private void RefreshSelectedWaitBreakdown()
+    {
+        SelectedProcessWaitBreakdown.Clear();
+        if (SelectedProcess is not { } target || Responsiveness is null) return;
+        foreach (var row in Responsiveness.GetThreadWaitBreakdown(target.Pid))
+            SelectedProcessWaitBreakdown.Add(row);
     }
 
     private void MergeInto(List<ProcessRow> latest)
@@ -266,6 +314,11 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
                 existing.SpawnGroupSize = fresh.SpawnGroupSize;
                 existing.DuplicateInstanceCount = fresh.DuplicateInstanceCount;
                 existing.IsDuplicateInstanceOutlier = fresh.IsDuplicateInstanceOutlier;
+                // #266/#270
+                existing.PowerThrottleText = fresh.PowerThrottleText;
+                existing.IoPriorityText = fresh.IoPriorityText;
+                existing.IsBackgroundIoPriority = fresh.IsBackgroundIoPriority;
+                existing.MemoryPriorityText = fresh.MemoryPriorityText;
                 // CommandLine/FilePath/StartTime/User/ParentPid/ParentName don't change for the
                 // lifetime of a pid - no need to reassign them every tick like the values above
                 // that actually vary.

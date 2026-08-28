@@ -153,4 +153,31 @@ public sealed class ProcessRow : ObservableObject
     public long PagedPoolBytes { get => _pagedPoolBytes; set => SetProperty(ref _pagedPoolBytes, value); }
 
     public double MemoryMb => MemoryBytes / 1024.0 / 1024.0;
+
+    /// <summary>#266: EcoQoS / power-throttling status ("Throttled (EcoQoS)", "Not throttled", or
+    /// "Unknown") - see ProcessPowerThrottleService.ReadStatus. "This app is slow because Windows
+    /// classified it as background" is otherwise undiagnosable.</summary>
+    private string _powerThrottleText = "Unknown";
+    public string PowerThrottleText
+    {
+        get => _powerThrottleText;
+        set { if (SetProperty(ref _powerThrottleText, value)) OnPropertyChanged(nameof(IsPowerThrottled)); }
+    }
+
+    public bool IsPowerThrottled => PowerThrottleText.StartsWith("Throttled", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>#270: I/O priority ("Very Low"/"Low"/"Normal"/"High"/"Critical"/"Unknown") - see
+    /// ProcessPriorityService.Read. IsBackgroundIoPriority flags the classic "stuck in background
+    /// I/O mode" case (Very Low/Low) that otherwise presents only as "this app's disk access is
+    /// oddly slow" with no visible cause.</summary>
+    private string _ioPriorityText = "Unknown";
+    public string IoPriorityText { get => _ioPriorityText; set => SetProperty(ref _ioPriorityText, value); }
+
+    private bool _isBackgroundIoPriority;
+    public bool IsBackgroundIoPriority { get => _isBackgroundIoPriority; set => SetProperty(ref _isBackgroundIoPriority, value); }
+
+    /// <summary>#270: memory priority ("Lowest" through "Normal", or "Unknown") - see
+    /// ProcessPriorityService.Read.</summary>
+    private string _memoryPriorityText = "Unknown";
+    public string MemoryPriorityText { get => _memoryPriorityText; set => SetProperty(ref _memoryPriorityText, value); }
 }

@@ -209,7 +209,14 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         // constructed above) rather than as a field initializer, so it's a real instance by the
         // time Cpu/Network construct - the same "reach a sibling ViewModel via constructor
         // reference" pattern #221's Network/Responsiveness wiring already established.
-        Responsiveness = new ResponsivenessViewModel(Processes);
+        // #260: Responsiveness now also takes Performance (a field initializer above, so already a
+        // real instance here) for the run-queue-pressure card's Processor Queue Length reading.
+        Responsiveness = new ResponsivenessViewModel(Processes, Performance);
+        // #261: gives the Processes tab read access to Responsiveness's shared scheduler sweep for
+        // the per-process wait-reason breakdown - see ProcessesViewModel.Responsiveness's remarks
+        // for why this is a settable property rather than a constructor parameter (Processes is
+        // itself a field initializer, constructed before Responsiveness exists).
+        Processes.Responsiveness = Responsiveness;
         EnergyThermals = new EnergyThermalsViewModel(Performance);
         Cpu = new CpuViewModel(Performance, EnergyThermals, Processes, Responsiveness);
         Memory = new MemoryViewModel(Performance, Processes);

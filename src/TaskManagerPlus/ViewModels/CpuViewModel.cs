@@ -120,6 +120,29 @@ public sealed class CpuViewModel : ObservableObject, IDisposable
     private string _deepIdleExitLatencyText = string.Empty;
     public string DeepIdleExitLatencyText { get => _deepIdleExitLatencyText; private set => SetProperty(ref _deepIdleExitLatencyText, value); }
 
+    /// <summary>
+    /// #267: on P-core/E-core (hybrid) systems, flags when the foreground app's threads are
+    /// running predominantly on E-cores - based on each thread's preferred (ideal) processor
+    /// (GetThreadIdealProcessorEx, the exact same API/honesty caveat #24's core-affinity heatmap
+    /// above already uses - "preferred core", not a live trace of which core a thread is actually
+    /// executing on this instant), classified P/E via Performance.Cores (already-known topology,
+    /// no second CpuTopologyService query needed). A plain text flag next to the existing heatmap
+    /// rather than a full heatmap P/E-tint overlay - a documented simplification (see CpuView.xaml)
+    /// since surgically overlaying the existing heatmap cells would be a much larger XAML change
+    /// for the same underlying signal. Links to #266 (EcoQoS) as the likely reason via plain text,
+    /// since EcoQoS-throttled work is exactly what Windows steers onto E-cores.
+    /// </summary>
+    private string _hybridMisplacementText = string.Empty;
+    public string HybridMisplacementText { get => _hybridMisplacementText; private set => SetProperty(ref _hybridMisplacementText, value); }
+
+    private bool _hybridMisplacementSuspected;
+    public bool HybridMisplacementSuspected { get => _hybridMisplacementSuspected; private set => SetProperty(ref _hybridMisplacementSuspected, value); }
+
+    /// <summary>Share of the foreground app's threads that must be on E-cores before this flags -
+    /// "predominantly", not "any at all" (a hybrid scheduler routinely puts a few background
+    /// threads on E-cores even for a foreground app, which is normal and not worth flagging).</summary>
+    private const double EcoreMisplacementThreshold = 0.6;
+
     /// <summary>Pass-through: true only on genuinely hybrid CPUs. The view should hide the
     /// P-core/E-core color distinction entirely when this is false.</summary>
     public bool HasHybridTopology => Performance.HasHybridTopology;
@@ -149,7 +172,7 @@ public sealed class CpuViewModel : ObservableObject, IDisposable
         RebuildGroups();
 
         _throttleTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(2) };
-        _throttleTimer.Tick += (_, _) => { RefreshThrottleStatus(); RefreshDeepIdleLatencyFlag(); _ = RefreshCoreAffinityAsync(); };
+        _throttleTimer.Tick += (_, _) => { RefreshThrottleStatus(); RefreshDeepIdleLatencyFlag(); _ = RefreshCoreAffinityAsync(); _ = RefreshHybridMisplacementFlagAsync(); };
         _throttleTimer.Start();
         RefreshThrottleStatus();
         RefreshDeepIdleLatencyFlag();
@@ -215,6 +238,86 @@ public sealed class CpuViewModel : ObservableObject, IDisposable
         finally
         {
             _affinityRefreshInFlight = false;
+        }
+    }
+
+    private bool _hybridMisplacementRefreshInFlight;
+
+    /// <summary>#267: see HybridMisplacementText's remarks. Guarded against overlap the same way
+    /// RefreshCoreAffinityAsync above is - GetThreadIdealProcessorEx-per-thread can legitimately
+    /// take a moment on a very thread-heavy foreground app.</summary>
+    private async Task RefreshHybridMisplacementFlagAsync()
+    {
+        if (!HasHybridTopology)
+        {
+            HybridMisplacementSuspected = false;
+            HybridMisplacementText = string.Empty;
+            return;
+        }
+        if (_hybridMisplacementRefreshInFlight) return;
+        _hybridMisplacementRefreshInFlight = true;
+        try
+        {
+            int fgPid = ForegroundContextService.GetForegroundProcessId();
+            if (fgPid <= 0)
+            {
+                HybridMisplacementSuspected = false;
+                HybridMisplacementText = string.Empty;
+                return;
+            }
+
+            // Snapshot P/E classification per core index on the UI thread before handing off to
+            // Task.Run below - Performance.Cores is an ObservableCollection mutated on the UI
+            // thread each Performance tick, so it isn't safe to enumerate concurrently from a
+            // background thread (the same reasoning RefreshCoreAffinityAsync above already follows
+            // by capturing logicalCount, a plain int, rather than touching Cores itself off-thread).
+            var isPCoreByIndex = Performance.Cores.ToDictionary(c => c.Index, c => c.IsPCore);
+
+            var result = await Task.Run<(string Name, int Total, int OnEcores)?>(() =>
+            {
+                System.Diagnostics.Process? proc = null;
+                try { proc = System.Diagnostics.Process.GetProcessById(fgPid); }
+                catch { return null; }
+
+                try
+                {
+                    var idealCores = CoreAffinityService.ComputeIdealProcessorsFor(proc);
+                    if (idealCores.Count == 0) return null;
+
+                    int onEcores = 0;
+                    foreach (var coreIndex in idealCores)
+                    {
+                        if (isPCoreByIndex.TryGetValue(coreIndex, out bool isP) && !isP) onEcores++;
+                    }
+                    return (proc.ProcessName, idealCores.Count, onEcores);
+                }
+                finally
+                {
+                    proc.Dispose();
+                }
+            });
+
+            if (result is not { } r || r.Total == 0)
+            {
+                HybridMisplacementSuspected = false;
+                HybridMisplacementText = string.Empty;
+                return;
+            }
+
+            double share = (double)r.OnEcores / r.Total;
+            bool suspected = share >= EcoreMisplacementThreshold;
+            HybridMisplacementSuspected = suspected;
+            HybridMisplacementText = suspected
+                ? $"Foreground app \"{r.Name}\" has {share:P0} of its threads preferring E-cores — check the Processes tab's EcoQoS column (#266): Windows' power-throttling classification is the most likely reason. Based on preferred (ideal) processor, not a live trace."
+                : string.Empty;
+        }
+        catch
+        {
+            // Best-effort - a failed read just leaves the flag at its last known value.
+        }
+        finally
+        {
+            _hybridMisplacementRefreshInFlight = false;
         }
     }
 
