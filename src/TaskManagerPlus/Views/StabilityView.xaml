@@ -161,6 +161,49 @@
                 </StackPanel>
             </Border>
 
+            <!-- #427: the classic pool-starvation event signature (Srv 2019/2020, event 333,
+                 Resource-Exhaustion-Detector) with a plain-English explanation per row - the
+                 strongest possible evidence of a kernel leak this app can surface. Collapsed
+                 entirely when none are found, same pattern as the faulting-module card above. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding PoolExhaustionEvents.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Pool-exhaustion event history" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Srv 2019/2020 (nonpaged/paged pool exhausted), event 333 (registry flush failure), and Windows' own resource-exhaustion detector - the strongest evidence available that a driver is leaking kernel memory."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+                    <ItemsControl ItemsSource="{Binding PoolExhaustionEvents}" Margin="0,0,0,0">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Padding="10,8" Margin="0,0,0,8" Background="{DynamicResource DangerMutedBrush}" CornerRadius="6">
+                                    <StackPanel>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" FontSize="12.5" FontWeight="SemiBold" Foreground="{DynamicResource DangerBrush}">
+                                                <Run Text="{Binding ProviderName}" /><Run Text=" · event " /><Run Text="{Binding EventId, Mode=OneWay}" />
+                                            </TextBlock>
+                                            <TextBlock Grid.Column="1" Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}"
+                                                       FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        </Grid>
+                                        <TextBlock Text="{Binding Explanation}" FontSize="11.5" TextWrapping="Wrap" Margin="0,4,0,0" />
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
             <!-- #1/#8: recent Critical/Error entries from the System and Application logs, last
                  30 days - a faulting-module tooltip is shown when the message matched that shape
                  (typically an Application-log app crash entry). -->

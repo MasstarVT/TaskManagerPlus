@@ -67,8 +67,74 @@ public sealed class EventLogService
             DailyCounts = BuildDailyCounts(events),
             LowMemoryEventCount = lowMemCount,
             LastLowMemoryEvent = lowMemLast,
+            PoolExhaustionEvents = ReadPoolExhaustionEvents(),
         };
     }
+
+    // #427: the classic pool-starvation event signature - Srv 2019 (nonpaged pool exhausted) and
+    // 2020 (paged pool exhausted) are logged at Warning/Error level by the SMB server component,
+    // event 333 ("The registry cannot flush changes...") is the classic secondary symptom of the
+    // same underlying exhaustion, and Resource-Exhaustion-Detector's own entries are queried
+    // separately here (rather than reusing ReadLowMemoryEvents' count-only result above) since
+    // this needs the actual event list to show, not just a count.
+    private const int SrvNonpagedPoolExhaustedEventId = 2019;
+    private const int SrvPagedPoolExhaustedEventId = 2020;
+    private const int RegistryFlushFailedEventId = 333;
+
+    private static List<PoolExhaustionEvent> ReadPoolExhaustionEvents()
+    {
+        var results = new List<PoolExhaustionEvent>();
+        try
+        {
+            long maxAgeMs = LookbackDays * 24L * 60 * 60 * 1000;
+            var query = new EventLogQuery("System", PathType.LogName,
+                $"*[System[(EventID={SrvNonpagedPoolExhaustedEventId} or EventID={SrvPagedPoolExhaustedEventId} or " +
+                $"EventID={RegistryFlushFailedEventId} or Provider[@Name='{ResourceExhaustionProvider}']) and " +
+                $"TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]")
+            {
+                ReverseDirection = true,
+            };
+
+            using var reader = new EventLogReader(query);
+            int count = 0;
+            const int maxEvents = 200;
+            while (count < maxEvents && reader.ReadEvent() is { } record)
+            {
+                using (record)
+                {
+                    count++;
+                    if (record.TimeCreated is null) continue;
+
+                    results.Add(new PoolExhaustionEvent
+                    {
+                        TimeCreated = record.TimeCreated.Value,
+                        ProviderName = record.ProviderName ?? string.Empty,
+                        EventId = record.Id,
+                        Explanation = ExplainPoolExhaustionEvent(record.Id, record.ProviderName ?? string.Empty),
+                    });
+                }
+            }
+        }
+        catch
+        {
+            // Provider/log unavailable - degrade to "none found", same as every other event-log
+            // read in this service.
+        }
+        return results;
+    }
+
+    private static string ExplainPoolExhaustionEvent(int eventId, string providerName) => eventId switch
+    {
+        SrvNonpagedPoolExhaustedEventId =>
+            "The SMB server (Srv) reported nonpaged pool exhausted - a driver is very likely leaking nonpaged pool; a hard crash (bugcheck), not just a slowdown, becomes possible if this keeps happening.",
+        SrvPagedPoolExhaustedEventId =>
+            "The SMB server (Srv) reported paged pool exhausted - a driver is very likely leaking paged pool; file sharing/network I/O can start failing outright once this pool is exhausted.",
+        RegistryFlushFailedEventId =>
+            "The registry couldn't flush changes to disk - a classic secondary symptom of pool or disk-space exhaustion, not usually a registry problem in its own right.",
+        _ when providerName.Equals(ResourceExhaustionProvider, StringComparison.OrdinalIgnoreCase) =>
+            "Windows' own resource-exhaustion detector flagged available memory (physical RAM and/or commit) running critically low.",
+        _ => "Matches the classic pool-starvation event signature.",
+    };
 
     // Round 8 #40: low-memory resource-exhaustion events are logged by a dedicated Windows
     // component at Warning level, not Critical/Error - outside the Level=1|2 filter the main scan

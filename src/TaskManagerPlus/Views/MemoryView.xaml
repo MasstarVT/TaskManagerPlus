@@ -123,22 +123,177 @@
                  leaking driver), and page fault rate (#20, hard faults spiking means heavy
                  paging to disk; soft faults are cheap and normal). -->
             <TextBlock Text="Diagnostics" Style="{StaticResource SubStat}" Margin="0,0,0,10" />
-            <UniformGrid Columns="4" Margin="0,0,0,16">
+            <UniformGrid Columns="5" Margin="0,0,0,16">
                 <views:VfdMeter Title="Standby list" Glow="False" Margin="0,0,6,0"
                                 Percent="{Binding Performance.StandbyPercent}"
                                 ValueText="{Binding Performance.StandbyGb, StringFormat={}{0:0.0}}" Unit="GB"
                                 SubText="Reclaimable cache" AccentBrush="{Binding Performance.RamColor, Converter={StaticResource ColorToBrushConverter}}" />
+                <!-- #420: red state past 80% (IsNonpagedPoolWarning) - nonpaged pool exhaustion is
+                     a hard bugcheck risk, not just a slowdown. SubText's limit is a documented
+                     registry override when configured, a clearly-labeled RAM-based estimate
+                     otherwise - see PoolLimitsService. -->
                 <views:VfdMeter Title="Nonpaged pool" Glow="False" Margin="3,0,3,0"
+                                Percent="{Binding Performance.PoolNonpagedPercent}"
                                 ValueText="{Binding Performance.PoolNonpagedGb, StringFormat={}{0:0.00}}" Unit="GB"
-                                SubText="Kernel memory" AccentBrush="{DynamicResource AccentBrush}" />
+                                SubText="{Binding Performance.PoolNonpagedLimitText}">
+                    <views:VfdMeter.Style>
+                        <Style TargetType="views:VfdMeter">
+                            <Setter Property="AccentBrush" Value="{DynamicResource AccentBrush}" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding Performance.IsNonpagedPoolWarning}" Value="True">
+                                    <Setter Property="AccentBrush" Value="{DynamicResource DangerBrush}" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </views:VfdMeter.Style>
+                </views:VfdMeter>
+                <!-- #421: same limit-denominator treatment as Nonpaged pool above. -->
                 <views:VfdMeter Title="Paged pool" Glow="False" Margin="3,0,3,0"
+                                Percent="{Binding Performance.PoolPagedPercent}"
                                 ValueText="{Binding Performance.PoolPagedGb, StringFormat={}{0:0.00}}" Unit="GB"
-                                SubText="Kernel memory" AccentBrush="{DynamicResource AccentBrush}" />
+                                SubText="{Binding Performance.PoolPagedLimitText}" AccentBrush="{DynamicResource AccentBrush}" />
+                <!-- #421: session pool - "Auto" (Windows manages it) unless an explicit registry
+                     override configures a size; live session pool usage isn't exposed by any
+                     documented API, so only the configured limit is shown, never a guessed usage. -->
+                <views:VfdMeter Title="Session pool" Glow="False" Margin="3,0,3,0"
+                                ValueText="{Binding Performance.SessionPoolValueText}" Unit="MB"
+                                SubText="{Binding Performance.SessionPoolSubText}" AccentBrush="{DynamicResource AccentBrush}" />
                 <views:VfdMeter Title="Page faults" Glow="False" Margin="6,0,0,0"
                                 ValueText="{Binding Performance.HardFaultsPerSec, StringFormat={}{0:0}}" Unit="hard/s"
                                 SubText="{Binding Performance.SoftFaultsPerSec, StringFormat={}+{0:0} soft/s}"
                                 AccentBrush="{DynamicResource AccentBrush}" />
             </UniformGrid>
+
+            <!-- #422: driver-locked and non-pageable memory - the RAM drivers hold that never
+                 shows up in any process's own working set. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Driver-locked &amp; non-pageable memory" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Resident is the subset currently paged in to physical RAM right now; Total also counts the pageable portion that may currently be paged out - a large gap between the two is normal, not a leak signal on its own."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+                    <UniformGrid Columns="4">
+                        <views:VfdMeter Title="Nonpaged allocs" Glow="False" Margin="0,0,6,0"
+                                        ValueText="{Binding Performance.PoolNonpagedAllocs, StringFormat={}{0:N0}}"
+                                        SubText="Outstanding allocations" AccentBrush="{DynamicResource AccentBrush}" />
+                        <views:VfdMeter Title="Driver resident" Glow="False" Margin="3,0,3,0"
+                                        ValueText="{Binding Performance.SystemDriverResidentGb, StringFormat={}{0:0.00}}" Unit="GB"
+                                        SubText="Locked in RAM now" AccentBrush="{DynamicResource AccentBrush}" />
+                        <views:VfdMeter Title="Driver total" Glow="False" Margin="3,0,3,0"
+                                        ValueText="{Binding Performance.SystemDriverTotalGb, StringFormat={}{0:0.00}}" Unit="GB"
+                                        SubText="Resident + pageable" AccentBrush="{DynamicResource AccentBrush}" />
+                        <views:VfdMeter Title="OS code resident" Glow="False" Margin="6,0,0,0"
+                                        ValueText="{Binding Performance.SystemCodeResidentGb, StringFormat={}{0:0.00}}" Unit="GB"
+                                        SubText="Kernel-mode OS code" AccentBrush="{DynamicResource AccentBrush}" />
+                    </UniformGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- #423: "where did my RAM go" - sums the categories already shown elsewhere on this
+                 tab and shows the unaccounted remainder explicitly, instead of leaving the user to
+                 do that arithmetic themselves across several different cards. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Where did my RAM go?" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="A reconciliation across independently-sampled counters, not one atomic accounting pass - a small remainder either direction is normal; a large one means a category this breakdown doesn't cover (e.g. GPU-shared memory) is worth a look."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Total physical RAM" FontSize="12.5" />
+                        <TextBlock Grid.Column="1" Text="{Binding Performance.RamTotalGb, StringFormat={}{0:0.00} GB}" FontSize="12.5" FontWeight="SemiBold" />
+                    </Grid>
+                    <Grid Margin="0,4,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="− Process private working sets" FontSize="12.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        <TextBlock Grid.Column="1" Text="{Binding ReconciledProcessPrivateWsGb, StringFormat={}{0:0.00} GB}" FontSize="12.5" />
+                    </Grid>
+                    <Grid Margin="0,4,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="− Standby (reclaimable) list" FontSize="12.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        <TextBlock Grid.Column="1" Text="{Binding Performance.StandbyGb, StringFormat={}{0:0.00} GB}" FontSize="12.5" />
+                    </Grid>
+                    <Grid Margin="0,4,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="− Modified (dirty) list" FontSize="12.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        <TextBlock Grid.Column="1" Text="{Binding Performance.ModifiedGb, StringFormat={}{0:0.00} GB}" FontSize="12.5" />
+                    </Grid>
+                    <Grid Margin="0,4,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="− Kernel pools (nonpaged + paged)" FontSize="12.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        <TextBlock Grid.Column="1" Text="{Binding ReconciledKernelPoolsGb, StringFormat={}{0:0.00} GB}" FontSize="12.5" />
+                    </Grid>
+                    <Grid Margin="0,4,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="− Driver-locked pages" FontSize="12.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        <TextBlock Grid.Column="1" Text="{Binding Performance.SystemDriverResidentGb, StringFormat={}{0:0.00} GB}" FontSize="12.5" />
+                    </Grid>
+                    <Grid Margin="0,4,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="− Hardware-reserved memory" FontSize="12.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        <TextBlock Grid.Column="1" Text="{Binding Performance.HardwareReservedGb, StringFormat={}{0:0.00} GB}" FontSize="12.5" />
+                    </Grid>
+                    <Border BorderThickness="0,1,0,0" BorderBrush="{DynamicResource BorderSubtleBrush}" Margin="0,8,0,8" />
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Unaccounted remainder" FontSize="13" FontWeight="SemiBold" />
+                        <TextBlock Grid.Column="1" FontSize="13" FontWeight="SemiBold">
+                            <Run Text="{Binding ReconciledRemainderGb, StringFormat={}{0:0.00} GB, Mode=OneWay}" />
+                            <Run Text=" (" /><Run Text="{Binding ReconciledRemainderPercent, StringFormat={}{0:0.0}%, Mode=OneWay}" /><Run Text=")" />
+                        </TextBlock>
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+            <!-- #425: system-wide handle count vs. the one documented reference point Windows
+                 actually publishes - see PerformanceViewModel's remarks for why there's no single
+                 documented system-wide cap to chart against directly. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="System-wide handle count" Style="{StaticResource CardTitle}" Margin="0" />
+                        <TextBlock Grid.Column="1" VerticalAlignment="Center" FontSize="18" FontWeight="SemiBold" Text="{Binding Performance.HandleCount, StringFormat={}{0:N0}}" />
+                    </Grid>
+                    <TextBlock Text="A climb here with no single process responsible (compare against the Processes tab's own Handles column) points at a kernel object leak rather than one runaway app. Windows doesn't publish a single system-wide handle cap - the practical ceiling is available kernel pool memory, shown in the Nonpaged/Paged pool cards above; the figure below is the one documented per-process reference point, for scale only."
+                               Style="{StaticResource SubStat}" Margin="0,0,0,10" TextWrapping="Wrap" />
+                    <lvc:CartesianChart Series="{Binding Performance.HandleCountSeries}" XAxes="{Binding Performance.HiddenXAxes}" YAxes="{Binding Performance.CountYAxes}"
+                                         Height="140" TooltipPosition="Hidden" LegendPosition="Hidden" Background="Transparent" Margin="0,0,0,10" />
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Documented per-process theoretical max (16,777,216)" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        <TextBlock Grid.Column="1" Text="{Binding Performance.HandleCountPercentOfPerProcessMax, StringFormat={}{0:0.00}%}" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+                    </Grid>
+                </StackPanel>
+            </Border>
 
             <!-- Committed trend -->
             <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
@@ -553,6 +708,237 @@
                                                              Height="110" TooltipPosition="Hidden" LegendPosition="Hidden" Background="Transparent" Margin="0,6,0,0" />
                                     </StackPanel>
                                 </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #416/#417/#418: "Kernel pool by tag" grid - poolmon-equivalent data via
+                 NtQuerySystemInformation(SystemPoolTagInformation), joined with a cached #417
+                 driver-attribution scan and the curated #418 embedded dictionary. See
+                 PoolTagInspectionService's remarks for why attribution is a second, slower,
+                 separately-gated button. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Kernel pool by tag" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Find owning drivers" Command="{Binding ScanDriverAttributionCommand}" Margin="0,0,8,0" />
+                        <Button Grid.Column="2" Content="Scan pool tags" Command="{Binding ScanPoolTagsCommand}" />
+                    </Grid>
+                    <TextBlock Text="The same per-tag allocation data poolmon.exe shows, without needing the WDK. &quot;Find owning drivers&quot; scans every driver file on disk for each tag's literal 4-byte string and caches the result - slow the first time, instant after."
+                               Style="{StaticResource SubStat}" Margin="0,0,0,10" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding PoolTagStatusText}" Margin="0,0,0,6" TextWrapping="Wrap">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding PoolTagStatusText}" Value="{x:Null}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <TextBlock Text="{Binding DriverAttributionStatusText}" Margin="0,0,0,10" TextWrapping="Wrap">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding DriverAttributionStatusText}" Value="{x:Null}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <DataGrid ItemsSource="{Binding PoolTagRows}" Height="280" IsReadOnly="True">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Tag" Binding="{Binding Tag}" Width="60" />
+                            <DataGridTextColumn Header="Description" Binding="{Binding Description, TargetNullValue=''}" Width="2*" />
+                            <DataGridTextColumn Header="Likely driver" Binding="{Binding LikelyDriver, TargetNullValue=''}" Width="1.2*" />
+                            <DataGridTextColumn Header="Paged" Binding="{Binding PagedBytes, Converter={StaticResource BytesToReadableConverter}}" Width="90" />
+                            <DataGridTextColumn Header="Nonpaged" Binding="{Binding NonpagedBytes, Converter={StaticResource BytesToReadableConverter}}" Width="90" />
+                            <DataGridTextColumn Header="Outstanding" Binding="{Binding OutstandingAllocs, StringFormat={}{0:N0}}" Width="90" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <TextBlock Text="No pool tag data yet - click &quot;Scan pool tags&quot;." Opacity="0.7" Margin="0,8,0,0">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding PoolTagRows.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- #419: "Compare pool snapshots" - captures the table above as a baseline, then
+                 diffs a fresh read against it on demand; sorted by growth, this is what actually
+                 identifies a leaking driver, as opposed to the flat point-in-time grid above. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Compare pool snapshots" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Capture baseline" Command="{Binding CapturePoolSnapshotCommand}" Margin="0,0,8,0" />
+                        <Button Grid.Column="2" Content="Compare to now" Command="{Binding ComparePoolSnapshotsCommand}" />
+                    </Grid>
+                    <TextBlock Text="Capture a baseline from the table above, wait however long you like (or just a few seconds), then compare - the tags that grew the most between the two captures are the strongest signal of a leaking driver."
+                               Style="{StaticResource SubStat}" Margin="0,0,0,10" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding PoolSnapshotStatusText}" Margin="0,0,0,10" TextWrapping="Wrap">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding PoolSnapshotStatusText}" Value="{x:Null}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <ItemsControl ItemsSource="{Binding PoolTagGrowthRows}" MaxHeight="260">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                                        <TextBlock FontSize="12.5" FontFamily="Consolas" FontWeight="SemiBold">
+                                            <Run Text="{Binding Tag}" /><Run Text="  " /><Run Text="{Binding Description}" FontFamily="Segoe UI" FontWeight="Normal" />
+                                        </TextBlock>
+                                        <TextBlock Style="{StaticResource SubStat}" FontSize="10.5">
+                                            <Run Text="{Binding LikelyDriver, TargetNullValue=Unknown}" />
+                                            <Run Text=" · outstanding allocs " /><Run Text="{Binding OutstandingAllocDelta, StringFormat=+{0:N0}, Mode=OneWay}" />
+                                        </TextBlock>
+                                    </StackPanel>
+                                    <TextBlock Grid.Column="1" Text="{Binding TotalByteDelta, Converter={StaticResource BytesToReadableConverter}, StringFormat={}+{0}}"
+                                               FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="{DynamicResource WarningBrush}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #424: loaded kernel module (driver) list, sorted by image size - lives here
+                 standalone; a later chunk's Devices &amp; Drivers tab (#453) can cross-link to
+                 this same data, but this grid doesn't depend on that tab existing. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Loaded kernel modules" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Scan kernel modules" Command="{Binding ScanKernelModulesCommand}" />
+                    </Grid>
+                    <TextBlock Text="Every currently-loaded driver's base address, image size, path and load order, sorted largest first - an unexpectedly large driver image is worth a second look."
+                               Style="{StaticResource SubStat}" Margin="0,0,0,10" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding KernelModulesStatusText}" Margin="0,0,0,10" TextWrapping="Wrap">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding KernelModulesStatusText}" Value="{x:Null}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <DataGrid ItemsSource="{Binding KernelModules}" Height="280" IsReadOnly="True">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="#" Binding="{Binding LoadOrderIndex}" Width="40" />
+                            <DataGridTextColumn Header="Name" Binding="{Binding FileName}" Width="1.3*" />
+                            <DataGridTextColumn Header="Friendly name" Binding="{Binding FriendlyName, TargetNullValue=''}" Width="1.6*" />
+                            <DataGridTextColumn Header="Image size" Binding="{Binding ImageSizeBytes, Converter={StaticResource BytesToReadableConverter}}" Width="90" />
+                            <DataGridTextColumn Header="Base address" Width="120">
+                                <DataGridTextColumn.Binding>
+                                    <Binding Path="BaseAddress" StringFormat="0x{0:X16}" />
+                                </DataGridTextColumn.Binding>
+                            </DataGridTextColumn>
+                            <DataGridTextColumn Header="Path" Binding="{Binding FullPath}" Width="2.5*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- #426: kernel object counts by type - flags a type whose current count is near
+                 (and, implicitly, likely climbing toward) its own recorded high-water mark. Whole
+                 card hides itself if the scan comes back empty - either not yet run, or the
+                 undocumented struct layout didn't parse cleanly on this Windows build (see
+                 KernelObjectTypeService's remarks) - either way there's nothing honest to show. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Kernel object counts by type" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Scan object types" Command="{Binding ScanObjectTypesCommand}" />
+                    </Grid>
+                    <TextBlock Text="Current count vs. each type's own recorded high-water mark, most-flagged first. A quick flag that a kind of kernel object is accumulating, not a confirmed leak."
+                               Style="{StaticResource SubStat}" Margin="0,0,0,10" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding ObjectTypesStatusText}" Margin="0,0,0,10" TextWrapping="Wrap">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding ObjectTypesStatusText}" Value="{x:Null}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <ItemsControl ItemsSource="{Binding ObjectTypeCounts}" MaxHeight="320">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                                        <TextBlock Text="{Binding TypeName}" FontSize="12.5" FontWeight="SemiBold" />
+                                        <TextBlock Style="{StaticResource SubStat}" FontSize="10.5">
+                                            <Run Text="handles " /><Run Text="{Binding TotalNumberOfHandles, StringFormat=N0, Mode=OneWay}" />
+                                            <Run Text=" · high-water " /><Run Text="{Binding HighWaterNumberOfObjects, StringFormat=N0, Mode=OneWay}" />
+                                        </TextBlock>
+                                    </StackPanel>
+                                    <TextBlock Grid.Column="1" Text="{Binding TotalNumberOfObjects, StringFormat={}{0:N0}}"
+                                               FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsNearHighWaterMark}" Value="True">
+                                                        <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </Grid>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>

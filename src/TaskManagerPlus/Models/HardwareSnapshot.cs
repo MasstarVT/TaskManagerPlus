@@ -83,6 +83,36 @@ public sealed class HardwareSnapshot
     public long PoolNonpagedBytes { get; init; }
     public long PoolPagedBytes { get; init; }
 
+    /// <summary>#422: Memory\Pool Nonpaged Allocs - the *count* of outstanding nonpaged pool
+    /// allocations, alongside PoolNonpagedBytes' byte total above; a count climbing faster than
+    /// the byte total points at many small leaked allocations rather than a few large ones.</summary>
+    public long PoolNonpagedAllocs { get; init; }
+
+    /// <summary>#422: Memory\System Driver Resident|Total Bytes - the RAM drivers hold that never
+    /// shows up in any process's own working set. Resident is the subset currently paged in
+    /// (actually occupying physical RAM right now); Total also counts the pageable portion that
+    /// may currently be paged out - a large gap between the two is normal, not a leak signal on
+    /// its own.</summary>
+    public long SystemDriverResidentBytes { get; init; }
+    public long SystemDriverTotalBytes { get; init; }
+
+    /// <summary>#422: Memory\System Code Resident Bytes - the resident portion of the OS's own
+    /// pageable kernel-mode code (as opposed to driver code above).</summary>
+    public long SystemCodeResidentBytes { get; init; }
+
+    /// <summary>#423: Memory\Modified Page List Bytes - pages that have been changed since being
+    /// read from disk and are waiting to be written back before they can move to the standby
+    /// list. A real, separate "where did my RAM go" category from the reclaimable-but-clean
+    /// standby list above.</summary>
+    public long ModifiedListBytes { get; init; }
+
+    /// <summary>#423: installed physical RAM (summed Win32_PhysicalMemory.Capacity) minus
+    /// GlobalMemoryStatusEx's own total - the chunk of RAM the platform (BIOS/UEFI, chipset,
+    /// integrated GPU shared memory, etc.) reserves before Windows ever sees it. Read once via
+    /// WMI, like ReadPageFileTotalMb below - it only changes with a hardware/firmware config
+    /// change, not per tick.</summary>
+    public long HardwareReservedBytes { get; init; }
+
     public double DiskActivePercent { get; init; }
     public double DiskReadBytesPerSec { get; init; }
     public double DiskWriteBytesPerSec { get; init; }

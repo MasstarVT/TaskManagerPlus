@@ -76,6 +76,11 @@ public sealed class StabilitySnapshot
     /// bucket of RecentEvents above.</summary>
     public int LowMemoryEventCount { get; init; }
     public DateTime? LastLowMemoryEvent { get; init; }
+
+    /// <summary>#427: the classic pool-starvation event signature (Srv 2019/2020, event 333, and
+    /// Resource-Exhaustion-Detector entries) found within the lookback window, most recent first -
+    /// see EventLogService.ReadPoolExhaustionEvents.</summary>
+    public List<PoolExhaustionEvent> PoolExhaustionEvents { get; init; } = new();
 }
 
 /// <summary>#66 (Round 10): repeated application crashes grouped by faulting module, with a count -
@@ -100,4 +105,18 @@ public sealed class ServiceStartDuration
     public double LastStartDurationMs { get; init; }
     public double AvgStartDurationMs { get; init; }
     public int SampleCount { get; init; }
+}
+
+/// <summary>#427: one entry from the System log matching the classic pool-starvation signature -
+/// `Srv` event 2019 (nonpaged pool exhausted) / 2020 (paged pool exhausted), event 333 (registry
+/// couldn't flush changes to disk, a common secondary symptom of pool/disk exhaustion), or a
+/// Microsoft-Windows-Resource-Exhaustion-Detector entry - see EventLogService.ReadPoolExhaustionEvents.
+/// Explanation is a fixed, plain-English sentence keyed off EventId/ProviderName, not anything
+/// parsed out of the event's own message text.</summary>
+public sealed class PoolExhaustionEvent
+{
+    public DateTime TimeCreated { get; init; }
+    public string ProviderName { get; init; } = string.Empty;
+    public int EventId { get; init; }
+    public string Explanation { get; init; } = string.Empty;
 }

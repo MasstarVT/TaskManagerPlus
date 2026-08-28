@@ -36,4 +36,13 @@
     <Using Remove="System.Windows.Forms" />
   </ItemGroup>
 
+  <!-- #418: curated pool-tag-to-description dictionary, embedded so PoolTagInspectionService can
+       read it with GetManifestResourceStream regardless of working directory (portable mode
+       runs from a USB drive, not always the exe's own folder). -->
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\pooltag.txt">
+      <LogicalName>pooltag.txt</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+
 </Project>

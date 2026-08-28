@@ -27,6 +27,10 @@ public sealed class StabilityViewModel : ObservableObject
     // FaultingModuleSummary's remarks. Pure derived aggregation over RecentEvents, no new query.
     public ObservableCollection<FaultingModuleSummary> CrashesByModule { get; } = new();
 
+    // #427: the classic pool-starvation event signature (Srv 2019/2020, event 333, and
+    // Resource-Exhaustion-Detector entries) - see EventLogService.ReadPoolExhaustionEvents.
+    public ObservableCollection<PoolExhaustionEvent> PoolExhaustionEvents { get; } = new();
+
     private bool _isLoading;
     public bool IsLoading { get => _isLoading; private set => SetProperty(ref _isLoading, value); }
 
@@ -188,6 +192,10 @@ public sealed class StabilityViewModel : ObservableObject
         {
             CrashesByModule.Add(g);
         }
+
+        // #427
+        PoolExhaustionEvents.Clear();
+        foreach (var e in snapshot.PoolExhaustionEvents) PoolExhaustionEvents.Add(e);
 
         StabilityIndex = ComputeStabilityIndex(snapshot);
     }

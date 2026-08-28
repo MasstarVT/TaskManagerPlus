@@ -56,6 +56,23 @@ public sealed class HardwareMonitorService : IDisposable
     private readonly PerformanceCounter _poolNonpagedCounter;
     private readonly PerformanceCounter _poolPagedCounter;
 
+    // #422/#423: driver-locked/non-pageable memory and the modified (dirty, not-yet-written-back)
+    // page list - all documented "Memory" category counters, same instantiate-once-reuse-per-tick
+    // shape as everything else in this class. Wrapped individually via TryCreateCounter since
+    // these are less universally documented than the ones above and this app has no way to test
+    // every Windows SKU/version they might be missing on - a missing one degrades to 0 rather than
+    // failing the whole sampler.
+    private readonly PerformanceCounter? _poolNonpagedAllocsCounter;
+    private readonly PerformanceCounter? _systemDriverResidentCounter;
+    private readonly PerformanceCounter? _systemDriverTotalCounter;
+    private readonly PerformanceCounter? _systemCodeResidentCounter;
+    private readonly PerformanceCounter? _modifiedListCounter;
+
+    // #423: installed physical RAM (Win32_PhysicalMemory, summed) vs. GlobalMemoryStatusEx's own
+    // total - the gap is platform/firmware-reserved memory Windows never sees. Read once via WMI,
+    // same "WMI for the rarely-changing total" tradeoff _pageFileTotalMb already makes.
+    private readonly long _installedRamBytes;
+
     // Network diagnostic (#32): TCP retransmit rate. Wrapped separately since the "TCPv4"
     // category can legitimately be absent on an unusual network stack config - null means
     // "not available", and Sample() just reports 0 rather than throwing.
@@ -170,6 +187,13 @@ public sealed class HardwareMonitorService : IDisposable
         _standbyReserveCounter = new PerformanceCounter("Memory", "Standby Cache Reserve Bytes", readOnly: true);
         _poolNonpagedCounter = new PerformanceCounter("Memory", "Pool Nonpaged Bytes", readOnly: true);
         _poolPagedCounter = new PerformanceCounter("Memory", "Pool Paged Bytes", readOnly: true);
+
+        _poolNonpagedAllocsCounter = TryCreateCounter("Memory", "Pool Nonpaged Allocs");
+        _systemDriverResidentCounter = TryCreateCounter("Memory", "System Driver Resident Bytes");
+        _systemDriverTotalCounter = TryCreateCounter("Memory", "System Driver Total Bytes");
+        _systemCodeResidentCounter = TryCreateCounter("Memory", "System Code Resident Bytes");
+        _modifiedListCounter = TryCreateCounter("Memory", "Modified Page List Bytes");
+        _installedRamBytes = ReadInstalledRamBytes();
 
         try
         {
@@ -295,6 +319,12 @@ public sealed class HardwareMonitorService : IDisposable
             StandbyListBytes = Math.Max(0, standbyBytes),
             PoolNonpagedBytes = (long)_poolNonpagedCounter.NextValue(),
             PoolPagedBytes = (long)_poolPagedCounter.NextValue(),
+            PoolNonpagedAllocs = _poolNonpagedAllocsCounter is null ? 0 : (long)Math.Max(0, _poolNonpagedAllocsCounter.NextValue()),
+            SystemDriverResidentBytes = _systemDriverResidentCounter is null ? 0 : (long)Math.Max(0, _systemDriverResidentCounter.NextValue()),
+            SystemDriverTotalBytes = _systemDriverTotalCounter is null ? 0 : (long)Math.Max(0, _systemDriverTotalCounter.NextValue()),
+            SystemCodeResidentBytes = _systemCodeResidentCounter is null ? 0 : (long)Math.Max(0, _systemCodeResidentCounter.NextValue()),
+            ModifiedListBytes = _modifiedListCounter is null ? 0 : (long)Math.Max(0, _modifiedListCounter.NextValue()),
+            HardwareReservedBytes = Math.Max(0, _installedRamBytes - totalBytes),
 
             DiskActivePercent = Math.Round(diskPercent, 1),
             DiskReadBytesPerSec = diskRead,
@@ -333,6 +363,39 @@ public sealed class HardwareMonitorService : IDisposable
         catch
         {
             return null;
+        }
+    }
+
+    /// <summary>#422/#423: instance-less overload for single-instance "Memory" category counters -
+    /// same best-effort/degrade-to-null contract as the three-argument overload above.</summary>
+    private static PerformanceCounter? TryCreateCounter(string category, string name)
+    {
+        try
+        {
+            return new PerformanceCounter(category, name, readOnly: true);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>#423: sums Win32_PhysicalMemory.Capacity across every installed memory module -
+    /// the platform's own record of how much RAM is physically installed, independent of how much
+    /// GlobalMemoryStatusEx says the OS can actually see.</summary>
+    private static long ReadInstalledRamBytes()
+    {
+        try
+        {
+            using var searcher = new ManagementObjectSearcher("SELECT Capacity FROM Win32_PhysicalMemory");
+            long total = 0;
+            foreach (ManagementObject mo in searcher.Get())
+                total += Convert.ToInt64(mo["Capacity"] ?? 0L);
+            return total;
+        }
+        catch
+        {
+            return 0;
         }
     }
 
@@ -488,6 +551,11 @@ public sealed class HardwareMonitorService : IDisposable
         _standbyReserveCounter.Dispose();
         _poolNonpagedCounter.Dispose();
         _poolPagedCounter.Dispose();
+        _poolNonpagedAllocsCounter?.Dispose();
+        _systemDriverResidentCounter?.Dispose();
+        _systemDriverTotalCounter?.Dispose();
+        _systemCodeResidentCounter?.Dispose();
+        _modifiedListCounter?.Dispose();
         _tcpRetransmitsCounter?.Dispose();
         _cIdleTimeCounter?.Dispose();
         _c1TimeCounter?.Dispose();

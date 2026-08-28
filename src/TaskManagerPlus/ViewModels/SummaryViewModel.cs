@@ -874,6 +874,16 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         if (Performance.PageFilePercent >= 90)
             issues.Add(new HealthIssue { Message = $"Page file is {Performance.PageFilePercent:0}% full", IsCritical = false });
 
+        // #420: nonpaged pool exhaustion is a hard bugcheck risk, not just a slowdown - see
+        // PerformanceViewModel.IsNonpagedPoolWarning/PoolLimitsService for what the limit is
+        // (a documented registry override when set, a clearly-labeled RAM-based estimate otherwise).
+        if (Performance.IsNonpagedPoolWarning)
+            issues.Add(new HealthIssue
+            {
+                Message = $"Nonpaged pool usage is high: {Performance.PoolNonpagedGb:0.00} GB of {(Performance.PoolNonpagedLimitIsEstimate ? "an estimated " : "")}{Performance.PoolNonpagedLimitGb:0.0} GB ({Performance.PoolNonpagedPercent:0}%) - a leaking driver risks a hard crash, not just a slowdown",
+                IsCritical = Performance.PoolNonpagedPercent >= 95,
+            });
+
         // Round 8 #41: swap-thrash - sustained heavy paging (hard faults) together with very
         // little free RAM is a much stronger "the system is thrashing" signal than either figure
         // alone; either one by itself happens routinely under ordinary load (a hard-fault burst

@@ -42,6 +42,12 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
     public ObservableCollection<double> NetworkSendHistory { get; } = NewHistory();
     public ObservableCollection<double> CommittedHistory { get; } = NewHistory();
 
+    /// <summary>#425: system-wide open handle count over time (already summed via the "Process\
+    /// Handle Count\_Total" perf counter - see HardwareSnapshot.HandleCount) - a climb here with
+    /// no single process responsible (compare against the Processes tab's own per-process column)
+    /// points at a kernel object leak rather than one runaway app.</summary>
+    public ObservableCollection<double> HandleCountHistory { get; } = NewHistory();
+
     public ObservableCollection<CoreUsage> Cores { get; } = new();
 
     // Each metric is drawn as a pair of series: a thick, translucent "glow" stroke behind a
@@ -59,16 +65,22 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
     private readonly LineSeries<double> _netSendCore;
     private readonly LineSeries<double> _committedGlow;
     private readonly LineSeries<double> _committedCore;
+    private readonly LineSeries<double> _handleCountGlow;
+    private readonly LineSeries<double> _handleCountCore;
 
     public ISeries[] CpuSeries { get; }
     public ISeries[] RamSeries { get; }
     public ISeries[] DiskSeries { get; }
     public ISeries[] NetworkSeries { get; }
     public ISeries[] CommittedSeries { get; }
+    public ISeries[] HandleCountSeries { get; }
     public Axis[] PercentYAxes { get; }
     public Axis[] HiddenXAxes { get; }
     public Axis[] NetworkYAxes { get; }
     public Axis[] MemoryBytesYAxes { get; }
+
+    /// <summary>#425: plain-count Y axis (not bytes/percent) for the handle-count history chart.</summary>
+    public Axis[] CountYAxes { get; }
 
     // Shared paints so the Network chart's legend/tooltip (the only ones left visible) render
     // in the app's dark palette instead of LiveCharts' default light-theme black-on-white.
@@ -247,6 +259,85 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
     private double _poolPagedGb;
     public double PoolPagedGb { get => _poolPagedGb; private set => SetProperty(ref _poolPagedGb, value); }
 
+    // #420/#421: the limit denominators the two pool tiles above previously lacked - see
+    // PoolLimitsService's remarks for why these are a documented registry override when present,
+    // and a clearly-labeled RAM-based estimate otherwise (never presented as an authoritative
+    // queried fact). Computed once per RAM total (registry+arithmetic, cheap, but no reason to
+    // repeat every tick since installed RAM never changes at runtime), not read from HardwareSnapshot.
+    private PoolLimits? _poolLimits;
+
+    private double _poolNonpagedLimitGb;
+    public double PoolNonpagedLimitGb { get => _poolNonpagedLimitGb; private set => SetProperty(ref _poolNonpagedLimitGb, value); }
+
+    private double _poolNonpagedPercent;
+    public double PoolNonpagedPercent { get => _poolNonpagedPercent; private set => SetProperty(ref _poolNonpagedPercent, value); }
+
+    private bool _poolNonpagedLimitIsEstimate;
+    public bool PoolNonpagedLimitIsEstimate { get => _poolNonpagedLimitIsEstimate; private set => SetProperty(ref _poolNonpagedLimitIsEstimate, value); }
+
+    /// <summary>#420: past this point the Memory tab shows a red state and the Summary Health
+    /// Check gets an entry - nonpaged pool exhaustion is a hard bugcheck risk, not just a
+    /// slowdown, so this fires earlier/louder than most of this app's other threshold warnings.</summary>
+    public const double NonpagedPoolWarningPercent = 80.0;
+    public bool IsNonpagedPoolWarning => PoolNonpagedPercent >= NonpagedPoolWarningPercent;
+
+    private double _poolPagedLimitGb;
+    public double PoolPagedLimitGb { get => _poolPagedLimitGb; private set => SetProperty(ref _poolPagedLimitGb, value); }
+
+    private double _poolPagedPercent;
+    public double PoolPagedPercent { get => _poolPagedPercent; private set => SetProperty(ref _poolPagedPercent, value); }
+
+    private bool _poolPagedLimitIsEstimate;
+    public bool PoolPagedLimitIsEstimate { get => _poolPagedLimitIsEstimate; private set => SetProperty(ref _poolPagedLimitIsEstimate, value); }
+
+    /// <summary>#421: null when no explicit registry override configures a session pool size -
+    /// Windows manages this automatically in that case (the default, and by far the common
+    /// case), and there's no reliable dynamic-sizing estimate to fall back to the way there is
+    /// for nonpaged/paged pool above, so this stays "Unknown" rather than guessing.</summary>
+    private double? _sessionPoolLimitMb;
+    public double? SessionPoolLimitMb { get => _sessionPoolLimitMb; private set => SetProperty(ref _sessionPoolLimitMb, value); }
+
+    // #420/#421: composed display strings, so the XAML tiles don't need converters/triggers just
+    // to say "of ~12.3 GB (estimated)" vs. "of 12.3 GB" vs. "Unknown".
+    public string PoolNonpagedLimitText => PoolNonpagedLimitGb <= 0 ? "limit unknown"
+        : $"of {(PoolNonpagedLimitIsEstimate ? "~" : "")}{PoolNonpagedLimitGb:0.0} GB{(PoolNonpagedLimitIsEstimate ? " (est.)" : "")}";
+    public string PoolPagedLimitText => PoolPagedLimitGb <= 0 ? "limit unknown"
+        : $"of {(PoolPagedLimitIsEstimate ? "~" : "")}{PoolPagedLimitGb:0.0} GB{(PoolPagedLimitIsEstimate ? " (est.)" : "")}";
+    public string SessionPoolValueText => SessionPoolLimitMb is { } mb ? $"{mb:0}" : "Auto";
+    public string SessionPoolSubText => SessionPoolLimitMb is null
+        ? "Not overridden - Windows manages this automatically"
+        : "Configured limit (registry override)";
+
+    // #422: driver-locked and non-pageable memory - the RAM drivers hold that never shows up in
+    // any process's own working set. See HardwareSnapshot's remarks for what each figure means.
+    private long _poolNonpagedAllocs;
+    public long PoolNonpagedAllocs { get => _poolNonpagedAllocs; private set => SetProperty(ref _poolNonpagedAllocs, value); }
+
+    private double _systemDriverResidentGb;
+    public double SystemDriverResidentGb { get => _systemDriverResidentGb; private set => SetProperty(ref _systemDriverResidentGb, value); }
+
+    private double _systemDriverTotalGb;
+    public double SystemDriverTotalGb { get => _systemDriverTotalGb; private set => SetProperty(ref _systemDriverTotalGb, value); }
+
+    private double _systemCodeResidentGb;
+    public double SystemCodeResidentGb { get => _systemCodeResidentGb; private set => SetProperty(ref _systemCodeResidentGb, value); }
+
+    // #423: reconciliation inputs not already exposed above - ModifiedGb/HardwareReservedGb.
+    // MemoryViewModel does the actual sum-and-show-the-remainder aggregation (it already has
+    // the Processes collection this needs); these are just the two extra raw figures it needs
+    // from here.
+    private double _modifiedGb;
+    public double ModifiedGb { get => _modifiedGb; private set => SetProperty(ref _modifiedGb, value); }
+
+    private double _hardwareReservedGb;
+    public double HardwareReservedGb { get => _hardwareReservedGb; private set => SetProperty(ref _hardwareReservedGb, value); }
+
+    // #425: system-wide handle count vs. the one documented per-process reference point Windows
+    // actually publishes (there is no single documented system-wide cap - the real constraint is
+    // available kernel pool memory, already surfaced by the nonpaged-pool warning above).
+    public const long PerProcessHandleTheoreticalMax = 16_777_216;
+    public double HandleCountPercentOfPerProcessMax => Math.Clamp(HandleCount / (double)PerProcessHandleTheoreticalMax * 100.0, 0, 100);
+
     // Round 8 #35: "memory in use by category" stacked-bar breakdown, built purely from figures
     // already read above (RamTotalGb/RamAvailableGb/StandbyGb) - no new signal. Matches the same
     // In Use / Standby / Free split Windows' own Resource Monitor shows: GlobalMemoryStatusEx's
@@ -314,7 +405,7 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
     public int ThreadCount { get => _threadCount; private set => SetProperty(ref _threadCount, value); }
 
     private int _handleCount;
-    public int HandleCount { get => _handleCount; private set => SetProperty(ref _handleCount, value); }
+    public int HandleCount { get => _handleCount; private set { if (SetProperty(ref _handleCount, value)) OnPropertyChanged(nameof(HandleCountPercentOfPerProcessMax)); } }
 
     private string _uptime = string.Empty;
     public string Uptime { get => _uptime; private set => SetProperty(ref _uptime, value); }
@@ -372,6 +463,17 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
                 SeparatorsPaint = AxisSeparatorPaint(),
             },
         };
+        // #425
+        CountYAxes = new[]
+        {
+            new Axis
+            {
+                MinLimit = 0,
+                Labeler = v => v.ToString("N0"),
+                LabelsPaint = AxisTextPaint(),
+                SeparatorsPaint = AxisSeparatorPaint(),
+            },
+        };
 
         (_cpuGlow, _cpuCore) = LineOf(CpuHistory, SKColors.DeepSkyBlue);
         (_ramGlow, _ramCore) = LineOf(RamHistory, SKColors.MediumPurple);
@@ -379,12 +481,14 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
         (_netRecvGlow, _netRecvCore) = LineOf(NetworkReceiveHistory, SKColors.LimeGreen, "Receive");
         (_netSendGlow, _netSendCore) = LineOf(NetworkSendHistory, SKColors.OrangeRed, "Send");
         (_committedGlow, _committedCore) = LineOf(CommittedHistory, SKColors.MediumPurple);
+        (_handleCountGlow, _handleCountCore) = LineOf(HandleCountHistory, SKColors.Goldenrod);
 
         CpuSeries = new ISeries[] { _cpuGlow, _cpuCore };
         RamSeries = new ISeries[] { _ramGlow, _ramCore };
         DiskSeries = new ISeries[] { _diskGlow, _diskCore };
         NetworkSeries = new ISeries[] { _netRecvGlow, _netRecvCore, _netSendGlow, _netSendCore };
         CommittedSeries = new ISeries[] { _committedGlow, _committedCore };
+        HandleCountSeries = new ISeries[] { _handleCountGlow, _handleCountCore };
 
         // Round 12, #100: configurable poll interval - see PollIntervalSettingsService's remarks.
         // This one timer also drives the CPU/Memory/Storage/Network thin-wrapper tabs (per
@@ -501,6 +605,8 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
         NetworkYAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
         MemoryBytesYAxes[0].LabelsPaint = new SolidColorPaint(textSk);
         MemoryBytesYAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
+        CountYAxes[0].LabelsPaint = new SolidColorPaint(textSk);
+        CountYAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
 
         LegendTextPaint = new SolidColorPaint(textSk);
         TooltipTextPaint = new SolidColorPaint(textSk);
@@ -555,6 +661,7 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
         PushHistory(NetworkReceiveHistory, snapshot.NetworkReceiveBytesPerSec);
         PushHistory(NetworkSendHistory, snapshot.NetworkSendBytesPerSec);
         PushHistory(CommittedHistory, snapshot.CommittedBytes);
+        PushHistory(HandleCountHistory, snapshot.HandleCount);
 
         SyncCores(snapshot.CpuPerCorePercent, snapshot.CoreParkedFlags);
 
@@ -630,6 +737,38 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(MemoryInUsePercent));
         OnPropertyChanged(nameof(MemoryStandbyPercent));
         OnPropertyChanged(nameof(MemoryFreePercent));
+
+        // #420/#421: computed once per RAM total - installed RAM doesn't change at runtime, so
+        // there's no reason to re-read the registry override every tick.
+        if (_poolLimits is null && snapshot.RamTotalBytes > 0)
+        {
+            _poolLimits = PoolLimitsService.Read(snapshot.RamTotalBytes);
+            PoolNonpagedLimitGb = _poolLimits.NonpagedPoolLimitBytes / 1024.0 / 1024.0 / 1024.0;
+            PoolNonpagedLimitIsEstimate = _poolLimits.NonpagedPoolLimitIsEstimate;
+            PoolPagedLimitGb = _poolLimits.PagedPoolLimitBytes / 1024.0 / 1024.0 / 1024.0;
+            PoolPagedLimitIsEstimate = _poolLimits.PagedPoolLimitIsEstimate;
+            SessionPoolLimitMb = _poolLimits.SessionPoolLimitBytes is { } sp ? sp / 1024.0 / 1024.0 : null;
+            OnPropertyChanged(nameof(PoolNonpagedLimitText));
+            OnPropertyChanged(nameof(PoolPagedLimitText));
+            OnPropertyChanged(nameof(SessionPoolValueText));
+            OnPropertyChanged(nameof(SessionPoolSubText));
+        }
+        if (_poolLimits is not null)
+        {
+            PoolNonpagedPercent = _poolLimits.NonpagedPoolLimitBytes <= 0 ? 0 : Math.Clamp((double)snapshot.PoolNonpagedBytes / _poolLimits.NonpagedPoolLimitBytes * 100.0, 0, 100);
+            PoolPagedPercent = _poolLimits.PagedPoolLimitBytes <= 0 ? 0 : Math.Clamp((double)snapshot.PoolPagedBytes / _poolLimits.PagedPoolLimitBytes * 100.0, 0, 100);
+            OnPropertyChanged(nameof(IsNonpagedPoolWarning));
+        }
+
+        // #422
+        PoolNonpagedAllocs = snapshot.PoolNonpagedAllocs;
+        SystemDriverResidentGb = snapshot.SystemDriverResidentBytes / 1024.0 / 1024.0 / 1024.0;
+        SystemDriverTotalGb = snapshot.SystemDriverTotalBytes / 1024.0 / 1024.0 / 1024.0;
+        SystemCodeResidentGb = snapshot.SystemCodeResidentBytes / 1024.0 / 1024.0 / 1024.0;
+
+        // #423
+        ModifiedGb = snapshot.ModifiedListBytes / 1024.0 / 1024.0 / 1024.0;
+        HardwareReservedGb = snapshot.HardwareReservedBytes / 1024.0 / 1024.0 / 1024.0;
 
         DiskPercent = snapshot.DiskActivePercent;
         DiskReadBps = snapshot.DiskReadBytesPerSec;
