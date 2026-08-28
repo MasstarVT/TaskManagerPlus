@@ -469,7 +469,13 @@
                         <Border Grid.Row="0" Background="{DynamicResource BgBrush}"
                                 BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,0,0,1">
                             <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
-                                <TabPanel IsItemsHost="True" Background="Transparent" Margin="18,0,18,0" />
+                                <!-- StackPanel, not TabPanel: TabPanel accounts for a child's Margin when
+                                     measuring but not when arranging, so each tab is arranged that much
+                                     narrower than it measured and its label is clipped. Level 1 hides this
+                                     because its tabs use a 2px margin; at the 20px spacing this row wants,
+                                     "Troubleshoot" rendered as "Troubleshc". TabPanel's multi-row wrapping
+                                     is not wanted here anyway - the strip scrolls instead. -->
+                                <StackPanel Orientation="Horizontal" IsItemsHost="True" Background="Transparent" Margin="18,0,18,0" />
                             </ScrollViewer>
                         </Border>
                         <ContentPresenter Grid.Row="1" ContentSource="SelectedContent" />
@@ -543,7 +549,10 @@
                         </Grid.RowDefinitions>
                         <ScrollViewer Grid.Row="0" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled"
                                       Margin="16,12,16,4">
-                            <TabPanel IsItemsHost="True" Background="Transparent" />
+                            <!-- StackPanel for the same reason as GroupTabControl above: a chip needs its
+                                 gap outside its border, so the spacing has to be Margin, and TabPanel
+                                 would clip 8px off every chip's label. -->
+                            <StackPanel Orientation="Horizontal" IsItemsHost="True" Background="Transparent" />
                         </ScrollViewer>
                         <ContentPresenter Grid.Row="1" ContentSource="SelectedContent" />
                     </Grid>
