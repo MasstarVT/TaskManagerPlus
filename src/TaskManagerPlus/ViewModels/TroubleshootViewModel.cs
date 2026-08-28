@@ -67,6 +67,14 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
     // ChangeJournalViewModel() is enough.
     public ChangeJournalViewModel ChangeJournal { get; } = new();
 
+    // suggestions.md #981-987: the "Evidence Bundle" panel - a sixth sibling "page", same shape as
+    // Timeline/Baselines/BackgroundHealth/ChangeJournal above (see ShowEvidenceBundle/
+    // IsShowingEvidenceBundle). Takes a small CollectContext record (rather than each ViewModel
+    // individually) so EvidenceBundleService's collectors have exactly the live-state references
+    // they need (#981's AppFindings collector reuses RulesEngineService.BuildMetricBag/Evaluate,
+    // the same call SummaryViewModel's Health Check card already makes).
+    public EvidenceBundleViewModel EvidenceBundle { get; }
+
     public ObservableCollection<SymptomCard> Symptoms { get; } = new();
 
     /// <summary>#915: saved run transcripts, newest first - populated on demand when the "Past
@@ -88,6 +96,7 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
                 OnPropertyChanged(nameof(ShowBaselines));
                 OnPropertyChanged(nameof(ShowBackgroundHealth));
                 OnPropertyChanged(nameof(ShowChangeJournal));
+                OnPropertyChanged(nameof(ShowEvidenceBundle));
             }
         }
     }
@@ -167,8 +176,24 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
         }
     }
 
+    // suggestions.md #981-987: landing page <-> Evidence Bundle panel, mirroring
+    // IsShowingChangeJournal above.
+    private bool _isShowingEvidenceBundle;
+    public bool IsShowingEvidenceBundle
+    {
+        get => _isShowingEvidenceBundle;
+        private set
+        {
+            if (SetProperty(ref _isShowingEvidenceBundle, value))
+            {
+                OnPropertyChanged(nameof(ShowLanding));
+                OnPropertyChanged(nameof(ShowEvidenceBundle));
+            }
+        }
+    }
+
     /// <summary>True for the symptom-card landing grid.</summary>
-    public bool ShowLanding => SelectedRun is null && !IsShowingPastRuns && !IsShowingTimeline && !IsShowingBaselines && !IsShowingBackgroundHealth && !IsShowingChangeJournal;
+    public bool ShowLanding => SelectedRun is null && !IsShowingPastRuns && !IsShowingTimeline && !IsShowingBaselines && !IsShowingBackgroundHealth && !IsShowingChangeJournal && !IsShowingEvidenceBundle;
 
     /// <summary>True for the "Past runs" list.</summary>
     public bool ShowPastRuns => SelectedRun is null && IsShowingPastRuns;
@@ -184,6 +209,9 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
 
     /// <summary>True for the "Changes made by this app" panel.</summary>
     public bool ShowChangeJournal => SelectedRun is null && IsShowingChangeJournal;
+
+    /// <summary>True for the Evidence Bundle panel.</summary>
+    public bool ShowEvidenceBundle => SelectedRun is null && IsShowingEvidenceBundle;
 
     public bool IsRunning { get => _isRunning; private set => SetProperty(ref _isRunning, value); }
 
@@ -211,6 +239,11 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
     public RelayCommand ShowChangeJournalCommand { get; }
     public RelayCommand HideChangeJournalCommand { get; }
 
+    // suggestions.md #981-987: landing page <-> Evidence Bundle panel, mirroring
+    // ShowChangeJournalCommand/HideChangeJournalCommand.
+    public RelayCommand ShowEvidenceBundleCommand { get; }
+    public RelayCommand HideEvidenceBundleCommand { get; }
+
     public TroubleshootViewModel(PerformanceViewModel performance, ProcessesViewModel processes, LoggingViewModel logging,
         EnergyThermalsViewModel energyThermals, SystemSpecsViewModel systemSpecs, ServicesViewModel services, RulesEngineService rulesEngine,
         BackgroundHealthCollectorService backgroundHealthCollector)
@@ -220,6 +253,8 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
         Timeline = new TimelineViewModel(logging);
         Baselines = new BaselineViewModel(performance, energyThermals, systemSpecs, services, processes, rulesEngine);
         BackgroundHealth = new BackgroundHealthViewModel(backgroundHealthCollector, rulesEngine);
+        EvidenceBundle = new EvidenceBundleViewModel(new EvidenceBundleService.CollectContext(
+            performance, processes, energyThermals, systemSpecs, services, rulesEngine));
 
         RegisterBranch("slow", "My PC is slow right now", "Checks CPU/RAM/disk load, top offenders, and background maintenance work.", BuildSlowPcSteps, BuildSlowPcVerdict);
         RegisterBranch("crash", "It crashes or blue-screens", "Checks crash events, minidumps, reliability records, hardware errors, and recent driver installs.", BuildCrashSteps, BuildCrashVerdict);
@@ -253,6 +288,8 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
         HideBackgroundHealthCommand = new RelayCommand(_ => IsShowingBackgroundHealth = false);
         ShowChangeJournalCommand = new RelayCommand(_ => IsShowingChangeJournal = true, _ => !IsRunning && SelectedRun is null);
         HideChangeJournalCommand = new RelayCommand(_ => IsShowingChangeJournal = false);
+        ShowEvidenceBundleCommand = new RelayCommand(_ => IsShowingEvidenceBundle = true, _ => !IsRunning && SelectedRun is null);
+        HideEvidenceBundleCommand = new RelayCommand(_ => IsShowingEvidenceBundle = false);
         OpenSavedRunCommand = new RelayCommand(param =>
         {
             if (param is not TroubleshootRunRecord record) return;

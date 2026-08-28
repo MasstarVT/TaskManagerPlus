@@ -364,6 +364,9 @@
                             <!-- #97: same report, as one self-contained HTML file with inline SVG
                                  sparkline charts - opens directly in a browser. -->
                             <Button Content="HTML report" Command="{Binding GenerateHtmlReportCommand}" Margin="0,0,8,0" />
+                            <!-- #988: prints the same HTML report via the OS's own registered
+                                 print handler (see ReportPrintService's remarks). -->
+                            <Button Content="Print report" Command="{Binding PrintReportCommand}" Margin="0,0,8,0" />
                             <!-- Round 12, #99: a handful of plain-text lines for pasting straight
                                  into a chat message or support ticket - distinct from the full
                                  Markdown/HTML report above. -->
@@ -424,6 +427,26 @@
                          always a "what did things look like right before I closed it" record
                          without remembering to click the button above first. -->
                     <CheckBox Content="Generate report automatically when the app closes" IsChecked="{Binding GenerateReportOnExit}" Margin="0,10,0,0" />
+                    <TextBlock Text="{Binding PrintReportStatusText}" Margin="0,4,0,0" TextWrapping="Wrap">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding PrintReportStatusText}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
+                    <!-- #989: Dark/Light/Follow system - covers both this report and the evidence
+                         bundle's index.html (EvidenceBundleService.BuildIndexHtml reads the same
+                         setting). -->
+                    <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                        <TextBlock Text="Report theme" VerticalAlignment="Center" Margin="0,0,8,0" FontSize="12.5" />
+                        <ComboBox ItemsSource="{Binding ReportThemes}" SelectedItem="{Binding ReportTheme}" Width="120" FontSize="11" />
+                    </StackPanel>
 
                     <!-- #933: sort order for the finding list below. -->
                     <StackPanel Orientation="Horizontal" Margin="0,10,0,0">

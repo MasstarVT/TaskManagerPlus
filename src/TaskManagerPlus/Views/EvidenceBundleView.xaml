@@ -1,0 +1,167 @@
+<UserControl x:Class="TaskManagerPlus.Views.EvidenceBundleView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:TaskManagerPlus.ViewModels"
+             xmlns:models="clr-namespace:TaskManagerPlus.Models"
+             d:DataContext="{d:DesignInstance Type=vm:EvidenceBundleViewModel}"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d">
+    <UserControl.Resources>
+        <!-- #983: one checklist row - a checkbox, title, one-line "what/why" description, and a
+             rough estimated size. -->
+        <DataTemplate x:Key="EvidenceBundleItemTemplate" DataType="{x:Type models:EvidenceBundleItem}">
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,8" Padding="12,10">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <CheckBox Grid.Column="0" IsChecked="{Binding IsSelected}" VerticalAlignment="Top" Margin="0,3,10,0" />
+                    <StackPanel Grid.Column="1">
+                        <TextBlock Text="{Binding Title}" FontSize="13" FontWeight="SemiBold" TextWrapping="Wrap" />
+                        <TextBlock Text="{Binding Description}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,2,0,0" />
+                    </StackPanel>
+                    <TextBlock Grid.Column="2" Text="{Binding EstimatedSizeLabel}" FontSize="11" VerticalAlignment="Top" Margin="10,2,0,0"
+                               Foreground="{DynamicResource TextTertiaryBrush}" />
+                </Grid>
+            </Border>
+        </DataTemplate>
+
+        <!-- #984: one scrub-review row - original value -> placeholder, the rule that matched it,
+             and how many times it occurred across every scrubbed file. -->
+        <DataTemplate x:Key="ScrubResultRowTemplate" DataType="{x:Type models:ScrubReplacementSummary}">
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,6" Padding="10,8">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0">
+                        <TextBlock FontSize="12.5" FontFamily="Consolas" TextWrapping="Wrap">
+                            <Run Text="{Binding OriginalValue, Mode=OneWay}" />
+                            <Run Text=" → " Foreground="{DynamicResource TextTertiaryBrush}" />
+                            <Run Text="{Binding Placeholder, Mode=OneWay}" Foreground="{DynamicResource AccentBrush}" />
+                        </TextBlock>
+                        <TextBlock Text="{Binding RuleLabel}" Style="{StaticResource SubStat}" />
+                    </StackPanel>
+                    <TextBlock Grid.Column="1" Text="{Binding OccurrenceCount, StringFormat='{}{0}x'}" FontSize="11.5"
+                               VerticalAlignment="Center" Foreground="{DynamicResource TextTertiaryBrush}" />
+                </Grid>
+            </Border>
+        </DataTemplate>
+    </UserControl.Resources>
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16">
+        <StackPanel>
+            <Grid Margin="0,0,0,12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <!-- HideEvidenceBundleCommand lives on TroubleshootViewModel - AncestorLevel=2 skips
+                     past this UserControl to reach it, same as ChangeJournalView's Back button. -->
+                <Button Grid.Column="0" Content="&#8592; Back"
+                        Command="{Binding DataContext.HideEvidenceBundleCommand, RelativeSource={RelativeSource AncestorType=UserControl, AncestorLevel=2}}"
+                        Padding="10,4" Margin="0,0,14,0" VerticalAlignment="Center" />
+                <TextBlock Grid.Column="1" Text="Evidence Bundle" FontSize="17" FontWeight="SemiBold" VerticalAlignment="Center" />
+                <!-- #987: independent of the checklist/collection flow below - reuses only cheap,
+                     already-live data. -->
+                <Button Grid.Column="2" Content="Copy forum post" Padding="10,4" Command="{Binding CopyForumPostCommand}" />
+            </Grid>
+            <TextBlock TextWrapping="Wrap" Margin="0,0,0,4" Style="{StaticResource SubStat}"
+                       Text="Collects everything a support engineer would ask for - system info, DirectX diagnostics, drivers, power reports, event logs, recent crash dumps, and this app's own findings/timeline - into one ZIP with a readable index.html and a manifest listing what's inside (and what couldn't be collected)." />
+            <TextBlock Text="{Binding ForumPostStatusText}" TextWrapping="Wrap" Margin="0,0,0,14">
+                <TextBlock.Style>
+                    <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                        <Setter Property="Visibility" Value="Visible" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding ForumPostStatusText}" Value="">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </TextBlock.Style>
+            </TextBlock>
+
+            <!-- ===================== Setup stage: #983 checklist ===================== -->
+            <StackPanel Visibility="{Binding IsSetupStage, Converter={StaticResource BoolToVisibilityConverter}}">
+                <ItemsControl ItemsSource="{Binding Items}" ItemTemplate="{StaticResource EvidenceBundleItemTemplate}" />
+
+                <TextBlock Text="{Binding EstimatedTotalSizeText}" FontSize="12.5" FontWeight="SemiBold" Margin="0,4,0,10" />
+
+                <!-- #984: opt-in - unchecked by default, same "off by default" convention every
+                     other opt-in toggle in this app follows. -->
+                <CheckBox Margin="0,0,0,14" IsChecked="{Binding ScrubPersonalInfo}"
+                          Content="Scrub personal info before saving (username, computer name, domain, MAC addresses, Wi-Fi SSID, product keys - reviewable before anything is written)" />
+
+                <Button Content="Collect everything" Padding="16,8" HorizontalAlignment="Left" Command="{Binding CollectCommand}" />
+            </StackPanel>
+
+            <!-- ===================== Collecting stage ===================== -->
+            <StackPanel Visibility="{Binding IsCollectingStage, Converter={StaticResource BoolToVisibilityConverter}}">
+                <TextBlock Text="Working…" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,10" />
+                <ItemsControl ItemsSource="{Binding ProgressLines}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding}" FontSize="11.5" FontFamily="Consolas" TextWrapping="Wrap" Margin="0,0,0,2"
+                                       Foreground="{DynamicResource TextSecondaryBrush}" />
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
+
+            <!-- ===================== Scrub review stage: #984/#985 ===================== -->
+            <StackPanel Visibility="{Binding IsScrubReviewStage, Converter={StaticResource BoolToVisibilityConverter}}">
+                <TextBlock Text="Review before saving" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,4" />
+                <TextBlock TextWrapping="Wrap" Margin="0,0,0,10" Style="{StaticResource SubStat}"
+                           Text="Every value below will be replaced with its placeholder in every text file in this bundle. Nothing is written to the zip until you confirm." />
+
+                <TextBlock Text="Nothing matched - no personal info was found to redact." Margin="0,0,0,10">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding ScrubResults.Count}" Value="0">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+                <ItemsControl ItemsSource="{Binding ScrubResults}" ItemTemplate="{StaticResource ScrubResultRowTemplate}" />
+
+                <!-- #985: "also redact this text" - a simple type-or-paste-and-add row, not a full
+                     text-selection UI over the preview. -->
+                <TextBlock Text="Also redact this text" FontSize="12.5" FontWeight="SemiBold" Margin="0,14,0,4" />
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBox Grid.Column="0" Margin="0,0,8,0" VerticalAlignment="Center"
+                              Text="{Binding CustomRedactionText, UpdateSourceTrigger=PropertyChanged}" />
+                    <Button Grid.Column="1" Content="Add" Padding="12,5" Command="{Binding AddCustomRedactionCommand}" />
+                </Grid>
+
+                <StackPanel Orientation="Horizontal" Margin="0,18,0,0">
+                    <Button Content="Looks good - finish bundle" Padding="14,7" Margin="0,0,10,0" Command="{Binding ConfirmScrubCommand}" />
+                    <Button Content="Cancel" Padding="14,7" Command="{Binding CancelScrubCommand}" />
+                </StackPanel>
+            </StackPanel>
+
+            <!-- ===================== Done stage ===================== -->
+            <StackPanel Visibility="{Binding IsDoneStage, Converter={StaticResource BoolToVisibilityConverter}}">
+                <TextBlock Text="Bundle ready" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,8" Foreground="{DynamicResource SuccessBrush}" />
+                <TextBlock Text="{Binding ResultSummaryText}" TextWrapping="Wrap" Margin="0,0,0,4" />
+                <TextBlock Text="{Binding ResultPath}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,14" />
+                <StackPanel Orientation="Horizontal">
+                    <Button Content="Open containing folder" Padding="12,6" Margin="0,0,10,0" Command="{Binding OpenContainingFolderCommand}" />
+                    <Button Content="Start over" Padding="12,6" Command="{Binding StartOverCommand}" />
+                </StackPanel>
+            </StackPanel>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

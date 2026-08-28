@@ -179,8 +179,13 @@
                                 Command="{Binding ShowPastRunsCommand}" />
                         <!-- #973: everything this app has changed on the system, with Undo where
                              reversible. -->
-                        <Button Content="Changes" Padding="10,4" VerticalAlignment="Center"
+                        <Button Content="Changes" Padding="10,4" Margin="0,0,8,0" VerticalAlignment="Center"
                                 Command="{Binding ShowChangeJournalCommand}" />
+                        <!-- suggestions.md #981-987: one-click evidence bundle export (msinfo32/
+                             dxdiag/event logs/minidumps/this app's own findings), with an opt-out
+                             checklist, an opt-in PII scrub review, and a manifest. -->
+                        <Button Content="Evidence Bundle" Padding="10,4" VerticalAlignment="Center"
+                                Command="{Binding ShowEvidenceBundleCommand}" />
                     </StackPanel>
                 </Grid>
                 <TextBlock Text="Pick the symptom that best matches what you're seeing - this runs a scripted set of checks instead of making you guess which tab to open."
@@ -244,6 +249,11 @@
              the landing page. -->
         <views:ChangeJournalView DataContext="{Binding ChangeJournal}"
                              Visibility="{Binding DataContext.ShowChangeJournal, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource BoolToVisibilityConverter}}" />
+
+        <!-- suggestions.md #981-987: the Evidence Bundle panel - visible only when explicitly
+             opened from the landing page. -->
+        <views:EvidenceBundleView DataContext="{Binding EvidenceBundle}"
+                             Visibility="{Binding DataContext.ShowEvidenceBundle, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource BoolToVisibilityConverter}}" />
 
         <!-- Run view - ordered step list plus a verdict card. Visible only once a run exists. -->
         <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16"

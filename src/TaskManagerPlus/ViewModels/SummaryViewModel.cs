@@ -193,6 +193,32 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
     // remotely to see the shape of the last minute's CPU/RAM/Disk activity, not just numbers.
     public RelayCommand GenerateHtmlReportCommand { get; }
 
+    // #988: "Print report" - writes the same HTML report to a temp file and hands it to the OS's
+    // own registered print handler (see ReportPrintService's remarks on why Verb=print rather than
+    // a full System.Printing/XPS pipeline).
+    public RelayCommand PrintReportCommand { get; }
+
+    private string _printReportStatusText = string.Empty;
+    public string PrintReportStatusText { get => _printReportStatusText; private set => SetProperty(ref _printReportStatusText, value); }
+
+    // #989: Dark/Light/Follow system - persisted in summary-settings.json (extends the existing
+    // #70 GenerateReportOnExit toggle's file rather than a new one), read by both this report and
+    // EvidenceBundleService's index.html generator (#982) so one setting covers every generated
+    // HTML report in the app.
+    public static Array ReportThemes { get; } = Enum.GetValues(typeof(ReportTheme));
+
+    public ReportTheme ReportTheme
+    {
+        get => _summarySettings.ReportTheme;
+        set
+        {
+            if (_summarySettings.ReportTheme == value) return;
+            _summarySettings.ReportTheme = value;
+            SummarySettingsService.Save(_summarySettings);
+            OnPropertyChanged();
+        }
+    }
+
     // #93/#94: baseline capture + "what changed" comparison - one save/compare pair covers both
     // suggestions, since a saved baseline IS the comparison point for a later diff. See
     // SnapshotService's remarks.
@@ -307,6 +333,7 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
 
         GenerateReportCommand = new RelayCommand(_ => GenerateReport());
         GenerateHtmlReportCommand = new RelayCommand(_ => GenerateHtmlReport());
+        PrintReportCommand = new RelayCommand(_ => PrintReport());
         SaveSnapshotCommand = new RelayCommand(_ => SaveSnapshot());
         CompareSnapshotCommand = new RelayCommand(_ => CompareSnapshot());
         CopySummaryCommand = new RelayCommand(_ => CopySummary());
@@ -512,12 +539,11 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
 
         Line("<!doctype html><html><head><meta charset=\"utf-8\">");
         Line($"<title>Task Manager Plus report - {Esc(DateTime.Now.ToString("F"))}</title>");
-        Line("<style>" +
-             "body{font-family:Segoe UI,Arial,sans-serif;background:#1c1c1f;color:#e4e4e7;max-width:900px;margin:32px auto;padding:0 16px}" +
-             "h1{font-size:20px}h2{font-size:15px;border-bottom:1px solid #3a3a42;padding-bottom:6px;margin-top:28px}" +
-             "table{border-collapse:collapse;width:100%;font-size:13px}td,th{padding:4px 8px;text-align:left;border-bottom:1px solid #2c2c33}" +
-             ".crit{color:#f26d6d}.warn{color:#e8b23c}.ok{color:#4fd18b}.muted{color:#9a9aa2;font-size:12px}" +
-             "svg{background:#242429;border-radius:6px}</style></head><body>");
+        // #989: theme (Dark/Light/Follow system) comes from the persisted setting, not a hardcoded
+        // dark palette - shared verbatim with EvidenceBundleService's index.html (#982) via this
+        // static helper. #988: BuildReportCss's output already includes the @media print block.
+        Line("<style>" + BuildReportCss(_summarySettings.ReportTheme) + "</style></head><body>");
+        Line(BuildPrintPageBars(_systemSpecs.ComputerName, DateTime.Now));
 
         Line($"<h1>Task Manager Plus diagnostic report</h1><p class=\"muted\">Generated {Esc(DateTime.Now.ToString("F"))}</p>");
 
@@ -564,6 +590,77 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
 
         Line("</body></html>");
         return sb.ToString();
+    }
+
+    /// <summary>#988: writes the same HTML report to a temp file and hands it to the OS's own
+    /// registered print handler - see ReportPrintService's remarks for why this (rather than a
+    /// full System.Printing/XPS pipeline) is the pragmatic choice here.</summary>
+    private void PrintReport()
+    {
+        try
+        {
+            ReportPrintService.PrintHtml(BuildReportHtml(), "TaskManagerPlus-Report");
+            PrintReportStatusText = "Sent to your default print handler.";
+        }
+        catch (Exception ex)
+        {
+            PrintReportStatusText = $"Couldn't print: {ex.Message}";
+        }
+    }
+
+    /// <summary>#989: the shared &lt;style&gt; body (palette + #988's @media print block) both this
+    /// report and EvidenceBundleService's index.html (#982) use - internal, not private, so it's a
+    /// real shared implementation rather than two copies kept in sync by hand. "Follow system"
+    /// emits the dark palette unconditionally (as the pre-media-query fallback) plus a
+    /// `prefers-color-scheme: light` override, since a generated report is a static file that may
+    /// be opened later in a browser this app has no way to ask about ahead of time.</summary>
+    internal static string BuildReportCss(ReportTheme theme)
+    {
+        const string dark =
+            "body{font-family:Segoe UI,Arial,sans-serif;background:#1c1c1f;color:#e4e4e7;max-width:900px;margin:32px auto;padding:0 16px 64px}" +
+            "h1{font-size:20px}h2{font-size:15px;border-bottom:1px solid #3a3a42;padding-bottom:6px;margin-top:28px}" +
+            "table{border-collapse:collapse;width:100%;font-size:13px}td,th{padding:4px 8px;text-align:left;border-bottom:1px solid #2c2c33}" +
+            ".crit{color:#f26d6d}.warn{color:#e8b23c}.ok{color:#4fd18b}.muted{color:#9a9aa2;font-size:12px}" +
+            "svg{background:#242429;border-radius:6px}a{color:#6cb4ee}details{margin:8px 0}summary{cursor:pointer;font-weight:600}" +
+            ".pagebar{position:fixed;left:0;right:0;font-size:10px;color:#9a9aa2;padding:4px 16px;display:none}#pagebar-top{top:0}#pagebar-bottom{bottom:0}";
+
+        const string light =
+            "body{font-family:Segoe UI,Arial,sans-serif;background:#ffffff;color:#1c1c1f;max-width:900px;margin:32px auto;padding:0 16px 64px}" +
+            "h1{font-size:20px}h2{font-size:15px;border-bottom:1px solid #d8d8dc;padding-bottom:6px;margin-top:28px}" +
+            "table{border-collapse:collapse;width:100%;font-size:13px}td,th{padding:4px 8px;text-align:left;border-bottom:1px solid #e4e4e7}" +
+            ".crit{color:#c02929}.warn{color:#9a6a08}.ok{color:#1f8452}.muted{color:#5a5a62;font-size:12px}" +
+            "svg{background:#f2f2f4;border-radius:6px}a{color:#1d5fa8}details{margin:8px 0}summary{cursor:pointer;font-weight:600}" +
+            ".pagebar{position:fixed;left:0;right:0;font-size:10px;color:#5a5a62;padding:4px 16px;display:none}#pagebar-top{top:0}#pagebar-bottom{bottom:0}";
+
+        // #988: page-break-before on every <h2>, thead repeats across printed pages, the fixed
+        // top/bottom .pagebar becomes visible (a pragmatic stand-in for @page margin boxes, whose
+        // browser support is inconsistent), and print-color-adjust keeps the pagebar/severity
+        // colors from being stripped to grayscale by a browser's own "save ink" default.
+        const string print =
+            "@media print{" +
+            "body{background:#ffffff!important;color:#111!important;max-width:none;margin:0;padding:56px 24px}" +
+            "h2{page-break-before:always}thead{display:table-header-group}" +
+            ".crit{color:#a11!important}.warn{color:#7a5600!important}.ok{color:#0a6b3c!important}" +
+            "svg{background:#f2f2f4!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}" +
+            ".pagebar{display:block!important;-webkit-print-color-adjust:exact;print-color-adjust:exact;background:#ffffff}" +
+            "a{color:#111!important;text-decoration:none}.noprint{display:none!important}" +
+            "}";
+
+        string themed = theme switch
+        {
+            ReportTheme.Light => light,
+            ReportTheme.FollowSystem => dark + $"@media (prefers-color-scheme: light){{{light}}}",
+            _ => dark,
+        };
+        return themed + print;
+    }
+
+    /// <summary>#988: a fixed top/bottom bar (machine name + generation date) that only becomes
+    /// visible under the @media print block above - a running header/footer on every printed page.</summary>
+    internal static string BuildPrintPageBars(string machineName, DateTime generatedAt)
+    {
+        string text = System.Net.WebUtility.HtmlEncode($"{(string.IsNullOrEmpty(machineName) ? "This machine" : machineName)} — generated {generatedAt:yyyy-MM-dd HH:mm}");
+        return $"<div class=\"pagebar\" id=\"pagebar-top\">{text}</div><div class=\"pagebar\" id=\"pagebar-bottom\">{text}</div>";
     }
 
     /// <summary>Renders one history buffer (0-100 range, 60 samples) as a small inline SVG
@@ -964,7 +1061,10 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
     ///   severityWeight: Info=1, Low=2, Medium=3, High=4
     /// "Severity"/"Confidence" sort by that field directly (tie-broken by the other); "Category"
     /// groups alphabetically by Rule.Category, empty/hand-rolled findings sorting last.</summary>
-    private static List<HealthIssue> SortIssues(List<HealthIssue> issues, HealthFindingSortMode mode) => mode switch
+    /// <summary>internal (not private) so EvidenceBundleService.CollectAppFindingsAsync (#981) and
+    /// its "top findings sorted by impact" index.html/forum-post rendering (#982/#987) can reuse
+    /// this exact composite-impact ordering rather than a second copy of the same formula.</summary>
+    internal static List<HealthIssue> SortIssues(List<HealthIssue> issues, HealthFindingSortMode mode) => mode switch
     {
         HealthFindingSortMode.Severity => issues.OrderByDescending(SeverityWeight).ThenByDescending(i => i.Confidence).ToList(),
         HealthFindingSortMode.Confidence => issues.OrderByDescending(i => i.Confidence).ThenByDescending(SeverityWeight).ToList(),
