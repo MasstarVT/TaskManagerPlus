@@ -1,4 +1,4 @@
-<UserControl x:Class="TaskManagerPlus.Views.EventsView"
+﻿<UserControl x:Class="TaskManagerPlus.Views.EventsView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="clr-namespace:TaskManagerPlus.ViewModels"
@@ -284,10 +284,10 @@
                                 <DataTemplate DataType="{x:Type models:EventIdBaselineFlag}">
                                     <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="8,5" Margin="0,0,0,4">
                                         <TextBlock FontSize="11" TextWrapping="Wrap">
-                                            <Run Text="{Binding Provider}" FontWeight="SemiBold" /><Run Text=" " /><Run Text="{Binding EventId}" />
-                                            <Run Text=" — " /><Run Text="{Binding Last24HourCount}" /><Run Text=" in the last 24h vs. a median of " />
-                                            <Run Text="{Binding MedianDailyCount, StringFormat={}{0:0.0}}" /><Run Text="/day over " />
-                                            <Run Text="{Binding ObservedDays}" /><Run Text=" observed day(s)." />
+                                            <Run Text="{Binding Provider, Mode=OneWay}" FontWeight="SemiBold" /><Run Text=" " /><Run Text="{Binding EventId, Mode=OneWay}" />
+                                            <Run Text=" — " /><Run Text="{Binding Last24HourCount, Mode=OneWay}" /><Run Text=" in the last 24h vs. a median of " />
+                                            <Run Text="{Binding MedianDailyCount, StringFormat={}{0:0.0}, Mode=OneWay}" /><Run Text="/day over " />
+                                            <Run Text="{Binding ObservedDays, Mode=OneWay}" /><Run Text=" observed day(s)." />
                                         </TextBlock>
                                     </Border>
                                 </DataTemplate>
@@ -301,9 +301,9 @@
                                 <DataTemplate DataType="{x:Type models:FirstOccurrenceFlag}">
                                     <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="8,5" Margin="0,0,0,4">
                                         <TextBlock FontSize="11" TextWrapping="Wrap">
-                                            <Run Text="{Binding Provider}" FontWeight="SemiBold" /><Run Text=" " /><Run Text="{Binding EventId}" />
-                                            <Run Text=" — first seen " /><Run Text="{Binding FirstSeen, StringFormat={}{0:g}}" />
-                                            <Run Text=", " /><Run Text="{Binding OccurrenceCount}" /><Run Text=" occurrence(s) since." />
+                                            <Run Text="{Binding Provider, Mode=OneWay}" FontWeight="SemiBold" /><Run Text=" " /><Run Text="{Binding EventId, Mode=OneWay}" />
+                                            <Run Text=" — first seen " /><Run Text="{Binding FirstSeen, StringFormat={}{0:g}, Mode=OneWay}" />
+                                            <Run Text=", " /><Run Text="{Binding OccurrenceCount, Mode=OneWay}" /><Run Text=" occurrence(s) since." />
                                         </TextBlock>
                                     </Border>
                                 </DataTemplate>
@@ -1004,7 +1004,7 @@
                                             <ItemsControl.ItemTemplate>
                                                 <DataTemplate>
                                                     <TextBlock FontSize="11" TextWrapping="Wrap" Margin="0,0,0,2">
-                                                        <Run Text="• " /><Run Text="{Binding}" />
+                                                        <Run Text="• " /><Run Text="{Binding Mode=OneWay}" />
                                                     </TextBlock>
                                                 </DataTemplate>
                                             </ItemsControl.ItemTemplate>
@@ -1030,7 +1030,7 @@
                                                 <DataTemplate DataType="{x:Type models:StatusCodeExplain}">
                                                     <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="6,4" Margin="0,0,0,4" ToolTip="{Binding ResolvedText}">
                                                         <TextBlock FontSize="11" TextWrapping="Wrap">
-                                                            <Run Text="{Binding Code}" FontFamily="Consolas" FontWeight="SemiBold" /><Run Text=" — " /><Run Text="{Binding ResolvedText}" />
+                                                            <Run Text="{Binding Code, Mode=OneWay}" FontFamily="Consolas" FontWeight="SemiBold" /><Run Text=" — " /><Run Text="{Binding ResolvedText, Mode=OneWay}" />
                                                         </TextBlock>
                                                     </Border>
                                                 </DataTemplate>

@@ -46,7 +46,7 @@ wrong with this PC" diagnostics.
 
 ## Requirements
 
-- Windows 10/11
+- Windows 10 version 2004 (build 19041) or newer, or Windows 11
 - [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)
 
 ## Running it
@@ -70,7 +70,7 @@ dotnet build -c Release
 ```
 
 The executable will be at
-`src/TaskManagerPlus/bin/Release/net8.0-windows/TaskManagerPlus.exe`. Running
+`src/TaskManagerPlus/bin/Release/net8.0-windows10.0.19041.0/TaskManagerPlus.exe`. Running
 it directly (double-click or from Explorer) will trigger the UAC prompt since
 it's marked `requireAdministrator` in `app.manifest`.
 

@@ -1,4 +1,4 @@
-<UserControl x:Class="TaskManagerPlus.Views.GpuView"
+﻿<UserControl x:Class="TaskManagerPlus.Views.GpuView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="clr-namespace:TaskManagerPlus.ViewModels"
@@ -171,9 +171,9 @@
                                             </Border>
                                         </StackPanel>
                                         <TextBlock Style="{StaticResource SubStat}" Margin="0,2,0,0">
-                                            <Run Text="Driver " /><Run Text="{Binding DriverVersion, TargetNullValue=Unknown}" />
-                                            <Run Text=" (" /><Run Text="{Binding DriverDate, TargetNullValue=Unknown}" /><Run Text=")" />
-                                            <Run Text=" · WDDM " /><Run Text="{Binding WddmVersion}" />
+                                            <Run Text="Driver " /><Run Text="{Binding DriverVersion, TargetNullValue=Unknown, Mode=OneWay}" />
+                                            <Run Text=" (" /><Run Text="{Binding DriverDate, TargetNullValue=Unknown, Mode=OneWay}" /><Run Text=")" />
+                                            <Run Text=" · WDDM " /><Run Text="{Binding WddmVersion, Mode=OneWay}" />
                                         </TextBlock>
                                     </StackPanel>
                                     <TextBlock Grid.Column="1" VerticalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}"
@@ -605,7 +605,7 @@
                                     <StackPanel Grid.Column="0" Margin="0,0,8,0">
                                         <TextBlock FontSize="12">
                                             <Run Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}" />
-                                            <Run Text=" — driver " /><Run Text="{Binding DriverModule}" FontWeight="SemiBold" />
+                                            <Run Text=" — driver " /><Run Text="{Binding DriverModule, Mode=OneWay}" FontWeight="SemiBold" />
                                         </TextBlock>
                                         <TextBlock Style="{StaticResource SubStat}" FontSize="10.5" TextWrapping="Wrap" Text="{Binding Message}" />
                                     </StackPanel>
@@ -660,7 +660,7 @@
                                 <StackPanel Margin="0,0,0,8">
                                     <TextBlock FontSize="12">
                                         <Run Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}" />
-                                        <Run Text=" — " /><Run Text="{Binding ProcessName}" FontWeight="SemiBold" />
+                                        <Run Text=" — " /><Run Text="{Binding ProcessName, Mode=OneWay}" FontWeight="SemiBold" />
                                     </TextBlock>
                                     <TextBlock Style="{StaticResource SubStat}" FontSize="10.5" TextWrapping="Wrap" Text="{Binding Message}" />
                                 </StackPanel>
@@ -691,11 +691,11 @@
                                 <StackPanel Margin="0,0,0,8">
                                     <TextBlock FontSize="12">
                                         <Run Text="{Binding DetectedAt, StringFormat={}{0:g}, Mode=OneWay}" />
-                                        <Run Text=" — " /><Run Text="{Binding ForegroundProcessName}" FontWeight="SemiBold" />
+                                        <Run Text=" — " /><Run Text="{Binding ForegroundProcessName, Mode=OneWay}" FontWeight="SemiBold" />
                                     </TextBlock>
                                     <TextBlock Style="{StaticResource SubStat}" FontSize="10.5">
-                                        <Run Text="{Binding AdapterName}" /><Run Text=" stuck at " /><Run Text="{Binding StuckAtPercent, StringFormat={}{0:0.#}%}" />
-                                        <Run Text=" for " /><Run Text="{Binding DurationSeconds, StringFormat={}{0:0}s}" /><Run Text="+" />
+                                        <Run Text="{Binding AdapterName, Mode=OneWay}" /><Run Text=" stuck at " /><Run Text="{Binding StuckAtPercent, StringFormat={}{0:0.#}%, Mode=OneWay}" />
+                                        <Run Text=" for " /><Run Text="{Binding DurationSeconds, StringFormat={}{0:0}s, Mode=OneWay}" /><Run Text="+" />
                                     </TextBlock>
                                 </StackPanel>
                             </DataTemplate>

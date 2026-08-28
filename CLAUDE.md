@@ -31,7 +31,7 @@ dotnet build
 dotnet build -c Release
 
 # Release exe output
-src/TaskManagerPlus/bin/Release/net8.0-windows/TaskManagerPlus.exe
+src/TaskManagerPlus/bin/Release/net8.0-windows10.0.19041.0/TaskManagerPlus.exe
 ```
 
 There is no test project and no lint/format config in this repo — don't
@@ -453,6 +453,24 @@ per file:
   `requireAdministrator`) rather than elevating per-action, so ending other
   users' processes and controlling services just work without extra
   prompts.
+
+- **Target framework carries an explicit Windows API version**
+  (`net8.0-windows10.0.19041.0`, not a bare `net8.0-windows`). This is
+  load-bearing, not incidental: `net8.0-windows` expands to
+  `net8.0-windows7.0`, and `SkiaSharp.Views.WPF` (pulled in by LiveCharts)
+  ships assets only under `net462`, `net6.0-windows10.0.19041` and
+  `net8.0-windows10.0.19041`. `net8.0-windows7.0` matches none of the
+  windows10 groups, so NuGet fell all the way back to the .NETFramework4.6.2
+  group and the app silently compiled against the **net462**
+  `SkiaSharp.Views.WPF`, a **net452** `GLWpfControl` and a **.NET 2.0**
+  `OpenTK` — which is what the 11 `NU1701` warnings were reporting. Naming
+  10.0.19041 selects the real net8.0 assets (OpenTK 4.3.0). Do not
+  “simplify” this back to `net8.0-windows`; it reintroduces the fallback
+  silently, and the only visible symptom is a set of NU1701 warnings that
+  look cosmetic. The consequence is a Windows 10 2004 (build 19041) floor,
+  declared via `SupportedOSPlatformVersion`, and it is also why the Release
+  output path contains the full moniker (`scripts/Sign-Release.ps1`
+  discovers the exe rather than hardcoding it).
 
 ## Local dev environment notes
 

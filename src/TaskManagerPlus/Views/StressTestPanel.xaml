@@ -1,4 +1,4 @@
-<UserControl x:Class="TaskManagerPlus.Views.StressTestPanel"
+﻿<UserControl x:Class="TaskManagerPlus.Views.StressTestPanel"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="clr-namespace:TaskManagerPlus.ViewModels"
@@ -225,11 +225,11 @@
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0" Text="{Binding Timestamp, StringFormat={}{0:g}}" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" />
                                 <TextBlock Grid.Column="1" FontSize="12" VerticalAlignment="Center">
-                                    <Run Text="{Binding TestType, Converter={StaticResource StressTestTypeDisplayNameConverter}}" />
+                                    <Run Text="{Binding TestType, Converter={StaticResource StressTestTypeDisplayNameConverter}, Mode=OneWay}" />
                                     <Run Text=" — " />
-                                    <Run Text="{Binding PeakTempC, StringFormat={}{0:0.#}°C, TargetNullValue=Unknown}" />
+                                    <Run Text="{Binding PeakTempC, StringFormat={}{0:0.#}°C, TargetNullValue=Unknown, Mode=OneWay}" />
                                     <Run Text=", " />
-                                    <Run Text="{Binding AvgClockGhz, StringFormat={}{0:0.00}GHz, TargetNullValue=Unknown}" />
+                                    <Run Text="{Binding AvgClockGhz, StringFormat={}{0:0.00}GHz, TargetNullValue=Unknown, Mode=OneWay}" />
                                 </TextBlock>
                                 <TextBlock Grid.Column="2" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center">
                                     <TextBlock.Style>

@@ -1,4 +1,4 @@
-<UserControl x:Class="TaskManagerPlus.Views.CpuView"
+﻿<UserControl x:Class="TaskManagerPlus.Views.CpuView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="clr-namespace:TaskManagerPlus.ViewModels"
@@ -468,15 +468,15 @@
                         <StackPanel Margin="3,0,3,0">
                             <TextBlock Text="Instruction sets" Style="{StaticResource SpecLabel}" />
                             <TextBlock Style="{StaticResource SpecValue}" TextWrapping="Wrap" FontSize="12">
-                                <Run Text="{Binding Features.Sse42Supported, StringFormat={}SSE4.2: {0}}" />
+                                <Run Text="{Binding Features.Sse42Supported, StringFormat={}SSE4.2: {0}, Mode=OneWay}" />
                                 <Run Text="  ·  " />
-                                <Run Text="{Binding Features.AvxSupported, StringFormat={}AVX: {0}}" />
+                                <Run Text="{Binding Features.AvxSupported, StringFormat={}AVX: {0}, Mode=OneWay}" />
                                 <Run Text="  ·  " />
-                                <Run Text="{Binding Features.Avx2Supported, StringFormat={}AVX2: {0}}" />
+                                <Run Text="{Binding Features.Avx2Supported, StringFormat={}AVX2: {0}, Mode=OneWay}" />
                                 <Run Text="  ·  " />
-                                <Run Text="{Binding Features.Avx512Supported, StringFormat={}AVX-512: {0}}" />
+                                <Run Text="{Binding Features.Avx512Supported, StringFormat={}AVX-512: {0}, Mode=OneWay}" />
                                 <Run Text="  ·  " />
-                                <Run Text="{Binding Features.FmaSupported, StringFormat={}FMA: {0}}" />
+                                <Run Text="{Binding Features.FmaSupported, StringFormat={}FMA: {0}, Mode=OneWay}" />
                             </TextBlock>
                         </StackPanel>
                     </UniformGrid>

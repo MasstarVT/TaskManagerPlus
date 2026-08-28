@@ -1,4 +1,4 @@
-<UserControl x:Class="TaskManagerPlus.Views.StorageView"
+﻿<UserControl x:Class="TaskManagerPlus.Views.StorageView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="clr-namespace:TaskManagerPlus.ViewModels"
@@ -36,7 +36,7 @@
                             </Style>
                         </TextBlock.Style>
                         <Run Text="Corrected utilization (100 − % Idle Time, matches Task Manager's own &quot;Active time&quot;): " />
-                        <Run Text="{Binding Performance.DiskUtilizationPercent, StringFormat={}{0:0.0}%}" FontWeight="SemiBold" />
+                        <Run Text="{Binding Performance.DiskUtilizationPercent, StringFormat={}{0:0.0}%, Mode=OneWay}" FontWeight="SemiBold" />
                     </TextBlock>
                 </StackPanel>
             </Border>
@@ -320,13 +320,13 @@
                                             </Grid.ColumnDefinitions>
                                             <StackPanel Grid.Column="0">
                                                 <TextBlock FontSize="12.5">
-                                                    <Run Text="{Binding VirtualDiskName}" FontWeight="SemiBold" />
-                                                    <Run Text=" · " /><Run Text="{Binding PoolName}" />
+                                                    <Run Text="{Binding VirtualDiskName, Mode=OneWay}" FontWeight="SemiBold" />
+                                                    <Run Text=" · " /><Run Text="{Binding PoolName, Mode=OneWay}" />
                                                 </TextBlock>
                                                 <TextBlock Style="{StaticResource SubStat}" Margin="0,2,0,0">
-                                                    <Run Text="{Binding ResiliencySettingName}" /><Run Text=" · " /><Run Text="{Binding OperationalStatus}" />
-                                                    <Run Text=" · " /><Run Text="{Binding ProvisioningTypeText}" /><Run Text=" provisioning" />
-                                                    <Run Text=" · " /><Run Text="{Binding AllocatedSizeText}" /><Run Text=" of " /><Run Text="{Binding SizeText}" />
+                                                    <Run Text="{Binding ResiliencySettingName, Mode=OneWay}" /><Run Text=" · " /><Run Text="{Binding OperationalStatus, Mode=OneWay}" />
+                                                    <Run Text=" · " /><Run Text="{Binding ProvisioningTypeText, Mode=OneWay}" /><Run Text=" provisioning" />
+                                                    <Run Text=" · " /><Run Text="{Binding AllocatedSizeText, Mode=OneWay}" /><Run Text=" of " /><Run Text="{Binding SizeText, Mode=OneWay}" />
                                                 </TextBlock>
                                             </StackPanel>
                                             <TextBlock Grid.Column="1" Text="{Binding HealthStatus}" FontWeight="SemiBold" VerticalAlignment="Center">
@@ -1561,13 +1561,13 @@
                             <DataTemplate>
                                 <StackPanel Margin="0,0,0,10">
                                     <TextBlock FontSize="12.5">
-                                        <Run Text="{Binding Path}" FontWeight="SemiBold" />
-                                        <Run Text=" · " /><Run Text="{Binding MediaType}" />
+                                        <Run Text="{Binding Path, Mode=OneWay}" FontWeight="SemiBold" />
+                                        <Run Text=" · " /><Run Text="{Binding MediaType, Mode=OneWay}" />
                                     </TextBlock>
                                     <TextBlock Style="{StaticResource SubStat}" Margin="0,2,0,0" TextWrapping="Wrap">
-                                        <Run Text="Initial " /><Run Text="{Binding InitialSizeMb, StringFormat={}{0:N0} MB}" />
-                                        <Run Text=" · Maximum " /><Run Text="{Binding MaximumSizeMb, StringFormat={}{0:N0} MB}" />
-                                        <Run Text=" · Peak usage " /><Run Text="{Binding PeakUsageMb, StringFormat={}{0:N0} MB}" />
+                                        <Run Text="Initial " /><Run Text="{Binding InitialSizeMb, StringFormat={}{0:N0} MB, Mode=OneWay}" />
+                                        <Run Text=" · Maximum " /><Run Text="{Binding MaximumSizeMb, StringFormat={}{0:N0} MB, Mode=OneWay}" />
+                                        <Run Text=" · Peak usage " /><Run Text="{Binding PeakUsageMb, StringFormat={}{0:N0} MB, Mode=OneWay}" />
                                     </TextBlock>
                                     <TextBlock Text="System-managed size." Margin="0,2,0,0">
                                         <TextBlock.Style>
@@ -1650,7 +1650,7 @@
                     <!-- #357: Storage Sense policy -->
                     <TextBlock Text="Storage Sense" FontWeight="SemiBold" FontSize="13" Margin="0,10,0,4" />
                     <TextBlock Margin="0,0,0,2" Style="{StaticResource SubStat}">
-                        <Run Text="Enabled: " /><Run Text="{Binding StorageSensePolicy.Enabled}" />
+                        <Run Text="Enabled: " /><Run Text="{Binding StorageSensePolicy.Enabled, Mode=OneWay}" />
                     </TextBlock>
                     <ItemsControl ItemsSource="{Binding StorageSensePolicy.RawPolicyValues}">
                         <ItemsControl.ItemTemplate>
@@ -1663,9 +1663,9 @@
                     <!-- #358: hibernation -->
                     <TextBlock Text="Hibernation" FontWeight="SemiBold" FontSize="13" Margin="0,16,0,4" />
                     <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,4" TextWrapping="Wrap">
-                        <Run Text="Enabled: " /><Run Text="{Binding HibernationInfo.Enabled}" />
-                        <Run Text=" · hiberfil.sys: " /><Run Text="{Binding HibernationInfo.HiberFileSizeBytes, Converter={StaticResource BytesToReadableConverter}, TargetNullValue=Unknown}" />
-                        <Run Text=" · Size policy: " /><Run Text="{Binding HibernationInfo.HiberFileSizePercent, TargetNullValue='Windows default (not customized)', StringFormat={}{0}% of RAM}" />
+                        <Run Text="Enabled: " /><Run Text="{Binding HibernationInfo.Enabled, Mode=OneWay}" />
+                        <Run Text=" · hiberfil.sys: " /><Run Text="{Binding HibernationInfo.HiberFileSizeBytes, Converter={StaticResource BytesToReadableConverter}, TargetNullValue=Unknown, Mode=OneWay}" />
+                        <Run Text=" · Size policy: " /><Run Text="{Binding HibernationInfo.HiberFileSizePercent, TargetNullValue='Windows default (not customized)', StringFormat={}{0}% of RAM, Mode=OneWay}" />
                     </TextBlock>
                     <TextBlock Text="Disabling hibernation also disables Fast Startup, since Fast Startup depends on it - stated here before you click Disable."
                                Style="{StaticResource SubStat}" Margin="0,0,0,6" TextWrapping="Wrap" />
@@ -1686,12 +1686,12 @@
                     <!-- #360: search indexer footprint -->
                     <TextBlock Text="Search indexer" FontWeight="SemiBold" FontSize="13" Margin="0,16,0,4" />
                     <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap">
-                        <Run Text="Windows.edb: " /><Run Text="{Binding IndexerFootprint.EdbSizeBytes, Converter={StaticResource BytesToReadableConverter}, TargetNullValue=Unknown}" />
-                        <Run Text=" · WSearch service: " /><Run Text="{Binding IndexerFootprint.ServiceStatus}" />
-                        <Run Text=" (" /><Run Text="{Binding IndexerFootprint.ServiceStartType}" /><Run Text=" startup)" />
+                        <Run Text="Windows.edb: " /><Run Text="{Binding IndexerFootprint.EdbSizeBytes, Converter={StaticResource BytesToReadableConverter}, TargetNullValue=Unknown, Mode=OneWay}" />
+                        <Run Text=" · WSearch service: " /><Run Text="{Binding IndexerFootprint.ServiceStatus, Mode=OneWay}" />
+                        <Run Text=" (" /><Run Text="{Binding IndexerFootprint.ServiceStartType, Mode=OneWay}" /><Run Text=" startup)" />
                     </TextBlock>
                     <TextBlock Margin="0,2,0,0" TextWrapping="Wrap">
-                        <Run Text="Backlog: " /><Run Text="{Binding IndexerFootprint.BacklogItemCount, StringFormat={}{0:N0} item(s)}" />
+                        <Run Text="Backlog: " /><Run Text="{Binding IndexerFootprint.BacklogItemCount, StringFormat={}{0:N0} item(s), Mode=OneWay}" />
                         <TextBlock.Style>
                             <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
                                 <Setter Property="Visibility" Value="Collapsed" />
@@ -1730,15 +1730,15 @@
                             </Style>
                         </StackPanel.Style>
                         <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap">
-                            <Run Text="Actual size: " /><Run Text="{Binding ComponentStoreAnalysis.ActualStoreSizeBytes, Converter={StaticResource BytesToReadableConverter}, TargetNullValue=Unknown}" />
-                            <Run Text=" · Shared with Windows: " /><Run Text="{Binding ComponentStoreAnalysis.SharedWithWindowsBytes, Converter={StaticResource BytesToReadableConverter}, TargetNullValue=Unknown}" />
+                            <Run Text="Actual size: " /><Run Text="{Binding ComponentStoreAnalysis.ActualStoreSizeBytes, Converter={StaticResource BytesToReadableConverter}, TargetNullValue=Unknown, Mode=OneWay}" />
+                            <Run Text=" · Shared with Windows: " /><Run Text="{Binding ComponentStoreAnalysis.SharedWithWindowsBytes, Converter={StaticResource BytesToReadableConverter}, TargetNullValue=Unknown, Mode=OneWay}" />
                         </TextBlock>
                         <TextBlock Style="{StaticResource SubStat}" Margin="0,2,0,0" TextWrapping="Wrap">
-                            <Run Text="Backups/disabled features: " /><Run Text="{Binding ComponentStoreAnalysis.BackupsAndDisabledFeaturesBytes, Converter={StaticResource BytesToReadableConverter}, TargetNullValue=Unknown}" />
-                            <Run Text=" · Cache/temp: " /><Run Text="{Binding ComponentStoreAnalysis.CacheAndTempDataBytes, Converter={StaticResource BytesToReadableConverter}, TargetNullValue=Unknown}" />
+                            <Run Text="Backups/disabled features: " /><Run Text="{Binding ComponentStoreAnalysis.BackupsAndDisabledFeaturesBytes, Converter={StaticResource BytesToReadableConverter}, TargetNullValue=Unknown, Mode=OneWay}" />
+                            <Run Text=" · Cache/temp: " /><Run Text="{Binding ComponentStoreAnalysis.CacheAndTempDataBytes, Converter={StaticResource BytesToReadableConverter}, TargetNullValue=Unknown, Mode=OneWay}" />
                         </TextBlock>
                         <TextBlock Margin="0,2,0,0" FontWeight="SemiBold">
-                            <Run Text="Cleanup recommended: " /><Run Text="{Binding ComponentStoreAnalysis.CleanupRecommended}" />
+                            <Run Text="Cleanup recommended: " /><Run Text="{Binding ComponentStoreAnalysis.CleanupRecommended, Mode=OneWay}" />
                         </TextBlock>
                         <TextBlock Text="{Binding ComponentStoreAnalysis.DateBasedCleanupNote}" Style="{StaticResource SubStat}" Margin="0,2,0,0" TextWrapping="Wrap" />
                         <TextBlock Text="Raw dism report" FontWeight="SemiBold" FontSize="12" Margin="0,8,0,4" />

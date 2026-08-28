@@ -1,4 +1,4 @@
-<UserControl x:Class="TaskManagerPlus.Views.WindowsHealthView"
+﻿<UserControl x:Class="TaskManagerPlus.Views.WindowsHealthView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="clr-namespace:TaskManagerPlus.ViewModels"
@@ -2018,7 +2018,7 @@
                                 <TextBlock Style="{StaticResource SpecValue}">
                                     <Run Text="{Binding RegistryBackupStatus.PopulatedStatusText, Mode=OneWay}" />
                                     <Run Text=" - " />
-                                    <Run Text="{Binding RegistryBackupStatus.NewestFileTime, StringFormat={}newest {0:g}, TargetNullValue='(no populated files)'}" />
+                                    <Run Text="{Binding RegistryBackupStatus.NewestFileTime, StringFormat={}newest {0:g}, TargetNullValue='(no populated files)', Mode=OneWay}" />
                                 </TextBlock>
                                 <TextBlock FontSize="11" Foreground="{DynamicResource TextTertiaryBrush}" Margin="0,2,0,0">
                                     <Run Text="Periodic backup policy: " />

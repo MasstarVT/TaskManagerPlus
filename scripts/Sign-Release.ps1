@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Signs the built TaskManagerPlus.exe with the local dev code-signing certificate.
 
@@ -25,10 +25,18 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$exePath = Join-Path $repoRoot "src\TaskManagerPlus\bin\$Configuration\net8.0-windows\TaskManagerPlus.exe"
+$binDir = Join-Path $repoRoot "src\TaskManagerPlus\bin\$Configuration"
 
-if (-not (Test-Path $exePath)) {
-    throw "Build output not found at '$exePath'. Build the project first (dotnet build -c $Configuration)."
+# Discovered rather than hardcoded: the target framework moniker is part of this path, so
+# pinning it here (it read "net8.0-windows" before the TFM gained an explicit Windows API
+# version) silently breaks this script on every retarget. Newest match wins, so a stale output
+# folder left by a previous TFM cannot get signed in place of the current build.
+$exePath = Get-ChildItem -Path $binDir -Filter 'TaskManagerPlus.exe' -Recurse -ErrorAction SilentlyContinue |
+    Sort-Object LastWriteTime -Descending |
+    Select-Object -First 1 -ExpandProperty FullName
+
+if (-not $exePath) {
+    throw "Build output not found under '$binDir'. Build the project first (dotnet build -c $Configuration)."
 }
 
 $cert = Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert |

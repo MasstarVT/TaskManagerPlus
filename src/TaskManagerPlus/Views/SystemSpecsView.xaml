@@ -1,4 +1,4 @@
-<UserControl x:Class="TaskManagerPlus.Views.SystemSpecsView"
+﻿<UserControl x:Class="TaskManagerPlus.Views.SystemSpecsView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="clr-namespace:TaskManagerPlus.ViewModels"
@@ -346,11 +346,11 @@
                                                 </Border>
                                             </StackPanel>
                                             <TextBlock Style="{StaticResource SecondaryLine}">
-                                                <Run Text="{Binding SpeedText}" /><Run Text="  " /><Run Text="{Binding ManufacturerText}" />
+                                                <Run Text="{Binding SpeedText, Mode=OneWay}" /><Run Text="  " /><Run Text="{Binding ManufacturerText, Mode=OneWay}" />
                                             </TextBlock>
                                             <TextBlock Style="{StaticResource SecondaryLine}" Text="{Binding FormFactorAndTechnologyText}" />
                                             <TextBlock Style="{StaticResource SecondaryLine}">
-                                                <Run Text="{Binding PartNumberText}" /><Run Text="  " /><Run Text="{Binding SerialNumberText}" />
+                                                <Run Text="{Binding PartNumberText, Mode=OneWay}" /><Run Text="  " /><Run Text="{Binding SerialNumberText, Mode=OneWay}" />
                                             </TextBlock>
                                             <TextBlock Style="{StaticResource SecondaryLine}" Text="{Binding RankAndVoltageText}" />
                                             <!-- #442: XMP/EXPO hint - hidden when the module already runs at rated speed. -->
@@ -712,9 +712,9 @@
                                                 </Style>
                                             </TextBlock.Style>
                                             <Run Text="HDR: " />
-                                            <Run Text="{Binding HdrSupported, Converter={StaticResource NullableBoolToYesNoConverter}}" /><Run Text=" supported" />
-                                            <Run Text=", " /><Run Text="{Binding HdrEnabled, Converter={StaticResource NullableBoolToYesNoConverter}}" /><Run Text=" enabled" />
-                                            <Run Text=" · Wide color gamut: " /><Run Text="{Binding WideColorEnabled, Converter={StaticResource NullableBoolToYesNoConverter}}" />
+                                            <Run Text="{Binding HdrSupported, Converter={StaticResource NullableBoolToYesNoConverter}, Mode=OneWay}" /><Run Text=" supported" />
+                                            <Run Text=", " /><Run Text="{Binding HdrEnabled, Converter={StaticResource NullableBoolToYesNoConverter}, Mode=OneWay}" /><Run Text=" enabled" />
+                                            <Run Text=" · Wide color gamut: " /><Run Text="{Binding WideColorEnabled, Converter={StaticResource NullableBoolToYesNoConverter}, Mode=OneWay}" />
                                         </TextBlock>
 
                                         <!-- #685: raw-EDID identity panel. -->

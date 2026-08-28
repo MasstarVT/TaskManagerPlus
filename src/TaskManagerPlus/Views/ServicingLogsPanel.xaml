@@ -1,4 +1,4 @@
-<UserControl x:Class="TaskManagerPlus.Views.ServicingLogsPanel"
+﻿<UserControl x:Class="TaskManagerPlus.Views.ServicingLogsPanel"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="clr-namespace:TaskManagerPlus.ViewModels"
@@ -311,7 +311,7 @@
                                         Visibility="{Binding SetupAnalysis.ErrorMessage, Converter={StaticResource NullToVisibilityConverter}}" />
                             <StackPanel Visibility="{Binding SetupAnalysis.Found, Converter={StaticResource BoolToVisibilityConverter}}">
                                 <TextBlock FontSize="11" FontWeight="SemiBold" Margin="0,0,0,4" TextWrapping="Wrap">
-                                    <Run Text="Source: " /><Run Text="{Binding SetupAnalysis.SourceFolder}" FontFamily="Consolas" FontWeight="Normal" />
+                                    <Run Text="Source: " /><Run Text="{Binding SetupAnalysis.SourceFolder, Mode=OneWay}" FontFamily="Consolas" FontWeight="Normal" />
                                 </TextBlock>
                                 <TextBlock Text="These logs are from $WINDOWS.~BT leftovers of a failed, rolled-back in-place upgrade (not the normal post-upgrade Panther folder)."
                                             TextWrapping="Wrap" FontSize="10.5" Foreground="{DynamicResource WarningBrush}" Margin="0,0,0,8"

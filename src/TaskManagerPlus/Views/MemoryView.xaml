@@ -1,4 +1,4 @@
-<UserControl x:Class="TaskManagerPlus.Views.MemoryView"
+﻿<UserControl x:Class="TaskManagerPlus.Views.MemoryView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="clr-namespace:TaskManagerPlus.ViewModels"
@@ -918,9 +918,9 @@
                                             </TextBlock>
                                         </Grid>
                                         <TextBlock FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,0" TextWrapping="Wrap">
-                                            <Run Text="{Binding HandleCount, StringFormat={}{0} handle(s)}" />
+                                            <Run Text="{Binding HandleCount, StringFormat={}{0} handle(s), Mode=OneWay}" />
                                             <Run Text=" across: " />
-                                            <Run Text="{Binding ProcessNames, Converter={StaticResource StringListJoinConverter}}" />
+                                            <Run Text="{Binding ProcessNames, Converter={StaticResource StringListJoinConverter}, Mode=OneWay}" />
                                         </TextBlock>
                                     </StackPanel>
                                 </Border>
@@ -1214,10 +1214,10 @@
                                     </Grid.ColumnDefinitions>
                                     <StackPanel Grid.Column="0" Margin="0,0,8,0">
                                         <TextBlock FontSize="12.5" FontFamily="Consolas" FontWeight="SemiBold">
-                                            <Run Text="{Binding Tag}" /><Run Text="  " /><Run Text="{Binding Description}" FontFamily="Segoe UI" FontWeight="Normal" />
+                                            <Run Text="{Binding Tag, Mode=OneWay}" /><Run Text="  " /><Run Text="{Binding Description, Mode=OneWay}" FontFamily="Segoe UI" FontWeight="Normal" />
                                         </TextBlock>
                                         <TextBlock Style="{StaticResource SubStat}" FontSize="10.5">
-                                            <Run Text="{Binding LikelyDriver, TargetNullValue=Unknown}" />
+                                            <Run Text="{Binding LikelyDriver, TargetNullValue=Unknown, Mode=OneWay}" />
                                             <Run Text=" · outstanding allocs " /><Run Text="{Binding OutstandingAllocDelta, StringFormat=+{0:N0}, Mode=OneWay}" />
                                         </TextBlock>
                                     </StackPanel>
