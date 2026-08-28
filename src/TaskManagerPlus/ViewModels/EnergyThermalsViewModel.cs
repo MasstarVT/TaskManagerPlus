@@ -26,6 +26,7 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
 
     private readonly SensorMonitorService _sensors = new();
     private readonly DispatcherTimer _timer;
+    private bool _isRefreshing;
 
     // #25: needed to know whether the CPU is actually running below its rated base clock under
     // load (a real throttle signal), not just "hot" - CpuViewModel's own thermal-throttle flag
@@ -125,8 +126,8 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
     // ScheduledTaskService/ServiceControlService's recovery-action reader already take, since
     // power plans essentially never change outside a direct user action.
     public ObservableCollection<PowerPlanInfo> PowerPlans { get; } = new();
-    public RelayCommand LoadPowerInfoCommand { get; }
-    public RelayCommand SetPowerPlanCommand { get; }
+    public AsyncRelayCommand LoadPowerInfoCommand { get; }
+    public AsyncRelayCommand SetPowerPlanCommand { get; }
 
     private string _sleepStateSupportText = string.Empty;
     /// <summary>Round 12, #91: Modern Standby (S0) vs. legacy S3 sleep support - see
@@ -140,7 +141,7 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
     // devices, each looked up by a best-effort prefix match; see UsbPowerService's remarks for
     // why SelectiveSuspendEnabled is "Unknown" far more often than a hard true/false).
     public ObservableCollection<UsbDevicePowerInfo> UsbDevices { get; } = new();
-    public RelayCommand LoadUsbDevicesCommand { get; }
+    public AsyncRelayCommand LoadUsbDevicesCommand { get; }
 
     private double? _cpuPackageTempC;
     public double? CpuPackageTempC { get => _cpuPackageTempC; private set => SetProperty(ref _cpuPackageTempC, value); }
@@ -361,15 +362,9 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         };
         FanRpmSeries = new ISeries[] { _fanRpmGlow, _fanRpmCore };
 
-        LoadPowerInfoCommand = new RelayCommand(_ => LoadPowerInfo());
-        SetPowerPlanCommand = new RelayCommand(p =>
-        {
-            if (p is not string guid || string.IsNullOrWhiteSpace(guid)) return;
-            var (success, error) = PowerPlanService.SetActivePlan(guid);
-            PowerPlanStatusText = success ? "Power plan switched." : $"Couldn't switch power plan: {error}";
-            if (success) LoadPowerInfo();
-        });
-        LoadUsbDevicesCommand = new RelayCommand(_ => LoadUsbDevices());
+        LoadPowerInfoCommand = new AsyncRelayCommand(_ => LoadPowerInfoAsync());
+        SetPowerPlanCommand = new AsyncRelayCommand(SetPowerPlanAsync);
+        LoadUsbDevicesCommand = new AsyncRelayCommand(_ => LoadUsbDevicesAsync());
 
         // Round 12, #100: configurable poll interval - see PollIntervalSettingsService's remarks.
         // Loaded fresh (not cached in a field) on every read/write so a slider change here can
@@ -406,22 +401,43 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
 
     /// <summary>Round 12, #90/#91: loads both the power-scheme list and the sleep-state support
     /// text in one on-demand action - both are cheap powercfg shell-outs, so there's no reason to
-    /// split them into two separate buttons.</summary>
-    private void LoadPowerInfo()
+    /// split them into two separate buttons. Both shell-outs run off the UI thread via Task.Run
+    /// (same pattern as StorageViewModel.CheckFragmentationAsync) since powercfg.exe can take a
+    /// moment to return; only the resulting collection/property updates happen back on the UI
+    /// thread, after the await completes.</summary>
+    private async Task LoadPowerInfoAsync()
     {
-        var plans = PowerPlanService.ListPowerPlans();
+        var (plans, sleepText) = await Task.Run(() =>
+        {
+            var p = PowerPlanService.ListPowerPlans();
+            var s = PowerPlanService.ReadSleepStateSupport();
+            return (p, s);
+        });
+
         PowerPlans.Clear();
         foreach (var p in plans) PowerPlans.Add(p);
 
-        SleepStateSupportText = PowerPlanService.ReadSleepStateSupport();
+        SleepStateSupportText = sleepText;
         PowerPlanStatusText = plans.Count == 0 ? "Couldn't read power plans (powercfg unavailable)." : string.Empty;
     }
 
-    /// <summary>Round 12, #92: on-demand USB selective-suspend read - see UsbPowerService's
-    /// remarks for why this can take a moment and often reports "Unknown" per device.</summary>
-    private void LoadUsbDevices()
+    /// <summary>Round 12, #90: switches the active power plan via powercfg /setactive - run off
+    /// the UI thread the same way LoadPowerInfoAsync is, since it shells out.</summary>
+    private async Task SetPowerPlanAsync(object? param)
     {
-        var devices = UsbPowerService.ReadUsbSelectiveSuspend();
+        if (param is not string guid || string.IsNullOrWhiteSpace(guid)) return;
+
+        var (success, error) = await Task.Run(() => PowerPlanService.SetActivePlan(guid));
+        PowerPlanStatusText = success ? "Power plan switched." : $"Couldn't switch power plan: {error}";
+        if (success) await LoadPowerInfoAsync();
+    }
+
+    /// <summary>Round 12, #92: on-demand USB selective-suspend read - see UsbPowerService's
+    /// remarks for why this can take a moment and often reports "Unknown" per device. Runs off the
+    /// UI thread via Task.Run, same pattern as LoadPowerInfoAsync above.</summary>
+    private async Task LoadUsbDevicesAsync()
+    {
+        var devices = await Task.Run(() => UsbPowerService.ReadUsbSelectiveSuspend());
         UsbDevices.Clear();
         foreach (var d in devices) UsbDevices.Add(d);
     }
@@ -454,6 +470,20 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
     }
 
     private async Task RefreshAsync()
+    {
+        if (_isRefreshing) return;
+        _isRefreshing = true;
+        try
+        {
+            await RefreshCoreAsync();
+        }
+        finally
+        {
+            _isRefreshing = false;
+        }
+    }
+
+    private async Task RefreshCoreAsync()
     {
         List<SensorReading> readings;
         try
