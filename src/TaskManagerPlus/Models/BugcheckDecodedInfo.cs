@@ -46,7 +46,20 @@ public sealed class BugcheckDecodedInfo
     /// null when the code doesn't carry one or no plausible tag could be extracted at all.</summary>
     public string? PoolTagText { get; init; }
 
+    /// <summary>Round 19, item 88: the bare 4-character tag PoolTagText above was built from (null
+    /// whenever PoolTagText is null) - kept separate from the friendly PoolTagText display string
+    /// so the "Apply Special Pool for this tag" button's CommandParameter has a plain tag to bind
+    /// to rather than having to re-parse it back out of the display text.</summary>
+    public string? PoolTagRaw { get; init; }
+
     /// <summary>#37: fault-address classification for 0xA/0xD1/0x50's referenced address - null
     /// for every other code.</summary>
     public string? FaultAddressClassification { get; init; }
+
+    /// <summary>Round 19, item 85: Parameter 1's Verifier-specific subcode meaning for 0xC4/0xC9/
+    /// 0xE6 (the three bugchecks Driver Verifier itself raises) - null for every other code, and
+    /// null when Parameter 1 isn't a value this app's subcode table (VerifierViolationLookup)
+    /// recognizes at all (a bare hex fallback still appears in the plain ParameterRows above in
+    /// that case, never hidden).</summary>
+    public string? VerifierViolationText { get; init; }
 }

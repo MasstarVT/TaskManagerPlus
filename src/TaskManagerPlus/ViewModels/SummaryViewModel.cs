@@ -756,6 +756,18 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         if (_systemSpecs.MultipleActiveAvWarning)
             issues.Add(new HealthIssue { Message = "Multiple antivirus products look active", IsCritical = false });
 
+        // Round 19, item 82: "Verifier is currently enabled" warning, also read directly off
+        // StabilityViewModel's own already-computed VerifierNagDue/VerifierEnabledDurationText
+        // (no new shell-out on this 2-second tick) - the prominent banner with the one-click reset
+        // lives on the Stability tab itself; this is just the same finding re-surfaced here so a
+        // forgotten diagnostic session shows up without having to know to check that tab.
+        if (_stability.VerifierNagDue)
+            issues.Add(new HealthIssue
+            {
+                Message = $"Driver Verifier is still on and slowing this PC down - {_stability.VerifierEnabledDurationText} Reset it from the Stability tab if you're done diagnosing.",
+                IsCritical = false,
+            });
+
         // Round 11, #73: Windows Update/servicing reboot pending - see
         // SystemSpecsService.ReadRebootPending for which registry keys are checked.
         if (_systemSpecs.RebootPending)

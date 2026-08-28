@@ -327,9 +327,25 @@
                                         </TextBlock>
 
                                         <!-- Round 15, item 35: pool-tag decode for 0xC2/0xC5. -->
+                                        <Grid Margin="0,2,0,0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" Style="{StaticResource SubStat}" TextWrapping="Wrap"
+                                                       Text="{Binding Decoded.PoolTagText}"
+                                                       Visibility="{Binding Decoded.PoolTagText, Converter={StaticResource NullToVisibilityConverter}}" />
+                                            <!-- Round 19, item 88: jump straight to Special Pool for this crash's own tag. -->
+                                            <Button Grid.Column="1" Content="Apply Special Pool" Padding="6,2" FontSize="11" Margin="8,0,0,0"
+                                                    Command="{Binding DataContext.ApplySpecialPoolCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                    CommandParameter="{Binding Decoded.PoolTagRaw}"
+                                                    Visibility="{Binding Decoded.PoolTagRaw, Converter={StaticResource NullToVisibilityConverter}}" />
+                                        </Grid>
+
+                                        <!-- Round 19, item 85: Verifier violation subcode decode for 0xC4/0xC9/0xE6. -->
                                         <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,2,0,0"
-                                                   Text="{Binding Decoded.PoolTagText}"
-                                                   Visibility="{Binding Decoded.PoolTagText, Converter={StaticResource NullToVisibilityConverter}}" />
+                                                   Text="{Binding Decoded.VerifierViolationText}"
+                                                   Visibility="{Binding Decoded.VerifierViolationText, Converter={StaticResource NullToVisibilityConverter}}" />
 
                                         <!-- Round 15, item 37: fault-address classification for 0xA/0xD1/0x50. -->
                                         <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,2,0,0"
@@ -503,9 +519,25 @@
                                                    Visibility="{Binding Decoded.DriverPowerStateSubcodeText, Converter={StaticResource NullToVisibilityConverter}}" />
 
                                         <!-- Round 15, item 35: pool-tag decode for 0xC2/0xC5. -->
+                                        <Grid Margin="0,2,0,0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" Style="{StaticResource SubStat}" TextWrapping="Wrap"
+                                                       Text="{Binding Decoded.PoolTagText}"
+                                                       Visibility="{Binding Decoded.PoolTagText, Converter={StaticResource NullToVisibilityConverter}}" />
+                                            <!-- Round 19, item 88: jump straight to Special Pool for this crash's own tag. -->
+                                            <Button Grid.Column="1" Content="Apply Special Pool" Padding="6,2" FontSize="11" Margin="8,0,0,0"
+                                                    Command="{Binding DataContext.ApplySpecialPoolCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                    CommandParameter="{Binding Decoded.PoolTagRaw}"
+                                                    Visibility="{Binding Decoded.PoolTagRaw, Converter={StaticResource NullToVisibilityConverter}}" />
+                                        </Grid>
+
+                                        <!-- Round 19, item 85: Verifier violation subcode decode for 0xC4/0xC9/0xE6. -->
                                         <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,2,0,0"
-                                                   Text="{Binding Decoded.PoolTagText}"
-                                                   Visibility="{Binding Decoded.PoolTagText, Converter={StaticResource NullToVisibilityConverter}}" />
+                                                   Text="{Binding Decoded.VerifierViolationText}"
+                                                   Visibility="{Binding Decoded.VerifierViolationText, Converter={StaticResource NullToVisibilityConverter}}" />
 
                                         <!-- Round 15, item 37: fault-address classification for 0xA/0xD1/0x50. -->
                                         <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,2,0,0"
@@ -1263,6 +1295,309 @@
                                Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" />
                     <Button Content="Make this PC capture crashes properly" Command="{Binding ApplyRecommendedCrashDumpConfigCommand}" Padding="10,4" HorizontalAlignment="Left" Margin="0,0,0,8" />
                     <TextBlock Text="{Binding CrashDumpConfigStatusText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+
+            <!-- Round 19, items 81/82/83/84/86: "Driver Verifier" card - live status (81), a
+                 prominent "still enabled" warning + one-click reset (82), how long it's been on
+                 (86), and a guided multi-step wizard for turning it on safely (83/84). See
+                 DriverVerifierService/VerifierEnableHistoryService for the underlying reads/writes. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding VerifierStatus.IsRunning}" Value="True">
+                                <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
+                                <Setter Property="BorderBrush" Value="{DynamicResource DangerBrush}" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Driver Verifier" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Verifier makes Windows scrutinize a chosen driver's every pool allocation, IRQL, IRP and DMA call, catching a misbehaving driver at the exact moment it breaks a rule instead of some random time later - the single most effective way to catch a driver bug, at the cost of noticeably slower/heavier operation while it's on."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+
+                    <!-- Item 81. -->
+                    <TextBlock Text="{Binding VerifierStatus.StatusSummaryText}" FontSize="12.5" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,0,0,4" />
+                    <TextBlock Text="{Binding VerifierStatus.ErrorText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Foreground="{DynamicResource DangerBrush}"
+                               Visibility="{Binding VerifierStatus.ErrorText, Converter={StaticResource NullToVisibilityConverter}}" Margin="0,0,0,4" />
+
+                    <TextBlock Text="Persistent settings for the next reboot:" Style="{StaticResource SubStat}" Margin="0,0,0,2" />
+                    <TextBlock TextWrapping="Wrap" FontSize="12" Margin="0,0,0,8">
+                        <Run Text="Drivers: " /><Run Text="{Binding VerifierStatus.PersistentDriverNames, Converter={StaticResource StringListJoinConverter}, Mode=OneWay}" />
+                        <LineBreak /><Run Text="Flags: " /><Run Text="{Binding VerifierStatus.PersistentFlagsDescription, Converter={StaticResource StringListJoinConverter}, Mode=OneWay}" />
+                    </TextBlock>
+
+                    <!-- Item 86. -->
+                    <TextBlock Text="{Binding VerifierEnabledDurationText}" TextWrapping="Wrap" FontSize="12" Margin="0,0,0,8"
+                               Visibility="{Binding VerifierEnabledDurationText, Converter={StaticResource NullToVisibilityConverter}}">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding VerifierNagDue}" Value="True">
+                                        <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                        <Setter Property="FontWeight" Value="SemiBold" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
+                    <!-- Item 86: "a configurable number of days or reboots" - the two nag
+                         thresholds, editable inline. -->
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Nag after" VerticalAlignment="Center" Style="{StaticResource SubStat}" Margin="0,0,6,0" />
+                        <TextBox Grid.Column="1" Width="40" Text="{Binding NagAfterDaysInput, UpdateSourceTrigger=PropertyChanged}" />
+                        <TextBlock Grid.Column="2" Text="day(s) or" VerticalAlignment="Center" Style="{StaticResource SubStat}" Margin="6,0,6,0" />
+                        <TextBox Grid.Column="3" Width="40" Text="{Binding NagAfterRebootsInput, UpdateSourceTrigger=PropertyChanged}" />
+                        <TextBlock Grid.Column="4" Text="reboot(s)" VerticalAlignment="Center" Style="{StaticResource SubStat}" Margin="6,0,10,0" />
+                        <Button Grid.Column="5" Content="Save" Command="{Binding SaveVerifierNagSettingsCommand}" Padding="8,2" />
+                    </Grid>
+
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                        <Button Content="Refresh status" Command="{Binding RefreshVerifierStatusCommand}" Padding="10,4" Margin="0,0,8,0" />
+                        <Button Content="Guided setup: enable Verifier safely..." Command="{Binding OpenWizardCommand}" Padding="10,4" />
+                    </StackPanel>
+
+                    <!-- Item 82: prominent banner + one-click reset, only while actually running. -->
+                    <Border Background="{DynamicResource DangerMutedBrush}" BorderBrush="{DynamicResource DangerBrush}"
+                            BorderThickness="1" CornerRadius="6" Padding="10,8" Margin="0,0,0,10">
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding VerifierStatus.IsRunning}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                        <StackPanel>
+                            <TextBlock Foreground="{DynamicResource DangerBrush}" FontSize="11.5" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,0,0,8"
+                                       Text="Driver Verifier is currently enabled and slowing this machine down. Left on after a diagnostic session is done, it's easy to forget about - reset it below once you're finished." />
+                            <Button Content="Reset Driver Verifier" Command="{Binding ResetVerifierCommand}" Style="{StaticResource DangerButton}" Padding="10,4" HorizontalAlignment="Left" />
+                            <TextBlock Text="A reboot is needed for the reset to fully take effect." Style="{StaticResource SubStat}" Margin="0,4,0,0" />
+                        </StackPanel>
+                    </Border>
+                    <TextBlock Text="{Binding VerifierResetStatusText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,4" />
+
+                    <!-- Items 83/84: the guided wizard itself, expanded in-card. -->
+                    <Border BorderBrush="{DynamicResource BorderBrush2}" BorderThickness="1" CornerRadius="8" Padding="12"
+                            Visibility="{Binding WizardOpen, Converter={StaticResource BoolToVisibilityConverter}}">
+                        <StackPanel>
+                            <Grid Margin="0,0,0,10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Guided Verifier setup" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" />
+                                <Button Grid.Column="1" Content="Cancel" Command="{Binding CloseWizardCommand}" Padding="10,4" />
+                            </Grid>
+
+                            <!-- Step 1: restore point. -->
+                            <StackPanel>
+                                <StackPanel.Style>
+                                    <Style TargetType="StackPanel">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding WizardStep}" Value="1">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </StackPanel.Style>
+                                <TextBlock Text="Step 1 of 4 - Create a restore point" FontWeight="SemiBold" FontSize="12.5" Margin="0,0,0,4" />
+                                <TextBlock Text="Enabling Driver Verifier is genuinely capable of making the machine unbootable if the driver being checked turns out to be badly broken. A System Restore point gives you a way back before anything changes."
+                                           Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,8" />
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                                    <Button Content="Create restore point" Command="{Binding CreateRestorePointCommand}" Padding="10,4" Margin="0,0,8,0" />
+                                    <Button Content="Next: choose drivers &gt;" Command="{Binding GoToDriverStepCommand}" Padding="10,4" />
+                                </StackPanel>
+                                <TextBlock Text="{Binding RestorePointStatusText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" />
+                            </StackPanel>
+
+                            <!-- Step 2: driver selection. -->
+                            <StackPanel>
+                                <StackPanel.Style>
+                                    <Style TargetType="StackPanel">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding WizardStep}" Value="2">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </StackPanel.Style>
+                                <TextBlock Text="Step 2 of 4 - Choose drivers to verify" FontWeight="SemiBold" FontSize="12.5" Margin="0,0,0,4" />
+                                <TextBlock Text="Only non-Microsoft, currently loaded drivers are listed - verifying Windows' own in-box drivers is rarely useful and adds a lot of overhead for little benefit."
+                                           Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,8" />
+                                <TextBlock Text="{Binding WizardDriverStatusText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,6" />
+                                <ItemsControl ItemsSource="{Binding WizardDriverCandidates}">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <StackPanel />
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <CheckBox IsChecked="{Binding IsSelected}" Margin="0,3,0,3">
+                                                <StackPanel>
+                                                    <TextBlock Text="{Binding FileName}" FontFamily="Consolas" FontSize="12" />
+                                                    <TextBlock Text="{Binding VendorText}" Style="{StaticResource SubStat}" FontSize="10.5" />
+                                                </StackPanel>
+                                            </CheckBox>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                    <Button Content="&lt; Back" Command="{Binding BackWizardStepCommand}" CommandParameter="1" Padding="10,4" Margin="0,0,8,0" />
+                                    <Button Content="Next: Safe Mode recovery &gt;" Command="{Binding GoToSafeModeStepCommand}" Padding="10,4" />
+                                </StackPanel>
+                            </StackPanel>
+
+                            <!-- Step 3: Safe Mode recovery guidance - shown BEFORE enabling, per this
+                                 chunk's own instruction that the recovery guidance is the point. -->
+                            <StackPanel>
+                                <StackPanel.Style>
+                                    <Style TargetType="StackPanel">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding WizardStep}" Value="3">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </StackPanel.Style>
+                                <TextBlock Text="Step 3 of 4 - If this stops the machine from booting" FontWeight="SemiBold" FontSize="12.5" Margin="0,0,0,4" />
+                                <Border Background="{DynamicResource DangerMutedBrush}" CornerRadius="6" Padding="10,8" Margin="0,0,0,8">
+                                    <TextBlock Foreground="{DynamicResource DangerBrush}" FontSize="11.5" TextWrapping="Wrap">
+                                        <Run Text="Read this before continuing - a badly-behaved driver under Verifier can bugcheck on every boot, before this app is reachable again." FontWeight="SemiBold" />
+                                        <LineBreak /><LineBreak />
+                                        <Run Text="1. If Windows won't start normally, force it into recovery: hold the power button to interrupt boot 2-3 times in a row, or boot from Windows installation media and choose &quot;Repair your computer&quot;." />
+                                        <LineBreak />
+                                        <Run Text="2. From the recovery menu: Troubleshoot -&gt; Advanced options -&gt; Startup Settings -&gt; Restart, then press 4 (or F4) for Safe Mode." />
+                                        <LineBreak />
+                                        <Run Text="3. In Safe Mode (or a recovery Command Prompt), run: verifier /reset  -  this clears every Verifier setting; reboot normally afterward." />
+                                        <LineBreak />
+                                        <Run Text="4. If even Safe Mode won't start, use the System Restore point from step 1 instead (Troubleshoot -&gt; Advanced options -&gt; System Restore)." />
+                                    </TextBlock>
+                                </Border>
+                                <StackPanel Orientation="Horizontal">
+                                    <Button Content="&lt; Back" Command="{Binding BackWizardStepCommand}" CommandParameter="2" Padding="10,4" Margin="0,0,8,0" />
+                                    <Button Content="Next: confirm &gt;" Command="{Binding GoToConfirmStepCommand}" Padding="10,4" />
+                                </StackPanel>
+                            </StackPanel>
+
+                            <!-- Step 4: confirm + apply. -->
+                            <StackPanel>
+                                <StackPanel.Style>
+                                    <Style TargetType="StackPanel">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding WizardStep}" Value="4">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </StackPanel.Style>
+                                <TextBlock Text="Step 4 of 4 - Confirm and apply" FontWeight="SemiBold" FontSize="12.5" Margin="0,0,0,4" />
+                                <TextBlock Text="Selected drivers:" Style="{StaticResource ColorRowLabel}" Margin="0,0,0,2" />
+                                <ItemsControl ItemsSource="{Binding WizardDriverCandidates}" Margin="0,0,0,8">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{Binding FileName}" FontFamily="Consolas" FontSize="12"
+                                                       Visibility="{Binding IsSelected, Converter={StaticResource BoolToVisibilityConverter}}" />
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+
+                                <!-- Item 84: apply-without-restarting option. -->
+                                <CheckBox Content="Apply without restarting (volatile - starts verifying immediately, no reboot)" IsChecked="{Binding WizardApplyVolatile}" Margin="0,0,0,8" />
+
+                                <StackPanel Margin="0,0,0,8">
+                                    <StackPanel.Style>
+                                        <Style TargetType="StackPanel">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding WizardApplyVolatile}" Value="True">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </StackPanel.Style>
+                                    <TextBlock Text="Also change one flag immediately (optional - Special Pool itself can't change without a reboot, but these can):"
+                                               Style="{StaticResource SubStat}" Margin="0,0,0,4" TextWrapping="Wrap" />
+                                    <ComboBox ItemsSource="{Binding VolatileFlagOptionLabels}" SelectedIndex="{Binding WizardVolatileFlagIndex}" Width="340" HorizontalAlignment="Left" />
+                                </StackPanel>
+
+                                <TextBlock Text="Standard mode applies Special Pool, Force IRQL Checking, Pool Tracking, I/O Verification, Deadlock Detection, DMA Verification and Microsoft's other recommended checks - takes effect after a reboot."
+                                           TextWrapping="Wrap" Margin="0,0,0,8">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding WizardApplyVolatile}" Value="True">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                    <Button Content="&lt; Back" Command="{Binding BackWizardStepCommand}" CommandParameter="3" Padding="10,4" Margin="0,0,8,0" />
+                                    <Button Content="Enable Driver Verifier" Command="{Binding ApplyWizardCommand}" Style="{StaticResource DangerButton}" Padding="10,4" />
+                                </StackPanel>
+                                <TextBlock Text="{Binding WizardApplyStatusText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </Border>
+
+            <!-- Round 19, item 87: on-demand kernel pool-by-tag monitor, with item 88's targeted
+                 Special Pool follow-up per row. Never a timer - see PoolTagMonitorService's own
+                 remarks on why this is explicit-button-gated. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Kernel pool by tag" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Samples every kernel pool tag's allocation counts on demand and, from the second sample onward, shows how much each tag's usage has grown since the first sample this session - sorted by nonpaged growth, since a nonpaged pool leak is a slow march toward a PFN_LIST_CORRUPT (0x4E) or DRIVER_LEFT_LOCKED_PAGES_IN_PROCESS-style (0xD1) crash. A quick flag, not a verdict - growth alone doesn't prove a leak."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                        <Button Content="Sample now" Command="{Binding SamplePoolTagsCommand}" Padding="10,4" Margin="0,0,8,0" />
+                        <Button Content="Reset baseline" Command="{Binding ResetPoolTagBaselineCommand}" Padding="10,4" />
+                    </StackPanel>
+                    <TextBlock Text="{Binding PoolTagStatusText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,8" />
+
+                    <DataGrid ItemsSource="{Binding PoolTagRows}" Height="320" IsReadOnly="True">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Tag" Binding="{Binding Tag}" Width="70" />
+                            <DataGridTextColumn Header="Nonpaged" Binding="{Binding NonPagedUsedText}" Width="90" />
+                            <DataGridTextColumn Header="Nonpaged growth" Binding="{Binding NonPagedGrowthText}" Width="120" />
+                            <DataGridTextColumn Header="Paged" Binding="{Binding PagedUsedText}" Width="90" />
+                            <DataGridTextColumn Header="Paged growth" Binding="{Binding PagedGrowthText}" Width="110" />
+                            <DataGridTextColumn Header="Allocations" Binding="{Binding NonPagedAllocs}" Width="90" />
+                            <DataGridTemplateColumn Header="" Width="150">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <Button Content="Apply Special Pool" Padding="6,2" FontSize="11"
+                                                Command="{Binding DataContext.ApplySpecialPoolCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                CommandParameter="{Binding Tag}" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <TextBlock Text="{Binding SpecialPoolStatusText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,8,0,0" />
                 </StackPanel>
             </Border>
 

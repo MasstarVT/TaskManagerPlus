@@ -35,11 +35,13 @@ public static class BugcheckDecoder
         }
 
         string? poolTag = null;
+        string? poolTagRaw = null;
         if (PoolTagLookup.AppliesTo(code))
         {
             var tag = PoolTagLookup.TryExtractTag(parameters);
             if (tag is not null)
             {
+                poolTagRaw = tag;
                 var (driver, source) = PoolTagLookup.Resolve(tag);
                 poolTag = driver is not null
                     ? $"Pool tag '{tag}' — likely {driver} ({source}, best-effort match)"
@@ -54,9 +56,12 @@ public static class BugcheckDecoder
             DpcWatchdogSubtypeText = code == 0x00000133 ? DescribeDpcWatchdogSubtype(parameters) : null,
             DriverPowerStateSubcodeText = code == 0x0000009F ? DescribeDriverPowerStateSubcode(parameters) : null,
             PoolTagText = poolTag,
+            PoolTagRaw = poolTagRaw,
             FaultAddressClassification = IsFaultAddressCode(code) && parameters.Count > 0
                 ? FaultAddressClassifier.Classify(parameters[0])
                 : null,
+            // Round 19, item 85: 0xC4/0xC9/0xE6's own Parameter-1 subcode meaning.
+            VerifierViolationText = VerifierViolationLookup.Describe(code, parameters),
         };
     }
 

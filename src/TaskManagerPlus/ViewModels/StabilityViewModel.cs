@@ -336,6 +336,120 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
     public RelayCommand DisableFastStartupCommand { get; }
     public RelayCommand ApplyRecommendedCrashDumpConfigCommand { get; }
 
+    // ---------------------------------------------------------------------------------------
+    // Round 19, items 81-88: "Driver Verifier and kernel pool corruption" - a "Driver Verifier"
+    // card (items 81/82/86) with a guided, multi-step wizard (items 83/84) for turning it on
+    // safely, plus an on-demand "Kernel pool by tag" panel (item 87) with a targeted Special Pool
+    // follow-up action (item 88). See DriverVerifierService/PoolTagMonitorService/
+    // VerifierEnableHistoryService for the underlying reads/writes this section drives.
+    // ---------------------------------------------------------------------------------------
+
+    // Item 81: last-read verifier.exe status (both /query and /querysettings, folded together).
+    private DriverVerifierStatus? _verifierStatus;
+    public DriverVerifierStatus? VerifierStatus { get => _verifierStatus; private set => SetProperty(ref _verifierStatus, value); }
+
+    // Item 86: "Verifier has been enabled for N days" - null when Verifier isn't currently
+    // running (nothing to nag about) or this app never recorded an enable timestamp for it (e.g.
+    // it was turned on outside this app, by a previous version, or manually via verifier.exe).
+    private string? _verifierEnabledDurationText;
+    public string? VerifierEnabledDurationText { get => _verifierEnabledDurationText; private set => SetProperty(ref _verifierEnabledDurationText, value); }
+
+    private bool _verifierNagDue;
+    public bool VerifierNagDue { get => _verifierNagDue; private set => SetProperty(ref _verifierNagDue, value); }
+
+    // Item 86: "a configurable number of days or reboots" - editable copies of
+    // VerifierEnableHistory's own two thresholds, kept in sync from UpdateVerifierEnabledDurationText
+    // and written back by SaveVerifierNagSettingsCommand.
+    private int _nagAfterDaysInput = 3;
+    public int NagAfterDaysInput { get => _nagAfterDaysInput; set => SetProperty(ref _nagAfterDaysInput, value); }
+
+    private int _nagAfterRebootsInput = 2;
+    public int NagAfterRebootsInput { get => _nagAfterRebootsInput; set => SetProperty(ref _nagAfterRebootsInput, value); }
+
+    public RelayCommand SaveVerifierNagSettingsCommand { get; }
+
+    public RelayCommand RefreshVerifierStatusCommand { get; }
+
+    // Item 82: one-click reset + reboot prompt - gated behind a confirmation like every other
+    // mutating action on this tab.
+    private string _verifierResetStatusText = string.Empty;
+    public string VerifierResetStatusText { get => _verifierResetStatusText; private set => SetProperty(ref _verifierResetStatusText, value); }
+
+    public AsyncRelayCommand ResetVerifierCommand { get; }
+
+    // ---- Guided wizard (items 83/84) -------------------------------------------------------
+
+    private bool _wizardOpen;
+    public bool WizardOpen { get => _wizardOpen; private set => SetProperty(ref _wizardOpen, value); }
+
+    // 1 = restore point, 2 = driver selection, 3 = Safe Mode recovery guidance, 4 = confirm/apply -
+    // driven by DataTrigger Value="N" in XAML (the same "int step -> Visibility via DataTrigger"
+    // shape CrashCaptureVerdict's Pass/Fail/Uncertain triggers already use above, just with an int
+    // instead of an enum) rather than a new converter.
+    private int _wizardStep;
+    public int WizardStep { get => _wizardStep; private set => SetProperty(ref _wizardStep, value); }
+
+    public RelayCommand OpenWizardCommand { get; }
+    public RelayCommand CloseWizardCommand { get; }
+    public RelayCommand BackWizardStepCommand { get; }
+
+    // Step 1: restore point.
+    private string _restorePointStatusText = string.Empty;
+    public string RestorePointStatusText { get => _restorePointStatusText; private set => SetProperty(ref _restorePointStatusText, value); }
+
+    public AsyncRelayCommand CreateRestorePointCommand { get; }
+    public RelayCommand GoToDriverStepCommand { get; }
+
+    // Step 2: driver selection.
+    public ObservableCollection<DriverVerifierCandidateRow> WizardDriverCandidates { get; } = new();
+
+    private string _wizardDriverStatusText = string.Empty;
+    public string WizardDriverStatusText { get => _wizardDriverStatusText; private set => SetProperty(ref _wizardDriverStatusText, value); }
+
+    public RelayCommand GoToSafeModeStepCommand { get; }
+
+    // Step 3: Safe Mode recovery guidance (static text in XAML) -> step 4.
+    public RelayCommand GoToConfirmStepCommand { get; }
+
+    // Step 4: confirm + apply. Item 84's "apply without restarting" option - only the five
+    // volatile-eligible flags are ever offered here (see DriverVerifierService.VolatileFlagOptions),
+    // matching what `verifier /volatile /flags` actually accepts; index 0 is "none - just start
+    // verifying the selected drivers".
+    public IReadOnlyList<string> VolatileFlagOptionLabels { get; } =
+        new[] { "None - just start verifying the selected drivers" }
+            .Concat(DriverVerifierService.VolatileFlagOptions.Select(f => f.Name))
+            .ToList();
+
+    private bool _wizardApplyVolatile;
+    public bool WizardApplyVolatile { get => _wizardApplyVolatile; set => SetProperty(ref _wizardApplyVolatile, value); }
+
+    private int _wizardVolatileFlagIndex;
+    public int WizardVolatileFlagIndex { get => _wizardVolatileFlagIndex; set => SetProperty(ref _wizardVolatileFlagIndex, value); }
+
+    private string _wizardApplyStatusText = string.Empty;
+    public string WizardApplyStatusText { get => _wizardApplyStatusText; private set => SetProperty(ref _wizardApplyStatusText, value); }
+
+    public AsyncRelayCommand ApplyWizardCommand { get; }
+
+    // ---- Item 87: on-demand kernel pool-by-tag monitor -------------------------------------
+
+    private PoolTagSnapshot? _poolTagBaseline;
+
+    public ObservableCollection<PoolTagRow> PoolTagRows { get; } = new();
+
+    private string _poolTagStatusText = "Not sampled yet this session.";
+    public string PoolTagStatusText { get => _poolTagStatusText; private set => SetProperty(ref _poolTagStatusText, value); }
+
+    public AsyncRelayCommand SamplePoolTagsCommand { get; }
+    public RelayCommand ResetPoolTagBaselineCommand { get; }
+
+    // ---- Item 88: targeted Special Pool for a suspect tag ----------------------------------
+
+    private string _specialPoolStatusText = string.Empty;
+    public string SpecialPoolStatusText { get => _specialPoolStatusText; private set => SetProperty(ref _specialPoolStatusText, value); }
+
+    public AsyncRelayCommand ApplySpecialPoolCommand { get; }
+
     // Round 17 chunk 64-70, item 66: persisted per-executable hang history - see
     // HangHistoryService. Shown on this same "Application hangs" card (item 53's own card) rather
     // than a new one, per this chunk's own instruction.
@@ -764,6 +878,210 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
                 JumpToServiceRequested?.Invoke(name);
         });
 
+        // Round 19, item 86: user-adjustable nag thresholds.
+        SaveVerifierNagSettingsCommand = new RelayCommand(() =>
+        {
+            VerifierEnableHistoryService.SetNagAfterDays(NagAfterDaysInput);
+            VerifierEnableHistoryService.SetNagAfterReboots(NagAfterRebootsInput);
+            UpdateVerifierEnabledDurationText(VerifierStatus ?? new DriverVerifierStatus());
+        });
+
+        // Round 19, item 82: refresh-status button + one-click reset.
+        RefreshVerifierStatusCommand = new RelayCommand(() => _ = RefreshVerifierStatusAsync());
+
+        ResetVerifierCommand = new AsyncRelayCommand(async () =>
+        {
+            var confirm = System.Windows.MessageBox.Show(
+                "Clears every Driver Verifier setting (verifier /reset).\n\nA reboot is needed for a currently-running verified session to actually stop, and for the machine to go back to full speed. This app will also forget when Verifier was turned on. Continue?",
+                "Reset Driver Verifier",
+                System.Windows.MessageBoxButton.YesNo,
+                System.Windows.MessageBoxImage.Warning);
+            if (confirm != System.Windows.MessageBoxResult.Yes) return;
+
+            bool ok = await DriverVerifierService.ResetAsync();
+            VerifierResetStatusText = ok
+                ? "Reset. Reboot for this to fully take effect - Driver Verifier will not verify any driver after that reboot."
+                : "Couldn't reset Driver Verifier - see the status above for what verifier.exe reported.";
+            if (ok) VerifierEnableHistoryService.ClearEnabled();
+            await RefreshVerifierStatusAsync();
+        });
+
+        // Round 19, items 83/84: guided wizard - restore point -> driver selection -> Safe Mode
+        // guidance -> confirm/apply. Every step forward is a plain state change (no destructive
+        // action happens until ApplyWizardCommand, which is itself confirmation-gated) - matching
+        // this chunk's own instruction that the safety steps are the point, not a checkbox to
+        // rush past.
+        OpenWizardCommand = new RelayCommand(() =>
+        {
+            WizardOpen = true;
+            WizardStep = 1;
+            RestorePointStatusText = string.Empty;
+            WizardDriverStatusText = string.Empty;
+            WizardApplyStatusText = string.Empty;
+            WizardApplyVolatile = false;
+            WizardVolatileFlagIndex = 0;
+            WizardDriverCandidates.Clear();
+        });
+
+        CloseWizardCommand = new RelayCommand(() => WizardOpen = false);
+
+        BackWizardStepCommand = new RelayCommand(param =>
+        {
+            if (param is string s && int.TryParse(s, out var step)) WizardStep = step;
+        });
+
+        CreateRestorePointCommand = new AsyncRelayCommand(async () =>
+        {
+            RestorePointStatusText = "Creating restore point...";
+            var (ok, message) = await Task.Run(() => RestorePointService.TryCreate("Task Manager Plus - before enabling Driver Verifier"));
+            RestorePointStatusText = message;
+        });
+
+        GoToDriverStepCommand = new RelayCommand(() =>
+        {
+            WizardStep = 2;
+            _ = LoadWizardDriversAsync();
+        });
+
+        GoToSafeModeStepCommand = new RelayCommand(() =>
+        {
+            if (!WizardDriverCandidates.Any(d => d.IsSelected))
+            {
+                WizardDriverStatusText = "Select at least one driver to verify before continuing.";
+                return;
+            }
+            WizardStep = 3;
+        });
+
+        GoToConfirmStepCommand = new RelayCommand(() => WizardStep = 4);
+
+        ApplyWizardCommand = new AsyncRelayCommand(async () =>
+        {
+            var selected = WizardDriverCandidates.Where(d => d.IsSelected).Select(d => d.FileName).ToList();
+            if (selected.Count == 0)
+            {
+                WizardApplyStatusText = "No drivers selected.";
+                return;
+            }
+
+            string modeText = WizardApplyVolatile
+                ? "immediately, with no reboot (volatile)"
+                : "after the next reboot (standard, persistent)";
+            var confirm = System.Windows.MessageBox.Show(
+                $"Start verifying {selected.Count} driver(s) {modeText}?\n\n{string.Join(", ", selected)}\n\n" +
+                "This deliberately makes Windows bugcheck (BSOD) the moment one of these drivers breaks a rule it's now checking - that's the point, it catches the exact offender. Make sure you've noted the Safe Mode recovery steps from the previous step first.",
+                "Enable Driver Verifier",
+                System.Windows.MessageBoxButton.YesNo,
+                System.Windows.MessageBoxImage.Warning);
+            if (confirm != System.Windows.MessageBoxResult.Yes) return;
+
+            bool ok;
+            string output;
+            if (WizardApplyVolatile)
+            {
+                uint? flag = WizardVolatileFlagIndex > 0
+                    ? DriverVerifierService.VolatileFlagOptions[WizardVolatileFlagIndex - 1].Value
+                    : null;
+                (ok, output) = await DriverVerifierService.ApplyVolatileAsync(selected, flag);
+            }
+            else
+            {
+                (ok, output) = await DriverVerifierService.ApplyStandardAsync(selected);
+            }
+
+            if (ok) VerifierEnableHistoryService.RecordEnabled();
+            WizardApplyStatusText = ok
+                ? (WizardApplyVolatile
+                    ? "Verifier is now verifying the selected driver(s) - no reboot needed."
+                    : "Saved - reboot for Driver Verifier to start verifying the selected driver(s).")
+                : $"Couldn't apply the change: {output}";
+
+            if (ok)
+            {
+                WizardOpen = false;
+                await RefreshVerifierStatusAsync();
+            }
+        });
+
+        // Round 19, item 87: on-demand pool-tag sampling - never a timer, per this chunk's own
+        // instructions and CLAUDE.md's "on-demand vs. polled" convention.
+        SamplePoolTagsCommand = new AsyncRelayCommand(async () =>
+        {
+            PoolTagStatusText = "Sampling...";
+            var snapshot = await Task.Run(PoolTagMonitorService.Sample);
+            if (snapshot is null)
+            {
+                PoolTagStatusText = "Pool tag information isn't available on this system.";
+                return;
+            }
+
+            bool isFirstSample = _poolTagBaseline is null;
+            _poolTagBaseline ??= snapshot;
+            var baselineByTag = _poolTagBaseline.Tags.ToDictionary(t => t.Tag, t => t, StringComparer.Ordinal);
+
+            var rows = snapshot.Tags
+                .Select(t =>
+                {
+                    baselineByTag.TryGetValue(t.Tag, out var baseline);
+                    return new PoolTagRow
+                    {
+                        Tag = t.Tag,
+                        NonPagedUsedBytes = t.NonPagedUsedBytes,
+                        NonPagedGrowthBytes = t.NonPagedUsedBytes - (baseline?.NonPagedUsedBytes ?? 0),
+                        PagedUsedBytes = t.PagedUsedBytes,
+                        PagedGrowthBytes = t.PagedUsedBytes - (baseline?.PagedUsedBytes ?? 0),
+                        NonPagedAllocs = t.NonPagedAllocs,
+                    };
+                })
+                .Where(r => r.NonPagedUsedBytes > 0 || r.PagedUsedBytes > 0)
+                .OrderByDescending(r => r.NonPagedGrowthBytes)
+                .ThenByDescending(r => r.NonPagedUsedBytes)
+                .Take(200)
+                .ToList();
+
+            PoolTagRows.Clear();
+            foreach (var r in rows) PoolTagRows.Add(r);
+
+            PoolTagStatusText = isFirstSample
+                ? $"Baseline sample taken at {snapshot.TakenAt:T} - {snapshot.Tags.Count} tags. Sample again later in this session to see growth."
+                : $"Sampled at {snapshot.TakenAt:T} - {snapshot.Tags.Count} tags, diffed against the baseline from {_poolTagBaseline.TakenAt:T}.";
+        });
+
+        ResetPoolTagBaselineCommand = new RelayCommand(() =>
+        {
+            _poolTagBaseline = null;
+            PoolTagRows.Clear();
+            PoolTagStatusText = "Baseline cleared - the next sample becomes the new baseline.";
+        });
+
+        // Round 19, item 88: targeted Special Pool for one suspect tag - reachable both from a
+        // pool-tag row above and from a 0xC2/0xC5 crash's own decoded PoolTagRaw (see
+        // StabilityView.xaml). Best-effort owning-driver resolution reuses PoolTagLookup (#35)
+        // rather than a second lookup mechanism.
+        ApplySpecialPoolCommand = new AsyncRelayCommand(async param =>
+        {
+            if (param is not string tag || string.IsNullOrWhiteSpace(tag)) return;
+
+            var (driver, source) = PoolTagLookup.Resolve(tag);
+            string scopeText = driver is not null
+                ? $"scoped to {driver} ({source})"
+                : "applied system-wide (no specific owning driver could be identified - the PoolTag registry list still limits the extra memory/performance cost to just this tag)";
+
+            var confirm = System.Windows.MessageBox.Show(
+                $"Enable Special Pool for pool tag '{tag}', {scopeText}?\n\n" +
+                "This makes Windows catch the exact driver that overruns or underruns an allocation carrying this tag, at the cost of extra memory and speed for those allocations. Requires a reboot to take effect.",
+                "Apply Special Pool",
+                System.Windows.MessageBoxButton.YesNo,
+                System.Windows.MessageBoxImage.Warning);
+            if (confirm != System.Windows.MessageBoxResult.Yes) return;
+
+            var (ok, output) = await DriverVerifierService.ApplySpecialPoolForTagAsync(tag, driver);
+            SpecialPoolStatusText = ok
+                ? $"Special Pool enabled for '{tag}'. Reboot for it to take effect."
+                : $"Couldn't apply Special Pool: {output}";
+            if (ok) await RefreshVerifierStatusAsync();
+        });
+
         _dailyEventColumns = new ColumnSeries<double>
         {
             Values = DailyEventCounts,
@@ -883,6 +1201,78 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
         return $"Ctrl+ScrollLock crash: {ctrlScroll} · NMI crash dump: {Describe(ForcedCrashService.ReadNmiCrashDumpEnabled())}";
     }
 
+    /// <summary>Round 19, items 81/82/86: re-reads verifier.exe's status and recomputes the
+    /// "enabled for N days" text (VerifierNagDue/VerifierEnabledDurationText below). Called once
+    /// from RefreshAsync (this tab's own on-demand load/Refresh-button cadence, which runs once
+    /// automatically at startup since every tab ViewModel is constructed eagerly - CLAUDE.md's
+    /// architecture notes) and again after any wizard/reset/special-pool action that could have
+    /// changed Verifier's live state. SummaryViewModel's Health Check card (item 82) reads
+    /// VerifierNagDue/VerifierEnabledDurationText straight off this ViewModel via its own existing
+    /// `_stability` reference - the same "read a sibling ViewModel's already-computed property"
+    /// shape every other Health Check rule already uses, rather than a second cache.</summary>
+    private async Task RefreshVerifierStatusAsync()
+    {
+        var status = await DriverVerifierService.ReadStatusAsync();
+        VerifierStatus = status;
+        UpdateVerifierEnabledDurationText(status);
+    }
+
+    /// <summary>Item 86: "Verifier has been enabled for N days," or null when there's nothing to
+    /// say (Verifier isn't running right now). An unknown enable time (running, but never recorded
+    /// by this app's own wizard - e.g. turned on manually, or by an older app version) is still
+    /// flagged as nag-due rather than silently skipped, since "we don't know how long" is itself a
+    /// reason to go check.</summary>
+    private void UpdateVerifierEnabledDurationText(DriverVerifierStatus status)
+    {
+        // Load the persisted nag thresholds into their editable copies unconditionally (not just
+        // while Verifier happens to be running right now) - they're a standing preference, not
+        // session state, so the input boxes should always reflect whatever was last saved.
+        var history = VerifierEnableHistoryService.Load();
+        NagAfterDaysInput = history.NagAfterDays;
+        NagAfterRebootsInput = history.NagAfterReboots;
+
+        if (!status.IsRunning)
+        {
+            VerifierEnabledDurationText = null;
+            VerifierNagDue = false;
+            return;
+        }
+
+        // Item 86's "or reboots" half - only meaningful to track while Verifier is actually
+        // confirmed running, same cadence RefreshVerifierStatusAsync already calls this at.
+        VerifierEnableHistoryService.RecordBootObservationIfChanged();
+        history = VerifierEnableHistoryService.Load();
+
+        if (history.EnabledAtUtc is not { } enabledAtUtc)
+        {
+            VerifierEnabledDurationText = "Verifier is running, but this app doesn't know when it was turned on (it wasn't enabled through this app's wizard, or the record was lost).";
+            VerifierNagDue = true;
+            return;
+        }
+
+        int days = Math.Max(0, (int)(DateTime.UtcNow - enabledAtUtc).TotalDays);
+        int reboots = history.RebootsSinceEnabled;
+        VerifierEnabledDurationText = days == 0
+            ? $"Verifier was enabled less than a day ago ({reboots} reboot{(reboots == 1 ? "" : "s")} since)."
+            : $"Verifier has been enabled for {days} day{(days == 1 ? "" : "s")} ({reboots} reboot{(reboots == 1 ? "" : "s")} since).";
+        VerifierNagDue = days >= history.NagAfterDays || reboots >= history.NagAfterReboots;
+    }
+
+    /// <summary>Item 83's driver-selection step - scans loaded non-Microsoft drivers off the UI
+    /// thread and populates WizardDriverCandidates.</summary>
+    private async Task LoadWizardDriversAsync()
+    {
+        WizardDriverStatusText = "Scanning loaded drivers...";
+        WizardDriverCandidates.Clear();
+
+        var candidates = await DriverVerifierService.ListNonMicrosoftDriversAsync();
+        foreach (var c in candidates) WizardDriverCandidates.Add(new DriverVerifierCandidateRow(c));
+
+        WizardDriverStatusText = candidates.Count == 0
+            ? "No non-Microsoft loaded drivers were found on this system."
+            : $"{candidates.Count} non-Microsoft loaded driver(s) found - select the ones to verify.";
+    }
+
     /// <summary>Repaints chart axis text/gridlines to match the active theme family - see
     /// PerformanceViewModel.ApplyAxisTheme's remarks.</summary>
     public void ApplyAxisTheme(System.Windows.Media.Color text, System.Windows.Media.Color separator)
@@ -931,6 +1321,10 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
             // manage-bde reads), applied separately, same shape as the bundles above.
             var crashDumpConfig = await CrashDumpConfigService.ReadConfigurationAsync();
             ApplyCrashDumpConfig(crashDumpConfig);
+
+            // Round 19, items 81/82/86: Driver Verifier status - independent of everything above
+            // (its own verifier.exe shell-out), applied separately, same shape as the reads above.
+            await RefreshVerifierStatusAsync();
 
             RefreshErrorText = null;
         }
