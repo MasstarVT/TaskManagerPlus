@@ -723,3 +723,235 @@ public sealed class MmcssTaskProfileRow
     public string SchedulingCategory { get; init; } = "Unknown";
     public string SfioPriority { get; init; } = "Unknown";
 }
+
+// ----- #284-293: Background-activity ribbon (background task interference) ------------------
+
+/// <summary>#284: whether a known background workload looks active right now. Unknown is
+/// distinct from Inactive - it means the underlying source (a WMI namespace, a service, a
+/// registry key) couldn't be read at all, per CLAUDE.md's "degrade to Unknown, never fabricate"
+/// rule, not that the workload was checked and found idle.</summary>
+public enum BackgroundActivityState { Unknown, Inactive, Active }
+
+/// <summary>#284: one row in the background-activity ribbon - the container/shell that #285-293
+/// each populate one or more rows of. Rebuilt fresh from whichever dedicated info property backs
+/// it (DefenderScan, SysMain, DeliveryOptimization, ...) every time any of those change, rather
+/// than merged in place - a small (13-row), read-only, no-selection-state list, the same "clear
+/// and rebuild" tier CLAUDE.md's data-flow convention calls out for lists like this.</summary>
+public sealed class BackgroundActivityRow
+{
+    public string Key { get; init; } = string.Empty;
+    public string Name { get; init; } = string.Empty;
+    public BackgroundActivityState State { get; init; } = BackgroundActivityState.Unknown;
+    public string CostText { get; init; } = string.Empty;
+
+    /// <summary>Whether an expanded detail card for this row exists further down the
+    /// Responsiveness tab - the ribbon itself never expands in place (see the item's own framing:
+    /// "a plain data-bound ItemsControl... don't over-engineer a new custom control for this").</summary>
+    public bool HasDetail { get; init; }
+
+    public string StateText => State switch
+    {
+        BackgroundActivityState.Active => "Active",
+        BackgroundActivityState.Inactive => "Idle",
+        _ => "Unknown",
+    };
+}
+
+/// <summary>#285: Windows Defender scan state and schedule, from MSFT_MpComputerStatus/
+/// MSFT_MpPreference (root\Microsoft\Windows\Defender WMI namespace) - extends the Summary tab's
+/// existing bare "MsMpEng at N% CPU" health-check observation into naming which scan is running
+/// and what its CPU cap is. IsAvailable=false (the whole namespace missing, e.g. a third-party AV
+/// owns real-time protection with Defender's engine disabled) degrades every field to Unknown/hidden,
+/// never a guessed state.</summary>
+public sealed class DefenderScanInfo
+{
+    public bool IsAvailable { get; init; }
+    public string StatusText { get; init; } = "Loading...";
+
+    public bool RealTimeProtectionEnabled { get; init; }
+    public DateTime? QuickScanStartTime { get; init; }
+    public DateTime? FullScanStartTime { get; init; }
+    public DateTime? SignatureLastUpdated { get; init; }
+
+    public int? ScanAvgCpuLoadFactor { get; init; }
+    public bool ScanOnlyIfIdleEnabled { get; init; }
+    public string? ScanScheduleTimeText { get; init; }
+
+    /// <summary>Quick flag, not a verdict: Windows exposes no documented "a scan is running right
+    /// now" boolean, so this combines MsMpEng's own CPU% (already polled by the Processes tab, see
+    /// ResponsivenessViewModel.SampleBackgroundActivityLight) with whichever scan start-time is
+    /// most recent - the same heuristic SummaryViewModel's existing health-check rule already
+    /// uses, just given a name and a time.</summary>
+    public bool IsScanLikelyActive { get; init; }
+
+    public string ScanActivityText { get; init; } = string.Empty;
+}
+
+/// <summary>#286: real-time-scan hot paths - directories real-time scanning keeps working over,
+/// mined from Microsoft-Windows-Windows Defender/Operational (event IDs 1000/1001 scan start/
+/// finish, 1116/1117 detections) plus the currently-configured exclusion list. Advisory only -
+/// this app makes no automatic changes to exclusions, read-only report only.</summary>
+public sealed class DefenderHotPathResult
+{
+    public bool IsAvailable { get; init; }
+    public string StatusText { get; init; } = string.Empty;
+    public List<DefenderHotPathRow> HotPaths { get; init; } = new();
+    public List<string> ExclusionPaths { get; init; } = new();
+}
+
+public sealed class DefenderHotPathRow
+{
+    public string Directory { get; init; } = string.Empty;
+    public int EventCount { get; init; }
+    public DateTime LastSeen { get; init; }
+    public bool IsAlreadyExcluded { get; init; }
+}
+
+/// <summary>#287: Search indexer live process cost - SearchIndexer.exe/SearchProtocolHost.exe/
+/// SearchFilterHost.exe CPU+disk, reusing ProcessesViewModel's already-polled per-process data
+/// (no second poll). See SearchIndexerActivityService.ReadLiveState.</summary>
+public sealed class SearchIndexerLiveInfo
+{
+    public bool AnyProcessRunning { get; init; }
+    public double TotalCpuPercent { get; init; }
+    public double TotalDiskBytesPerSec { get; init; }
+}
+
+/// <summary>#287: on-demand Search indexer crawl-state scan - Microsoft-Windows-Search/Operational
+/// crawl-start/stop events plus the HKLM back-off settings and a best-effort indexed-location
+/// list.</summary>
+public sealed class SearchIndexerCrawlResult
+{
+    public bool IsAvailable { get; init; }
+    public string StatusText { get; init; } = string.Empty;
+    public bool CrawlLikelyInProgress { get; init; }
+    public DateTime? LastCrawlStart { get; init; }
+    public DateTime? LastCrawlStop { get; init; }
+    public List<string> IndexedLocations { get; init; } = new();
+
+    /// <summary>The indexer's own idle/back-off delay setting (ms), when present under
+    /// HKLM\SOFTWARE\Microsoft\Windows Search - Unknown (null) means the value wasn't found,
+    /// never a guessed default.</summary>
+    public int? BackOffDelayMs { get; init; }
+}
+
+/// <summary>#288: SysMain (Superfetch) service state plus the prefetch/superfetch registry
+/// configuration. Deliberately the simpler of the two options the item allows: service state +
+/// registry config only, not per-service-inside-svchost.exe I/O attribution - matching SysMain's
+/// own disk I/O back to its specific svchost.exe host process needs more plumbing (a service-to-
+/// PID-inside-a-shared-svchost join) than this one ribbon row warrants. See
+/// BackgroundActivityService.ReadSysMain.</summary>
+public sealed class SysMainInfo
+{
+    public bool ServiceRunning { get; init; }
+    public string ServiceStatusText { get; init; } = "Unknown";
+    public bool? PrefetcherEnabled { get; init; }
+    public bool? SuperfetchEnabled { get; init; }
+    public string StatusText { get; init; } = string.Empty;
+}
+
+/// <summary>#289: Delivery Optimization service state plus the peer-caching policy
+/// (DODownloadMode). See BackgroundActivityService.ReadDeliveryOptimization for the cheap part
+/// and DeliveryOptimizationService.ReadRecentActivityAsync for the on-demand event-log part.</summary>
+public sealed class DeliveryOptimizationInfo
+{
+    public bool ServiceRunning { get; init; }
+    public string ServiceStatusText { get; init; } = "Unknown";
+    public int? DownloadMode { get; init; }
+    public string DownloadModeText { get; init; } = "Unknown";
+    public string StatusText { get; init; } = string.Empty;
+}
+
+/// <summary>#289: on-demand Delivery Optimization activity - Microsoft-Windows-
+/// DeliveryOptimization/Operational event volume as a proxy for "how much has DO been doing
+/// lately". A live transfer-volume number (bytes currently in flight) isn't cheaply readable
+/// without the DO COM/PowerShell API, a much heavier ask than this app's other event-log reads -
+/// see DeliveryOptimizationService's remarks.</summary>
+public sealed class DeliveryOptimizationEventResult
+{
+    public bool IsAvailable { get; init; }
+    public string StatusText { get; init; } = string.Empty;
+    public int RecentEventCount { get; init; }
+    public DateTime? LastEventTime { get; init; }
+}
+
+/// <summary>#290: Windows Update/servicing process cost - wuauserv service state plus
+/// TrustedInstaller.exe/TiWorker.exe/MoUsoCoreWorker.exe/CompatTelRunner.exe CPU+disk, reusing
+/// already-polled process data. None of these processes running is the normal case, not an
+/// error - see WindowsUpdateActivityService.ReadProcessState.</summary>
+public sealed class WindowsUpdateActivityInfo
+{
+    public bool ServiceRunning { get; init; }
+    public string ServiceStatusText { get; init; } = "Unknown";
+    public List<ProcessCostRow> ActiveProcesses { get; init; } = new();
+}
+
+/// <summary>#290: on-demand Windows Update/servicing scan/install events from
+/// Microsoft-Windows-WindowsUpdateClient/Operational - names the current update operation rather
+/// than leaving a long CBS servicing pass as an anonymous busy disk.</summary>
+public sealed class WindowsUpdateEventResult
+{
+    public bool IsAvailable { get; init; }
+    public string StatusText { get; init; } = string.Empty;
+    public List<WindowsUpdateEventRow> RecentEvents { get; init; } = new();
+}
+
+public sealed class WindowsUpdateEventRow
+{
+    public DateTime TimeCreated { get; init; }
+    public int EventId { get; init; }
+    public string Description { get; init; } = string.Empty;
+}
+
+/// <summary>#293/#290/#287: one process's CPU/disk cost, reused across every ribbon cluster that
+/// just needs to show "this known background client is running, at this cost" from
+/// already-polled process data - cloud-sync clients, game-download clients, and Windows Update
+/// worker processes all share this same shape.</summary>
+public sealed class ProcessCostRow
+{
+    public string ProcessName { get; init; } = string.Empty;
+    public int Pid { get; init; }
+    public double CpuPercent { get; init; }
+    public double DiskBytesPerSec { get; init; }
+}
+
+/// <summary>#291: one active BITS transfer from `bitsadmin /list /allusers /verbose`.</summary>
+public sealed class BitsTransferRow
+{
+    public string DisplayName { get; init; } = string.Empty;
+    public string JobId { get; init; } = string.Empty;
+    public string TypeText { get; init; } = string.Empty;
+    public string StateText { get; init; } = string.Empty;
+    public string Owner { get; init; } = string.Empty;
+    public string PriorityText { get; init; } = string.Empty;
+    public long BytesTransferred { get; init; }
+    public long BytesTotal { get; init; }
+}
+
+/// <summary>#292: Automatic Maintenance window/last-run state from
+/// HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\Maintenance - an adaptive
+/// label/value list (like BootTimeBreakdown's components) rather than fixed named properties,
+/// since this key's exact value names aren't a documented, versioned contract. Reuses
+/// PlatformLatencySettingRow, the same generic label/value shape #217-220's device-topology
+/// bundle already established for "one small platform-setting fact per row".</summary>
+public sealed class AutomaticMaintenanceInfo
+{
+    public bool KeyPresent { get; init; }
+    public string StatusText { get; init; } = string.Empty;
+    public List<PlatformLatencySettingRow> Settings { get; init; } = new();
+}
+
+/// <summary>#293: Storage Sense's configured enable/frequency state from
+/// HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\StorageSense - live "running right now"
+/// detection isn't cheaply available (no documented API/event for it), so this reports
+/// configuration only, the same "document what you found" allowance the item text gives. The
+/// underlying registry value names (01/2048) are an undocumented-but-community-confirmed
+/// convention, the same "Quick flag, not a verdict" tier this app's AV-mitigation bitmask reads
+/// already use.</summary>
+public sealed class StorageSenseInfo
+{
+    public bool KeyPresent { get; init; }
+    public bool? Enabled { get; init; }
+    public string RunFrequencyText { get; init; } = "Unknown";
+    public string StatusText { get; init; } = string.Empty;
+}

@@ -44,6 +44,17 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
     private readonly EventLogService _eventLog = new();
     private readonly DispatcherTimer _lightTimer;
 
+    // #284-293: background-activity ribbon - Defender's WMI status read (#285) is heavier than a
+    // plain registry/perf-counter read, so it rides its own moderate cadence (Task.Run'd, like
+    // _schedulerTimer) rather than the fastest 2s _lightTimer. Everything else in this section
+    // (service states, already-polled process cost, registry reads) is genuinely cheap and rides
+    // _lightTimer directly - see SampleBackgroundActivityLight.
+    private readonly DispatcherTimer _backgroundActivityTimer;
+    private bool _isSamplingDefender;
+    private double _msMpEngCpuPercent;
+    private bool _bitsLoadedOnce;
+    private bool _scheduledTasksRunningLoadedOnce;
+
     // #260: needed for the run-queue-pressure card (Processor Queue Length + logical-processor
     // count, both already sampled by PerformanceViewModel every tick) - passed in via constructor
     // like ProcessesViewModel, rather than a second HardwareMonitorService instance.
@@ -604,6 +615,107 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
     private MemoryCompressionInfo _memoryCompression = new() { StatusText = "Loading..." };
     public MemoryCompressionInfo MemoryCompression { get => _memoryCompression; private set => SetProperty(ref _memoryCompression, value); }
 
+    // ----- #284-293: Background-activity ribbon (background task interference) -----------------
+
+    // #284: the container/shell - one row per known background workload, rebuilt fresh (see
+    // RebuildBackgroundActivityRows) from whichever dedicated info property below backs it,
+    // whenever any of those change. A small, read-only, no-selection-state list.
+    public ObservableCollection<BackgroundActivityRow> BackgroundActivityRows { get; } = new();
+
+    // #285: Defender scan state/schedule - "fine live" per the task framing, so this rides
+    // _backgroundActivityTimer (Task.Run'd WMI read) rather than a manual button.
+    private DefenderScanInfo _defenderScan = new() { StatusText = "Loading..." };
+    public DefenderScanInfo DefenderScan { get => _defenderScan; private set => SetProperty(ref _defenderScan, value); }
+
+    // #286: on-demand real-time-scan hot-path scan.
+    public ObservableCollection<DefenderHotPathRow> DefenderHotPaths { get; } = new();
+    public ObservableCollection<string> DefenderExclusionPaths { get; } = new();
+
+    private bool _isLoadingDefenderHotPaths;
+    public bool IsLoadingDefenderHotPaths { get => _isLoadingDefenderHotPaths; private set => SetProperty(ref _isLoadingDefenderHotPaths, value); }
+
+    private string _defenderHotPathsStatusText = "Not scanned yet.";
+    public string DefenderHotPathsStatusText { get => _defenderHotPathsStatusText; private set => SetProperty(ref _defenderHotPathsStatusText, value); }
+
+    public AsyncRelayCommand LoadDefenderHotPathsCommand { get; }
+
+    // #287: Search indexer - live process cost (cheap tick) plus on-demand crawl-state scan.
+    private SearchIndexerLiveInfo _searchIndexerLive = new();
+    public SearchIndexerLiveInfo SearchIndexerLive { get => _searchIndexerLive; private set => SetProperty(ref _searchIndexerLive, value); }
+
+    private SearchIndexerCrawlResult? _searchIndexerCrawl;
+    public SearchIndexerCrawlResult? SearchIndexerCrawl { get => _searchIndexerCrawl; private set => SetProperty(ref _searchIndexerCrawl, value); }
+
+    private bool _isCheckingSearchCrawl;
+    public bool IsCheckingSearchCrawl { get => _isCheckingSearchCrawl; private set => SetProperty(ref _isCheckingSearchCrawl, value); }
+
+    public AsyncRelayCommand CheckSearchCrawlCommand { get; }
+
+    // #288: SysMain (Superfetch) service + registry state - cheap tick.
+    private SysMainInfo _sysMain = new() { StatusText = "Loading..." };
+    public SysMainInfo SysMain { get => _sysMain; private set => SetProperty(ref _sysMain, value); }
+
+    // #289: Delivery Optimization - cheap service+policy state (tick) plus on-demand event volume.
+    private DeliveryOptimizationInfo _deliveryOptimization = new() { StatusText = "Loading..." };
+    public DeliveryOptimizationInfo DeliveryOptimization { get => _deliveryOptimization; private set => SetProperty(ref _deliveryOptimization, value); }
+
+    private DeliveryOptimizationEventResult? _deliveryOptimizationActivity;
+    public DeliveryOptimizationEventResult? DeliveryOptimizationActivity { get => _deliveryOptimizationActivity; private set => SetProperty(ref _deliveryOptimizationActivity, value); }
+
+    private bool _isCheckingDeliveryOptimizationActivity;
+    public bool IsCheckingDeliveryOptimizationActivity { get => _isCheckingDeliveryOptimizationActivity; private set => SetProperty(ref _isCheckingDeliveryOptimizationActivity, value); }
+
+    public AsyncRelayCommand CheckDeliveryOptimizationActivityCommand { get; }
+
+    // #290: Windows Update/servicing - cheap process+service state (tick) plus on-demand events.
+    private WindowsUpdateActivityInfo _windowsUpdateActivity = new();
+    public WindowsUpdateActivityInfo WindowsUpdateActivity { get => _windowsUpdateActivity; private set => SetProperty(ref _windowsUpdateActivity, value); }
+
+    private WindowsUpdateEventResult? _windowsUpdateEvents;
+    public WindowsUpdateEventResult? WindowsUpdateEvents { get => _windowsUpdateEvents; private set => SetProperty(ref _windowsUpdateEvents, value); }
+
+    private bool _isCheckingWindowsUpdateEvents;
+    public bool IsCheckingWindowsUpdateEvents { get => _isCheckingWindowsUpdateEvents; private set => SetProperty(ref _isCheckingWindowsUpdateEvents, value); }
+
+    public AsyncRelayCommand CheckWindowsUpdateEventsCommand { get; }
+
+    // #291: BITS transfer list - on-demand-refreshed-plus-startup-load, per CLAUDE.md's tiering
+    // for a cheap-ish shell-out (matching the #217-224 device-topology refresh pattern).
+    public ObservableCollection<BitsTransferRow> BitsTransfers { get; } = new();
+
+    private bool _isLoadingBitsTransfers;
+    public bool IsLoadingBitsTransfers { get => _isLoadingBitsTransfers; private set => SetProperty(ref _isLoadingBitsTransfers, value); }
+
+    private string _bitsTransfersStatusText = "Not loaded yet.";
+    public string BitsTransfersStatusText { get => _bitsTransfersStatusText; private set => SetProperty(ref _bitsTransfersStatusText, value); }
+
+    public AsyncRelayCommand LoadBitsTransfersCommand { get; }
+
+    // #292: currently-running scheduled tasks + Automatic Maintenance registry audit - same
+    // start-up-plus-manual-refresh tier as BITS above. Feeds a future "flight recorder" timeline
+    // (items #296-300, a later chunk) - just the data/service here, no timeline wired up yet.
+    public ObservableCollection<ScheduledTaskRow> ScheduledTasksRunning { get; } = new();
+
+    private bool _isLoadingScheduledTasksRunning;
+    public bool IsLoadingScheduledTasksRunning { get => _isLoadingScheduledTasksRunning; private set => SetProperty(ref _isLoadingScheduledTasksRunning, value); }
+
+    private string _scheduledTasksRunningStatusText = "Not loaded yet.";
+    public string ScheduledTasksRunningStatusText { get => _scheduledTasksRunningStatusText; private set => SetProperty(ref _scheduledTasksRunningStatusText, value); }
+
+    public AsyncRelayCommand LoadScheduledTasksRunningCommand { get; }
+
+    private AutomaticMaintenanceInfo _automaticMaintenance = new() { StatusText = "Loading..." };
+    public AutomaticMaintenanceInfo AutomaticMaintenance { get => _automaticMaintenance; private set => SetProperty(ref _automaticMaintenance, value); }
+
+    // #293: cloud sync / game-download clients (cheap tick, already-polled process data), plus
+    // Storage Sense's configured state (cheap tick, registry). Defrag/System Restore reuse #292's
+    // ScheduledTasksRunning data directly in BuildDefragRow/BuildSystemRestoreRow - no new rows here.
+    public ObservableCollection<ProcessCostRow> CloudSyncProcesses { get; } = new();
+    public ObservableCollection<ProcessCostRow> GameClientProcesses { get; } = new();
+
+    private StorageSenseInfo _storageSense = new() { StatusText = "Loading..." };
+    public StorageSenseInfo StorageSense { get => _storageSense; private set => SetProperty(ref _storageSense, value); }
+
     public ResponsivenessViewModel(ProcessesViewModel processes, PerformanceViewModel performance)
     {
         _processes = processes;
@@ -865,6 +977,28 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
         // #281: page-file placement/usage - loaded once at start-up, same tier as the blocks above
         // (page-file configuration doesn't change without a reboot).
         _ = LoadPageFileVolumesAsync();
+
+        // #284-293: background-activity ribbon commands.
+        LoadDefenderHotPathsCommand = new AsyncRelayCommand(LoadDefenderHotPathsAsync, () => !IsLoadingDefenderHotPaths);
+        CheckSearchCrawlCommand = new AsyncRelayCommand(CheckSearchCrawlAsync, () => !IsCheckingSearchCrawl);
+        CheckDeliveryOptimizationActivityCommand = new AsyncRelayCommand(CheckDeliveryOptimizationActivityAsync, () => !IsCheckingDeliveryOptimizationActivity);
+        CheckWindowsUpdateEventsCommand = new AsyncRelayCommand(CheckWindowsUpdateEventsAsync, () => !IsCheckingWindowsUpdateEvents);
+        LoadBitsTransfersCommand = new AsyncRelayCommand(LoadBitsTransfersAsync, () => !IsLoadingBitsTransfers);
+        LoadScheduledTasksRunningCommand = new AsyncRelayCommand(LoadScheduledTasksRunningAsync, () => !IsLoadingScheduledTasksRunning);
+
+        // #285: Defender's own moderate cadence - see the field remarks on why this isn't the
+        // fastest 2s _lightTimer.
+        _backgroundActivityTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(6) };
+        _backgroundActivityTimer.Tick += async (_, _) => await SampleDefenderAsync();
+        _backgroundActivityTimer.Start();
+        _ = SampleDefenderAsync();
+
+        // #291/#292: on-demand-refreshed-plus-startup-load, same tier as the #217-224 device-
+        // topology bundle above.
+        _ = LoadBitsTransfersAsync();
+        _ = LoadScheduledTasksRunningAsync();
+
+        RebuildBackgroundActivityRows();
     }
 
     /// <summary>#211/#216: driver metadata join plus the best-effort driver-file -> device-name
@@ -1328,6 +1462,365 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
         // above rather than a second counter instance (see MemoryCompressionInfo's remarks).
         long totalRamBytesForCompression = (long)(_performance.RamTotalGb * 1024.0 * 1024.0 * 1024.0);
         MemoryCompression = MemoryCompressionService.Sample(StandbyListInfo.ModifiedPageListBytes, totalRamBytesForCompression);
+
+        // #284-293: the cheap half of the background-activity ribbon - see the method remarks.
+        SampleBackgroundActivityLight();
+    }
+
+    /// <summary>#284-293: the cheap, always-on half of the background-activity ribbon - SysMain
+    /// service+registry state (#288), Delivery Optimization service+policy state (#289's cheap
+    /// part), Windows Update worker-process cost (#290's cheap part), Search indexer worker-process
+    /// cost (#287's cheap part), Storage Sense's configured state (#293), and cloud-sync/game-
+    /// client process cost (#293) - all single-service ServiceController queries, plain registry
+    /// reads, or already-polled-process lookups, genuinely cheap enough for this 2s tick. Defender's
+    /// WMI-backed scan state (#285) rides its own slower cadence instead - see SampleDefenderAsync.</summary>
+    private void SampleBackgroundActivityLight()
+    {
+        var processes = _processes.Processes;
+
+        SysMain = BackgroundActivityService.ReadSysMain();
+        DeliveryOptimization = BackgroundActivityService.ReadDeliveryOptimization();
+        WindowsUpdateActivity = BackgroundActivityService.ReadWindowsUpdateProcessState(processes);
+        SearchIndexerLive = BackgroundActivityService.ReadSearchIndexerLiveState(processes);
+        StorageSense = BackgroundActivityService.ReadStorageSense();
+
+        var cloud = BackgroundActivityService.MatchProcesses(processes, BackgroundActivityService.CloudSyncProcessNames);
+        CloudSyncProcesses.Clear();
+        foreach (var c in cloud) CloudSyncProcesses.Add(c);
+
+        var games = BackgroundActivityService.MatchProcesses(processes, BackgroundActivityService.GameClientProcessNames);
+        GameClientProcesses.Clear();
+        foreach (var g in games) GameClientProcesses.Add(g);
+
+        // #285: MsMpEng's own already-polled CPU% - cached for SampleDefenderAsync's slower WMI
+        // cadence to combine with, the same "read the sibling ViewModel's already-polled state"
+        // shape #245's USER/GDI handle totals use.
+        _msMpEngCpuPercent = processes.FirstOrDefault(p => p.Name.Equals("MsMpEng", StringComparison.OrdinalIgnoreCase))?.CpuPercent ?? 0;
+
+        RebuildBackgroundActivityRows();
+    }
+
+    /// <summary>#285: Defender's own moderate cadence (Task.Run'd WMI read) - see the field
+    /// remarks on why this isn't the fastest 2s _lightTimer. Re-entrancy-guarded the same way
+    /// RunProbeCycleAsync/SampleSchedulerAsync are, since a WMI query can legitimately outlast one
+    /// tick of its own timer on a loaded system.</summary>
+    private async Task SampleDefenderAsync()
+    {
+        if (_isSamplingDefender) return;
+        _isSamplingDefender = true;
+        try
+        {
+            DefenderScan = await DefenderActivityService.ReadStatusAsync(_msMpEngCpuPercent);
+            RebuildBackgroundActivityRows();
+        }
+        catch
+        {
+            // best-effort - DefenderScan just keeps its last known value until the next tick.
+        }
+        finally
+        {
+            _isSamplingDefender = false;
+        }
+    }
+
+    /// <summary>#286: on-demand real-time-scan hot-path scan - a 24h lookback, long enough to catch
+    /// a repeating pattern without an unwieldy scan.</summary>
+    private async Task LoadDefenderHotPathsAsync()
+    {
+        if (IsLoadingDefenderHotPaths) return;
+        IsLoadingDefenderHotPaths = true;
+        DefenderHotPathsStatusText = "Scanning real-time-scan hot paths (last 24h)...";
+        try
+        {
+            var result = await DefenderActivityService.ReadHotPathsAsync(TimeSpan.FromHours(24));
+            DefenderHotPaths.Clear();
+            foreach (var r in result.HotPaths) DefenderHotPaths.Add(r);
+            DefenderExclusionPaths.Clear();
+            foreach (var p in result.ExclusionPaths) DefenderExclusionPaths.Add(p);
+            DefenderHotPathsStatusText = result.StatusText;
+        }
+        catch (Exception ex)
+        {
+            DefenderHotPathsStatusText = $"Scan failed: {ex.Message}";
+        }
+        finally
+        {
+            IsLoadingDefenderHotPaths = false;
+        }
+    }
+
+    /// <summary>#287: on-demand Search indexer crawl-state scan - a 6h lookback, matching the
+    /// "long enough to catch a still-running crawl" reasoning WifiScanStormService's own window
+    /// uses at a shorter scale.</summary>
+    private async Task CheckSearchCrawlAsync()
+    {
+        if (IsCheckingSearchCrawl) return;
+        IsCheckingSearchCrawl = true;
+        try
+        {
+            SearchIndexerCrawl = await SearchIndexerActivityService.ReadCrawlStateAsync(TimeSpan.FromHours(6));
+        }
+        catch (Exception ex)
+        {
+            SearchIndexerCrawl = new SearchIndexerCrawlResult { IsAvailable = false, StatusText = $"Scan failed: {ex.Message}" };
+        }
+        finally
+        {
+            IsCheckingSearchCrawl = false;
+        }
+    }
+
+    /// <summary>#289: on-demand Delivery Optimization event-volume check - a 24h lookback.</summary>
+    private async Task CheckDeliveryOptimizationActivityAsync()
+    {
+        if (IsCheckingDeliveryOptimizationActivity) return;
+        IsCheckingDeliveryOptimizationActivity = true;
+        try
+        {
+            DeliveryOptimizationActivity = await DeliveryOptimizationService.ReadRecentActivityAsync(TimeSpan.FromHours(24));
+        }
+        catch (Exception ex)
+        {
+            DeliveryOptimizationActivity = new DeliveryOptimizationEventResult { IsAvailable = false, StatusText = $"Scan failed: {ex.Message}" };
+        }
+        finally
+        {
+            IsCheckingDeliveryOptimizationActivity = false;
+        }
+    }
+
+    /// <summary>#290: on-demand Windows Update/servicing event scan - a 24h lookback, so a long CBS
+    /// servicing pass is named rather than an anonymous busy disk.</summary>
+    private async Task CheckWindowsUpdateEventsAsync()
+    {
+        if (IsCheckingWindowsUpdateEvents) return;
+        IsCheckingWindowsUpdateEvents = true;
+        try
+        {
+            WindowsUpdateEvents = await WindowsUpdateActivityService.ReadRecentActivityAsync(TimeSpan.FromHours(24));
+        }
+        catch (Exception ex)
+        {
+            WindowsUpdateEvents = new WindowsUpdateEventResult { IsAvailable = false, StatusText = $"Scan failed: {ex.Message}" };
+        }
+        finally
+        {
+            IsCheckingWindowsUpdateEvents = false;
+        }
+    }
+
+    /// <summary>#291: BITS transfer list - on-demand-refreshed-plus-startup-load (constructor calls
+    /// this once, same as LoadPowerRequestsAsync's own tier).</summary>
+    private async Task LoadBitsTransfersAsync()
+    {
+        if (IsLoadingBitsTransfers) return;
+        IsLoadingBitsTransfers = true;
+        BitsTransfersStatusText = "Loading BITS transfers...";
+        try
+        {
+            var (success, message, rows) = await BitsTransferService.ListAsync();
+            BitsTransfers.Clear();
+            foreach (var r in rows) BitsTransfers.Add(r);
+            BitsTransfersStatusText = message;
+            _bitsLoadedOnce = success;
+        }
+        catch (Exception ex)
+        {
+            BitsTransfersStatusText = $"Load failed: {ex.Message}";
+        }
+        finally
+        {
+            IsLoadingBitsTransfers = false;
+            RebuildBackgroundActivityRows();
+        }
+    }
+
+    /// <summary>#292: currently-running scheduled tasks + Automatic Maintenance registry audit -
+    /// on-demand-refreshed-plus-startup-load, same tier as LoadBitsTransfersAsync above. Also backs
+    /// BuildDefragRow/BuildSystemRestoreRow below (#293) - reused directly, not re-queried.</summary>
+    private async Task LoadScheduledTasksRunningAsync()
+    {
+        if (IsLoadingScheduledTasksRunning) return;
+        IsLoadingScheduledTasksRunning = true;
+        ScheduledTasksRunningStatusText = "Loading currently-running scheduled tasks...";
+        try
+        {
+            var running = await ScheduledTaskService.ListRunningAsync();
+            ScheduledTasksRunning.Clear();
+            foreach (var r in running) ScheduledTasksRunning.Add(r);
+            _scheduledTasksRunningLoadedOnce = true;
+            ScheduledTasksRunningStatusText = running.Count == 0
+                ? "No scheduled tasks currently running."
+                : $"{running.Count} scheduled task(s) currently running.";
+
+            AutomaticMaintenance = await Task.Run(ScheduledTaskService.ReadAutomaticMaintenance);
+        }
+        catch (Exception ex)
+        {
+            ScheduledTasksRunningStatusText = $"Load failed: {ex.Message}";
+        }
+        finally
+        {
+            IsLoadingScheduledTasksRunning = false;
+            RebuildBackgroundActivityRows();
+        }
+    }
+
+    /// <summary>#284: rebuilds the ribbon fresh from whichever dedicated info property backs each
+    /// row - see the class remarks on why this is a plain clear+rebuild rather than a merge.</summary>
+    private void RebuildBackgroundActivityRows()
+    {
+        var rows = new List<BackgroundActivityRow>
+        {
+            BuildDefenderRow(),
+            BuildSearchRow(),
+            BuildSysMainRow(),
+            BuildDeliveryOptimizationRow(),
+            BuildWindowsUpdateRow(),
+            BuildBitsRow(),
+            BuildScheduledTasksRow(),
+            BuildAutomaticMaintenanceRow(),
+            BuildCloudSyncRow(),
+            BuildGameClientsRow(),
+            BuildDefragRow(),
+            BuildSystemRestoreRow(),
+            BuildStorageSenseRow(),
+        };
+        BackgroundActivityRows.Clear();
+        foreach (var r in rows) BackgroundActivityRows.Add(r);
+    }
+
+    private BackgroundActivityRow BuildDefenderRow()
+    {
+        var d = DefenderScan;
+        var state = !d.IsAvailable ? BackgroundActivityState.Unknown
+            : d.IsScanLikelyActive ? BackgroundActivityState.Active
+            : BackgroundActivityState.Inactive;
+        string cost = d.IsAvailable ? d.ScanActivityText
+            : d.StatusText.Equals("Loading...", StringComparison.Ordinal) ? "Loading..."
+            : "Unavailable";
+        return new BackgroundActivityRow { Key = "defender", Name = "Windows Defender", State = state, CostText = cost, HasDetail = true };
+    }
+
+    private BackgroundActivityRow BuildSearchRow()
+    {
+        var live = SearchIndexerLive;
+        var state = !live.AnyProcessRunning ? BackgroundActivityState.Inactive
+            : live.TotalCpuPercent >= 5 || live.TotalDiskBytesPerSec >= 1024 * 1024 ? BackgroundActivityState.Active
+            : BackgroundActivityState.Inactive;
+        return new BackgroundActivityRow
+        {
+            Key = "search",
+            Name = "Search Indexer",
+            State = state,
+            CostText = live.AnyProcessRunning ? $"CPU {live.TotalCpuPercent:0.#}% · {Formatting.FormatByteRate(live.TotalDiskBytesPerSec)}" : "Not running",
+            HasDetail = true,
+        };
+    }
+
+    private BackgroundActivityRow BuildSysMainRow()
+    {
+        var s = SysMain;
+        var state = s.ServiceStatusText.StartsWith("Unknown", StringComparison.Ordinal) ? BackgroundActivityState.Unknown
+            : s.ServiceRunning ? BackgroundActivityState.Active : BackgroundActivityState.Inactive;
+        return new BackgroundActivityRow { Key = "sysmain", Name = "SysMain (Superfetch)", State = state, CostText = s.ServiceStatusText, HasDetail = true };
+    }
+
+    private BackgroundActivityRow BuildDeliveryOptimizationRow()
+    {
+        var d = DeliveryOptimization;
+        var state = d.ServiceStatusText.StartsWith("Unknown", StringComparison.Ordinal) ? BackgroundActivityState.Unknown
+            : d.ServiceRunning ? BackgroundActivityState.Active : BackgroundActivityState.Inactive;
+        return new BackgroundActivityRow { Key = "delivery-optimization", Name = "Delivery Optimization", State = state, CostText = d.DownloadModeText, HasDetail = true };
+    }
+
+    private BackgroundActivityRow BuildWindowsUpdateRow()
+    {
+        var w = WindowsUpdateActivity;
+        bool anyProcess = w.ActiveProcesses.Count > 0;
+        var state = anyProcess ? BackgroundActivityState.Active
+            : w.ServiceStatusText.StartsWith("Unknown", StringComparison.Ordinal) ? BackgroundActivityState.Unknown
+            : BackgroundActivityState.Inactive;
+        string cost = anyProcess
+            ? string.Join(", ", w.ActiveProcesses.Select(p => $"{p.ProcessName} {p.CpuPercent:0.#}%"))
+            : "No servicing processes running";
+        return new BackgroundActivityRow { Key = "windows-update", Name = "Windows Update / Servicing", State = state, CostText = cost, HasDetail = true };
+    }
+
+    private BackgroundActivityRow BuildBitsRow()
+    {
+        if (!_bitsLoadedOnce)
+            return new BackgroundActivityRow { Key = "bits", Name = "BITS Transfers", State = BackgroundActivityState.Unknown, CostText = "Not loaded yet", HasDetail = true };
+        var state = BitsTransfers.Count > 0 ? BackgroundActivityState.Active : BackgroundActivityState.Inactive;
+        return new BackgroundActivityRow { Key = "bits", Name = "BITS Transfers", State = state, CostText = BitsTransfers.Count > 0 ? $"{BitsTransfers.Count} transfer(s)" : "No active transfers", HasDetail = true };
+    }
+
+    private BackgroundActivityRow BuildScheduledTasksRow()
+    {
+        if (!_scheduledTasksRunningLoadedOnce)
+            return new BackgroundActivityRow { Key = "scheduled-tasks", Name = "Scheduled Tasks", State = BackgroundActivityState.Unknown, CostText = "Not loaded yet", HasDetail = true };
+        var state = ScheduledTasksRunning.Count > 0 ? BackgroundActivityState.Active : BackgroundActivityState.Inactive;
+        return new BackgroundActivityRow { Key = "scheduled-tasks", Name = "Scheduled Tasks", State = state, CostText = $"{ScheduledTasksRunning.Count} running", HasDetail = true };
+    }
+
+    private BackgroundActivityRow BuildAutomaticMaintenanceRow()
+    {
+        var m = AutomaticMaintenance;
+        // #292: live "running right now" state isn't derivable from this registry key alone - see
+        // AutomaticMaintenanceInfo's remarks. Always Unknown, per CLAUDE.md's degrade rule, never a
+        // guessed active/inactive state.
+        return new BackgroundActivityRow
+        {
+            Key = "automatic-maintenance",
+            Name = "Automatic Maintenance",
+            State = BackgroundActivityState.Unknown,
+            CostText = m.KeyPresent ? "See card for configuration" : "Not available",
+            HasDetail = true,
+        };
+    }
+
+    private BackgroundActivityRow BuildCloudSyncRow()
+    {
+        var running = CloudSyncProcesses;
+        var state = running.Count > 0 ? BackgroundActivityState.Active : BackgroundActivityState.Inactive;
+        string cost = running.Count > 0 ? string.Join(", ", running.Select(p => $"{p.ProcessName} {p.CpuPercent:0.#}%")) : "No cloud-sync client running";
+        return new BackgroundActivityRow { Key = "cloud-sync", Name = "Cloud Sync", State = state, CostText = cost, HasDetail = true };
+    }
+
+    private BackgroundActivityRow BuildGameClientsRow()
+    {
+        var running = GameClientProcesses;
+        var state = running.Count > 0 ? BackgroundActivityState.Active : BackgroundActivityState.Inactive;
+        string cost = running.Count > 0 ? string.Join(", ", running.Select(p => $"{p.ProcessName} {p.CpuPercent:0.#}%")) : "Not running";
+        return new BackgroundActivityRow { Key = "game-clients", Name = "Game Downloads (Steam/Epic)", State = state, CostText = cost, HasDetail = true };
+    }
+
+    // #293: Optimize Drives' scheduled-task path is "\Microsoft\Windows\Defrag\ScheduledDefrag";
+    // System Restore's is "\Microsoft\Windows\SystemRestore\SR" - both reuse #292's
+    // ScheduledTasksRunning data directly rather than a second schtasks query.
+    private BackgroundActivityRow BuildDefragRow()
+    {
+        if (!_scheduledTasksRunningLoadedOnce)
+            return new BackgroundActivityRow { Key = "defrag", Name = "Disk Defrag", State = BackgroundActivityState.Unknown, CostText = "Not loaded yet", HasDetail = false };
+        bool running = ScheduledTasksRunning.Any(t => t.Name.Contains("Defrag", StringComparison.OrdinalIgnoreCase));
+        return new BackgroundActivityRow { Key = "defrag", Name = "Disk Defrag", State = running ? BackgroundActivityState.Active : BackgroundActivityState.Inactive, CostText = running ? "Optimize Drives task running" : "Not running", HasDetail = false };
+    }
+
+    private BackgroundActivityRow BuildSystemRestoreRow()
+    {
+        if (!_scheduledTasksRunningLoadedOnce)
+            return new BackgroundActivityRow { Key = "system-restore", Name = "System Restore", State = BackgroundActivityState.Unknown, CostText = "Not loaded yet", HasDetail = false };
+        bool running = ScheduledTasksRunning.Any(t => t.Name.Contains("SystemRestore", StringComparison.OrdinalIgnoreCase) || t.Name.EndsWith(@"\SR", StringComparison.OrdinalIgnoreCase));
+        return new BackgroundActivityRow { Key = "system-restore", Name = "System Restore", State = running ? BackgroundActivityState.Active : BackgroundActivityState.Inactive, CostText = running ? "SR task running" : "Not running", HasDetail = false };
+    }
+
+    private BackgroundActivityRow BuildStorageSenseRow()
+    {
+        var s = StorageSense;
+        string cost = s.Enabled switch { true => $"Enabled · {s.RunFrequencyText}", false => "Disabled", null => "Unknown" };
+        // #293: live "running right now" isn't detectable for Storage Sense - see StorageSenseInfo's
+        // remarks. Always Unknown, never a guessed active/inactive state.
+        return new BackgroundActivityRow { Key = "storage-sense", Name = "Storage Sense", State = BackgroundActivityState.Unknown, CostText = cost, HasDetail = true };
     }
 
     /// <summary>#261-265/267: the shared thread sweep's own slower cadence - see the field remarks
@@ -1935,6 +2428,7 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
         _lightTimer.Stop();
         _probeTimer.Stop();
         _schedulerTimer.Stop();
+        _backgroundActivityTimer.Stop();
         _measureCts?.Cancel();
         _presentCts?.Cancel();
         _hardFaultEtwCts?.Cancel();

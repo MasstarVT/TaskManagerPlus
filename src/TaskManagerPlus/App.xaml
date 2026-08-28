@@ -31,6 +31,7 @@
             <conv:ActivePlanSuffixConverter x:Key="ActivePlanSuffixConverter" />
             <conv:DpcTimeToBrushConverter x:Key="DpcTimeToBrushConverter" />
             <conv:StringNotEmptyConverter x:Key="StringNotEmptyConverter" />
+            <conv:BackgroundActivityStateToBrushConverter x:Key="BackgroundActivityStateToBrushConverter" />
         </ResourceDictionary>
     </Application.Resources>
 </Application>

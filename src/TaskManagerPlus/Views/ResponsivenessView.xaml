@@ -1544,6 +1544,441 @@
                 </StackPanel>
             </Border>
 
+            <!-- ===== #284-293: Background-activity ribbon (background task interference) ===== -->
+
+            <TextBlock Text="Background-activity ribbon" Style="{StaticResource CardTitle}" Margin="0,10,0,4" />
+            <TextBlock Text="Known background workloads that commonly cause stutter/hitching - Defender scans, indexing, servicing, cloud sync, and more - summarised as one strip. Green = active, gray = idle, dim = unknown/unavailable."
+                       Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5" TextWrapping="Wrap" Margin="0,0,0,10" />
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <ItemsControl ItemsSource="{Binding BackgroundActivityRows}">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,8" Margin="0,0,8,8" MinWidth="190">
+                                <StackPanel>
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                                        <Ellipse Width="9" Height="9" VerticalAlignment="Center" Margin="0,0,6,0"
+                                                 Fill="{Binding State, Converter={StaticResource BackgroundActivityStateToBrushConverter}}" />
+                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="12" />
+                                    </StackPanel>
+                                    <TextBlock Text="{Binding CostText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" TextWrapping="Wrap" MaxWidth="220" />
+                                </StackPanel>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </Border>
+
+            <!-- #285: Defender scan state/schedule - hidden detail (StatusText only) when the WMI
+                 namespace itself is unavailable (e.g. a third-party AV owns real-time protection). -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Windows Defender scan state" FontWeight="SemiBold" Margin="0,0,0,6" />
+                    <TextBlock Text="{Binding DefenderScan.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding DefenderScan.IsAvailable}" Value="False">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <StackPanel>
+                        <StackPanel.Style>
+                            <Style TargetType="StackPanel">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding DefenderScan.IsAvailable}" Value="False">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </StackPanel.Style>
+                        <TextBlock Text="{Binding DefenderScan.ScanActivityText}" TextWrapping="Wrap" FontSize="12.5" Margin="0,0,0,10">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding DefenderScan.IsScanLikelyActive}" Value="True">
+                                            <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                        <UniformGrid Columns="2" Margin="0,0,0,8">
+                            <views:VfdMeter Title="CPU cap" Glow="False" Margin="0,0,8,0"
+                                            ValueText="{Binding DefenderScan.ScanAvgCpuLoadFactor, TargetNullValue=Unknown}" Unit="%"
+                                            AccentBrush="{DynamicResource TextSecondaryBrush}" />
+                            <views:VfdMeter Title="Signatures updated" Glow="False" Margin="8,0,0,0"
+                                            ValueText="{Binding DefenderScan.SignatureLastUpdated, StringFormat={}{0:g}, TargetNullValue=Unknown}"
+                                            AccentBrush="{DynamicResource TextSecondaryBrush}" />
+                        </UniformGrid>
+                        <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}">
+                            <Run Text="Real-time protection: " /><Run Text="{Binding DefenderScan.RealTimeProtectionEnabled, Mode=OneWay}" />
+                            <Run Text=" · Scan only if idle: " /><Run Text="{Binding DefenderScan.ScanOnlyIfIdleEnabled, Mode=OneWay}" />
+                            <Run Text=" · Schedule: " /><Run Text="{Binding DefenderScan.ScanScheduleTimeText, TargetNullValue=Unknown}" />
+                        </TextBlock>
+                    </StackPanel>
+                    <TextBlock Text="Quick flag, not a verdict: Windows exposes no documented &quot;a scan is running right now&quot; API - this combines MsMpEng's own CPU usage (already polled on the Processes tab) with the most recent scan start time."
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" FontStyle="Italic" TextWrapping="Wrap" Margin="0,8,0,0" />
+                </StackPanel>
+            </Border>
+
+            <!-- #286: on-demand real-time-scan hot-path scan - advisory only, read-only, no
+                 automatic exclusion changes. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <Grid Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="Real-time-scan hot paths" FontWeight="SemiBold" />
+                        <Button Grid.Column="1" Style="{StaticResource PrimaryButton}" Command="{Binding LoadDefenderHotPathsCommand}">
+                            <TextBlock>
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="Scan (last 24h)" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsLoadingDefenderHotPaths}" Value="True">
+                                                <Setter Property="Text" Value="Scanning..." />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Button>
+                    </Grid>
+                    <TextBlock Text="{Binding DefenderHotPathsStatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,10" />
+                    <DataGrid ItemsSource="{Binding DefenderHotPaths}" MaxHeight="220" IsReadOnly="True">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Directory" Binding="{Binding Directory}" Width="2.5*" />
+                            <DataGridTextColumn Header="Events" Binding="{Binding EventCount}" Width="70" />
+                            <DataGridTextColumn Header="Last seen" Binding="{Binding LastSeen, StringFormat={}{0:g}}" Width="150" />
+                            <DataGridCheckBoxColumn Header="Already excluded" Binding="{Binding IsAlreadyExcluded}" Width="120" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <TextBlock Text="Adding exclusions reduces protection. This is a read-only report - this app makes no automatic changes to Defender exclusions."
+                               Foreground="{DynamicResource WarningBrush}" FontSize="11" FontStyle="Italic" TextWrapping="Wrap" Margin="0,8,0,0" />
+                </StackPanel>
+            </Border>
+
+            <!-- #287: Search indexer - live process cost (always on) plus on-demand crawl-state scan. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <Grid Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="Search indexer crawl state" FontWeight="SemiBold" />
+                        <Button Grid.Column="1" Style="{StaticResource PrimaryButton}" Command="{Binding CheckSearchCrawlCommand}">
+                            <TextBlock>
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="Check crawl state" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsCheckingSearchCrawl}" Value="True">
+                                                <Setter Property="Text" Value="Checking..." />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Button>
+                    </Grid>
+                    <UniformGrid Columns="2" Margin="0,0,0,10">
+                        <views:VfdMeter Title="Indexer process CPU" Glow="False" Margin="0,0,8,0"
+                                        ValueText="{Binding SearchIndexerLive.TotalCpuPercent, StringFormat={}{0:0.#}}" Unit="%"
+                                        AccentBrush="{DynamicResource TextSecondaryBrush}" />
+                        <views:VfdMeter Title="Indexer process disk" Glow="False" Margin="8,0,0,0"
+                                        ValueText="{Binding SearchIndexerLive.TotalDiskBytesPerSec, Converter={StaticResource BytesToReadableConverter}}"
+                                        AccentBrush="{DynamicResource TextSecondaryBrush}" />
+                    </UniformGrid>
+                    <TextBlock Text="{Binding SearchIndexerCrawl.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8" />
+                    <TextBlock Text="Indexed locations" Style="{StaticResource SubStat}" Margin="0,0,0,4" />
+                    <ItemsControl ItemsSource="{Binding SearchIndexerCrawl.IndexedLocations}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="8,4" Margin="0,0,6,6">
+                                    <TextBlock Text="{Binding}" FontSize="11" />
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #288: SysMain (Superfetch) - simpler of the two allowed options: service state +
+                 registry config only, not per-service-inside-svchost I/O attribution (see
+                 SysMainInfo's remarks). -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="SysMain (Superfetch)" FontWeight="SemiBold" Margin="0,0,0,6" />
+                    <TextBlock Text="{Binding SysMain.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12.5" TextWrapping="Wrap" Margin="0,0,0,8" />
+                    <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}">
+                        <Run Text="Service status: " /><Run Text="{Binding SysMain.ServiceStatusText}" />
+                        <Run Text=" · EnablePrefetcher: " /><Run Text="{Binding SysMain.PrefetcherEnabled, TargetNullValue=Unknown}" />
+                        <Run Text=" · EnableSuperfetch: " /><Run Text="{Binding SysMain.SuperfetchEnabled, TargetNullValue=Unknown}" />
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- #289: Delivery Optimization - cheap service+policy state plus on-demand event volume. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <Grid Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="Delivery Optimization" FontWeight="SemiBold" />
+                        <Button Grid.Column="1" Style="{StaticResource PrimaryButton}" Command="{Binding CheckDeliveryOptimizationActivityCommand}">
+                            <TextBlock>
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="Check activity (24h)" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsCheckingDeliveryOptimizationActivity}" Value="True">
+                                                <Setter Property="Text" Value="Checking..." />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Button>
+                    </Grid>
+                    <TextBlock Text="{Binding DeliveryOptimization.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12.5" TextWrapping="Wrap" Margin="0,0,0,8" />
+                    <TextBlock Text="{Binding DeliveryOptimizationActivity.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,4" />
+                    <TextBlock Text="A live transfer-byte-count isn't cheaply readable without the Delivery Optimization COM/PowerShell API - the check above reports recent event-log volume as a proxy instead."
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" FontStyle="Italic" TextWrapping="Wrap" Margin="0,4,0,0" />
+                </StackPanel>
+            </Border>
+
+            <!-- #290: Windows Update / servicing - cheap worker-process cost plus on-demand events,
+                 so a long CBS servicing pass is named rather than an anonymous busy disk. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <Grid Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="Windows Update / servicing" FontWeight="SemiBold" />
+                        <Button Grid.Column="1" Style="{StaticResource PrimaryButton}" Command="{Binding CheckWindowsUpdateEventsCommand}">
+                            <TextBlock>
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="Check events (24h)" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsCheckingWindowsUpdateEvents}" Value="True">
+                                                <Setter Property="Text" Value="Checking..." />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Button>
+                    </Grid>
+                    <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8">
+                        <Run Text="wuauserv: " /><Run Text="{Binding WindowsUpdateActivity.ServiceStatusText}" />
+                    </TextBlock>
+                    <DataGrid ItemsSource="{Binding WindowsUpdateActivity.ActiveProcesses}" MaxHeight="140" IsReadOnly="True" Margin="0,0,0,8">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Process" Binding="{Binding ProcessName}" Width="1.5*" />
+                            <DataGridTextColumn Header="PID" Binding="{Binding Pid}" Width="70" />
+                            <DataGridTextColumn Header="CPU %" Binding="{Binding CpuPercent, StringFormat={}{0:0.#}}" Width="80" />
+                            <DataGridTextColumn Header="Disk" Binding="{Binding DiskBytesPerSec, Converter={StaticResource BytesToReadableConverter}}" Width="100" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <TextBlock Text="No servicing processes running is the normal case, not an error." Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" FontStyle="Italic" Margin="0,0,0,8">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding WindowsUpdateActivity.ActiveProcesses.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <TextBlock Text="{Binding WindowsUpdateEvents.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8" />
+                    <DataGrid ItemsSource="{Binding WindowsUpdateEvents.RecentEvents}" MaxHeight="180" IsReadOnly="True">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Time" Binding="{Binding TimeCreated, StringFormat={}{0:g}}" Width="150" />
+                            <DataGridTextColumn Header="Event ID" Binding="{Binding EventId}" Width="80" />
+                            <DataGridTextColumn Header="Description" Binding="{Binding Description}" Width="3*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- #291: BITS transfer list - on-demand-refreshed-plus-startup-load. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <Grid Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="BITS transfers" FontWeight="SemiBold" />
+                        <Button Grid.Column="1" Style="{StaticResource PrimaryButton}" Command="{Binding LoadBitsTransfersCommand}">
+                            <TextBlock>
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="Refresh" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsLoadingBitsTransfers}" Value="True">
+                                                <Setter Property="Text" Value="Loading..." />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Button>
+                    </Grid>
+                    <TextBlock Text="{Binding BitsTransfersStatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,10" />
+                    <DataGrid ItemsSource="{Binding BitsTransfers}" MaxHeight="220" IsReadOnly="True">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Job" Binding="{Binding DisplayName}" Width="2*" />
+                            <DataGridTextColumn Header="Owner" Binding="{Binding Owner}" Width="1.3*" />
+                            <DataGridTextColumn Header="Type" Binding="{Binding TypeText}" Width="90" />
+                            <DataGridTextColumn Header="State" Binding="{Binding StateText}" Width="100" />
+                            <DataGridTextColumn Header="Priority" Binding="{Binding PriorityText}" Width="80" />
+                            <DataGridTextColumn Header="Transferred" Binding="{Binding BytesTransferred, Converter={StaticResource BytesToReadableConverter}}" Width="100" />
+                            <DataGridTextColumn Header="Total" Binding="{Binding BytesTotal, Converter={StaticResource BytesToReadableConverter}}" Width="100" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- #292: currently-running scheduled tasks + Automatic Maintenance registry audit -
+                 answers "what task fired at the exact second things hitched" (feeds a future
+                 flight-recorder timeline, items #296-300, not built yet). -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <Grid Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="Scheduled tasks running right now" FontWeight="SemiBold" />
+                        <Button Grid.Column="1" Style="{StaticResource PrimaryButton}" Command="{Binding LoadScheduledTasksRunningCommand}">
+                            <TextBlock>
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="Refresh" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsLoadingScheduledTasksRunning}" Value="True">
+                                                <Setter Property="Text" Value="Loading..." />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Button>
+                    </Grid>
+                    <TextBlock Text="{Binding ScheduledTasksRunningStatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,10" />
+                    <DataGrid ItemsSource="{Binding ScheduledTasksRunning}" MaxHeight="200" IsReadOnly="True" Margin="0,0,0,14">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="2.5*" />
+                            <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="90" />
+                            <DataGridTextColumn Header="Last run" Binding="{Binding LastRunTime}" Width="150" />
+                            <DataGridTextColumn Header="Last result" Binding="{Binding LastResult}" Width="90" />
+                            <DataGridTextColumn Header="Task to run" Binding="{Binding TaskToRun}" Width="3*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+
+                    <TextBlock Text="Automatic Maintenance" Style="{StaticResource SubStat}" Margin="0,0,0,4" />
+                    <TextBlock Text="{Binding AutomaticMaintenance.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8" />
+                    <ItemsControl ItemsSource="{Binding AutomaticMaintenance.Settings}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,6" Margin="0,0,8,8">
+                                    <TextBlock FontSize="11.5">
+                                        <Run Text="{Binding SettingName}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        <Run Text=": " />
+                                        <Run Text="{Binding ValueText}" FontWeight="SemiBold" />
+                                    </TextBlock>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #293: cloud sync / game-download clients / Storage Sense - the last ribbon cluster. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Cloud sync" FontWeight="SemiBold" Margin="0,0,0,6" />
+                    <TextBlock Text="OneDrive.exe / Dropbox.exe / GoogleDriveFS.exe - presence and CPU/disk cost, matched by process name. Not a definitive &quot;is syncing right now&quot; API - none of these vendors expose one to third-party apps."
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,8" />
+                    <DataGrid ItemsSource="{Binding CloudSyncProcesses}" MaxHeight="140" IsReadOnly="True" Margin="0,0,0,4">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Process" Binding="{Binding ProcessName}" Width="1.5*" />
+                            <DataGridTextColumn Header="PID" Binding="{Binding Pid}" Width="70" />
+                            <DataGridTextColumn Header="CPU %" Binding="{Binding CpuPercent, StringFormat={}{0:0.#}}" Width="80" />
+                            <DataGridTextColumn Header="Disk" Binding="{Binding DiskBytesPerSec, Converter={StaticResource BytesToReadableConverter}}" Width="100" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <TextBlock Text="No cloud-sync client currently running." Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" FontStyle="Italic" Margin="0,0,0,14">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding CloudSyncProcesses.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
+                    <TextBlock Text="Game downloads (Steam / Epic)" FontWeight="SemiBold" Margin="0,0,0,6" />
+                    <TextBlock Text="steamwebhelper.exe / EpicGamesLauncher.exe are loose proxies - presence and cost, not a definitive &quot;downloading right now&quot; state. Exact download-vs-idle detection isn't cheaply available for either client."
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,8" />
+                    <DataGrid ItemsSource="{Binding GameClientProcesses}" MaxHeight="140" IsReadOnly="True" Margin="0,0,0,4">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Process" Binding="{Binding ProcessName}" Width="1.5*" />
+                            <DataGridTextColumn Header="PID" Binding="{Binding Pid}" Width="70" />
+                            <DataGridTextColumn Header="CPU %" Binding="{Binding CpuPercent, StringFormat={}{0:0.#}}" Width="80" />
+                            <DataGridTextColumn Header="Disk" Binding="{Binding DiskBytesPerSec, Converter={StaticResource BytesToReadableConverter}}" Width="100" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <TextBlock Text="No Steam/Epic helper process currently running." Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" FontStyle="Italic" Margin="0,0,0,14">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding GameClientProcesses.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
+                    <TextBlock Text="Disk defrag &amp; System Restore" FontWeight="SemiBold" Margin="0,0,0,6" />
+                    <TextBlock Text="Reuses the Scheduled Tasks Running list above (Optimize Drives' &quot;ScheduledDefrag&quot; task and System Restore's &quot;SR&quot; task) rather than a second schtasks query - refresh that list to update this."
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,14" />
+
+                    <TextBlock Text="Storage Sense" FontWeight="SemiBold" Margin="0,0,0,6" />
+                    <TextBlock Text="{Binding StorageSense.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12.5" TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+
         </StackPanel>
     </ScrollViewer>
 </UserControl>
