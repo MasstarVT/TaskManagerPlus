@@ -180,4 +180,46 @@ public sealed class ProcessRow : ObservableObject
     /// ProcessPriorityService.Read.</summary>
     private string _memoryPriorityText = "Unknown";
     public string MemoryPriorityText { get => _memoryPriorityText; set => SetProperty(ref _memoryPriorityText, value); }
+
+    /// <summary>#272: "looks stuck" flag from SchedulerService.DetectStuckProcesses - every thread
+    /// in a Wr* wait for several consecutive scheduler sweeps with no context-switch activity.
+    /// Explicitly a sampled inference ("quick flag, not a verdict"); StuckThreadHintText carries the
+    /// exact wording for a tooltip. Null/false when not flagged, never a guess either way.</summary>
+    private bool _isStuckThreadSuspect;
+    public bool IsStuckThreadSuspect { get => _isStuckThreadSuspect; set => SetProperty(ref _isStuckThreadSuspect, value); }
+
+    private string? _stuckThreadHintText;
+    public string? StuckThreadHintText { get => _stuckThreadHintText; set => SetProperty(ref _stuckThreadHintText, value); }
+
+    /// <summary>#274: .NET lock-contention counters from the ".NET CLR LocksAndThreads(&lt;instance&gt;)"
+    /// performance-counter category - see DotNetPerfCounterService. Null for a process that isn't
+    /// managed, or when the category isn't published on this machine - never a fabricated zero.</summary>
+    private double? _dotNetContentionRatePerSec;
+    public double? DotNetContentionRatePerSec { get => _dotNetContentionRatePerSec; set => SetProperty(ref _dotNetContentionRatePerSec, value); }
+
+    private long? _dotNetTotalContentions;
+    public long? DotNetTotalContentions { get => _dotNetTotalContentions; set => SetProperty(ref _dotNetTotalContentions, value); }
+
+    private int? _dotNetQueueLength;
+    public int? DotNetQueueLength { get => _dotNetQueueLength; set => SetProperty(ref _dotNetQueueLength, value); }
+
+    /// <summary>#276: GC mode/concurrency, read from the process's environment variables
+    /// (DOTNET_gcServer/COMPlus_gcServer, DOTNET_gcConcurrent/COMPlus_gcConcurrent) via
+    /// ProcessEnvironmentService - see DotNetPerfCounterService's remarks. Empty string for a
+    /// non-managed process (blank in the grid, never a fabricated value); "Unknown" for a managed
+    /// process whose environment didn't carry the variable - this is a heuristic, not a certainty,
+    /// since a process can also set its GC mode via its own runtimeconfig.json, which this app has
+    /// no clean way to locate/parse.</summary>
+    private string _gcModeText = string.Empty;
+    public string GcModeText { get => _gcModeText; set => SetProperty(ref _gcModeText, value); }
+
+    private string _gcConcurrentText = string.Empty;
+    public string GcConcurrentText { get => _gcConcurrentText; set => SetProperty(ref _gcConcurrentText, value); }
+
+    /// <summary>#277: thread-pool-starvation sampled hint - rising ".NET CLR LocksAndThreads"
+    /// logical-thread count over several consecutive Processes-tab ticks alongside an elevated
+    /// queue-length/contention signal, the outward signature of blocking calls starving the thread
+    /// pool. Explicitly a hint, not a diagnosis - see DotNetPerfCounterService.</summary>
+    private bool _isThreadPoolStarvationSuspect;
+    public bool IsThreadPoolStarvationSuspect { get => _isThreadPoolStarvationSuspect; set => SetProperty(ref _isThreadPoolStarvationSuspect, value); }
 }

@@ -248,6 +248,65 @@
                     </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>
                 <DataGridTextColumn Header="Memory priority" Binding="{Binding MemoryPriorityText}" Width="110" />
+                <!-- #274: .NET lock contention, managed processes only - blank for a native
+                     process (a null DotNetContentionRatePerSec/DotNetQueueLength renders as an
+                     empty cell, no converter needed). -->
+                <DataGridTextColumn Header="Lock contention/sec" Binding="{Binding DotNetContentionRatePerSec, StringFormat={}{0:0.0}}" Width="130" />
+                <DataGridTextColumn Header="Lock queue" Binding="{Binding DotNetQueueLength}" Width="90" />
+                <!-- #276: GC mode via environment variables - a heuristic, not a certainty; see the
+                     tooltip and ProcessRow.GcModeText's own remarks. -->
+                <DataGridTextColumn Header="GC mode" Binding="{Binding GcModeText}" Width="150">
+                    <DataGridTextColumn.ElementStyle>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="ToolTip" Value="Read from the process's environment variables (DOTNET_gcServer/COMPlus_gcServer) via a PEB memory walk - a process configured through its runtimeconfig.json instead may not show correctly here." />
+                        </Style>
+                    </DataGridTextColumn.ElementStyle>
+                </DataGridTextColumn>
+                <!-- #277: thread-pool-starvation hint - a rising logical-thread count alongside an
+                     elevated queue/contention signal over several ticks. Explicitly a hint. -->
+                <DataGridTemplateColumn Header="TP hint" Width="90" SortMemberPath="IsThreadPoolStarvationSuspect">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="Starving?" Foreground="{DynamicResource WarningBrush}" FontSize="11" VerticalAlignment="Center"
+                                       ToolTip="Thread-pool-starvation hint: the .NET CLR logical-thread count has climbed steadily over the last several samples while the queue/contention signal stayed elevated - the outward signature of blocking calls starving the thread pool. A sampled hint, not a diagnosis.">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsThreadPoolStarvationSuspect}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <!-- #272: "looks stuck" flag from the shared scheduler sweep, with a one-click
+                     shortcut into #271's real wait-chain analysis to actually confirm it. -->
+                <DataGridTemplateColumn Header="Stuck?" Width="150" SortMemberPath="IsStuckThreadSuspect">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <StackPanel Orientation="Horizontal" ToolTip="{Binding StuckThreadHintText}">
+                                <StackPanel.Style>
+                                    <Style TargetType="StackPanel">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsStuckThreadSuspect}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </StackPanel.Style>
+                                <TextBlock Text="Possibly stuck" Foreground="{DynamicResource DangerBrush}" FontSize="11" VerticalAlignment="Center" Margin="0,0,6,0" />
+                                <Button Content="Analyze" FontSize="10" Padding="6,1"
+                                        Command="{Binding DataContext.AnalyzeWaitChainCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                        CommandParameter="{Binding}" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
                 <!-- Round 7 #2/#11: spawn-group size and duplicate-instance count badges. -->
                 <DataGridTemplateColumn Header="Group" Width="70" SortMemberPath="SpawnGroupSize">
                     <DataGridTemplateColumn.CellTemplate>
@@ -353,6 +412,10 @@
                     <MenuItem Header="View environment" Command="{Binding ViewEnvironmentCommand}" />
                     <MenuItem Header="View handle types" Command="{Binding ViewHandleTypesCommand}" />
                     <MenuItem Header="Hosted services (svchost)" Command="{Binding ViewHostedServicesCommand}" />
+                    <Separator />
+                    <!-- #271: Wait Chain Traversal - the same in-box API Resource Monitor's own
+                         "Analyze Wait Chain" action uses, against this process's main thread. -->
+                    <MenuItem Header="Analyze wait chain..." Command="{Binding AnalyzeWaitChainCommand}" />
                 </ContextMenu>
             </DataGrid.ContextMenu>
         </DataGrid>
@@ -501,6 +564,45 @@
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
                                 <TextBlock Text="{Binding}" FontSize="11.5" Margin="0,0,0,2" />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #271: Wait Chain Traversal result - populated on demand via AnalyzeWaitChainCommand
+                 (context menu, or #272's inline "Analyze" link on a flagged row). -->
+            <Border Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Margin="0,0,0,6">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Visibility" Value="Visible" />
+                        <Style.Triggers>
+                            <MultiDataTrigger>
+                                <MultiDataTrigger.Conditions>
+                                    <Condition Binding="{Binding WaitChainNodes.Count}" Value="0" />
+                                    <Condition Binding="{Binding WaitChainStatusText, Converter={StaticResource StringNotEmptyConverter}}" Value="False" />
+                                </MultiDataTrigger.Conditions>
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </MultiDataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Wait chain analysis" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                    <TextBlock Text="{Binding WaitChainStatusText}" FontSize="11.5" TextWrapping="Wrap" Margin="0,0,0,4">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <ItemsControl ItemsSource="{Binding WaitChainNodes}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock FontSize="11.5" FontFamily="Consolas" TextWrapping="Wrap" Margin="0,0,0,2">
+                                    <Run Text="{Binding IndentLevel, Mode=OneWay, StringFormat=\{0\}: }" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                    <Run Text="{Binding Description, Mode=OneWay}" />
+                                </TextBlock>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>

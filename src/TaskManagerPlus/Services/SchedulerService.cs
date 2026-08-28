@@ -424,6 +424,73 @@ public sealed class SchedulerService
         return hints.OrderByDescending(h => h.ConsecutiveSamples).Take(MaxInversionHints).ToList();
     }
 
+    // #272: last-seen ContextSwitches count per (pid, tid), for the stuck-process heuristic's own
+    // "zero CS delta" check - a separate dictionary from #263's _prevContextSwitches above so the
+    // two independent diffs (one per-thread-rate, one per-process-stuck-streak) can't step on each
+    // other's baseline if a caller samples them in a different order or skips one on a given tick.
+    private readonly Dictionary<(int Pid, int Tid), uint> _stuckCheckPrevContextSwitches = new();
+    private readonly Dictionary<int, int> _stuckStreak = new();
+
+    private const int StuckSustainedSamplesRequired = 3;
+    private const int MaxStuckHints = 10;
+
+    /// <summary>#272: flags a process where *every* thread has been in a Wr* (wait-type) state for
+    /// several consecutive sweeps with zero context-switch delta each time - what a deadlocked or
+    /// fully-blocked process looks like from the outside, sampled over a few ticks of the same sweep
+    /// this class already produces for #261-265/267. Explicitly a quick flag, not a verdict: WCT
+    /// (#271) is the way to actually confirm a real cross-thread block/cycle. A process with zero
+    /// threads, or whose threads are still mid-startup (fewer than the required sample count seen
+    /// so far), is never flagged.</summary>
+    public List<StuckProcessHint> DetectStuckProcesses(List<ThreadSnapshot> snapshot)
+    {
+        var byProcess = snapshot.GroupBy(t => (t.Pid, t.ProcessName)).ToList();
+        var seenPids = new HashSet<int>(byProcess.Count);
+        var hints = new List<StuckProcessHint>();
+
+        foreach (var group in byProcess)
+        {
+            int pid = group.Key.Pid;
+            if (pid <= 4) continue; // System/Idle - not a meaningful "stuck app" target.
+            var threads = group.ToList();
+            seenPids.Add(pid);
+
+            bool allWaitingOnWr = threads.Count > 0 && threads.All(t =>
+                t.ThreadState == ThreadStateWaiting && WaitReasonName(t.WaitReason).StartsWith("Wr", StringComparison.Ordinal));
+
+            bool allZeroCsDelta = allWaitingOnWr && threads.All(t =>
+            {
+                var key = (pid, t.Tid);
+                bool zeroDelta = _stuckCheckPrevContextSwitches.TryGetValue(key, out var prev) && t.ContextSwitches == prev;
+                _stuckCheckPrevContextSwitches[key] = t.ContextSwitches;
+                return zeroDelta;
+            });
+
+            bool matchesThisSample = allWaitingOnWr && allZeroCsDelta;
+            int streak = matchesThisSample ? (_stuckStreak.TryGetValue(pid, out var s) ? s + 1 : 1) : 0;
+            if (matchesThisSample) _stuckStreak[pid] = streak; else _stuckStreak.Remove(pid);
+
+            if (streak >= StuckSustainedSamplesRequired)
+            {
+                hints.Add(new StuckProcessHint
+                {
+                    Pid = pid,
+                    ProcessName = NameOrPid(group.Key.ProcessName, pid),
+                    ConsecutiveSamples = streak,
+                    HintText = $"Every thread in this process has been waiting (Wr*) with no context-switch activity for {streak} consecutive samples - looks deadlocked or fully blocked from the outside. Quick flag, not a verdict: run a wait-chain analysis (#271) to actually confirm it.",
+                });
+            }
+        }
+
+        // Prune per-thread/per-process state for pids/threads that no longer exist, same shape as
+        // #263's/#264's own pruning above.
+        foreach (var key in _stuckCheckPrevContextSwitches.Keys.ToList())
+            if (!seenPids.Contains(key.Pid)) _stuckCheckPrevContextSwitches.Remove(key);
+        foreach (var pid in _stuckStreak.Keys.ToList())
+            if (!seenPids.Contains(pid)) _stuckStreak.Remove(pid);
+
+        return hints.OrderByDescending(h => h.ConsecutiveSamples).Take(MaxStuckHints).ToList();
+    }
+
     /// <summary>Resolves a thread's start address to its owning module - first against the kernel
     /// module map (DpcModuleMapService, covers System-process/driver-worker kernel-mode threads),
     /// then, for an ordinary user-mode process, against that process's own loaded modules

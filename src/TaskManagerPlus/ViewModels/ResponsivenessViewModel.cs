@@ -472,6 +472,13 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
     public ObservableCollection<ContextSwitchAttributionRow> ContextSwitchAttribution { get; } = new();
     public ObservableCollection<PriorityInversionHint> PriorityInversionHints { get; } = new();
 
+    // #272: "looks stuck" process hints from the same shared sweep - see
+    // SchedulerService.DetectStuckProcesses. StuckThreadHintsByPid backs
+    // ProcessesViewModel.ApplyDotNetCounters' per-row flag (GetStuckThreadFlag); the ObservableCollection
+    // is the same data for anyone who wants to see it listed here too.
+    public ObservableCollection<StuckProcessHint> StuckProcessHints { get; } = new();
+    private Dictionary<int, string> _stuckThreadHintsByPid = new();
+
     private string _schedulerStatusText = "Sampling scheduler data...";
     public string SchedulerStatusText { get => _schedulerStatusText; private set => SetProperty(ref _schedulerStatusText, value); }
 
@@ -479,6 +486,48 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
     // at start-up alongside the #217-220 device-topology bundle plus its manual refresh.
     private MmcssAuditInfo _mmcssAudit = new() { ServiceStatusText = "Loading..." };
     public MmcssAuditInfo MmcssAudit { get => _mmcssAudit; private set => SetProperty(ref _mmcssAudit, value); }
+
+    // ----- #271-277: Lock contention, deadlocks and GC pauses --------------------------------
+
+    // #271: Wait Chain Traversal, reachable here for a selected hung-window row (the Processes-tab
+    // context-menu action lives on ProcessesViewModel instead - see its own remarks). Always
+    // Task.Run'd - see WaitChainTraversalService.Analyze's remarks.
+    public ObservableCollection<WaitChainNodeRow> HungWindowWaitChainNodes { get; } = new();
+
+    private string _hungWindowWaitChainStatusText = string.Empty;
+    public string HungWindowWaitChainStatusText { get => _hungWindowWaitChainStatusText; private set => SetProperty(ref _hungWindowWaitChainStatusText, value); }
+
+    private bool _isAnalyzingHungWindowWaitChain;
+    public bool IsAnalyzingHungWindowWaitChain { get => _isAnalyzingHungWindowWaitChain; private set => SetProperty(ref _isAnalyzingHungWindowWaitChain, value); }
+
+    public AsyncRelayCommand AnalyzeHungWindowWaitChainCommand { get; }
+
+    // #273: optional kernel "Synchronization" perf-counter category - hidden entirely (see
+    // SynchronizationCounters.IsAvailable) unless the machine was deliberately configured for
+    // kernel-contention diagnostics. Rides the cheap _lightTimer (a plain perf-counter read).
+    private readonly SynchronizationCountersService _syncCounters = new();
+    private SynchronizationCountersInfo _synchronizationCounters = new();
+    public SynchronizationCountersInfo SynchronizationCounters { get => _synchronizationCounters; private set => SetProperty(ref _synchronizationCounters, value); }
+
+    public ObservableCollection<double> SpinlockAcquiresHistory { get; } = NewHistory(0);
+    public ObservableCollection<double> SpinlockContentionsHistory { get; } = NewHistory(0);
+    public ObservableCollection<double> ExecResourceContentionsHistory { get; } = NewHistory(0);
+    private readonly LineSeries<double> _spinAcqGlow, _spinAcqCore, _spinContGlow, _spinContCore, _execResGlow, _execResCore;
+    public ISeries[] SynchronizationSeries { get; }
+    public Axis[] SynchronizationYAxes { get; }
+
+    // #275: .NET GC pause monitor - reads ProcessesViewModel's already-sampled shared .NET CLR
+    // perf-counter dictionary (see DotNetPerfCounterService's remarks) rather than re-sampling.
+    // Aggregate %Time-in-GC/collection-count figures only, not a real per-pause millisecond
+    // duration - the optional ETW deep mode isn't implemented in this build (see SampleLight's
+    // remarks for why that's an honestly-labeled partial, per the task's own allowance).
+    public ObservableCollection<GcProcessRow> GcProcessRows { get; } = new();
+
+    private string _worstGcProcessName = "—";
+    public string WorstGcProcessName { get => _worstGcProcessName; private set => SetProperty(ref _worstGcProcessName, value); }
+
+    private double _worstGcPercentTimeInGc;
+    public double WorstGcPercentTimeInGc { get => _worstGcPercentTimeInGc; private set => SetProperty(ref _worstGcPercentTimeInGc, value); }
 
     public ResponsivenessViewModel(ProcessesViewModel processes, PerformanceViewModel performance)
     {
@@ -587,6 +636,30 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
         };
         RunQueuePressureSeries = new ISeries[] { _runQueueGlow, _runQueueCore };
 
+        // #273: three glow+core pairs on one shared chart (Spinlock Acquires/Contentions, Exec.
+        // Resource Contentions) - the same glow+core convention as every other history chart in
+        // this app, co-plotted since all three are "per second" kernel-contention counters.
+        SynchronizationYAxes = new[]
+        {
+            new Axis
+            {
+                MinLimit = 0,
+                Labeler = v => $"{v:N0}/s",
+                LabelsPaint = new SolidColorPaint(AxisTextColor),
+                SeparatorsPaint = new SolidColorPaint(AxisSeparatorColor) { StrokeThickness = 1 },
+            },
+        };
+        var spinAcqColor = SKColors.MediumSeaGreen;
+        _spinAcqGlow = new LineSeries<double> { Values = SpinlockAcquiresHistory, Stroke = new SolidColorPaint(spinAcqColor.WithAlpha(70), GlowStrokeWidth), Fill = null, GeometryStroke = null, GeometryFill = null, LineSmoothness = 0.3, IsHoverable = false, IsVisibleAtLegend = false };
+        _spinAcqCore = new LineSeries<double> { Values = SpinlockAcquiresHistory, Name = "Spinlock acquires/sec", Stroke = new SolidColorPaint(spinAcqColor, CoreStrokeWidth), Fill = null, GeometryStroke = null, GeometryFill = null, LineSmoothness = 0.3 };
+        var spinContColor = SKColors.OrangeRed;
+        _spinContGlow = new LineSeries<double> { Values = SpinlockContentionsHistory, Stroke = new SolidColorPaint(spinContColor.WithAlpha(70), GlowStrokeWidth), Fill = null, GeometryStroke = null, GeometryFill = null, LineSmoothness = 0.3, IsHoverable = false, IsVisibleAtLegend = false };
+        _spinContCore = new LineSeries<double> { Values = SpinlockContentionsHistory, Name = "Spinlock contentions/sec", Stroke = new SolidColorPaint(spinContColor, CoreStrokeWidth), Fill = null, GeometryStroke = null, GeometryFill = null, LineSmoothness = 0.3 };
+        var execResColor = SKColors.Goldenrod;
+        _execResGlow = new LineSeries<double> { Values = ExecResourceContentionsHistory, Stroke = new SolidColorPaint(execResColor.WithAlpha(70), GlowStrokeWidth), Fill = null, GeometryStroke = null, GeometryFill = null, LineSmoothness = 0.3, IsHoverable = false, IsVisibleAtLegend = false };
+        _execResCore = new LineSeries<double> { Values = ExecResourceContentionsHistory, Name = "Exec. resource contentions/sec", Stroke = new SolidColorPaint(execResColor, CoreStrokeWidth), Fill = null, GeometryStroke = null, GeometryFill = null, LineSmoothness = 0.3 };
+        SynchronizationSeries = new ISeries[] { _spinAcqGlow, _spinAcqCore, _spinContGlow, _spinContCore, _execResGlow, _execResCore };
+
         // #251: frame-time-vs-index scatter for the headline present-monitor app - no glow pair,
         // matching EnergyThermalsViewModel's fan-curve scatter (a point cloud doesn't read well
         // with one).
@@ -621,6 +694,8 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
         OpenSleepStudyReportCommand = new RelayCommand(() => { if (_sleepStudyReportPath is not null) WprCaptureService.OpenInDefaultApp(_sleepStudyReportPath); }, () => _sleepStudyReportPath is not null);
 
         CreateDumpCommand = new AsyncRelayCommand(CreateDumpAsync, () => SelectedHungWindow is not null);
+        // #271
+        AnalyzeHungWindowWaitChainCommand = new AsyncRelayCommand(AnalyzeHungWindowWaitChainAsync, () => SelectedHungWindow is not null);
 
         LoadDisplayAuditCommand = new AsyncRelayCommand(LoadDisplayAuditAsync, () => !IsLoadingDisplayAudit);
         StartVBlankCommand = new RelayCommand(StartVBlank, () => !IsMeasuringVBlank);
@@ -1051,6 +1126,47 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
         RunQueuePressure = new RunQueuePressureInfo { ProcessorQueueLength = _performance.CpuQueueLength, LogicalProcessorCount = logicalCount };
         RunQueuePressureHistory.Add(_performance.CpuQueueLength);
         if (RunQueuePressureHistory.Count > HistoryLength) RunQueuePressureHistory.RemoveAt(0);
+
+        // #273: optional kernel Synchronization perf-counter category - a cheap read when
+        // available, a plain IsAvailable=false when not (the common case) - see the service's
+        // remarks. The card this backs hides itself entirely on IsAvailable=false in XAML.
+        SynchronizationCounters = _syncCounters.Sample();
+        if (SynchronizationCounters.IsAvailable)
+        {
+            SpinlockAcquiresHistory.Add(SynchronizationCounters.SpinlockAcquiresPerSec);
+            if (SpinlockAcquiresHistory.Count > HistoryLength) SpinlockAcquiresHistory.RemoveAt(0);
+            SpinlockContentionsHistory.Add(SynchronizationCounters.SpinlockContentionsPerSec);
+            if (SpinlockContentionsHistory.Count > HistoryLength) SpinlockContentionsHistory.RemoveAt(0);
+            ExecResourceContentionsHistory.Add(SynchronizationCounters.ExecResourceContentionsPerSec);
+            if (ExecResourceContentionsHistory.Count > HistoryLength) ExecResourceContentionsHistory.RemoveAt(0);
+        }
+
+        // #275: .NET GC pause monitor - reads ProcessesViewModel's already-sampled shared .NET CLR
+        // perf-counter dictionary (see DotNetPerfCounterService's remarks) rather than a second
+        // perf-counter sweep here, the same "read the sibling ViewModel's already-polled state"
+        // shape #245's USER/GDI handle totals use above. A read-only display list with no
+        // selection state, so it clears+rebuilds each tick rather than merging in place.
+        GcProcessRows.Clear();
+        GcProcessRow? worst = null;
+        foreach (var (pid, counters) in _processes.LastDotNetCounters)
+        {
+            string name = _processes.Processes.FirstOrDefault(p => p.Pid == pid)?.Name ?? $"pid {pid}";
+            var row = new GcProcessRow
+            {
+                Pid = pid,
+                ProcessName = name,
+                PercentTimeInGc = counters.PercentTimeInGc,
+                Gen0Collections = counters.Gen0Collections,
+                Gen1Collections = counters.Gen1Collections,
+                Gen2Collections = counters.Gen2Collections,
+                InducedGcCount = counters.InducedGcCount,
+                AllocatedBytesPerSec = counters.AllocatedBytesPerSec,
+            };
+            GcProcessRows.Add(row);
+            if (worst is null || row.PercentTimeInGc > worst.PercentTimeInGc) worst = row;
+        }
+        WorstGcProcessName = worst?.ProcessName ?? "—";
+        WorstGcPercentTimeInGc = worst?.PercentTimeInGc ?? 0;
     }
 
     /// <summary>#261-265/267: the shared thread sweep's own slower cadence - see the field remarks
@@ -1063,7 +1179,7 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
         _isSchedulerSampling = true;
         try
         {
-            var (snapshot, longestBlocked, topRates, attribution, inversions) = await Task.Run(() =>
+            var (snapshot, longestBlocked, topRates, attribution, inversions, stuckHints) = await Task.Run(() =>
             {
                 var snap = _scheduler.Sweep();
                 var kernelModules = DpcModuleMapService.GetModuleMap();
@@ -1072,7 +1188,9 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
                 var topRates = SchedulerService.ResolveTopModules(rates, kernelModules);
                 var attrib = SchedulerService.AttributeByProcess(rates);
                 var inv = _scheduler.DetectPriorityInversions(snap);
-                return (snap, longest, topRates, attrib, inv);
+                // #272: new aggregation over data this same sweep already produces, not a new syscall.
+                var stuck = _scheduler.DetectStuckProcesses(snap);
+                return (snap, longest, topRates, attrib, inv, stuck);
             });
 
             _lastSchedulerSweep = snapshot;
@@ -1088,6 +1206,10 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
 
             PriorityInversionHints.Clear();
             foreach (var h in inversions) PriorityInversionHints.Add(h);
+
+            StuckProcessHints.Clear();
+            foreach (var h in stuckHints) StuckProcessHints.Add(h);
+            _stuckThreadHintsByPid = stuckHints.ToDictionary(h => h.Pid, h => h.HintText);
 
             SchedulerStatusText = snapshot.Count == 0
                 ? "Scheduler sweep returned no data (unsupported Windows build, or a transient read failure)."
@@ -1107,6 +1229,12 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
     /// per-selected-process wait-reason breakdown panel - see ProcessesViewModel.Responsiveness's
     /// remarks for the cross-ViewModel wiring.</summary>
     public List<ThreadWaitBreakdownRow> GetThreadWaitBreakdown(int pid) => SchedulerService.BuildWaitBreakdown(_lastSchedulerSweep, pid);
+
+    /// <summary>#272: cheap in-memory lookup over the shared sweep's already-computed stuck-process
+    /// hints, for ProcessesViewModel's per-row flag - the same cross-viewmodel-read shape
+    /// GetThreadWaitBreakdown above already establishes for #261.</summary>
+    public (bool IsStuck, string? Hint) GetStuckThreadFlag(int pid) =>
+        _stuckThreadHintsByPid.TryGetValue(pid, out var hint) ? (true, hint) : (false, null);
 
     /// <summary>#213: Start button - resets the session, arms IsMeasuring, and kicks off a
     /// background loop of short SampleOnceAsync captures until Stop is pressed.</summary>
@@ -1291,6 +1419,30 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
         DumpStatusText = "Writing dump...";
         var (_, message) = await ProcessDumpService.CreateDumpAsync(row.Pid, dialog.FileName);
         DumpStatusText = message;
+    }
+
+    /// <summary>#271: analyzes SelectedHungWindow's own owning thread (already known - no need to
+    /// guess a "main thread" the way ProcessesViewModel's own analysis does for an arbitrary
+    /// process row) - see WaitChainTraversalService.Analyze's remarks on why this always runs via
+    /// Task.Run.</summary>
+    private async Task AnalyzeHungWindowWaitChainAsync()
+    {
+        var target = SelectedHungWindow;
+        if (target is null) return;
+
+        IsAnalyzingHungWindowWaitChain = true;
+        HungWindowWaitChainStatusText = "Analyzing wait chain...";
+        HungWindowWaitChainNodes.Clear();
+        try
+        {
+            var result = await Task.Run(() => WaitChainTraversalService.Analyze(target.Pid, target.ThreadId));
+            HungWindowWaitChainStatusText = result.StatusText;
+            foreach (var n in result.Nodes) HungWindowWaitChainNodes.Add(n);
+        }
+        finally
+        {
+            IsAnalyzingHungWindowWaitChain = false;
+        }
     }
 
     /// <summary>#246: a registry-tree walk (ShellExtensionService.List), not a per-tick cost -
@@ -1525,5 +1677,6 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
         _inputLatency.Dispose();
         _perCore.Dispose();
         _hungWindows.Dispose();
+        _syncCounters.Dispose();
     }
 }

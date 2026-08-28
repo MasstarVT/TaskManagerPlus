@@ -589,6 +589,34 @@
                                             </Style>
                                         </TextBlock.Style>
                                     </TextBlock>
+                                    <!-- #271: Wait Chain Traversal against this window's own owning
+                                         thread - the same in-box API Resource Monitor's own
+                                         "Analyze Wait Chain" action uses. -->
+                                    <Button Content="Analyze wait chain..." HorizontalAlignment="Left" FontSize="11" Padding="8,3" Margin="0,6,0,0"
+                                            Command="{Binding DataContext.AnalyzeHungWindowWaitChainCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" />
+                                    <TextBlock Text="{Binding DataContext.HungWindowWaitChainStatusText, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                               FontSize="11" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,0">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding DataContext.HungWindowWaitChainStatusText, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource StringNotEmptyConverter}}" Value="True">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                    <ItemsControl ItemsSource="{Binding DataContext.HungWindowWaitChainNodes, RelativeSource={RelativeSource AncestorType=UserControl}}" Margin="0,2,0,0">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <TextBlock FontSize="11" FontFamily="Consolas" TextWrapping="Wrap" Margin="0,0,0,2">
+                                                    <Run Text="{Binding IndentLevel, Mode=OneWay, StringFormat=\{0\}: }" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                                    <Run Text="{Binding Description, Mode=OneWay}" />
+                                                </TextBlock>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
                                 </StackPanel>
                             </DataTemplate>
                         </DataGrid.RowDetailsTemplate>
@@ -807,6 +835,40 @@
                 </StackPanel>
             </Border>
 
+            <!-- #273: optional kernel "Synchronization" perf-counter category - hidden entirely
+                 (not shown with zeroed values) unless the machine was deliberately configured for
+                 kernel-contention diagnostics, per CLAUDE.md's "degrade to hidden" rule. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Setter Property="Visibility" Value="Visible" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding SynchronizationCounters.IsAvailable}" Value="False">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Kernel synchronization contention" FontWeight="SemiBold" Margin="0,0,0,6" />
+                    <TextBlock Text="The optional &quot;Synchronization&quot; performance-counter category is enabled on this system - spinlock and executive-resource contention, straight from the kernel."
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,10" />
+                    <UniformGrid Columns="3" Margin="0,0,0,10">
+                        <views:VfdMeter Title="Spinlock acquires/sec" Glow="True" Margin="0,0,8,0"
+                                        ValueText="{Binding SynchronizationCounters.SpinlockAcquiresPerSec, StringFormat={}{0:N0}}"
+                                        AccentBrush="{DynamicResource AccentBrush}" />
+                        <views:VfdMeter Title="Spinlock contentions/sec" Glow="True" Margin="8,0,8,0"
+                                        ValueText="{Binding SynchronizationCounters.SpinlockContentionsPerSec, StringFormat={}{0:N0}}"
+                                        AccentBrush="{DynamicResource WarningBrush}" />
+                        <views:VfdMeter Title="Exec. resource contentions/sec" Glow="True" Margin="8,0,0,0"
+                                        ValueText="{Binding SynchronizationCounters.ExecResourceContentionsPerSec, StringFormat={}{0:N0}}"
+                                        AccentBrush="{DynamicResource WarningBrush}" />
+                    </UniformGrid>
+                    <lvc:CartesianChart Series="{Binding SynchronizationSeries}" XAxes="{Binding HiddenXAxes}" YAxes="{Binding SynchronizationYAxes}"
+                                         Height="140" TooltipPosition="Hidden" LegendPosition="Bottom" Background="Transparent" />
+                </StackPanel>
+            </Border>
+
             <!-- #262/#263: longest-blocked threads and busiest threads (context-switch rate), from
                  the same shared sweep. #261's per-process breakdown is on the Processes tab. -->
             <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
@@ -916,6 +978,47 @@
                             <DataGridTextColumn Header="SFIO priority" Binding="{Binding SfioPriority}" Width="1*" />
                         </DataGrid.Columns>
                     </DataGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- #275: .NET GC pause monitor - aggregate perf-counter figures per managed process,
+                 not a real per-pause millisecond duration (that needs the optional ETW deep mode
+                 on Microsoft-Windows-DotNETRuntime's GC keyword - not implemented in this build,
+                 an honestly-labeled partial per the task's own allowance). Still a strong headline
+                 signal: a sustained high %Time-in-GC is a real, visible freeze. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text=".NET GC pause monitor" FontWeight="SemiBold" Margin="0,0,0,6" />
+                    <TextBlock Text="Aggregate %Time-in-GC and collection counts per managed process, via the .NET CLR Memory performance counters - not a real per-pause millisecond duration (that would need the optional ETW-based deep mode, which isn't implemented here). A sustained high %Time in GC is still a strong signal of GC-driven stalls."
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,10" />
+                    <views:VfdMeter Title="Worst %Time in GC right now" Glow="True" HorizontalAlignment="Left" MinWidth="260" Margin="0,0,0,10"
+                                    ValueText="{Binding WorstGcPercentTimeInGc, StringFormat={}{0:0.#}%}" Unit="%"
+                                    SubText="{Binding WorstGcProcessName}"
+                                    AccentBrush="{DynamicResource WarningBrush}" />
+                    <DataGrid ItemsSource="{Binding GcProcessRows}" MaxHeight="220" IsReadOnly="True">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Process" Binding="{Binding ProcessName}" Width="1.2*" />
+                            <DataGridTextColumn Header="PID" Binding="{Binding Pid}" Width="70" />
+                            <DataGridTextColumn Header="% Time in GC" Binding="{Binding PercentTimeInGc, StringFormat={}{0:0.#}%}" Width="100" />
+                            <DataGridTextColumn Header="Gen0" Binding="{Binding Gen0Collections}" Width="60" />
+                            <DataGridTextColumn Header="Gen1" Binding="{Binding Gen1Collections}" Width="60" />
+                            <DataGridTextColumn Header="Gen2" Binding="{Binding Gen2Collections}" Width="60" />
+                            <DataGridTextColumn Header="Induced" Binding="{Binding InducedGcCount}" Width="70" />
+                            <DataGridTextColumn Header="Alloc/sec" Binding="{Binding AllocatedBytesPerSec, Converter={StaticResource BytesToReadableConverter}, ConverterParameter=rate}" Width="100" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <TextBlock Text="No managed (.NET) processes with published performance counters were found - either nothing managed is currently running, or the &quot;.NET CLR Memory&quot; category isn't available on this machine.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding GcProcessRows.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
                 </StackPanel>
             </Border>
 
