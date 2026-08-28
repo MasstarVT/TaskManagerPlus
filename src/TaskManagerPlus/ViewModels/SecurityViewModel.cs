@@ -240,6 +240,8 @@ public sealed class SecurityViewModel : ObservableObject
         ScanLsassHandlesCommand = new AsyncRelayCommand(ScanLsassHandlesAsync);
         ScanUnsignedNetworkActivityCommand = new AsyncRelayCommand(ScanUnsignedNetworkActivityAsync);
 
+        RefreshPlatformSecurityCommand = new AsyncRelayCommand(RefreshPlatformSecurityAsync);
+
         RefreshProtectionStatusCommand = new AsyncRelayCommand(RefreshProtectionStatusAsync);
         LoadScanHistoryCommand = new AsyncRelayCommand(LoadScanHistoryAsync);
         LoadThreatHistoryCommand = new AsyncRelayCommand(LoadThreatHistoryAsync);
@@ -899,6 +901,56 @@ public sealed class SecurityViewModel : ObservableObject
         finally
         {
             IsCheckingWritePermissions = false;
+        }
+    }
+
+    // ==================================================================================
+    // Round 18, #871-880: "Platform security" section - HVCI/VBS detail/LSA protection/Kernel DMA
+    // Protection/vulnerable-driver blocklist/boot integrity switches/app control policy presence/
+    // extended TPM detail/Secure Boot detail/UAC audit. See PlatformSecurityService for the read
+    // logic - everything here is on-demand behind one "Refresh platform security" button, matching
+    // this item's own framing (a single Scan/Refresh button, one IsLoading flag, one StatusMessage).
+    // ==================================================================================
+
+    private PlatformSecurityService.PlatformSecurityInfo? _platformSecurity;
+    public PlatformSecurityService.PlatformSecurityInfo? PlatformSecurity { get => _platformSecurity; private set => SetProperty(ref _platformSecurity, value); }
+
+    private bool _isLoadingPlatformSecurity;
+    public bool IsLoadingPlatformSecurity { get => _isLoadingPlatformSecurity; private set => SetProperty(ref _isLoadingPlatformSecurity, value); }
+
+    private string? _platformSecurityStatus;
+    public string? PlatformSecurityStatus { get => _platformSecurityStatus; private set => SetProperty(ref _platformSecurityStatus, value); }
+
+    public AsyncRelayCommand RefreshPlatformSecurityCommand { get; }
+
+    /// <summary>#871-880: reads everything in PlatformSecurityService.ReadAll in one shot - every
+    /// individual read (registry/WMI/two capped event-log queries/a bcdedit shell-out/an AppLocker
+    /// PowerShell call) is cheap/bounded on its own, so unlike Protection status above this doesn't
+    /// need to split event-log reads into their own separate buttons.</summary>
+    private async Task RefreshPlatformSecurityAsync()
+    {
+        IsLoadingPlatformSecurity = true;
+        PlatformSecurityStatus = null;
+        try
+        {
+            // Snapshot on the UI thread first - same discipline RefreshProtectionStatusAsync above
+            // already uses before handing AutorunEntries to a background thread.
+            var persistenceSnapshot = AutorunEntries.Count > 0 ? AutorunEntries.ToList() : null;
+
+            var result = await Task.Run(() => PlatformSecurityService.ReadAll(persistenceSnapshot));
+
+            PlatformSecurity = result.Info;
+            foreach (var f in result.Findings) Findings.Add(f);
+
+            PlatformSecurityStatus = $"Platform security posture refreshed - {result.Findings.Count} new finding(s).";
+        }
+        catch (Exception ex)
+        {
+            PlatformSecurityStatus = $"Refresh failed: {ex.Message}";
+        }
+        finally
+        {
+            IsLoadingPlatformSecurity = false;
         }
     }
 

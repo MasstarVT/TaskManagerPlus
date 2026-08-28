@@ -813,6 +813,230 @@
                 </StackPanel>
             </Border>
 
+            <!-- Round 18, #871-880: "Platform security" - HVCI/VBS detail/LSA protection (RunAsPPL)/
+                 Kernel DMA Protection/vulnerable-driver blocklist/boot integrity switches (bcdedit)/
+                 app control policy presence (WDAC/AppLocker/Smart App Control)/extended TPM detail/
+                 Secure Boot detail/UAC configuration audit. See PlatformSecurityService for the read
+                 logic - one Refresh button, one IsLoading flag, one StatusMessage, per this section's
+                 own framing. -->
+            <Border BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,1,0,0" Padding="0,16,0,0" Margin="0,16,0,0">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="Platform security" FontSize="14" FontWeight="SemiBold" />
+                            <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}"
+                                       Text="HVCI/memory integrity, virtualization-based security detail, LSA protection, Kernel DMA Protection, the vulnerable-driver blocklist, boot integrity switches, app control policy (WDAC/AppLocker/Smart App Control), extended TPM detail, Secure Boot detail, and a UAC configuration audit - all read-only, on-demand." />
+                        </StackPanel>
+                        <Button Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Top" Style="{StaticResource PrimaryButton}" Command="{Binding RefreshPlatformSecurityCommand}">
+                            <TextBlock>
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="Refresh platform security" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsLoadingPlatformSecurity}" Value="True">
+                                                <Setter Property="Text" Value="Refreshing..." />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Button>
+                    </Grid>
+                    <TextBlock Text="{Binding PlatformSecurityStatus}" TextWrapping="Wrap" Margin="0,4,0,12" Foreground="{DynamicResource TextSecondaryBrush}" />
+
+                    <StackPanel Visibility="{Binding PlatformSecurity, Converter={StaticResource NullToVisibilityConverter}}">
+
+                        <!-- #871: HVCI / memory integrity. -->
+                        <Border Padding="10,8" Margin="0,0,0,12" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
+                            <StackPanel>
+                                <TextBlock Text="HVCI / memory integrity" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                                <TextBlock TextWrapping="Wrap"><Run Text="Running: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.Hvci.RunningText, Mode=OneWay}" FontWeight="SemiBold" /><Run Text="   Configured: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.Hvci.ConfiguredText, Mode=OneWay}" /></TextBlock>
+                                <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" Text="{Binding PlatformSecurity.Hvci.ReasonText}" />
+                                <TextBlock Margin="0,6,0,0" TextWrapping="Wrap" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}">
+                                    <Run Text="DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity: " />
+                                    <Run Text="{Binding PlatformSecurity.Hvci.RegistryValuesText, Mode=OneWay}" />
+                                </TextBlock>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- #872: VBS detail beyond the plain running flag. -->
+                        <Border Padding="10,8" Margin="0,0,0,12" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
+                            <StackPanel>
+                                <TextBlock Text="Virtualization-based security detail" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                                <TextBlock TextWrapping="Wrap" Text="{Binding PlatformSecurity.VbsDetail.ExplanationText}" />
+                                <TextBlock Margin="0,6,0,0" TextWrapping="Wrap"><Run Text="Credential Guard running: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.VbsDetail.CredentialGuardRunningText, Mode=OneWay}" FontWeight="SemiBold" /></TextBlock>
+                                <UniformGrid Columns="2" Margin="0,6,0,0">
+                                    <TextBlock Margin="0,0,8,4" FontSize="11.5"><Run Text="Required: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.VbsDetail.RequiredPropertiesText, Mode=OneWay}" /></TextBlock>
+                                    <TextBlock Margin="0,0,0,4" FontSize="11.5"><Run Text="Available: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.VbsDetail.AvailablePropertiesText, Mode=OneWay}" /></TextBlock>
+                                    <TextBlock Margin="0,0,8,0" FontSize="11.5"><Run Text="Configured services: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.VbsDetail.ConfiguredServicesText, Mode=OneWay}" /></TextBlock>
+                                    <TextBlock Margin="0,0,0,0" FontSize="11.5"><Run Text="Running services: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.VbsDetail.RunningServicesText, Mode=OneWay}" /></TextBlock>
+                                </UniformGrid>
+                                <TextBlock Margin="0,6,0,0" TextWrapping="Wrap" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}">
+                                    <Run Text="Prerequisites - hypervisor active: " /><Run Text="{Binding PlatformSecurity.VbsDetail.HypervisorPresentText, Mode=OneWay}" />
+                                    <Run Text=", firmware virtualization: " /><Run Text="{Binding PlatformSecurity.VbsDetail.VirtualizationFirmwareEnabledText, Mode=OneWay}" />
+                                    <Run Text=", UEFI (via Secure Boot key): " /><Run Text="{Binding PlatformSecurity.VbsDetail.UefiSecureBootKeyPresentText, Mode=OneWay}" />
+                                    <Run Text=", Secure Boot: " /><Run Text="{Binding PlatformSecurity.VbsDetail.SecureBootEnabledText, Mode=OneWay}" />
+                                </TextBlock>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- #873: LSA protection (RunAsPPL) - display-only, no toggle. -->
+                        <Border Padding="10,8" Margin="0,0,0,12" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
+                            <StackPanel>
+                                <TextBlock Text="LSA protection (RunAsPPL)" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                                <TextBlock TextWrapping="Wrap"><Run Text="RunAsPPL: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.LsaProtection.RunAsPPLText, Mode=OneWay}" FontWeight="SemiBold" /><Run Text="   RunAsPPLBoot: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.LsaProtection.RunAsPPLBootText, Mode=OneWay}" /></TextBlock>
+                                <TextBlock Margin="0,6,0,0" TextWrapping="Wrap" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}"
+                                           Text="Turning this on prevents unsigned/untrusted code from loading into lsass.exe, blocking a common credential-theft technique. It can also break legitimate LSA plugins, some third-party antivirus/EDR drivers, or other software that intentionally loads into lsass.exe - test before enabling broadly. Not a toggle here; change it via Windows Security &gt; Device security &gt; Core isolation, or the registry value directly." />
+                                <TextBlock Margin="0,6,0,0" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}"
+                                           Text="Related Microsoft-Windows-CodeIntegrity/Operational events (3065/3033 - what was blocked from loading into lsass), last 180 days:" />
+                                <TextBlock FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap"
+                                           Visibility="{Binding PlatformSecurity.LsaProtection.EventLogUnavailable, Converter={StaticResource BoolToVisibilityConverter}}">
+                                    <Run Text="Couldn't read the CodeIntegrity Operational event log (unavailable, access denied, or the channel isn't enabled)." />
+                                </TextBlock>
+                                <ListBox ItemsSource="{Binding PlatformSecurity.LsaProtection.RelatedEvents}" MaxHeight="100" Margin="0,2,0,0" Background="Transparent" BorderThickness="0">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <TextBlock FontSize="11.5" TextWrapping="Wrap">
+                                                <Run Text="{Binding Time, Mode=OneWay, StringFormat=g}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                                <Run Text=" - Event " /><Run Text="{Binding EventId, Mode=OneWay}" />
+                                                <Run Text=" - " /><Run Text="{Binding Summary, Mode=OneWay}" />
+                                            </TextBlock>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- #874: Kernel DMA Protection / IOMMU - honest "Unknown" is the expected
+                             common outcome here, per the item's own explicit permission. -->
+                        <Border Padding="10,8" Margin="0,0,0,12" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
+                            <StackPanel>
+                                <TextBlock Text="Kernel DMA Protection / IOMMU" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                                <TextBlock TextWrapping="Wrap" Text="{Binding PlatformSecurity.KernelDma.StatusText}" />
+                                <TextBlock Margin="0,4,0,0" TextWrapping="Wrap"><Run Text="IOMMU/VT-d: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.KernelDma.IommuText, Mode=OneWay}" /></TextBlock>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- #875: vulnerable-driver blocklist state, cross-referenced against the
+                             Persistence section's Kernel Driver entries. -->
+                        <Border Padding="10,8" Margin="0,0,0,12" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
+                            <StackPanel>
+                                <TextBlock Text="Vulnerable driver blocklist" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                                <TextBlock TextWrapping="Wrap"><Run Text="VulnerableDriverBlocklistEnable: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.DriverBlocklist.EnabledText, Mode=OneWay}" FontWeight="SemiBold" /></TextBlock>
+                                <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}">
+                                    <Run Text="Other values under HKLM\SYSTEM\CurrentControlSet\Control\CI\Config: " />
+                                    <Run Text="{Binding PlatformSecurity.DriverBlocklist.OtherConfigValuesText, Mode=OneWay}" />
+                                </TextBlock>
+                                <TextBlock Margin="0,6,0,0" TextWrapping="Wrap"
+                                           Text="Checked against a small curated list of publicly reported vulnerable/abused (BYOVD) driver names - see Microsoft's published vulnerable driver blocklist for the authoritative list." />
+                                <ItemsControl ItemsSource="{Binding PlatformSecurity.DriverBlocklist.PossibleMatches}" Margin="0,4,0,0">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <TextBlock FontSize="12" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap">
+                                                <Run Text="⚠ " /><Run Text="{Binding FileName, Mode=OneWay}" FontWeight="SemiBold" /><Run Text=" (" /><Run Text="{Binding ServiceName, Mode=OneWay}" /><Run Text=")" />
+                                            </TextBlock>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- #876: boot integrity switches, via bcdedit /enum {current}. -->
+                        <Border Padding="10,8" Margin="0,0,0,12" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
+                            <StackPanel>
+                                <TextBlock Text="Boot configuration integrity switches" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                                <TextBlock TextWrapping="Wrap" Text="{Binding PlatformSecurity.BootIntegrity.RawFieldsText}" />
+                                <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}"
+                                           Text="testsigning/nointegritychecks/debug/safeboot/flightsigning, parsed from bcdedit /enum {current}. Any of these left ON after a driver-install workaround is a real, findable exposure - see the finding above if one is currently on." />
+                            </StackPanel>
+                        </Border>
+
+                        <!-- #877: app control policy presence - WDAC/AppLocker/Smart App Control. -->
+                        <Border Padding="10,8" Margin="0,0,0,12" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
+                            <StackPanel>
+                                <TextBlock Text="App control policy presence" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                                <TextBlock TextWrapping="Wrap"><Run Text="WDAC enforcement (CodeIntegrityPolicyEnforcementStatus): " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.AppControl.CodeIntegrityEnforcementText, Mode=OneWay}" FontWeight="SemiBold" /></TextBlock>
+                                <TextBlock Margin="0,2,0,0" TextWrapping="Wrap" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}">
+                                    <Run Text="WDAC policy files (CodeIntegrity\CiPolicies\Active\*.cip): " />
+                                    <Run Text="{Binding PlatformSecurity.AppControl.WdacPolicyFilesText, Mode=OneWay}" />
+                                </TextBlock>
+                                <TextBlock Margin="0,6,0,0" TextWrapping="Wrap"><Run Text="AppIDSvc (AppLocker): " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.AppControl.AppIdSvcStatusText, Mode=OneWay}" /></TextBlock>
+                                <TextBlock Margin="0,2,0,0" TextWrapping="Wrap" Text="{Binding PlatformSecurity.AppControl.AppLockerRulesText}" />
+                                <TextBlock Margin="0,6,0,0" TextWrapping="Wrap"><Run Text="Smart App Control: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.AppControl.SmartAppControlText, Mode=OneWay}" FontWeight="SemiBold" /></TextBlock>
+                                <TextBlock Margin="0,2,0,0" TextWrapping="Wrap" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}"
+                                           Text="Smart App Control blocks based on reputation, not just signature validity - a locally-built, unsigned executable is blocked outright while it's On. In Evaluation mode it watches your usage and can turn itself OFF permanently if certain apps/drivers trigger it; once off, re-enabling it requires a full OS reset." />
+                            </StackPanel>
+                        </Border>
+
+                        <!-- #878: extended TPM detail, complementing the System Specs tab's own
+                             (smaller) TPM card rather than replacing it. -->
+                        <Border Padding="10,8" Margin="0,0,0,12" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
+                            <StackPanel>
+                                <TextBlock Text="TPM detail" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                                <TextBlock Margin="0,0,0,4" TextWrapping="Wrap" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}"
+                                           Text="Complements the TPM summary on the System Specs tab's Security card with a few extra Win32_Tpm fields." />
+                                <UniformGrid Columns="3">
+                                    <TextBlock Margin="0,0,8,4"><Run Text="Present: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.TpmDetail.PresentText, Mode=OneWay}" /></TextBlock>
+                                    <TextBlock Margin="0,0,8,4"><Run Text="Owned: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.TpmDetail.IsOwnedText, Mode=OneWay}" /></TextBlock>
+                                    <TextBlock Margin="0,0,0,4"><Run Text="Activated: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.TpmDetail.IsActivatedText, Mode=OneWay}" /></TextBlock>
+                                    <TextBlock Margin="0,0,8,0"><Run Text="Enabled: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.TpmDetail.IsEnabledText, Mode=OneWay}" /></TextBlock>
+                                    <TextBlock Margin="0,0,8,0"><Run Text="Spec version: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.TpmDetail.SpecVersion, Mode=OneWay}" /></TextBlock>
+                                    <TextBlock Margin="0,0,0,0"><Run Text="Manufacturer: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.TpmDetail.ManufacturerIdText, Mode=OneWay}" /></TextBlock>
+                                </UniformGrid>
+                                <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}">
+                                    <Run Text="Manufacturer version: " /><Run Text="{Binding PlatformSecurity.TpmDetail.ManufacturerVersion, Mode=OneWay}" />
+                                    <Run Text="  Version info: " /><Run Text="{Binding PlatformSecurity.TpmDetail.ManufacturerVersionInfo, Mode=OneWay}" />
+                                </TextBlock>
+                                <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}">
+                                    <Run Text="Lockout count: " /><Run Text="{Binding PlatformSecurity.TpmDetail.LockoutCountText, Mode=OneWay}" />
+                                </TextBlock>
+                                <TextBlock Margin="0,6,0,0" TextWrapping="Wrap" FontSize="11.5" Foreground="{DynamicResource WarningBrush}"
+                                           Visibility="{Binding PlatformSecurity.TpmDetail.ShowAdvisoryCaveat, Converter={StaticResource BoolToVisibilityConverter}}"
+                                           Text="Worth a manual check against your TPM vendor's published advisories for this firmware version - this app has no live advisory database to check against automatically." />
+                            </StackPanel>
+                        </Border>
+
+                        <!-- #879: Secure Boot detail - setup mode + DBX recency, or one clear legacy-
+                             BIOS message in place of several confusing per-field Unknowns. -->
+                        <Border Padding="10,8" Margin="0,0,0,12" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
+                            <StackPanel>
+                                <TextBlock Text="Secure Boot detail" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                                <TextBlock TextWrapping="Wrap"
+                                           Visibility="{Binding PlatformSecurity.SecureBootDetail.KeyMissing, Converter={StaticResource BoolToVisibilityConverter}}"
+                                           Text="Legacy BIOS boot - Secure Boot not applicable." />
+                                <StackPanel Visibility="{Binding PlatformSecurity.SecureBootDetail.KeyPresent, Converter={StaticResource BoolToVisibilityConverter}}">
+                                    <TextBlock TextWrapping="Wrap"><Run Text="Enabled: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.SecureBootDetail.EnabledText, Mode=OneWay}" FontWeight="SemiBold" /><Run Text="   Setup mode: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.SecureBootDetail.SetupModeText, Mode=OneWay}" /></TextBlock>
+                                    <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}"
+                                               Text="Setup mode means Secure Boot policy isn't fully enforced - itself a red flag if seen outside an active firmware update/reconfiguration." />
+                                    <TextBlock Margin="0,4,0,0" TextWrapping="Wrap"><Run Text="DBX (revocation list) last updated: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.SecureBootDetail.DbxRecencyText, Mode=OneWay}" /></TextBlock>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- #880: UAC configuration audit. -->
+                        <Border Padding="10,8" Margin="0,0,0,0" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
+                            <StackPanel>
+                                <TextBlock Text="UAC configuration audit" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                                <TextBlock TextWrapping="Wrap" FontWeight="SemiBold" Text="{Binding PlatformSecurity.Uac.SliderPositionText}" />
+                                <UniformGrid Columns="3" Margin="0,6,0,0">
+                                    <TextBlock Margin="0,0,8,4" FontSize="11.5"><Run Text="EnableLUA: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.Uac.EnableLUA, Mode=OneWay}" /></TextBlock>
+                                    <TextBlock Margin="0,0,8,4" FontSize="11.5"><Run Text="ConsentPromptBehaviorAdmin: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.Uac.ConsentPromptBehaviorAdmin, Mode=OneWay}" /></TextBlock>
+                                    <TextBlock Margin="0,0,0,4" FontSize="11.5"><Run Text="ConsentPromptBehaviorUser: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.Uac.ConsentPromptBehaviorUser, Mode=OneWay}" /></TextBlock>
+                                    <TextBlock Margin="0,0,8,0" FontSize="11.5"><Run Text="PromptOnSecureDesktop: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.Uac.PromptOnSecureDesktop, Mode=OneWay}" /></TextBlock>
+                                    <TextBlock Margin="0,0,8,0" FontSize="11.5"><Run Text="FilterAdministratorToken: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.Uac.FilterAdministratorToken, Mode=OneWay}" /></TextBlock>
+                                    <TextBlock Margin="0,0,0,0" FontSize="11.5"><Run Text="EnableInstallerDetection: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.Uac.EnableInstallerDetection, Mode=OneWay}" /></TextBlock>
+                                </UniformGrid>
+                            </StackPanel>
+                        </Border>
+
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
         </StackPanel>
     </ScrollViewer>
 </UserControl>

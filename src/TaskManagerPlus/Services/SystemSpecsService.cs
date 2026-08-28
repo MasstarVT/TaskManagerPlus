@@ -881,7 +881,10 @@ public sealed class SystemSpecsService
         VbsServicesRunning = vbsServices,
     };
 
-    private static bool? ReadSecureBootEnabled()
+    /// <summary>Round 18, #872/#879: made internal (was private) so PlatformSecurityService can
+    /// reuse this exact same read for its VBS-prerequisite and Secure Boot detail cards instead of
+    /// duplicating the registry key/value name.</summary>
+    internal static bool? ReadSecureBootEnabled()
     {
         try
         {
