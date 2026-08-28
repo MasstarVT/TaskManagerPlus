@@ -1338,6 +1338,37 @@ public sealed class StorageViewModel : ObservableObject
     private string _diskLayoutStatusText = "Loading...";
     public string DiskLayoutStatusText { get => _diskLayoutStatusText; private set => SetProperty(ref _diskLayoutStatusText, value); }
 
+    // ================================================================================
+    // Round 20, #387: repair action for a Degraded/In Service Storage Spaces virtual disk - reuses
+    // the existing StoragePools collection (StorageSpaceInfo now carries its own mutable
+    // IsRunningRepair/RepairStatusText, same "model owns its own mutable UI state" shape
+    // ServiceRow/ScheduledTaskRow use elsewhere in this app). CommandParameter binds to the row
+    // itself, same shape ToggleSelfHealingCommand/CheckEjectBlockersCommand already use.
+    // ================================================================================
+    public AsyncRelayCommand RepairVirtualDiskCommand { get; }
+
+    // ================================================================================
+    // Round 20, #389-#393: BitLocker card - key protector inventory, suspended-protection/auto-
+    // unlock detail, cipher/hardware-encryption/live conversion percentage, and (where BitLocker is
+    // off) a best-effort reason why. One-time read at tab load, same tier as the rest of this file's
+    // WMI-only cards. #392's recovery-prompt history is a separate, explicit-button event-log scan.
+    // ================================================================================
+    public ObservableCollection<BitLockerVolumeInfo> BitLockerVolumes { get; } = new();
+
+    private string _bitLockerStatusText = "Loading...";
+    public string BitLockerStatusText { get => _bitLockerStatusText; private set => SetProperty(ref _bitLockerStatusText, value); }
+
+    // #392
+    public ObservableCollection<BitLockerRecoveryPromptEvent> BitLockerRecoveryPrompts { get; } = new();
+
+    private bool _isCheckingBitLockerRecoveryPrompts;
+    public bool IsCheckingBitLockerRecoveryPrompts { get => _isCheckingBitLockerRecoveryPrompts; private set => SetProperty(ref _isCheckingBitLockerRecoveryPrompts, value); }
+
+    private string _bitLockerRecoveryPromptsStatusText = "Not checked";
+    public string BitLockerRecoveryPromptsStatusText { get => _bitLockerRecoveryPromptsStatusText; private set => SetProperty(ref _bitLockerRecoveryPromptsStatusText, value); }
+
+    public AsyncRelayCommand CheckBitLockerRecoveryPromptsCommand { get; }
+
     private readonly ProcessesViewModel _processes;
 
     public StorageViewModel(PerformanceViewModel performance, EnergyThermalsViewModel energyThermals, ProcessesViewModel processes)
@@ -1488,6 +1519,12 @@ public sealed class StorageViewModel : ObservableObject
         // Round 19, #377/#378/#383
         RefreshControllerFactsCommand = new AsyncRelayCommand(LoadStorageControllerFactsAsync);
 
+        // Round 20, #387
+        RepairVirtualDiskCommand = new AsyncRelayCommand(param => RepairVirtualDiskAsync(param as StorageSpaceInfo));
+
+        // Round 20, #392
+        CheckBitLockerRecoveryPromptsCommand = new AsyncRelayCommand(CheckBitLockerRecoveryPromptsAsync, () => !IsCheckingBitLockerRecoveryPrompts);
+
         // #324: subscribe to the shared sampler's tick rather than owning a new heavy timer -
         // see PerformanceViewModel.Sampled's remarks.
         Performance.Sampled += OnPerformanceSampled;
@@ -1593,6 +1630,10 @@ public sealed class StorageViewModel : ObservableObject
 
         // Round 19, #385: over-provisioning + partition alignment per disk - same tier.
         _ = LoadDiskLayoutAsync();
+
+        // Round 20, #389-#391/#393: BitLocker card - same one-time-at-load tier; #392's recovery-
+        // prompt history stays behind its own explicit button (event-log scan).
+        _ = LoadBitLockerAsync();
     }
 
     /// <summary>#371: repaints the retry-trend chart's axis text/gridlines to match the active
@@ -2052,6 +2093,102 @@ public sealed class StorageViewModel : ObservableObject
         catch (Exception ex)
         {
             DiskLayoutStatusText = $"Failed: {ex.Message}";
+        }
+    }
+
+    // ================================================================================
+    // Round 20, #387: repair a Degraded/In Service Storage Spaces virtual disk - confirmed first
+    // (same Yes/No MessageBox.Show pattern #341/#343/#348 already use for a disruptive action).
+    // ================================================================================
+    private async Task RepairVirtualDiskAsync(StorageSpaceInfo? row)
+    {
+        if (row is null || row.IsRunningRepair) return;
+
+        var confirm = System.Windows.MessageBox.Show(
+            $"Repair virtual disk '{row.VirtualDiskName}'?\n\n" +
+            $"This restores data and redundancy to different or new physical disks within the pool '{row.PoolName}'. It can take a long time and adds I/O load to the pool while it runs.",
+            "Repair virtual disk",
+            System.Windows.MessageBoxButton.YesNo,
+            System.Windows.MessageBoxImage.Warning);
+        if (confirm != System.Windows.MessageBoxResult.Yes) return;
+
+        row.IsRunningRepair = true;
+        row.RepairStatusText = "Starting repair...";
+        try
+        {
+            var (started, _, message) = await Task.Run(() => StorageSpacesService.RepairVirtualDisk(row.VirtualDiskObjectId));
+
+            if (started)
+            {
+                // Re-read the whole card so the newly started job shows up under ActiveJobs and
+                // OperationalStatus reflects the repair now in progress - this replaces every row
+                // with a fresh StorageSpaceInfo instance, so the status message is re-attached to
+                // whichever new row matches the same virtual disk (if it still resolves) rather
+                // than being set on the now-discarded old row object.
+                var pools = await Task.Run(StorageSpacesService.List);
+                StoragePools.Clear();
+                foreach (var p in pools) StoragePools.Add(p);
+                var refreshedRow = StoragePools.FirstOrDefault(p => p.VirtualDiskObjectId == row.VirtualDiskObjectId);
+                if (refreshedRow is not null) refreshedRow.RepairStatusText = message;
+            }
+            else
+            {
+                row.RepairStatusText = message;
+            }
+        }
+        catch (Exception ex)
+        {
+            row.RepairStatusText = $"Repair failed: {ex.Message}";
+        }
+        finally
+        {
+            row.IsRunningRepair = false;
+        }
+    }
+
+    // ================================================================================
+    // Round 20, #389-#391/#393: BitLocker card - one-time read at tab load.
+    // ================================================================================
+    private async Task LoadBitLockerAsync()
+    {
+        BitLockerStatusText = "Loading...";
+        try
+        {
+            var volumes = await BitLockerService.ReadAllAsync();
+            BitLockerVolumes.Clear();
+            foreach (var v in volumes) BitLockerVolumes.Add(v);
+            BitLockerStatusText = volumes.Count == 0 ? "No fixed volumes found." : $"{volumes.Count} volume(s).";
+        }
+        catch (Exception ex)
+        {
+            BitLockerStatusText = $"Failed: {ex.Message}";
+        }
+    }
+
+    // ================================================================================
+    // #392: recovery-prompt history - explicit-button event-log scan (this app's "expensive scan ->
+    // explicit button" convention, same tier as CheckDiskDiagnosisCommand/CheckNtfsCorruptionEventsCommand).
+    // ================================================================================
+    private async Task CheckBitLockerRecoveryPromptsAsync()
+    {
+        IsCheckingBitLockerRecoveryPrompts = true;
+        BitLockerRecoveryPromptsStatusText = "Scanning event logs (this can take a moment)...";
+        try
+        {
+            var events = await Task.Run(BitLockerService.ReadRecoveryPromptHistory);
+            BitLockerRecoveryPrompts.Clear();
+            foreach (var e in events) BitLockerRecoveryPrompts.Add(e);
+            BitLockerRecoveryPromptsStatusText = events.Count == 0
+                ? $"No recovery-prompt events found in the last {BitLockerService.RecoveryLookbackDays} days - the BitLocker Management/BitLocker-API operational logs may not be enabled on this system (they're off by default; see 'wevtutil sl <channel> /e:true')."
+                : $"{events.Count} recovery-prompt event(s) found in the last {BitLockerService.RecoveryLookbackDays} days.";
+        }
+        catch (Exception ex)
+        {
+            BitLockerRecoveryPromptsStatusText = $"Failed: {ex.Message}";
+        }
+        finally
+        {
+            IsCheckingBitLockerRecoveryPrompts = false;
         }
     }
 

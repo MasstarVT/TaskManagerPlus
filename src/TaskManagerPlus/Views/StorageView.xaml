@@ -225,7 +225,10 @@
             </TextBlock>
 
             <!-- #85: Storage Spaces / RAID member health rollup - hidden entirely when the system
-                 has no Storage Spaces pools configured (the common case). -->
+                 has no Storage Spaces pools configured (the common case). Round 20, #386/#387/#388
+                 extend each virtual disk row with its pool's member physical disks, any in-flight
+                 repair/rebuild job (plus a Repair action), and a thin-provisioning over-commit
+                 warning. -->
             <Border Margin="0,16,0,16">
                 <Border.Style>
                     <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
@@ -241,33 +244,216 @@
                     <ItemsControl ItemsSource="{Binding StoragePools}" Margin="0,8,0,0">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <Grid Margin="0,0,0,8">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <StackPanel Grid.Column="0">
-                                        <TextBlock FontSize="12.5">
-                                            <Run Text="{Binding VirtualDiskName}" FontWeight="SemiBold" />
-                                            <Run Text=" · " /><Run Text="{Binding PoolName}" />
-                                        </TextBlock>
-                                        <TextBlock Style="{StaticResource SubStat}" Margin="0,2,0,0">
-                                            <Run Text="{Binding ResiliencySettingName}" /><Run Text=" · " /><Run Text="{Binding OperationalStatus}" />
-                                        </TextBlock>
+                                <Border Margin="0,0,0,10" Padding="10" CornerRadius="4" BorderThickness="1" BorderBrush="{DynamicResource BorderSubtleBrush}">
+                                    <StackPanel>
+                                        <Grid Margin="0,0,0,4">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel Grid.Column="0">
+                                                <TextBlock FontSize="12.5">
+                                                    <Run Text="{Binding VirtualDiskName}" FontWeight="SemiBold" />
+                                                    <Run Text=" · " /><Run Text="{Binding PoolName}" />
+                                                </TextBlock>
+                                                <TextBlock Style="{StaticResource SubStat}" Margin="0,2,0,0">
+                                                    <Run Text="{Binding ResiliencySettingName}" /><Run Text=" · " /><Run Text="{Binding OperationalStatus}" />
+                                                    <Run Text=" · " /><Run Text="{Binding ProvisioningTypeText}" /><Run Text=" provisioning" />
+                                                    <Run Text=" · " /><Run Text="{Binding AllocatedSizeText}" /><Run Text=" of " /><Run Text="{Binding SizeText}" />
+                                                </TextBlock>
+                                            </StackPanel>
+                                            <TextBlock Grid.Column="1" Text="{Binding HealthStatus}" FontWeight="SemiBold" VerticalAlignment="Center">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsHealthWarning}" Value="True">
+                                                                <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                        </Grid>
+
+                                        <!-- #388: thin-provisioning over-commit warning - empty/hidden unless the pool
+                                             actually has a thin virtual disk and is over-committed or close to full. -->
+                                        <TextBlock Text="{Binding ThinProvisioningWarningText}" Style="{StaticResource SubStat}"
+                                                   Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" Margin="0,2,0,4"
+                                                   Visibility="{Binding ShowThinProvisioningWarning, Converter={StaticResource BoolToVisibilityConverter}}" />
+
+                                        <!-- #386: pool member physical disks. -->
+                                        <StackPanel Visibility="{Binding HasMemberDisks, Converter={StaticResource BoolToVisibilityConverter}}" Margin="0,4,0,0">
+                                            <TextBlock Text="Pool members" FontWeight="SemiBold" FontSize="11.5" Margin="0,0,0,2" />
+                                            <ItemsControl ItemsSource="{Binding MemberDisks}">
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <TextBlock FontSize="11.5" Margin="0,0,0,2" TextWrapping="Wrap">
+                                                            <TextBlock.Style>
+                                                                <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding IsUnhealthy}" Value="True">
+                                                                            <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </TextBlock.Style>
+                                                            <Run Text="{Binding FriendlyName, Mode=OneWay}" FontWeight="SemiBold" />
+                                                            <Run Text=" - " /><Run Text="{Binding UsageText, Mode=OneWay}" />
+                                                            <Run Text=" · " /><Run Text="{Binding OperationalStatusText, Mode=OneWay}" />
+                                                            <Run Text=" · " /><Run Text="{Binding AllocatedText, Mode=OneWay}" /><Run Text=" of " /><Run Text="{Binding SizeText, Mode=OneWay}" />
+                                                        </TextBlock>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </StackPanel>
+
+                                        <!-- #387: in-flight repair/rebuild jobs + Repair action. -->
+                                        <StackPanel Visibility="{Binding HasActiveJobs, Converter={StaticResource BoolToVisibilityConverter}}" Margin="0,4,0,0">
+                                            <TextBlock Text="Active jobs" FontWeight="SemiBold" FontSize="11.5" Margin="0,0,0,2" />
+                                            <ItemsControl ItemsSource="{Binding ActiveJobs}">
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <TextBlock Style="{StaticResource SubStat}" FontSize="11.5" Margin="0,0,0,2" TextWrapping="Wrap">
+                                                            <Run Text="{Binding Name, Mode=OneWay}" FontWeight="SemiBold" />
+                                                            <Run Text=" - " /><Run Text="{Binding JobStateText, Mode=OneWay}" />
+                                                            <Run Text=" · " /><Run Text="{Binding PercentComplete, Mode=OneWay, StringFormat={}{0:0}%}" /><Run Text=" complete" />
+                                                            <Run Text=" · elapsed " /><Run Text="{Binding ElapsedTimeText, Mode=OneWay}" />
+                                                        </TextBlock>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </StackPanel>
+
+                                        <Grid Margin="0,6,0,0" Visibility="{Binding CanRepair, Converter={StaticResource BoolToVisibilityConverter}}">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" Text="This virtual disk is Degraded or In Service - repair restores redundancy to different/new physical disks in the pool."
+                                                       Style="{StaticResource SubStat}" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,10,0" />
+                                            <Button Grid.Column="1" Content="Repair" Padding="10,4" FontSize="11.5"
+                                                    Command="{Binding DataContext.RepairVirtualDiskCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                    CommandParameter="{Binding}" />
+                                        </Grid>
+                                        <TextBlock Text="{Binding RepairStatusText}" Style="{StaticResource SubStat}" Margin="0,4,0,0" TextWrapping="Wrap"
+                                                   Visibility="{Binding RepairStatusText, Converter={StaticResource StringToVisibilityConverter}}" />
                                     </StackPanel>
-                                    <TextBlock Grid.Column="1" Text="{Binding HealthStatus}" FontWeight="SemiBold" VerticalAlignment="Center">
-                                        <TextBlock.Style>
-                                            <Style TargetType="TextBlock">
-                                                <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
-                                                <Style.Triggers>
-                                                    <DataTrigger Binding="{Binding IsHealthWarning}" Value="True">
-                                                        <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
-                                                    </DataTrigger>
-                                                </Style.Triggers>
-                                            </Style>
-                                        </TextBlock.Style>
-                                    </TextBlock>
-                                </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- Round 20, #389-#393: BitLocker card. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="BitLocker" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Key protector identifiers are shown, never the recovery key itself. Cipher, hardware-encryption support, live conversion percentage, suspended-protection countdown, and (where BitLocker is off) a best-effort reason why."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding BitLockerStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,8" />
+
+                    <ItemsControl ItemsSource="{Binding BitLockerVolumes}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Margin="0,0,0,10" Padding="10" CornerRadius="4" BorderThickness="1" BorderBrush="{DynamicResource BorderSubtleBrush}">
+                                    <StackPanel>
+                                        <Grid Margin="0,0,0,4">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" Text="{Binding DriveLetter, StringFormat={}{0}:}" FontWeight="SemiBold" FontSize="14" Margin="0,0,10,0" VerticalAlignment="Center" />
+                                            <TextBlock Grid.Column="1" Text="{Binding ConversionStatusText}" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                        </Grid>
+
+                                        <!-- Not applicable / unknown - no Win32_EncryptableVolume instance, or access denied. -->
+                                        <TextBlock Text="{Binding UnavailableReason}" TextWrapping="Wrap">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding Available}" Value="False">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+
+                                        <StackPanel Visibility="{Binding Available, Converter={StaticResource BoolToVisibilityConverter}}">
+                                            <!-- #391: cipher + hardware encryption + live conversion percentage. -->
+                                            <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,2" TextWrapping="Wrap">
+                                                <Run Text="Cipher: " /><Run Text="{Binding EncryptionMethodText, Mode=OneWay, TargetNullValue=Unknown}" />
+                                                <Run Text=" · Hardware encryption: " /><Run Text="{Binding HardwareEncryptionStatusText, Mode=OneWay}" />
+                                            </TextBlock>
+                                            <StackPanel Visibility="{Binding IsConverting, Converter={StaticResource BoolToVisibilityConverter}}" Margin="0,2,0,4">
+                                                <ProgressBar Height="6" Minimum="0" Maximum="100" Value="{Binding EncryptionPercentage, Mode=OneWay, TargetNullValue=0}" Margin="0,0,0,2" />
+                                                <TextBlock Style="{StaticResource SubStat}" Text="{Binding EncryptionPercentageText, StringFormat={}{0} complete}" />
+                                            </StackPanel>
+
+                                            <!-- #390: suspended protection + auto-unlock. -->
+                                            <TextBlock Text="{Binding ProtectionSummaryText}" Style="{StaticResource SubStat}" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" Margin="0,0,0,2"
+                                                       Visibility="{Binding IsProtectionSuspended, Converter={StaticResource BoolToVisibilityConverter}}" />
+                                            <TextBlock Text="{Binding AutoUnlockText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,2"
+                                                       Visibility="{Binding AutoUnlockText, Converter={StaticResource StringToVisibilityConverter}}" />
+                                            <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,4" TextWrapping="Wrap"
+                                                       Visibility="{Binding IsAutoUnlockKeyStored, Converter={StaticResource BoolToVisibilityConverter}}">
+                                                <Run Text="An auto-unlock key for at least one data volume is stored on this OS volume." />
+                                            </TextBlock>
+
+                                            <!-- #393: only shown when BitLocker is off and a reason was actually found. -->
+                                            <TextBlock Text="{Binding OffReasonText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,4"
+                                                       Visibility="{Binding HasOffReason, Converter={StaticResource BoolToVisibilityConverter}}" />
+
+                                            <!-- #389: key protector inventory - IDs and types ONLY, never the recovery key. -->
+                                            <StackPanel Visibility="{Binding HasKeyProtectors, Converter={StaticResource BoolToVisibilityConverter}}">
+                                                <TextBlock Text="Key protectors" FontWeight="SemiBold" FontSize="11.5" Margin="0,2,0,2" />
+                                                <ItemsControl ItemsSource="{Binding KeyProtectors}">
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate>
+                                                            <TextBlock Style="{StaticResource SubStat}" FontSize="11.5" Margin="0,0,0,2" TextWrapping="Wrap">
+                                                                <Run Text="{Binding TypeText, Mode=OneWay}" FontWeight="SemiBold" />
+                                                                <Run Text=" - ID " /><Run Text="{Binding Id, Mode=OneWay}" FontFamily="Consolas" />
+                                                            </TextBlock>
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                            </StackPanel>
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <!-- #392: recovery-prompt history - explicit button, event-log scan. -->
+                    <Grid Margin="0,6,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Recovery-prompt history: times this PC asked for the recovery key, correlated with nearby TPM/firmware/Secure-Boot-related events (a likely cause, not a proven one)."
+                                   Style="{StaticResource SubStat}" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,10,0" />
+                        <Button Grid.Column="1" Content="Check now" Padding="10,4" Command="{Binding CheckBitLockerRecoveryPromptsCommand}" />
+                    </Grid>
+                    <TextBlock Text="{Binding BitLockerRecoveryPromptsStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" />
+                    <ItemsControl ItemsSource="{Binding BitLockerRecoveryPrompts}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border BorderThickness="0,0,0,1" BorderBrush="{DynamicResource BorderSubtleBrush}" Padding="0,0,0,8" Margin="0,0,0,8">
+                                    <StackPanel>
+                                        <TextBlock FontSize="12.5" TextWrapping="Wrap">
+                                            <Run Text="{Binding TimeCreated, Mode=OneWay, StringFormat={}{0:g}}" FontWeight="SemiBold" />
+                                            <Run Text=" - " /><Run Text="{Binding Channel, Mode=OneWay}" />
+                                            <Run Text=" (event " /><Run Text="{Binding EventId, Mode=OneWay}" /><Run Text=")" />
+                                        </TextBlock>
+                                        <TextBlock Text="{Binding Message}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,2,0,0" />
+                                        <TextBlock Text="{Binding LikelyCauseText}" Style="{StaticResource SubStat}" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" Margin="0,2,0,0"
+                                                   Visibility="{Binding HasLikelyCause, Converter={StaticResource BoolToVisibilityConverter}}" />
+                                    </StackPanel>
+                                </Border>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
