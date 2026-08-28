@@ -113,7 +113,7 @@ public static class VolumeDiagnosticsService
     /// (NTFS/ReFS) when a drive letter is supplied - this looks for the first "= 0" or "= 1" it
     /// finds. Only meaningful for SSD volumes; callers should skip this for HDDs, mirroring how
     /// HDD fragmentation is hidden for SSDs.</summary>
-    public static bool? ReadTrimStatus(string driveLetter)
+    public static async Task<bool?> ReadTrimStatusAsync(string driveLetter)
     {
         try
         {
@@ -127,8 +127,28 @@ public static class VolumeDiagnosticsService
             using var proc = Process.Start(psi);
             if (proc is null) return null;
 
-            string output = proc.StandardOutput.ReadToEnd() + proc.StandardError.ReadToEnd();
-            if (!proc.WaitForExit(5000)) { try { proc.Kill(); } catch { /* best-effort */ } return null; }
+            // Concurrent async reads + a bounded WaitForExitAsync + Kill()-on-timeout - the same
+            // pattern TracerouteService.RunAsync uses. The previous version already checked
+            // WaitForExit's result and killed the process on timeout, but only *after* the
+            // unbounded synchronous ReadToEnd() calls above it had already returned - so fsutil
+            // filling its stdout/stderr pipe buffer before exiting could still deadlock before the
+            // timeout/kill logic was ever reached. Starting both reads and the bounded wait
+            // concurrently fixes that ordering.
+            var outputTask = proc.StandardOutput.ReadToEndAsync();
+            var errorTask = proc.StandardError.ReadToEndAsync();
+
+            using var cts = new CancellationTokenSource(5000);
+            try
+            {
+                await proc.WaitForExitAsync(cts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                try { proc.Kill(); } catch { /* best-effort */ }
+                return null;
+            }
+
+            string output = (await outputTask) + (await errorTask);
 
             var match = Regex.Match(output, @"=\s*([01])");
             if (!match.Success) return null;
@@ -151,7 +171,7 @@ public static class VolumeDiagnosticsService
     /// than once per drive letter) since the command already reports the whole system in one pass.
     /// Empty (not an error) on the very common case where no volume has any shadow copies at all.
     /// </summary>
-    public static Dictionary<string, long> ReadShadowCopyUsageByVolume()
+    public static async Task<Dictionary<string, long>> ReadShadowCopyUsageByVolumeAsync()
     {
         var result = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
         try
@@ -166,8 +186,26 @@ public static class VolumeDiagnosticsService
             using var proc = Process.Start(psi);
             if (proc is null) return result;
 
-            string output = proc.StandardOutput.ReadToEnd() + proc.StandardError.ReadToEnd();
-            if (!proc.WaitForExit(10000)) { try { proc.Kill(); } catch { /* best-effort */ } return result; }
+            // Concurrent async reads + a bounded WaitForExitAsync + Kill()-on-timeout - the same
+            // pattern TracerouteService.RunAsync uses (and the same ordering fix ReadTrimStatusAsync
+            // above just got): the previous version's synchronous ReadToEnd() ran unbounded before
+            // WaitForExit's result was even checked, risking a deadlock if vssadmin's report filled
+            // a pipe buffer before exiting.
+            var outputTask = proc.StandardOutput.ReadToEndAsync();
+            var errorTask = proc.StandardError.ReadToEndAsync();
+
+            using var cts = new CancellationTokenSource(10000);
+            try
+            {
+                await proc.WaitForExitAsync(cts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                try { proc.Kill(); } catch { /* best-effort */ }
+                return result;
+            }
+
+            string output = (await outputTask) + (await errorTask);
 
             string? currentVolume = null;
             foreach (var line in output.Split('\n'))

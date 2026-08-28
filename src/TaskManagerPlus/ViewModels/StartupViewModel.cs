@@ -55,7 +55,7 @@ public sealed class StartupViewModel : ObservableObject
     }
 
     public AsyncRelayCommand LoadScheduledTasksCommand { get; }
-    public RelayCommand ToggleScheduledTaskCommand { get; }
+    public AsyncRelayCommand ToggleScheduledTaskCommand { get; }
     public AsyncRelayCommand CheckLogonDelayCommand { get; }
 
     // #19/#20: browser extension inventory and registered shell extensions - both loaded on
@@ -111,7 +111,7 @@ public sealed class StartupViewModel : ObservableObject
         ToggleEnabledCommand = new RelayCommand(param => Toggle(param as StartupItem ?? SelectedItem));
 
         LoadScheduledTasksCommand = new AsyncRelayCommand(LoadScheduledTasksAsync);
-        ToggleScheduledTaskCommand = new RelayCommand(param => ToggleScheduledTask(param as ScheduledTaskRow ?? SelectedScheduledTask));
+        ToggleScheduledTaskCommand = new AsyncRelayCommand(param => ToggleScheduledTaskAsync(param as ScheduledTaskRow ?? SelectedScheduledTask));
         CheckLogonDelayCommand = new AsyncRelayCommand(CheckLogonDelayAsync, () => SelectedScheduledTask is not null);
 
         LoadBrowserExtensionsCommand = new AsyncRelayCommand(LoadBrowserExtensionsAsync);
@@ -180,7 +180,7 @@ public sealed class StartupViewModel : ObservableObject
         IsLoadingScheduledTasks = true;
         try
         {
-            var tasks = await Task.Run(ScheduledTaskService.List);
+            var tasks = await ScheduledTaskService.ListAsync();
             ScheduledTasks.Clear();
             foreach (var t in tasks) ScheduledTasks.Add(t);
         }
@@ -190,12 +190,12 @@ public sealed class StartupViewModel : ObservableObject
         }
     }
 
-    private void ToggleScheduledTask(ScheduledTaskRow? task)
+    private async Task ToggleScheduledTaskAsync(ScheduledTaskRow? task)
     {
         if (task is null) return;
 
         bool newState = !task.IsEnabled;
-        var (success, error) = ScheduledTaskService.SetEnabled(task.Name, newState);
+        var (success, error) = await ScheduledTaskService.SetEnabledAsync(task.Name, newState);
         if (success)
         {
             task.IsEnabled = newState;
@@ -212,7 +212,7 @@ public sealed class StartupViewModel : ObservableObject
         var target = SelectedScheduledTask;
         if (target is null) return;
 
-        var (delayText, runModeText) = await Task.Run(() => ScheduledTaskService.ReadLogonTriggerInfo(target.Name));
+        var (delayText, runModeText) = await ScheduledTaskService.ReadLogonTriggerInfoAsync(target.Name);
         target.DelayText = delayText;
         target.RunModeText = runModeText;
     }

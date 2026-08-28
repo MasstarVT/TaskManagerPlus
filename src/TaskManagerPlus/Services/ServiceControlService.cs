@@ -277,21 +277,40 @@ public sealed class ServiceControlService
     /// takes. On-demand only (like Processes' module list) - not worth a WMI/registry read on
     /// every 2s tick for every service.
     /// </summary>
-    public static string ReadFailureActionsText(string serviceName)
+    public static async Task<string> ReadFailureActionsTextAsync(string serviceName)
     {
         try
         {
             var psi = new ProcessStartInfo("sc.exe", $"qfailure \"{serviceName}\"")
             {
                 RedirectStandardOutput = true,
+                RedirectStandardError = true,
                 UseShellExecute = false,
                 CreateNoWindow = true,
             };
             using var proc = Process.Start(psi);
             if (proc is null) return "(couldn't run sc.exe)";
 
-            string output = proc.StandardOutput.ReadToEnd();
-            proc.WaitForExit(5000);
+            // Concurrent async reads + a bounded WaitForExitAsync + Kill()-on-timeout - the same
+            // pattern TracerouteService.RunAsync uses, rather than the previous synchronous
+            // ReadToEnd() followed by an unchecked WaitForExit(5000), which could deadlock if
+            // sc.exe's output filled its pipe buffer before exiting and would otherwise leave the
+            // process running past the 5s mark with nothing to kill it.
+            var outputTask = proc.StandardOutput.ReadToEndAsync();
+            var errorTask = proc.StandardError.ReadToEndAsync();
+
+            using var cts = new CancellationTokenSource(5000);
+            try
+            {
+                await proc.WaitForExitAsync(cts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                try { proc.Kill(); } catch { /* best-effort */ }
+                return "(sc.exe timed out)";
+            }
+
+            string output = (await outputTask) + (await errorTask);
 
             // Strip the "[SC] QueryServiceConfig2 SUCCESS" boilerplate line sc.exe always prints
             // first - everything after it is the actual recovery-action report.

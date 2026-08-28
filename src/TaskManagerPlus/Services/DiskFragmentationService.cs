@@ -70,7 +70,7 @@ public static class DiskFragmentationService
     /// from its verbose report. Returns a human-readable status either way - never a raw exception
     /// message, since defrag's own text already explains common cases (SSD, not enough free space
     /// to analyze, ...) better than this app reformatting them would.</summary>
-    public static (bool Success, int? FragmentedPercent, string Message) Analyze(string driveLetter)
+    public static async Task<(bool Success, int? FragmentedPercent, string Message)> Analyze(string driveLetter)
     {
         try
         {
@@ -84,13 +84,28 @@ public static class DiskFragmentationService
             using var proc = Process.Start(psi);
             if (proc is null) return (false, null, "Couldn't start defrag.exe.");
 
-            string output = proc.StandardOutput.ReadToEnd() + proc.StandardError.ReadToEnd();
-            bool exited = proc.WaitForExit(120_000);
-            if (!exited)
+            // Concurrent async reads + a bounded WaitForExitAsync + Kill()-on-timeout - the same
+            // pattern TracerouteService.RunAsync uses. The previous version already checked
+            // WaitForExit's result and killed the process on timeout, but only *after* the
+            // unbounded synchronous ReadToEnd() calls above it had already returned - so a defrag
+            // run whose verbose report filled the stdout/stderr pipe buffers before exiting could
+            // still deadlock (and never reach the timeout/kill logic at all). Starting both reads
+            // and the bounded wait concurrently fixes that ordering.
+            var outputTask = proc.StandardOutput.ReadToEndAsync();
+            var errorTask = proc.StandardError.ReadToEndAsync();
+
+            using var cts = new CancellationTokenSource(120_000);
+            try
+            {
+                await proc.WaitForExitAsync(cts.Token);
+            }
+            catch (OperationCanceledException)
             {
                 try { proc.Kill(); } catch { /* best-effort */ }
                 return (false, null, "Analysis timed out.");
             }
+
+            string output = (await outputTask) + (await errorTask);
 
             var match = FragmentationPercentRegex.Match(output);
             if (match.Success && int.TryParse(match.Groups[1].Value, out int percent))

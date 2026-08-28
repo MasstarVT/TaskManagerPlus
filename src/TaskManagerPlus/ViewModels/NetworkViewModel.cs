@@ -230,7 +230,7 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
             HistoryThisMonth.Clear();
             foreach (var e in monthTotals.Take(8)) HistoryThisMonth.Add(e);
 
-            Wifi = await Task.Run(WifiDiagnosticsService.ReadCurrentWifi);
+            Wifi = await WifiDiagnosticsService.ReadCurrentWifiAsync();
         }
         catch
         {

@@ -19,12 +19,12 @@ public static class PowerPlanService
     /// marks the active scheme). Returns an empty list on any failure (powercfg missing/blocked)
     /// rather than throwing - the Energy &amp; Thermals tab just hides the power-plan card when
     /// this comes back empty.</summary>
-    public static List<PowerPlanInfo> ListPowerPlans()
+    public static async Task<List<PowerPlanInfo>> ListPowerPlansAsync()
     {
         var plans = new List<PowerPlanInfo>();
         try
         {
-            string output = RunCaptured("powercfg.exe", "/list").Output;
+            string output = (await RunCapturedAsync("powercfg.exe", "/list")).Output;
             foreach (Match m in Regex.Matches(output, @"Power Scheme GUID:\s*([0-9a-fA-F-]{36})\s*\(([^)]*)\)\s*(\*)?"))
             {
                 plans.Add(new PowerPlanInfo
@@ -43,11 +43,11 @@ public static class PowerPlanService
     }
 
     /// <summary>`powercfg /setactive &lt;guid&gt;` - switches the active Windows power scheme.</summary>
-    public static (bool Success, string? Error) SetActivePlan(string guid)
+    public static async Task<(bool Success, string? Error)> SetActivePlanAsync(string guid)
     {
         try
         {
-            var (output, exitCode) = RunCaptured("powercfg.exe", $"/setactive {guid}");
+            var (output, exitCode) = await RunCapturedAsync("powercfg.exe", $"/setactive {guid}");
             return exitCode == 0 ? (true, null) : (false, output.Trim());
         }
         catch (Exception ex)
@@ -63,11 +63,11 @@ public static class PowerPlanService
     /// mention either in a recognizable way (older Windows builds phrase this report slightly
     /// differently release to release, so this looks for the two well-known phrases rather than
     /// trying to parse the report's full structure).</summary>
-    public static string ReadSleepStateSupport()
+    public static async Task<string> ReadSleepStateSupportAsync()
     {
         try
         {
-            string output = RunCaptured("powercfg.exe", "/a").Output;
+            string output = (await RunCapturedAsync("powercfg.exe", "/a")).Output;
             bool hasModernStandby = output.Contains("S0 Low Power Idle", StringComparison.OrdinalIgnoreCase);
             bool hasS3 = Regex.IsMatch(output, @"Standby\s*\(S3\)", RegexOptions.IgnoreCase);
 
@@ -81,7 +81,21 @@ public static class PowerPlanService
         }
     }
 
-    private static (string Output, int ExitCode) RunCaptured(string exe, string args)
+    /// <summary>
+    /// Shells out and captures combined stdout+stderr, bounded by a real timeout - the same
+    /// concurrent-read/bounded-wait/kill-on-timeout pattern TracerouteService.RunAsync already
+    /// established. The previous version called the blocking `proc.StandardOutput.ReadToEnd()`
+    /// (and StandardError.ReadToEnd()) synchronously *before* waiting for exit at all, which is
+    /// the classic .NET Process redirection deadlock (both streams' OS pipe buffers are small and
+    /// fixed-size - if the child fills one while nothing is draining it, the child blocks writing
+    /// and the parent blocks reading, forever), and then read `proc.WaitForExit(10000)`'s bool
+    /// result without checking it, so a process that legitimately took longer than 10s would throw
+    /// an InvalidOperationException from `proc.ExitCode` (undetermined). Reading both streams
+    /// concurrently via ReadToEndAsync and awaiting WaitForExitAsync under a bounded
+    /// CancellationTokenSource avoids the deadlock and lets a genuine timeout be handled as data
+    /// (ExitCode: null) rather than an exception.
+    /// </summary>
+    private static async Task<(string Output, int? ExitCode)> RunCapturedAsync(string exe, string args, int timeoutMs = 10000)
     {
         var psi = new ProcessStartInfo(exe, args)
         {
@@ -91,8 +105,22 @@ public static class PowerPlanService
             CreateNoWindow = true,
         };
         using var proc = Process.Start(psi) ?? throw new InvalidOperationException($"couldn't start {exe}");
-        string output = proc.StandardOutput.ReadToEnd() + proc.StandardError.ReadToEnd();
-        proc.WaitForExit(10000);
+
+        var outputTask = proc.StandardOutput.ReadToEndAsync();
+        var errorTask = proc.StandardError.ReadToEndAsync();
+
+        using var cts = new CancellationTokenSource(timeoutMs);
+        try
+        {
+            await proc.WaitForExitAsync(cts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            try { proc.Kill(); } catch { /* best-effort */ }
+            return ("(command timed out)", null);
+        }
+
+        string output = (await outputTask) + (await errorTask);
         return (output, proc.ExitCode);
     }
 }

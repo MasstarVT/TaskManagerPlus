@@ -179,7 +179,7 @@ public sealed class SystemSpecsViewModel : ObservableObject
         IsLoading = true;
         try
         {
-            var specs = await Task.Run(() => _service.Query());
+            var specs = await _service.QueryAsync();
             var (uptimeMonth, uptimeYear) = await Task.Run(() => BootPerformanceService.ComputeLongestUptimeRecords());
             Apply(specs);
             LongestUptimeThisMonthText = uptimeMonth is { } m ? FormatUptime(m) : "Not enough boot history yet";
