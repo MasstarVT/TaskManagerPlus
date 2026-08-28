@@ -20,6 +20,7 @@ public sealed class GpuViewModel : ObservableObject, IDisposable
 {
     private readonly GpuMonitorService _service = new();
     private readonly DispatcherTimer _timer;
+    private bool _isRefreshing;
 
     public bool IsAvailable => _service.IsAvailable;
 
@@ -54,9 +55,22 @@ public sealed class GpuViewModel : ObservableObject, IDisposable
     private async Task RefreshAsync()
     {
         if (!IsAvailable) return;
-        var snapshot = await Task.Run(() => _service.Sample());
-        LiveAdapters.Clear();
-        foreach (var a in snapshot) LiveAdapters.Add(a);
+        if (_isRefreshing) return;
+        _isRefreshing = true;
+        try
+        {
+            var snapshot = await Task.Run(() => _service.Sample());
+            LiveAdapters.Clear();
+            foreach (var a in snapshot) LiveAdapters.Add(a);
+        }
+        catch
+        {
+            // Best-effort - a failed sample shouldn't crash the timer loop.
+        }
+        finally
+        {
+            _isRefreshing = false;
+        }
     }
 
     public void Dispose()
