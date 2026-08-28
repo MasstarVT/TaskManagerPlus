@@ -139,6 +139,19 @@ public sealed class ProcessMonitorService : IDisposable
                 bool isSuspended = false;
                 try { isSuspended = ProcessControlService.IsSuspended(proc); } catch { /* ignore */ }
 
+                // Round 15, #852(a)/(c): integrity level + AppContainer flag, reusing this same
+                // already-open process handle (proc.Handle, the same one ReadGuiResourceCounts just
+                // used above) - both are cheap single-token-query calls, safe for a per-tick column.
+                // #852(b): protection level (PS_PROTECTION) opens its own short-lived handle since it
+                // needs PROCESS_QUERY_LIMITED_INFORMATION specifically - see
+                // ProcessTokenInspectionService's remarks.
+                string integrityLevel = "Unknown";
+                bool isAppContainer = false;
+                string protectionLevel = "Unknown";
+                try { integrityLevel = ProcessTokenInspectionService.ReadIntegrityLevel(proc.Handle); } catch { /* ignore */ }
+                try { isAppContainer = ProcessTokenInspectionService.ReadIsAppContainer(proc.Handle); } catch { /* ignore */ }
+                try { protectionLevel = ProcessTokenInspectionService.ReadProtectionLevel(pid); } catch { /* ignore */ }
+
                 string status = "Running";
                 int notRespondingSeconds = 0;
                 try
@@ -161,10 +174,21 @@ public sealed class ProcessMonitorService : IDisposable
 
                 double cpuPercentClamped = Math.Round(Math.Min(cpuPercent, 100.0 * _logicalProcessors), 1);
 
+                // #837: publisher (subject CN, falling back to issuer CN) - piggybacks on the
+                // same cached SignatureCheckService lookup SignatureStatus below already performs,
+                // so this costs nothing extra beyond the first check of a given file path.
+                string processName = SafeName(proc);
+                var signer = SignatureCheckService.GetSignerInfo(filePath);
+                string publisher = signer.SubjectCn ?? signer.IssuerCn ?? "Unknown";
+
+                // #840: expected-Microsoft-binary / near-miss-name check - see
+                // ProcessTrustService's remarks on why this stays cheap for a per-tick poll.
+                string? trustWarning = ProcessTrustService.Evaluate(processName, filePath);
+
                 rows.Add(new ProcessRow
                 {
                     Pid = pid,
-                    Name = SafeName(proc),
+                    Name = processName,
                     CpuPercent = cpuPercentClamped,
                     MemoryBytes = memoryBytes,
                     PrivateBytes = privateBytes,
@@ -181,6 +205,9 @@ public sealed class ProcessMonitorService : IDisposable
                     FilePath = filePath,
                     CommandLine = GetCommandLineCached(pid),
                     SignatureStatus = SignatureCheckService.GetStatus(filePath),
+                    Publisher = publisher,
+                    IsSelfSigned = signer.SelfSigned,
+                    TrustWarning = trustWarning,
                     IsHighPrivilege = HighPrivilegeAccounts.Contains(owner, StringComparer.OrdinalIgnoreCase),
                     ParentPid = GetParentPidCached(pid),
                     IsLeakSuspect = ComputeLeakSuspect(pid, memoryBytes),
@@ -190,6 +217,9 @@ public sealed class ProcessMonitorService : IDisposable
                     GdiHandleCount = gdiHandles,
                     UserHandleCount = userHandles,
                     IsSuspended = isSuspended,
+                    IntegrityLevel = integrityLevel,
+                    IsAppContainer = isAppContainer,
+                    ProtectionLevel = protectionLevel,
                 });
             }
             catch (Exception)
@@ -215,6 +245,7 @@ public sealed class ProcessMonitorService : IDisposable
 
         ComputeSpawnGroups(rows);
         ComputeDuplicateInstances(rows);
+        ComputeSecurityFlags(rows, seenPids);
 
         // Drop cached samples/owners/command lines for processes that no longer exist. The
         // signature cache is keyed by file path, not pid, so it isn't pruned here - it's small
@@ -293,6 +324,31 @@ public sealed class ProcessMonitorService : IDisposable
                 row.DuplicateInstanceCount = count;
                 row.IsDuplicateInstanceOutlier = outlier;
             }
+        }
+    }
+
+    /// <summary>Round 16, #854/#855/#856: combined suspicious-location / parent-child-anomaly /
+    /// living-off-the-land heuristics - all cheap string/path comparisons over data already
+    /// resolved above (FilePath/ParentName/ParentPid/IntegrityLevel/CommandLine), so this is safe
+    /// to run every tick per CLAUDE.md's "on-demand vs polled" rule. Runs after ParentName is
+    /// resolved (rows' second pass, above) since #855(a)/(b)/(c) key off it, and needs livePids
+    /// (this same snapshot's seenPids) for #855(d)'s "parent already exited" check.</summary>
+    private static void ComputeSecurityFlags(List<ProcessRow> rows, HashSet<int> livePids)
+    {
+        foreach (var row in rows)
+        {
+            var reasons = new List<string>(1);
+
+            var suspiciousLocation = SuspiciousLocationHeuristicService.Evaluate(row.FilePath);
+            if (suspiciousLocation is not null) reasons.Add(suspiciousLocation);
+
+            var parentChildAnomaly = ParentChildAnomalyService.Evaluate(row, livePids);
+            if (parentChildAnomaly is not null) reasons.Add(parentChildAnomaly);
+
+            var livingOffTheLand = LivingOffTheLandService.Evaluate(row.Name, row.CommandLine);
+            if (livingOffTheLand is not null) reasons.Add(livingOffTheLand);
+
+            row.SecurityFlagReason = reasons.Count > 0 ? string.Join("; ", reasons) : null;
         }
     }
 

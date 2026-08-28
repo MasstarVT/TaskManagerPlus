@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.IO;
 using System.Windows;
 using System.Windows.Data;
 using System.Windows.Threading;
@@ -45,19 +46,65 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
             {
                 // Stale on-demand results from a previous selection would be misleading.
                 SelectedProcessModules.Clear();
+                SideLoadFindings.Clear();
+                SelectedProcessAppDirWarning = null;
                 SelectedProcessEnvironment.Clear();
                 SelectedProcessHandleTypes.Clear();
                 SelectedProcessHostedServices.Clear();
                 FileLockResults.Clear();
+                SelectedProcessUnbackedMemory.Clear();
+                SelectedProcessHollowingCheck.Clear();
+                SelectedProcessForeignThreads.Clear();
+                SelectedProcessMitigations.Clear();
+                SelectedProcessPrivileges.Clear();
+                DecodedCommandLineText = null;
                 LoadAffinityForSelection();
             }
         }
     }
 
-    /// <summary>Loaded modules/DLLs for SelectedProcess (#39), populated on demand via
-    /// ViewModulesCommand rather than every tick - walking a process's full module list is
-    /// comparatively expensive and something Task Manager itself also only does on request.</summary>
-    public ObservableCollection<string> SelectedProcessModules { get; } = new();
+    /// <summary>Loaded modules/DLLs for SelectedProcess (#39, extended by Round 15 #849 with
+    /// signature/publisher/user-writable-location trust columns), populated on demand via
+    /// ViewModulesCommand rather than every tick - walking a process's full module list (and, since
+    /// #849, checking every module's signature) is comparatively expensive and something Task
+    /// Manager itself also only does on request. See ModuleTrustInspectionService.</summary>
+    public ObservableCollection<ProcessModuleInfo> SelectedProcessModules { get; } = new();
+
+    /// <summary>Round 15, #850: DLL side-loading findings from the same module inspection pass above -
+    /// a filtered view (IsSideLoadSuspect) of SelectedProcessModules, kept as its own collection so
+    /// the XAML "Side-loading risk" panel doesn't need a converter/filter to stay in sync.</summary>
+    public ObservableCollection<ProcessModuleInfo> SideLoadFindings { get; } = new();
+
+    /// <summary>Round 15, #850: set when the selected process's own application directory is itself
+    /// in a user-writable location - null when clean/not yet checked.</summary>
+    private string? _selectedProcessAppDirWarning;
+    public string? SelectedProcessAppDirWarning { get => _selectedProcessAppDirWarning; set => SetProperty(ref _selectedProcessAppDirWarning, value); }
+
+    /// <summary>Round 15, #846: unbacked executable memory scan results for SelectedProcess -
+    /// see UnbackedExecutableMemoryService.</summary>
+    public ObservableCollection<string> SelectedProcessUnbackedMemory { get; } = new();
+
+    /// <summary>Round 15, #847: hollowed-image indicator results for SelectedProcess's main module -
+    /// see HollowedImageIndicatorService.</summary>
+    public ObservableCollection<string> SelectedProcessHollowingCheck { get; } = new();
+
+    /// <summary>Round 15, #848: foreign (unbacked) thread start-address findings for SelectedProcess -
+    /// see ForeignThreadStartService.</summary>
+    public ObservableCollection<string> SelectedProcessForeignThreads { get; } = new();
+
+    /// <summary>Round 15, #851: mitigation-policy badge row for SelectedProcess - see
+    /// ProcessMitigationService.</summary>
+    public ObservableCollection<MitigationFlag> SelectedProcessMitigations { get; } = new();
+
+    /// <summary>Round 16, #853: token privilege audit results for SelectedProcess - see
+    /// TokenPrivilegeAuditService.</summary>
+    public ObservableCollection<TokenPrivilegeInfo> SelectedProcessPrivileges { get; } = new();
+
+    /// <summary>Round 16, #856: decoded text from SelectedProcess's -EncodedCommand PowerShell
+    /// argument (or an error message if decoding failed) - null until DecodeEncodedCommandCommand
+    /// has been run. See LivingOffTheLandService.DecodeEncodedCommand.</summary>
+    private string? _decodedCommandLineText;
+    public string? DecodedCommandLineText { get => _decodedCommandLineText; set => SetProperty(ref _decodedCommandLineText, value); }
 
     /// <summary>Round 7 #3: environment variables for SelectedProcess, populated on demand via
     /// ViewEnvironmentCommand - see ProcessEnvironmentService for why this needs a PEB memory walk
@@ -98,6 +145,20 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
     public RelayCommand ViewHandleTypesCommand { get; }
     public RelayCommand ViewHostedServicesCommand { get; }
     public RelayCommand LookupFileLockCommand { get; }
+    /// <summary>Round 15, #846.</summary>
+    public RelayCommand ViewUnbackedMemoryCommand { get; }
+    /// <summary>Round 15, #847.</summary>
+    public RelayCommand ViewHollowingCheckCommand { get; }
+    /// <summary>Round 15, #848.</summary>
+    public RelayCommand ViewForeignThreadsCommand { get; }
+    /// <summary>Round 15, #851.</summary>
+    public RelayCommand ViewMitigationsCommand { get; }
+    /// <summary>Round 16, #853.</summary>
+    public RelayCommand ViewPrivilegesCommand { get; }
+    /// <summary>Round 16, #856.</summary>
+    public RelayCommand DecodeEncodedCommandCommand { get; }
+    /// <summary>Round 17, #864: "Scan this process's image file" context-menu item.</summary>
+    public AsyncRelayCommand ScanWithDefenderCommand { get; }
     public RelayCommand TrimWorkingSetCommand { get; }
     public RelayCommand SuspendCommand { get; }
     public RelayCommand ResumeCommand { get; }
@@ -144,11 +205,18 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
         EndTaskCommand = new RelayCommand(_ => EndSelected(tree: false), _ => SelectedProcess is not null);
         EndProcessTreeCommand = new RelayCommand(_ => EndSelected(tree: true), _ => SelectedProcess is not null);
         RefreshNowCommand = new RelayCommand(_ => _ = RefreshAsync());
-        ViewModulesCommand = new RelayCommand(_ => LoadSelectedProcessModules(), _ => SelectedProcess is not null);
+        ViewModulesCommand = new RelayCommand(_ => _ = LoadSelectedProcessModulesAsync(), _ => SelectedProcess is not null);
         ViewEnvironmentCommand = new RelayCommand(_ => LoadSelectedProcessEnvironment(), _ => SelectedProcess is not null);
         ViewHandleTypesCommand = new RelayCommand(_ => _ = LoadSelectedProcessHandleTypesAsync(), _ => SelectedProcess is not null);
         ViewHostedServicesCommand = new RelayCommand(_ => LoadSelectedProcessHostedServices(), _ => IsSvchostSelected());
         LookupFileLockCommand = new RelayCommand(_ => _ = LookupFileLockAsync(), _ => !string.IsNullOrWhiteSpace(FileLockPath));
+        ViewUnbackedMemoryCommand = new RelayCommand(_ => _ = LoadSelectedProcessUnbackedMemoryAsync(), _ => SelectedProcess is not null);
+        ViewHollowingCheckCommand = new RelayCommand(_ => _ = LoadSelectedProcessHollowingCheckAsync(), _ => SelectedProcess is not null);
+        ViewForeignThreadsCommand = new RelayCommand(_ => _ = LoadSelectedProcessForeignThreadsAsync(), _ => SelectedProcess is not null);
+        ViewMitigationsCommand = new RelayCommand(_ => _ = LoadSelectedProcessMitigationsAsync(), _ => SelectedProcess is not null);
+        ViewPrivilegesCommand = new RelayCommand(_ => _ = LoadSelectedProcessPrivilegesAsync(), _ => SelectedProcess is not null);
+        DecodeEncodedCommandCommand = new RelayCommand(_ => DecodeEncodedCommand(), _ => HasEncodedCommand());
+        ScanWithDefenderCommand = new AsyncRelayCommand(ScanSelectedWithDefenderAsync, () => !string.IsNullOrWhiteSpace(SelectedProcess?.FilePath));
         TrimWorkingSetCommand = new RelayCommand(_ => TrimWorkingSet(), _ => SelectedProcess is not null);
         SuspendCommand = new RelayCommand(_ => SetSuspended(true), _ => SelectedProcess is not null);
         ResumeCommand = new RelayCommand(_ => SetSuspended(false), _ => SelectedProcess is not null);
@@ -263,9 +331,13 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
                 existing.GdiHandleCount = fresh.GdiHandleCount;
                 existing.UserHandleCount = fresh.UserHandleCount;
                 existing.IsSuspended = fresh.IsSuspended;
+                existing.IntegrityLevel = fresh.IntegrityLevel;
+                existing.IsAppContainer = fresh.IsAppContainer;
+                existing.ProtectionLevel = fresh.ProtectionLevel;
                 existing.SpawnGroupSize = fresh.SpawnGroupSize;
                 existing.DuplicateInstanceCount = fresh.DuplicateInstanceCount;
                 existing.IsDuplicateInstanceOutlier = fresh.IsDuplicateInstanceOutlier;
+                existing.SecurityFlagReason = fresh.SecurityFlagReason;
                 // CommandLine/FilePath/StartTime/User/ParentPid/ParentName don't change for the
                 // lifetime of a pid - no need to reassign them every tick like the values above
                 // that actually vary.
@@ -332,26 +404,42 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
             _ = RefreshAsync();
     }
 
-    /// <summary>Loads SelectedProcess's module/DLL list (#39) - a plain synchronous read of
-    /// Process.Modules, which is itself fast; the expensive part avoided by making this on-demand
-    /// is doing it for every process on every tick, not this one call.</summary>
-    private void LoadSelectedProcessModules()
+    /// <summary>Loads SelectedProcess's module/DLL list (#39), now with Round 15 #849's trust columns
+    /// (signature/publisher/user-writable-location) and #850's side-loading findings - see
+    /// ModuleTrustInspectionService. Signature-checking every module is real work (a WinVerifyTrust
+    /// chain call per distinct path on a cache miss), so unlike the original plain-string-list
+    /// version this now runs off the UI thread via Task.Run.</summary>
+    private async Task LoadSelectedProcessModulesAsync()
     {
-        SelectedProcessModules.Clear();
         var target = SelectedProcess;
         if (target is null) return;
+        int pid = target.Pid;
 
-        try
+        SelectedProcessModules.Clear();
+        SideLoadFindings.Clear();
+        SelectedProcessAppDirWarning = null;
+
+        var result = await Task.Run(() => ModuleTrustInspectionService.Inspect(pid));
+
+        // The selection (or the whole app) may have moved on while this ran in the background.
+        if (SelectedProcess?.Pid != pid) return;
+
+        if (result.Error is not null)
         {
-            using var proc = Process.GetProcessById(target.Pid);
-            foreach (ProcessModule module in proc.Modules)
-                SelectedProcessModules.Add($"{module.ModuleName}  —  {module.FileName}");
+            SelectedProcessModules.Add(new ProcessModuleInfo { ModuleName = "(error)", FilePath = result.Error });
+            return;
         }
-        catch (Exception ex)
+
+        foreach (var module in result.Modules)
         {
-            // Protected process (access denied) or it exited before this ran - a real,
-            // expected limitation worth surfacing inline rather than failing silently.
-            SelectedProcessModules.Add($"(couldn't read modules: {ex.Message})");
+            SelectedProcessModules.Add(module);
+            if (module.IsSideLoadSuspect) SideLoadFindings.Add(module);
+        }
+
+        if (result.AppDirectoryIsUserWritable)
+        {
+            SelectedProcessAppDirWarning =
+                $"This process's application directory (\"{result.ApplicationDirectory}\") is in a user-writable location - worth a closer look. Quick flag, not a verdict.";
         }
     }
 
@@ -391,6 +479,193 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
         }
         foreach (var (typeName, count) in counts)
             SelectedProcessHandleTypes.Add($"{typeName}: {count}");
+    }
+
+    /// <summary>Round 15, #846: on-demand unbacked-executable-memory scan for SelectedProcess - see
+    /// UnbackedExecutableMemoryService for the safety discipline behind this call.</summary>
+    private async Task LoadSelectedProcessUnbackedMemoryAsync()
+    {
+        var target = SelectedProcess;
+        if (target is null) return;
+        int pid = target.Pid;
+
+        SelectedProcessUnbackedMemory.Clear();
+        SelectedProcessUnbackedMemory.Add("Scanning…");
+
+        var result = await Task.Run(() => UnbackedExecutableMemoryService.Scan(pid));
+
+        if (SelectedProcess?.Pid != pid) return;
+
+        SelectedProcessUnbackedMemory.Clear();
+        SelectedProcessUnbackedMemory.Add(
+            "JITs (browsers, .NET, Java) legitimately produce unbacked executable memory - this is a comparison signal, not a verdict.");
+        string totalSizeText = result.TotalBytes > 0 ? Formatting.FormatBytes(result.TotalBytes) : "0 B";
+        SelectedProcessUnbackedMemory.Add(
+            $"{result.RegionCount:N0} unbacked executable region(s), {totalSizeText} total ({result.RegionsWalked:N0} regions inspected{(result.Completed ? "" : ", scan abandoned after timing out")}).");
+        if (result.Note is not null)
+            SelectedProcessUnbackedMemory.Add(result.Note);
+    }
+
+    /// <summary>Round 15, #847: on-demand hollowed-image indicator for SelectedProcess's main module -
+    /// see HollowedImageIndicatorService.</summary>
+    private async Task LoadSelectedProcessHollowingCheckAsync()
+    {
+        var target = SelectedProcess;
+        if (target is null) return;
+        int pid = target.Pid;
+
+        SelectedProcessHollowingCheck.Clear();
+        SelectedProcessHollowingCheck.Add("Checking…");
+
+        var result = await Task.Run(() => HollowedImageIndicatorService.CheckMainModule(pid));
+
+        if (SelectedProcess?.Pid != pid) return;
+
+        SelectedProcessHollowingCheck.Clear();
+        SelectedProcessHollowingCheck.Add($"Reported path: {result.ReportedPath ?? "(unknown)"}");
+        SelectedProcessHollowingCheck.Add($"Actually-mapped path: {result.MappedPath ?? "(couldn't be read)"}");
+        SelectedProcessHollowingCheck.Add($"Image file still exists on disk: {(result.FileExists ? "Yes" : "No")}");
+        SelectedProcessHollowingCheck.Add($"Path mismatch: {(result.PathMismatch ? "Yes" : "No")}");
+        if (result.Note is not null)
+            SelectedProcessHollowingCheck.Add(result.Note);
+    }
+
+    /// <summary>Round 15, #848: on-demand foreign-thread-start-address scan for SelectedProcess - see
+    /// ForeignThreadStartService for the safety discipline behind this call.</summary>
+    private async Task LoadSelectedProcessForeignThreadsAsync()
+    {
+        var target = SelectedProcess;
+        if (target is null) return;
+        int pid = target.Pid;
+
+        SelectedProcessForeignThreads.Clear();
+        SelectedProcessForeignThreads.Add("Scanning…");
+
+        var result = await Task.Run(() => ForeignThreadStartService.Scan(pid));
+
+        if (SelectedProcess?.Pid != pid) return;
+
+        SelectedProcessForeignThreads.Clear();
+        if (result.Findings.Count == 0)
+        {
+            SelectedProcessForeignThreads.Add($"No unbacked thread start addresses found ({result.ThreadsScanned} of {result.ThreadsTotal} threads checked).");
+        }
+        else
+        {
+            foreach (var finding in result.Findings)
+                SelectedProcessForeignThreads.Add($"Thread {finding.ThreadId} started in unbacked memory at 0x{finding.StartAddress:X}");
+        }
+        if (result.Note is not null)
+            SelectedProcessForeignThreads.Add(result.Note);
+    }
+
+    /// <summary>Round 15, #851: on-demand mitigation-policy badge row for SelectedProcess - see
+    /// ProcessMitigationService.</summary>
+    private async Task LoadSelectedProcessMitigationsAsync()
+    {
+        var target = SelectedProcess;
+        if (target is null) return;
+        int pid = target.Pid;
+
+        SelectedProcessMitigations.Clear();
+
+        var flags = await Task.Run(() => ProcessMitigationService.ReadMitigations(pid));
+
+        if (SelectedProcess?.Pid != pid) return;
+
+        foreach (var flag in flags)
+            SelectedProcessMitigations.Add(flag);
+    }
+
+    /// <summary>Round 16, #853: on-demand token-privilege audit for SelectedProcess - see
+    /// TokenPrivilegeAuditService. "Non-Microsoft" is decided from SelectedProcess.Publisher, already
+    /// computed every tick by ProcessMonitorService/SignatureCheckService, so this needs no extra
+    /// signature check of its own.</summary>
+    private async Task LoadSelectedProcessPrivilegesAsync()
+    {
+        var target = SelectedProcess;
+        if (target is null) return;
+        int pid = target.Pid;
+        bool isMicrosoftSigned = target.Publisher.Contains("Microsoft", StringComparison.OrdinalIgnoreCase);
+
+        SelectedProcessPrivileges.Clear();
+
+        var (privileges, error) = await Task.Run(() => TokenPrivilegeAuditService.ReadPrivileges(pid, isMicrosoftSigned));
+
+        // The selection (or the whole app) may have moved on while this ran in the background.
+        if (SelectedProcess?.Pid != pid) return;
+
+        if (error is not null)
+        {
+            StatusMessage = error;
+            return;
+        }
+        foreach (var privilege in privileges)
+            SelectedProcessPrivileges.Add(privilege);
+    }
+
+    /// <summary>Round 16, #856: true only when SelectedProcess's command line matches a PowerShell
+    /// -EncodedCommand/-enc argument - see LivingOffTheLandService.TryExtractEncodedCommandArgument.</summary>
+    private bool HasEncodedCommand() =>
+        SelectedProcess is not null &&
+        LivingOffTheLandService.TryExtractEncodedCommandArgument(SelectedProcess.Name, SelectedProcess.CommandLine) is not null;
+
+    /// <summary>Round 16, #856: decodes SelectedProcess's -EncodedCommand argument (UTF-16LE base64,
+    /// PowerShell's documented encoding for this flag) into DecodedCommandLineText - a malformed/
+    /// truncated base64 string is reported as a decode failure rather than crashing, per this app's
+    /// "quick flag, not a verdict" framing (a failed decode isn't itself a finding).</summary>
+    private void DecodeEncodedCommand()
+    {
+        var target = SelectedProcess;
+        if (target is null) return;
+
+        var base64 = LivingOffTheLandService.TryExtractEncodedCommandArgument(target.Name, target.CommandLine);
+        if (base64 is null)
+        {
+            DecodedCommandLineText = null;
+            return;
+        }
+
+        try
+        {
+            DecodedCommandLineText = LivingOffTheLandService.DecodeEncodedCommand(base64);
+        }
+        catch (Exception ex)
+        {
+            DecodedCommandLineText = $"(couldn't decode - {ex.Message})";
+        }
+    }
+
+    /// <summary>Round 17, #864: "Scan this process's image file" - shells to MpCmdRun.exe
+    /// -Scan -ScanType 3 -File &lt;image path&gt; and reports the result via StatusMessage. A quick
+    /// trigger from the Processes tab, distinct from the Security tab's full streamed-output scan
+    /// UI - this one just waits (up to 5 minutes) and reports pass/fail.</summary>
+    private async Task ScanSelectedWithDefenderAsync()
+    {
+        var target = SelectedProcess;
+        if (target is null || string.IsNullOrWhiteSpace(target.FilePath))
+        {
+            StatusMessage = "Selected process has no resolvable image path.";
+            return;
+        }
+
+        string path = target.FilePath;
+        StatusMessage = $"Scanning {Path.GetFileName(path)} with Windows Defender...";
+        try
+        {
+            var (exitCode, output) = await Task.Run(() => DefenderService.RunCapturedWithExitCode(
+                DefenderService.ResolveMpCmdRunPath(),
+                DefenderService.BuildScanArgs(DefenderService.DefenderScanType.Custom, path),
+                TimeSpan.FromMinutes(5)));
+
+            StatusMessage = exitCode == 0
+                ? $"Defender scan of {Path.GetFileName(path)} finished - no threats reported."
+                : $"Defender scan of {Path.GetFileName(path)} finished (exit code {exitCode}). {output.Trim()}";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Couldn't run Defender scan: {ex.Message}";
+        }
     }
 
     /// <summary>Round 7 #17: true only for a process actually named svchost - the reverse-lookup

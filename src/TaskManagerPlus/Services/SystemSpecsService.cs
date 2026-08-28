@@ -881,7 +881,10 @@ public sealed class SystemSpecsService
         VbsServicesRunning = vbsServices,
     };
 
-    private static bool? ReadSecureBootEnabled()
+    /// <summary>Round 18, #872/#879: made internal (was private) so PlatformSecurityService can
+    /// reuse this exact same read for its VBS-prerequisite and Secure Boot detail cards instead of
+    /// duplicating the registry key/value name.</summary>
+    internal static bool? ReadSecureBootEnabled()
     {
         try
         {
@@ -1075,8 +1078,12 @@ public sealed class SystemSpecsService
     /// heuristic, not a verified fact - the same "quick visual flag, not a security verdict"
     /// tradeoff ProcessMonitorService's signature check documents - so it's presented as such
     /// rather than a precise on/off state.
+    ///
+    /// Round 17, #869/#870: made internal (was private) so DefenderService can reuse this same
+    /// SecurityCenter2 query for its policy-disabled/duplicated-scanner diagnoses instead of
+    /// duplicating the WMI call and the productState decode.
     /// </summary>
-    private static List<AntivirusInfo> ReadAntivirusProducts(out bool multipleActive)
+    internal static List<AntivirusInfo> ReadAntivirusProducts(out bool multipleActive)
     {
         var products = new List<AntivirusInfo>();
         try

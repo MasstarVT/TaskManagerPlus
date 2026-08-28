@@ -500,7 +500,7 @@
                                     <Style TargetType="TextBlock" BasedOn="{StaticResource SpecValue}">
                                         <Setter Property="Text" Value="No" />
                                         <Style.Triggers>
-                                            <DataTrigger Binding="{Binding RebootPending}" Value="True">
+                            <DataTrigger Binding="{Binding RebootPending}" Value="True">
                                                 <Setter Property="Text" Value="Yes" />
                                                 <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
                                             </DataTrigger>
@@ -510,6 +510,13 @@
                             </TextBlock>
                         </StackPanel>
                     </UniformGrid>
+                    <!-- Round 18, #878/#879: pointer to the richer HVCI/VBS-prerequisite/LSA-
+                         protection/Secure-Boot-setup-mode/TPM-detail reads on the Security tab's
+                         Platform security section - plain text, not a live navigation link (this
+                         app has no cross-tab navigation plumbing yet), so this stays a small,
+                         honest deviation from a literal clickable "link" per the item's own text. -->
+                    <TextBlock Margin="0,10,0,0" TextWrapping="Wrap" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}"
+                               Text="More detail - HVCI/VBS prerequisites, LSA protection, Secure Boot setup mode, extended TPM info, and more - is on the Security tab's Platform security section." />
                 </StackPanel>
             </Border>
 

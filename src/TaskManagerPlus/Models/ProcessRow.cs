@@ -69,6 +69,27 @@ public sealed class ProcessRow : ObservableObject
     private string _signatureStatus = "Unknown";
     public string SignatureStatus { get => _signatureStatus; set => SetProperty(ref _signatureStatus, value); }
 
+    /// <summary>#837: signing certificate's subject CN (falling back to issuer CN, then
+    /// "Unknown") - see SignatureCheckService.GetSignerInfo. Populated from the same cached
+    /// per-path lookup SignatureStatus already triggers, so this costs nothing extra.</summary>
+    private string _publisher = "Unknown";
+    public string Publisher { get => _publisher; set => SetProperty(ref _publisher, value); }
+
+    /// <summary>#837: true when the signing certificate's subject and issuer are the same (a
+    /// self-signed cert) - worth calling out since a self-signed "Microsoft"-looking publisher
+    /// name would otherwise look legitimate at a glance.</summary>
+    private bool _isSelfSigned;
+    public bool IsSelfSigned { get => _isSelfSigned; set => SetProperty(ref _isSelfSigned, value); }
+
+    /// <summary>#840: set only for the handful of well-known Windows system process names
+    /// (svchost, lsass, csrss, ...) when the running image is somewhere other than
+    /// System32/SysWOW64 or isn't Microsoft-signed, OR for a near-miss name that looks like a
+    /// typo-squat of one of those names (e.g. "scvhost", "svch0st") - see
+    /// ProcessTrustService.EvaluateProcessTrust. Null means "nothing to flag" (not evaluated, or
+    /// evaluated and clean). "Quick flag, not a verdict" - see ProcessTrustService's remarks.</summary>
+    private string? _trustWarning;
+    public string? TrustWarning { get => _trustWarning; set => SetProperty(ref _trustWarning, value); }
+
     /// <summary>True when User is SYSTEM/LOCAL SERVICE/NETWORK SERVICE/an Administrators-group
     /// account - i.e. running with more privilege than an ordinary signed-in user, worth calling
     /// out when auditing for something unexpected among running processes.</summary>
@@ -153,4 +174,35 @@ public sealed class ProcessRow : ObservableObject
     public long PagedPoolBytes { get => _pagedPoolBytes; set => SetProperty(ref _pagedPoolBytes, value); }
 
     public double MemoryMb => MemoryBytes / 1024.0 / 1024.0;
+
+    /// <summary>Round 15, #852(a): integrity level (Untrusted/Low/Medium/Medium+/High/System/
+    /// Protected/Unknown) - see ProcessTokenInspectionService.ReadIntegrityLevel. Cheap enough
+    /// (one OpenProcessToken + one GetTokenInformation call) to read every tick.</summary>
+    private string _integrityLevel = "Unknown";
+    public string IntegrityLevel { get => _integrityLevel; set => SetProperty(ref _integrityLevel, value); }
+
+    /// <summary>Round 15, #852(c): TokenIsAppContainer - true for a sandboxed AppContainer process
+    /// (most UWP/Store apps, some browser renderer processes) - see
+    /// ProcessTokenInspectionService.ReadIsAppContainer.</summary>
+    private bool _isAppContainer;
+    public bool IsAppContainer { get => _isAppContainer; set => SetProperty(ref _isAppContainer, value); }
+
+    /// <summary>Round 15, #852(b): protection level (None/PPL/Protected, plus a signer subtype like
+    /// "PPL (Antimalware)") via NtQueryInformationProcess's PS_PROTECTION byte - see
+    /// ProcessTokenInspectionService.ReadProtectionLevel. A single native call, cheap enough for a
+    /// per-tick column - see that class's remarks on why the direct PS_PROTECTION read was chosen
+    /// over the access-denied-heuristic proxy #852 offers as a fallback.</summary>
+    private string _protectionLevel = "Unknown";
+    public string ProtectionLevel { get => _protectionLevel; set => SetProperty(ref _protectionLevel, value); }
+
+    /// <summary>Round 16, #854/#855/#856: combined "quick flag" reason text from three cheap
+    /// per-tick heuristics - suspicious image location (#854), parent-child anomaly rules (#855),
+    /// and living-off-the-land command-line patterns (#856) - all computed in
+    /// ProcessMonitorService.Sample from data it already collects (FilePath/ParentName/ParentPid/
+    /// IntegrityLevel/CommandLine), with no new syscalls. Null means nothing to flag; more than one
+    /// applying is joined with "; ". Rendered with the same "Check this" badge pattern TrustWarning
+    /// above already established. "Quick flag, not a verdict" - see each heuristic service's own
+    /// remarks.</summary>
+    private string? _securityFlagReason;
+    public string? SecurityFlagReason { get => _securityFlagReason; set => SetProperty(ref _securityFlagReason, value); }
 }

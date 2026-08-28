@@ -49,6 +49,15 @@ public sealed class StartupItem : ObservableObject
     private string _signatureStatus = "Checking...";
     public string SignatureStatus { get => _signatureStatus; set => SetProperty(ref _signatureStatus, value); }
 
+    /// <summary>#837: signing certificate's subject CN (falling back to issuer CN, then
+    /// "Unknown") - see SignatureCheckService.GetSignerInfo, populated alongside SignatureStatus
+    /// above in StartupViewModel.Refresh.</summary>
+    private string _publisher = "Checking...";
+    public string Publisher { get => _publisher; set => SetProperty(ref _publisher, value); }
+
+    private bool _isSelfSigned;
+    public bool IsSelfSigned { get => _isSelfSigned; set => SetProperty(ref _isSelfSigned, value); }
+
     /// <summary>Round 8 #21: file size and last-modified time of the target executable, read by
     /// StartupManagerService.Sample() - null for a file that can't be resolved or no longer exists.</summary>
     public long? FileSizeBytes { get; init; }

@@ -18,6 +18,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public StabilityViewModel Stability { get; } = new();
     public SummaryViewModel Summary { get; }
 
+    // Round 13, #801: Security tab - on-demand, same shape as Startup/SystemSpecs/Stability
+    // above. Not part of TabShortcutOrder below (Ctrl+1..9 only covers the first nine tabs today).
+    public SecurityViewModel Security { get; } = new();
+
     // Thin wrappers over the shared Performance sampler (see CpuViewModel's remarks) - the
     // CPU/Memory/Storage/Network tabs are split views of one underlying data source, not four
     // independent pollers.

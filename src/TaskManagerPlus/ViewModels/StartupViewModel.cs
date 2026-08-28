@@ -72,6 +72,13 @@ public sealed class StartupViewModel : ObservableObject
     public bool IsLoadingShellExtensions { get => _isLoadingShellExtensions; private set => SetProperty(ref _isLoadingShellExtensions, value); }
     public AsyncRelayCommand LoadShellExtensionsCommand { get; }
 
+    private ShellExtensionInfo? _selectedShellExtension;
+    public ShellExtensionInfo? SelectedShellExtension { get => _selectedShellExtension; set => SetProperty(ref _selectedShellExtension, value); }
+
+    // #829: approve/block toggle - writes/removes the CLSID under "Shell Extensions\Approved"
+    // (ShellExtensionService.SetApproved) rather than unregistering anything.
+    public RelayCommand ToggleShellExtensionApprovedCommand { get; }
+
     // #89/#90: boot time breakdown for the most recent boot, plus a small self-recorded trend
     // across sessions - see BootPerformanceService's remarks on why the breakdown is an adaptive
     // field list rather than fixed named properties.
@@ -116,6 +123,7 @@ public sealed class StartupViewModel : ObservableObject
 
         LoadBrowserExtensionsCommand = new AsyncRelayCommand(LoadBrowserExtensionsAsync);
         LoadShellExtensionsCommand = new AsyncRelayCommand(LoadShellExtensionsAsync);
+        ToggleShellExtensionApprovedCommand = new RelayCommand(param => ToggleShellExtensionApproved(param as ShellExtensionInfo ?? SelectedShellExtension));
 
         Refresh();
         LoadBootPerformance();
@@ -156,6 +164,23 @@ public sealed class StartupViewModel : ObservableObject
         finally
         {
             IsLoadingShellExtensions = false;
+        }
+    }
+
+    private void ToggleShellExtensionApproved(ShellExtensionInfo? extension)
+    {
+        if (extension is null) return;
+
+        bool newState = !extension.IsApproved;
+        var (success, error) = ShellExtensionService.SetApproved(extension.Clsid, extension.Name, newState);
+        if (success)
+        {
+            extension.IsApproved = newState;
+            StatusMessage = $"{extension.Name} {(newState ? "approved" : "unapproved")}.";
+        }
+        else
+        {
+            StatusMessage = $"Couldn't change {extension.Name}: {error}";
         }
     }
 
@@ -263,12 +288,24 @@ public sealed class StartupViewModel : ObservableObject
         // #18: signed/unsigned trust badge, reusing SignatureCheckService's shared per-path cache
         // (extracted from ProcessMonitorService in Round 2) rather than a duplicate check - also
         // off the UI thread, since a first-time signature check reads the file from disk.
+        // #837: publisher/self-signed piggyback on this same per-item background pass.
         _ = Task.Run(() =>
         {
-            var statuses = items.ToDictionary(item => item, item => SignatureCheckService.GetStatus(StartupManagerService.ExtractPath(item.Command)));
+            var results = items.ToDictionary(item => item, item =>
+            {
+                var path = StartupManagerService.ExtractPath(item.Command);
+                var status = SignatureCheckService.GetStatus(path);
+                var signer = SignatureCheckService.GetSignerInfo(path);
+                return (status, publisher: signer.SubjectCn ?? signer.IssuerCn ?? "Unknown", signer.SelfSigned);
+            });
             System.Windows.Application.Current?.Dispatcher.Invoke(() =>
             {
-                foreach (var (item, status) in statuses) item.SignatureStatus = status;
+                foreach (var (item, result) in results)
+                {
+                    item.SignatureStatus = result.status;
+                    item.Publisher = result.publisher;
+                    item.IsSelfSigned = result.SelfSigned;
+                }
             });
         });
     }

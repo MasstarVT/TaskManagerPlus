@@ -140,6 +140,82 @@
                 </StackPanel>
             </Border>
 
+            <!-- Round 19, #888: DNS posture - per-adapter configured DNS servers cross-referenced
+                 against DHCP status (flags the "static DNS on an otherwise-DHCP adapter" shape a
+                 DNS-hijack leaves), DNS-over-HTTPS template state, and NRPT policy rules.
+                 Deliberately its own on-demand button, NOT part of the 15s connectivity timer
+                 above - see NetworkViewModel/DnsPostureService's remarks for why. The
+                 static-DNS-on-DHCP finding is mirrored to the Security tab's Network exposure
+                 section via its own independent "Check DNS posture" button there. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="DNS posture" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Padding="10,4" Command="{Binding CheckDnsPostureCommand}">
+                            <TextBlock>
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="Check DNS posture" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsCheckingDnsPosture}" Value="True">
+                                                <Setter Property="Text" Value="Checking..." />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Button>
+                    </Grid>
+                    <TextBlock Text="{Binding DnsPostureStatusText}" Style="{StaticResource SubStat}" Margin="0,4,0,8" TextWrapping="Wrap" />
+
+                    <StackPanel Visibility="{Binding DnsPosture, Converter={StaticResource NullToVisibilityConverter}}">
+                        <ItemsControl ItemsSource="{Binding DnsPosture.Adapters}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Padding="8" Margin="0,0,0,6" CornerRadius="4" Background="{DynamicResource BgElevatedBrush}">
+                                        <StackPanel>
+                                            <TextBlock FontSize="12.5" FontWeight="SemiBold" Text="{Binding Description}" TextWrapping="Wrap" />
+                                            <TextBlock FontSize="12" Margin="0,2,0,0" TextWrapping="Wrap">
+                                                <Run Text="DHCP: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding DhcpEnabledText}" />
+                                                <Run Text="   DNS servers: " Foreground="{DynamicResource TextSecondaryBrush}" />
+                                                <Run Text="{Binding ConfiguredServers, Converter={StaticResource StringListJoinConverter}}" />
+                                            </TextBlock>
+                                            <TextBlock FontSize="11.5" Margin="0,4,0,0" TextWrapping="Wrap" Foreground="{DynamicResource WarningBrush}"
+                                                       Visibility="{Binding StaticDnsOnDhcpAdapter, Converter={StaticResource BoolToVisibilityConverter}}"
+                                                       Text="Static DNS set on an otherwise-DHCP adapter - the shape a DNS hijack leaves (also common as a deliberate choice, e.g. 1.1.1.1/8.8.8.8/a Pi-hole). Mirrored to the Security tab's Network exposure section." />
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+
+                        <TextBlock Margin="0,4,0,0" TextWrapping="Wrap">
+                            <Run Text="DNS-over-HTTPS: " Foreground="{DynamicResource TextSecondaryBrush}" />
+                            <Run Text="{Binding DnsPosture.DohAvailabilityText}" />
+                        </TextBlock>
+                        <ItemsControl ItemsSource="{Binding DnsPosture.DohServers}" Margin="0,2,0,0">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock FontSize="11.5" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}">
+                                        <Run Text="{Binding ServerAddress}" /><Run Text=" - template: " /><Run Text="{Binding DohTemplate}" /><Run Text=" - auto-upgrade: " /><Run Text="{Binding AutoUpgradeText}" />
+                                    </TextBlock>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+
+                        <TextBlock Margin="0,8,0,0" TextWrapping="Wrap">
+                            <Run Text="NRPT policy rules: " Foreground="{DynamicResource TextSecondaryBrush}" />
+                            <Run Text="{Binding DnsPosture.NrptAvailabilityText}" />
+                            <Run Text=" (" /><Run Text="{Binding DnsPosture.NrptRules.Count}" /><Run Text=" found - informational, most machines have none)" />
+                        </TextBlock>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
             <!-- Adapters: negotiated link speed per active adapter (#31, flags a "Gigabit"
                  adapter that negotiated down - a classic bad-cable/bad-port symptom) and VPN
                  presence (#37, a heuristic name/type match, not a "traffic is routed through it"

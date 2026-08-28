@@ -268,6 +268,58 @@ public sealed class ServiceControlService
     }
 
     /// <summary>
+    /// #896: OEM cleanup's "Disable" action for a service - there was no existing enable/disable-
+    /// by-start-type control anywhere in this app before this chunk (only Start/Stop/Restart
+    /// above), so this is a genuinely new small method, added here rather than as a one-off in the
+    /// Security tab, so any future caller has one place to toggle a service's start type. Shells
+    /// out to `sc.exe config ... start= &lt;type&gt;` - the same "known tool, not raw SCM interop"
+    /// tradeoff ReadFailureActionsTextAsync below already takes for qfailure, and NEVER deletes
+    /// the service. Returns the PREVIOUS start type (as sc.exe's own start= vocabulary: "auto"/
+    /// "demand"/"disabled") so a caller can record enough to Undo by calling this again with that
+    /// exact string.
+    /// </summary>
+    public static (bool Success, string PreviousStartType, string? Error) SetStartupType(string serviceName, string startType)
+    {
+        string previous = "demand";
+        try
+        {
+            using var sc = new ServiceController(serviceName);
+            previous = sc.StartType switch
+            {
+                ServiceStartMode.Automatic => "auto",
+                ServiceStartMode.Disabled => "disabled",
+                _ => "demand",
+            };
+        }
+        catch { /* best-effort - Undo may end up guessing "demand" if this couldn't be read */ }
+
+        try
+        {
+            var psi = new ProcessStartInfo("sc.exe", $"config \"{serviceName}\" start= {startType}")
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            using var proc = Process.Start(psi);
+            if (proc is null) return (false, previous, "couldn't start sc.exe");
+
+            string output = proc.StandardOutput.ReadToEnd() + proc.StandardError.ReadToEnd();
+            if (!proc.WaitForExit(10000))
+            {
+                try { proc.Kill(); } catch { /* best-effort */ }
+                return (false, previous, "sc.exe timed out");
+            }
+            return proc.ExitCode == 0 ? (true, previous, null) : (false, previous, output.Trim());
+        }
+        catch (Exception ex)
+        {
+            return (false, previous, ex.Message);
+        }
+    }
+
+    /// <summary>
     /// Failure/recovery actions (#71) - what Windows does when this service crashes
     /// (auto-restart, run a program, reboot, ...), read via `sc.exe qfailure`. The raw registry
     /// value (SERVICE_FAILURE_ACTIONS, under the service's own key) is an undocumented binary

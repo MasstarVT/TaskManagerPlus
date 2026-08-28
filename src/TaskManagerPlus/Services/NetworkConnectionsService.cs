@@ -5,6 +5,33 @@ using System.Text.RegularExpressions;
 
 namespace TaskManagerPlus.Services;
 
+/// <summary>Round 19, #883: how a listening socket is bound, for the exposed-listener map -
+/// loopback-only is the common/expected/uninteresting case, all-interfaces is the one worth a
+/// second look, and a specific bound address sits in between (reachable only via that one
+/// address/adapter).</summary>
+public enum ListenerBindScope { LoopbackOnly, AllInterfaces, SpecificAddress }
+
+/// <summary>Round 19, #883: one LISTENING socket enriched with bind scope, a heuristic firewall
+/// cross-reference, and the owning process's signature/publisher - see
+/// NetworkConnectionsService.BuildExposedListenerMap's remarks for why every judgment here is
+/// explicitly a heuristic, not a definitive reachability test.</summary>
+public sealed class ExposedListenerInfo
+{
+    public required TcpConnectionInfo Connection { get; init; }
+    public ListenerBindScope BindScope { get; init; }
+    public bool FirewallLooksAllowed { get; init; }
+    public string ReachabilityNote { get; init; } = string.Empty;
+    public string SignatureStatus { get; init; } = "Unknown";
+    public string Publisher { get; init; } = "Unknown";
+
+    /// <summary>Whether this listener belongs to this app's own process - see #883's own explicit
+    /// text: "the user sees their own exposure honestly," so this is used to call the row out
+    /// clearly, never to filter it out of the list.</summary>
+    public bool IsSelf { get; init; }
+
+    public bool IsInteresting => BindScope == ListenerBindScope.AllInterfaces;
+}
+
 /// <summary>One active TCP connection, with its owning process (#21 - a themed "netstat -b").</summary>
 public sealed record TcpConnectionInfo(
     string LocalAddress, int LocalPort, string RemoteAddress, int RemotePort, string State, int Pid, string ProcessName);
@@ -53,6 +80,77 @@ public static class NetworkConnectionsService
             // Best-effort - an empty list just means nothing to show.
         }
         return results;
+    }
+
+    // Round 19, #883: loopback vs. all-interfaces vs. a specific bound address.
+    private static ListenerBindScope ClassifyBindScope(string localAddress) => localAddress switch
+    {
+        "127.0.0.1" or "::1" => ListenerBindScope.LoopbackOnly,
+        "0.0.0.0" or "::" => ListenerBindScope.AllInterfaces,
+        _ => ListenerBindScope.SpecificAddress,
+    };
+
+    /// <summary>
+    /// Round 19, #883: extends the plain LISTENING rows from <see cref="Sample"/> with bind scope,
+    /// a heuristic firewall cross-reference against #882's enabled-inbound-allow-rule audit, and
+    /// the owning process's signature/publisher. This is a heuristic cross-reference, not a
+    /// definitive reachability test - a matching rule (by port only, ignoring profile/program/
+    /// remote-scope narrowing within that rule) counts as "looks allowed," and the absence of one
+    /// only counts as "not obviously reachable" when every currently-active firewall profile's own
+    /// default inbound action is Block; anything less certain is reported as "reachability unclear"
+    /// rather than guessing either way. Explicitly does NOT filter out this app's own optional
+    /// remote-monitor listener (RemoteMonitorService) when it's running - see IsSelf's remarks.
+    /// </summary>
+    public static List<ExposedListenerInfo> BuildExposedListenerMap(
+        IEnumerable<TcpConnectionInfo> connections,
+        List<FirewallService.FirewallRuleInfo> enabledInboundAllowRules,
+        bool everyActiveProfileDefaultsToBlockInbound)
+    {
+        var results = new List<ExposedListenerInfo>();
+        int selfPid = Environment.ProcessId;
+
+        foreach (var c in connections.Where(c => c.State == "LISTENING"))
+        {
+            var scope = ClassifyBindScope(c.LocalAddress);
+            bool firewallAllowed = enabledInboundAllowRules.Any(r => FirewallService.RuleCoversLocalPort(r, c.LocalPort));
+
+            string note = firewallAllowed
+                ? "A currently-enabled inbound Allow rule matches this port - looks reachable from wherever that rule's scope permits."
+                : everyActiveProfileDefaultsToBlockInbound
+                    ? "No matching enabled inbound Allow rule found, and every active firewall profile defaults to Block - not obviously reachable, but this is a heuristic cross-reference, not a definitive test."
+                    : "No matching enabled inbound Allow rule found, but this app couldn't confirm every active profile defaults to Block - reachability unclear.";
+
+            string path = ResolveProcessPath(c.Pid);
+            string sig = path.Length > 0 ? SignatureCheckService.GetStatus(path) : "Unknown";
+            var (subjectCn, issuerCn, _, _, _) = path.Length > 0 ? SignatureCheckService.GetSignerInfo(path) : (null, null, null, null, false);
+
+            results.Add(new ExposedListenerInfo
+            {
+                Connection = c,
+                BindScope = scope,
+                FirewallLooksAllowed = firewallAllowed,
+                ReachabilityNote = note,
+                SignatureStatus = sig,
+                Publisher = subjectCn ?? issuerCn ?? "Unknown",
+                IsSelf = c.Pid == selfPid,
+            });
+        }
+
+        return results;
+    }
+
+    private static string ResolveProcessPath(int pid)
+    {
+        try
+        {
+            using var p = Process.GetProcessById(pid);
+            return p.MainModule?.FileName ?? string.Empty;
+        }
+        catch
+        {
+            // Denied (protected process) or already exited - "Unknown" signature/publisher below.
+            return string.Empty;
+        }
     }
 
     /// <summary>#87: groups an already-sampled connection list by owning process, sorted by

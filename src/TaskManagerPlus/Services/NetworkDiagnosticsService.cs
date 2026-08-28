@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Management;
 using System.Net;
 using System.Net.Http;
@@ -21,9 +22,23 @@ public sealed record ConnectivityResult(
 /// <summary>One active network adapter's negotiated link speed (#31).</summary>
 public sealed record AdapterLinkInfo(string Name, double SpeedMbps, bool LooksDegraded);
 
-/// <summary>Read-only WinHTTP/IE proxy configuration (round 9, #47) - display only, this app never
-/// writes to these keys.</summary>
-public sealed record ProxyConfigInfo(bool Enabled, string ProxyServer, string AutoConfigUrl);
+/// <summary>Read-only WinHTTP/IE proxy configuration (round 9, #47; extended round 19, #889 with
+/// ProxyOverride from the same per-user key) - display only, this app never writes to these keys.</summary>
+public sealed record ProxyConfigInfo(bool Enabled, string ProxyServer, string AutoConfigUrl, string ProxyOverride);
+
+/// <summary>Round 19, #889: the MACHINE-level WinHTTP proxy (distinct from the per-user
+/// ProxyConfigInfo above - this is what non-interactive/system-context processes and some
+/// enterprise software use), via `netsh winhttp show proxy`.</summary>
+public sealed record WinHttpProxyInfo(bool DirectAccess, string ProxyServer, string BypassList);
+
+/// <summary>Round 19, #889: proxy hijack check - bundles the per-user + machine-level proxy
+/// configuration with a severity-ranked warning about the AutoConfigURL specifically, since a
+/// hijacked/malicious PAC script is the highest-value single thing to check here.</summary>
+public sealed class ProxyHijackPostureInfo
+{
+    public ProxyConfigInfo PerUser { get; init; } = new(false, string.Empty, string.Empty, string.Empty);
+    public WinHttpProxyInfo Machine { get; init; } = new(true, string.Empty, string.Empty);
+}
 
 /// <summary>One network adapter's driver version/date (round 9, #48).</summary>
 public sealed record AdapterDriverInfo(string DeviceName, string DriverVersion, DateTime? DriverDate, bool LooksOld);
@@ -124,12 +139,165 @@ public sealed class NetworkDiagnosticsService
             bool enabled = key?.GetValue("ProxyEnable") is int e && e != 0;
             string server = (key?.GetValue("ProxyServer") as string ?? string.Empty).Trim();
             string autoConfigUrl = (key?.GetValue("AutoConfigURL") as string ?? string.Empty).Trim();
-            return new ProxyConfigInfo(enabled, server, autoConfigUrl);
+            string proxyOverride = (key?.GetValue("ProxyOverride") as string ?? string.Empty).Trim();
+            return new ProxyConfigInfo(enabled, server, autoConfigUrl, proxyOverride);
         }
         catch
         {
-            return new ProxyConfigInfo(false, string.Empty, string.Empty);
+            return new ProxyConfigInfo(false, string.Empty, string.Empty, string.Empty);
         }
+    }
+
+    /// <summary>Round 19, #889: MACHINE-level WinHTTP proxy via `netsh winhttp show proxy` - a
+    /// simple, stable two/three-line text format ("Direct access (no proxy server)." or
+    /// "Proxy Server(s) : ..." / "Bypass List : ...").</summary>
+    public static WinHttpProxyInfo ReadWinHttpProxy()
+    {
+        try
+        {
+            string output = RunCapturedSyncStatic("netsh.exe", "winhttp show proxy", TimeSpan.FromSeconds(10));
+            if (output.Contains("Direct access", StringComparison.OrdinalIgnoreCase))
+                return new WinHttpProxyInfo(true, string.Empty, string.Empty);
+
+            string server = ExtractNetshField(output, "Proxy Server(s)");
+            string bypass = ExtractNetshField(output, "Bypass List");
+            return new WinHttpProxyInfo(server.Length == 0, server, bypass);
+        }
+        catch
+        {
+            return new WinHttpProxyInfo(true, string.Empty, string.Empty);
+        }
+    }
+
+    private static string ExtractNetshField(string output, string label)
+    {
+        foreach (var rawLine in output.Split('\n'))
+        {
+            var line = rawLine.TrimEnd('\r');
+            var colonIdx = line.IndexOf(':');
+            if (colonIdx <= 0) continue;
+            var key = line[..colonIdx].Trim();
+            if (key.Equals(label, StringComparison.OrdinalIgnoreCase))
+                return line[(colonIdx + 1)..].Trim();
+        }
+        return string.Empty;
+    }
+
+    /// <summary>Round 19, #889: proxy hijack findings. AutoConfigURL pointing at a local file
+    /// (file:// scheme) is the clearest hijack signal (High) - a non-empty AutoConfigURL to
+    /// anything else is lower-confidence (Low), framed as "worth checking who set this" per the
+    /// item's own text, since plenty of legitimate corporate/router PAC scripts look exactly like
+    /// this.</summary>
+    public static List<Models.SecurityFinding> BuildProxyFindings(ProxyConfigInfo perUser)
+    {
+        var findings = new List<Models.SecurityFinding>();
+        if (string.IsNullOrWhiteSpace(perUser.AutoConfigUrl)) return findings;
+
+        if (perUser.AutoConfigUrl.StartsWith("file://", StringComparison.OrdinalIgnoreCase))
+        {
+            findings.Add(new Models.SecurityFinding
+            {
+                Severity = Models.FindingSeverity.High,
+                Title = "Proxy auto-config (PAC) script points at a local file",
+                Reason = $"AutoConfigURL is set to a local file:// path (\"{perUser.AutoConfigUrl}\") rather than an https:// URL - this is the clearest proxy-hijack signal this app checks: malware commonly drops a local PAC script that silently routes specific sites (banks, webmail, antivirus update servers) through an attacker-controlled proxy.",
+                Path = @"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings\AutoConfigURL",
+                WhatDisablingDoes = "If you don't recognize this file or didn't set it up yourself, open the referenced .pac file in a text editor to see what it redirects, then clear AutoConfigURL via Settings > Network & Internet > Proxy if it's unwanted.",
+            });
+        }
+        else if (!perUser.AutoConfigUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
+                 !perUser.AutoConfigUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            findings.Add(new Models.SecurityFinding
+            {
+                Severity = Models.FindingSeverity.Low,
+                Title = "Proxy auto-config (PAC) URL uses an unusual scheme",
+                Reason = $"AutoConfigURL is set to \"{perUser.AutoConfigUrl}\", which is neither an http(s):// URL nor a local file:// path. Worth checking who set this and why - low-confidence flag, not a confirmed problem.",
+                Path = @"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings\AutoConfigURL",
+                WhatDisablingDoes = "Clear AutoConfigURL via Settings > Network & Internet > Proxy if you don't recognize it.",
+            });
+        }
+        else
+        {
+            findings.Add(new Models.SecurityFinding
+            {
+                Severity = Models.FindingSeverity.Info,
+                Title = "Proxy auto-config (PAC) script is configured",
+                Reason = $"AutoConfigURL is set to \"{perUser.AutoConfigUrl}\". This is completely normal on a managed/corporate network - worth checking who set this if you don't recognize the host.",
+                Path = @"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings\AutoConfigURL",
+                WhatDisablingDoes = "No action implied - clear AutoConfigURL via Settings > Network & Internet > Proxy only if you don't recognize it.",
+            });
+        }
+
+        return findings;
+    }
+
+    /// <summary>Round 19, #889: "Reset proxy and Winsock" - runs, in sequence, `netsh winhttp reset
+    /// proxy`, `netsh winsock reset`, `ipconfig /flushdns`. Genuinely disruptive (winsock reset
+    /// needs a reboot to fully take effect) - SecurityViewModel gates this behind an explicit
+    /// confirmation dialog that names the reboot requirement before calling this.</summary>
+    public static async Task<string> ResetProxyAndWinsockAsync()
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine(await RunCapturedAsync("netsh.exe", "winhttp reset proxy"));
+        sb.AppendLine(await RunCapturedAsync("netsh.exe", "winsock reset"));
+        sb.AppendLine(await RunCapturedAsync("ipconfig.exe", "/flushdns"));
+        return sb.ToString().Trim();
+    }
+
+    private static async Task<string> RunCapturedAsync(string exe, string args)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo(exe, args)
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            using var proc = Process.Start(psi);
+            if (proc is null) return $"{exe} {args}: couldn't start.";
+
+            var outputTask = proc.StandardOutput.ReadToEndAsync();
+            var errorTask = proc.StandardError.ReadToEndAsync();
+
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+            try { await proc.WaitForExitAsync(cts.Token); }
+            catch (OperationCanceledException)
+            {
+                try { proc.Kill(); } catch { /* best-effort */ }
+                return $"{exe} {args}: timed out.";
+            }
+
+            return $"{exe} {args}:\n{(await outputTask) + (await errorTask)}".Trim();
+        }
+        catch (Exception ex)
+        {
+            return $"{exe} {args}: failed ({ex.Message}).";
+        }
+    }
+
+    private static string RunCapturedSyncStatic(string exe, string args, TimeSpan timeout)
+    {
+        var psi = new ProcessStartInfo(exe, args)
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        using var proc = Process.Start(psi) ?? throw new InvalidOperationException($"couldn't start {exe}");
+
+        var outputTask = proc.StandardOutput.ReadToEndAsync();
+        var errorTask = proc.StandardError.ReadToEndAsync();
+
+        if (!proc.WaitForExit((int)timeout.TotalMilliseconds))
+        {
+            try { proc.Kill(entireProcessTree: true); } catch { /* best-effort */ }
+            return string.Empty;
+        }
+
+        return outputTask.GetAwaiter().GetResult() + errorTask.GetAwaiter().GetResult();
     }
 
     // Same 2-year "worth checking for an update" bar SystemSpecsService.ReadOutdatedDrivers uses -
