@@ -130,6 +130,10 @@ public sealed class StartupViewModel : ObservableObject
             BrowserExtensions.Clear();
             foreach (var e in extensions) BrowserExtensions.Add(e);
         }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Couldn't load browser extensions: {ex.Message}";
+        }
         finally
         {
             IsLoadingBrowserExtensions = false;
@@ -144,6 +148,10 @@ public sealed class StartupViewModel : ObservableObject
             var extensions = await Task.Run(ShellExtensionService.List);
             ShellExtensions.Clear();
             foreach (var e in extensions) ShellExtensions.Add(e);
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Couldn't load shell extensions: {ex.Message}";
         }
         finally
         {
@@ -184,6 +192,10 @@ public sealed class StartupViewModel : ObservableObject
             ScheduledTasks.Clear();
             foreach (var t in tasks) ScheduledTasks.Add(t);
         }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Couldn't load scheduled tasks: {ex.Message}";
+        }
         finally
         {
             IsLoadingScheduledTasks = false;
@@ -212,9 +224,16 @@ public sealed class StartupViewModel : ObservableObject
         var target = SelectedScheduledTask;
         if (target is null) return;
 
-        var (delayText, runModeText) = await ScheduledTaskService.ReadLogonTriggerInfoAsync(target.Name);
-        target.DelayText = delayText;
-        target.RunModeText = runModeText;
+        try
+        {
+            var (delayText, runModeText) = await ScheduledTaskService.ReadLogonTriggerInfoAsync(target.Name);
+            target.DelayText = delayText;
+            target.RunModeText = runModeText;
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Couldn't check logon delay for {target.Name}: {ex.Message}";
+        }
     }
 
     private void Refresh()
