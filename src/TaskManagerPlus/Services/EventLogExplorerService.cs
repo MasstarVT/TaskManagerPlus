@@ -785,4 +785,85 @@ public sealed class EventLogExplorerService
     {
         try { return evt.Template ?? string.Empty; } catch { return string.Empty; }
     }
+
+    // ---- #119/#123: per-(provider,eventId) manifest lookup for the detail pane ----
+
+    /// <summary>#119's provider-description fallback and #123's named-field labels, bundled
+    /// together since both come from the same ProviderMetadata.Events scan - a null
+    /// DescriptionTemplate/FieldNames means the manifest genuinely doesn't have one (unregistered
+    /// provider, or an event with no &lt;template&gt;), never a guessed value.</summary>
+    public sealed class ProviderEventDetail
+    {
+        public List<string>? FieldNames { get; init; }
+        public string? DescriptionTemplate { get; init; }
+    }
+
+    private static readonly ProviderEventDetail EmptyProviderEventDetail = new();
+
+    // Cached per (provider, eventId) for the lifetime of this service instance - re-selecting rows
+    // for the same event ID (the common case when browsing one channel or one provider's worth of
+    // noise) would otherwise repeat a full manifest scan (GetProviderMetadata's own "walk every
+    // event this provider declares" cost) on every click.
+    private readonly Dictionary<(string Provider, int EventId), ProviderEventDetail> _providerEventDetailCache = new();
+
+    /// <summary>#119: the provider's own registered message-template description for one event ID -
+    /// used as the detail pane's fallback "what this usually means" when the local knowledge base
+    /// (#117) has no entry, so an unknown event still gets real Windows-authored text instead of
+    /// "no information". #123: the same manifest lookup's &lt;template&gt; XML gives the real field
+    /// names for EventRecord.Properties, turning today's "Property 0/Property 1" positional
+    /// guessing into a labelled grid - falls back to positional naming (handled by the caller) when
+    /// no template is registered for this event.</summary>
+    public ProviderEventDetail GetProviderEventDetail(string providerName, int eventId)
+    {
+        var key = (providerName, eventId);
+        if (_providerEventDetailCache.TryGetValue(key, out var cached)) return cached;
+
+        var detail = EmptyProviderEventDetail;
+        if (!string.IsNullOrWhiteSpace(providerName))
+        {
+            try
+            {
+                using var metadata = new ProviderMetadata(providerName);
+                var evt = metadata.Events.FirstOrDefault(e => (int)e.Id == eventId);
+                if (evt is not null)
+                {
+                    string? description = null;
+                    try { description = evt.Description; } catch { /* not every event has one */ }
+
+                    List<string>? fieldNames = null;
+                    string template = SafeTemplate(evt);
+                    if (!string.IsNullOrWhiteSpace(template))
+                    {
+                        try
+                        {
+                            var doc = XDocument.Parse(template);
+                            var names = doc.Descendants()
+                                .Where(e => e.Name.LocalName == "data")
+                                .Select(e => e.Attribute("name")?.Value)
+                                .Where(n => !string.IsNullOrWhiteSpace(n))
+                                .Select(n => n!)
+                                .ToList();
+                            if (names.Count > 0) fieldNames = names;
+                        }
+                        catch
+                        {
+                            // Template XML not well-formed / not the expected shape - fall back to
+                            // positional naming rather than guessing field order from a partial parse.
+                        }
+                    }
+
+                    detail = new ProviderEventDetail { FieldNames = fieldNames, DescriptionTemplate = description };
+                }
+            }
+            catch
+            {
+                // Provider not locally registered, or its manifest is otherwise unreadable - no
+                // field names, no description template; caller falls back to positional naming and
+                // "no information" respectively, per #117's degrade-never-fabricate rule.
+            }
+        }
+
+        _providerEventDetailCache[key] = detail;
+        return detail;
+    }
 }

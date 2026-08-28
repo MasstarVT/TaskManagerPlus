@@ -317,4 +317,67 @@ public sealed class EventLogService
         }
         return result;
     }
+
+    // Round 13, #122: the event knowledge base's "seriously bad" set can include Warning-level IDs
+    // (disk 153, Ntfs 98 - exactly the "Windows' own levels lie" cases #120 is about), which the
+    // fixed Level=1|2 sweep ReadLog/Query use above never reads at all - so the Stability tab's
+    // "Known-bad IDs present on this PC" scorecard needs its own light, explicitly-scoped query
+    // instead of reusing RecentEvents. "Light" here means an XPath that names the exact
+    // provider+eventId pairs to look for (built from whatever the caller's knowledge base flags as
+    // serious), not a second full Level-based sweep - still on-demand only, folded into
+    // StabilityViewModel's existing RefreshCommand, not a new timer.
+    public List<KnownBadIdScanHit> ScanForKnownBadIds(IReadOnlyCollection<(string Provider, int EventId)> flaggedIds, int lookbackDays = LookbackDays)
+    {
+        var hits = new Dictionary<(string Provider, int EventId), (int Count, DateTime LastSeen)>();
+        if (flaggedIds.Count == 0) return new List<KnownBadIdScanHit>();
+
+        string idsClause = string.Join(" or ", flaggedIds
+            .GroupBy(f => f.Provider, StringComparer.OrdinalIgnoreCase)
+            .Select(g => $"(Provider[@Name='{EscapeXPathLiteral(g.Key)}'] and ({string.Join(" or ", g.Select(f => $"EventID={f.EventId}"))}))"));
+
+        long maxAgeMs = lookbackDays * 24L * 60 * 60 * 1000;
+        string xpath = $"*[System[({idsClause}) and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]";
+
+        foreach (var logName in new[] { "System", "Application" })
+        {
+            try
+            {
+                var query = new EventLogQuery(logName, PathType.LogName, xpath) { ReverseDirection = true };
+                using var reader = new EventLogReader(query);
+                int count = 0;
+                const int maxEvents = 2000; // generous cap - this is a narrow, ID-scoped query, not a full-log sweep
+                while (count < maxEvents && reader.ReadEvent() is { } record)
+                {
+                    using (record)
+                    {
+                        count++;
+                        var key = (record.ProviderName ?? string.Empty, record.Id);
+                        var time = record.TimeCreated ?? DateTime.MinValue;
+                        if (hits.TryGetValue(key, out var existing))
+                            hits[key] = (existing.Count + 1, time > existing.LastSeen ? time : existing.LastSeen);
+                        else
+                            hits[key] = (1, time);
+                    }
+                }
+            }
+            catch
+            {
+                // This log unavailable/access denied - contribute nothing from it, keep scanning the other.
+            }
+        }
+
+        return hits.Select(kv => new KnownBadIdScanHit
+        {
+            Provider = kv.Key.Provider,
+            EventId = kv.Key.EventId,
+            Count = kv.Value.Count,
+            LastSeen = kv.Value.LastSeen,
+        }).ToList();
+    }
+
+    /// <summary>A provider name containing a literal single quote would break the XPath string
+    /// literal it's wrapped in - none of the bundled knowledge-base provider names do, but this
+    /// strips one defensively rather than producing an unparseable query for a user-added override
+    /// entry with an unusual provider name.</summary>
+    private static string EscapeXPathLiteral(string value) => value.Replace("'", "");
 }

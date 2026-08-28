@@ -25,10 +25,21 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
 {
     private readonly EventLogExplorerService _service = new();
 
+    // #117: the known-bad Event ID knowledge base, and #124's status-code resolver - both plain
+    // Services/* instances composed directly here, same as every other ViewModel in this
+    // no-DI-container app.
+    private readonly EventKnowledgeBaseService _kb = new();
+    private readonly StatusCodeResolverService _statusCodes = new();
+
     // Needed only for #106's "which process logged this" PID -> name lookup in the detail pane -
     // reads the already-live Processes collection (no new polling) purely on the UI thread inside
     // BuildDetail, so there's no cross-thread ObservableCollection access to worry about.
     private readonly ProcessesViewModel _processes;
+
+    // #125: the only KB action currently wired to a real app command - "restart this service" for
+    // Service Control Manager 7031/7009, via the live Services tab's own RestartCommand. See
+    // ResolveKbAction's remarks for what else was searched for and not found.
+    private readonly ServicesViewModel _services;
 
     public ObservableCollection<EventChannelNode> ChannelTree { get; } = new();
     public ObservableCollection<EventRecordRow> Events { get; } = new();
@@ -235,12 +246,73 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
     /// item 200 (later); this just gathers selected rows with a small counter/badge in the UI.</summary>
     public ObservableCollection<EventRecordRow> EvidenceBundle { get; } = new();
 
-    /// <summary>#115: TODO(#117) - "Explain" is meant to open/focus a real event knowledge-base
-    /// panel once one exists (backlog item 117). No such service exists yet in this codebase, so
-    /// this just surfaces a clearly-labeled placeholder note in the detail pane rather than doing
-    /// nothing when clicked.</summary>
-    private string? _explainNote;
-    public string? ExplainNote { get => _explainNote; private set => SetProperty(ref _explainNote, value); }
+    // ---- #117-126: known-bad Event ID knowledge base explanation pane ----
+
+    /// <summary>#118: "what this usually means", as distinct from the raw Windows message shown
+    /// above it in the friendly view. Populated for whatever event is selected (BuildDetail), not
+    /// just via the row context menu's "Explain" item any more - #115's ExplainEventCommand now
+    /// just selects the row so its explanation shows here automatically.</summary>
+    private string? _explainMeaning;
+    public string? ExplainMeaning { get => _explainMeaning; private set => SetProperty(ref _explainMeaning, value); }
+
+    public ObservableCollection<string> ExplainLikelyCauses { get; } = new();
+
+    private string? _explainNextStep;
+    public string? ExplainNextStep { get => _explainNextStep; private set => SetProperty(ref _explainNextStep, value); }
+
+    // Nullable (unlike ExplainSourceLabel, which is always shown) so the XAML confidence chip can
+    // use NullToVisibilityConverter to hide itself entirely when there's nothing to rate.
+    private string? _explainConfidenceLabel;
+    public string? ExplainConfidenceLabel { get => _explainConfidenceLabel; private set => SetProperty(ref _explainConfidenceLabel, value); }
+
+    private bool _explainIsBenign;
+    public bool ExplainIsBenign { get => _explainIsBenign; private set => SetProperty(ref _explainIsBenign, value); }
+
+    /// <summary>"Local knowledge base" / "Provider's own event description (not curated)" / "No
+    /// information available for this event." - #118's rule that a KB entry is never presented as
+    /// more authoritative than it is, and #119's fallback is clearly labeled as uncurated rather
+    /// than passed off as a real knowledge-base match.</summary>
+    private string _explainSourceLabel = string.Empty;
+    public string ExplainSourceLabel { get => _explainSourceLabel; private set => SetProperty(ref _explainSourceLabel, value); }
+
+    private bool _explainHasContent;
+    public bool ExplainHasContent { get => _explainHasContent; private set => SetProperty(ref _explainHasContent, value); }
+
+    // #125: only set (non-null) when the selected event's KB entry maps to a real action this app
+    // already exposes - see ResolveKbAction. Every other KB category leaves this null, so the
+    // button in EventsView simply doesn't render for them (never a fake/no-op button).
+    private EventRecordRow? _kbActionTargetRow;
+    private string? _explainActionLabel;
+    public string? ExplainActionLabel { get => _explainActionLabel; private set => SetProperty(ref _explainActionLabel, value); }
+    public RelayCommand RunKbActionCommand { get; }
+
+    // #124: status codes detected in the selected event's message, resolved via `certutil -error`
+    // - filled in asynchronously (each certutil call is a small shell-out) after BuildDetail runs.
+    public ObservableCollection<StatusCodeExplain> ExplainStatusCodes { get; } = new();
+    private CancellationTokenSource? _statusCodeCts;
+
+    // ---- #121: known-benign noise suppression ----
+    private bool _hideKnownNoise;
+    public bool HideKnownNoise
+    {
+        get => _hideKnownNoise;
+        set { if (SetProperty(ref _hideKnownNoise, value)) { EventsView.Refresh(); UpdateHiddenNoiseText(); } }
+    }
+
+    private string? _hiddenNoiseText;
+    public string? HiddenNoiseText { get => _hiddenNoiseText; private set => SetProperty(ref _hiddenNoiseText, value); }
+
+    // ---- #126: unknown-event coverage report ----
+    private readonly Dictionary<string, EventRecordRow> _unknownEventSamples = new(StringComparer.OrdinalIgnoreCase);
+
+    private int _unknownEventCount;
+    public int UnknownEventCount { get => _unknownEventCount; private set => SetProperty(ref _unknownEventCount, value); }
+    public RelayCommand ExportUnknownEventsCommand { get; }
+
+    // ---- #117: knowledge-base coverage/status, shown in "More tools" for transparency ----
+    public string KbStatusText => _kb.OverridesLoadError is { } err
+        ? $"Knowledge base: {_kb.BundledEntryCount} built-in entries ({_kb.OverrideEntryCount} override(s) FAILED to load: {err})"
+        : $"Knowledge base: {_kb.BundledEntryCount} built-in + {_kb.OverrideEntryCount} override entries loaded.";
 
     // ---- #116: group-by and correlation columns ----
     public ICollectionView EventsView { get; }
@@ -257,9 +329,10 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
     private bool _showCorrelationColumns;
     public bool ShowCorrelationColumns { get => _showCorrelationColumns; set => SetProperty(ref _showCorrelationColumns, value); }
 
-    public EventsViewModel(ProcessesViewModel processes)
+    public EventsViewModel(ProcessesViewModel processes, ServicesViewModel services)
     {
         _processes = processes;
+        _services = services;
 
         RefreshChannelsCommand = new AsyncRelayCommand(RefreshChannelsAsync);
         BuildXPathCommand = new RelayCommand(_ => RawXPathText = BuildXPathFromFilters());
@@ -299,7 +372,13 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
         ShowAroundTimeCommand = new RelayCommand(p => _ = ShowAroundTimeAsync(p as EventRecordRow));
         AddToEvidenceCommand = new RelayCommand(p => AddToEvidence(p as EventRecordRow));
 
+        RunKbActionCommand = new RelayCommand(_ => RunKbAction(), _ => _kbActionTargetRow is not null);
+        ExportUnknownEventsCommand = new RelayCommand(_ => ExportUnknownEvents(), _ => UnknownEventCount > 0);
+
         EventsView = CollectionViewSource.GetDefaultView(Events);
+        // #121: hides rows the KB flags as benign noise while the toggle is on - applied on top of
+        // whatever grouping #116 already sets, not instead of it.
+        EventsView.Filter = o => !(HideKnownNoise && o is EventRecordRow row && row.KbIsBenign);
 
         LoadSavedFilters();
         _ = RefreshChannelsAsync();
@@ -389,10 +468,12 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
                 ? result.Rows
                 : result.Rows.Where(r => r.Message.Contains(keyword, StringComparison.OrdinalIgnoreCase)).ToList();
 
+            RegisterKbCoverage(rows);
             foreach (var row in rows) Events.Add(row);
             _pageBookmark = result.Bookmark;
             HasMore = result.HasMore;
             StatusText = Events.Count == 0 ? "No matching events found." : $"{Events.Count} event(s) loaded.";
+            UpdateHiddenNoiseText();
         }
         catch (Exception ex)
         {
@@ -412,7 +493,11 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
     {
         DetailProperties.Clear();
         var row = SelectedEvent;
-        if (row is null) return;
+        if (row is null)
+        {
+            BuildExplain(null);
+            return;
+        }
 
         string account = _service.ResolveUserAccount(row.UserSid);
         DetailProperties.Add(new EventPropertyDisplay { Name = "User", Value = string.IsNullOrEmpty(row.UserSid) ? "Unknown" : $"{account} ({row.UserSid})" });
@@ -425,9 +510,247 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
         }
         DetailProperties.Add(new EventPropertyDisplay { Name = "Process", Value = processName });
 
+        // #123: named-field decoding via the provider's own manifest template - falls back to
+        // positional "Property[N]" naming when no template is registered for this event.
+        var fieldNames = _service.GetProviderEventDetail(row.ProviderName, row.EventId).FieldNames;
         for (int i = 0; i < row.PropertyValues.Count; i++)
-            DetailProperties.Add(new EventPropertyDisplay { Name = $"Property {i}", Value = row.PropertyValues[i] });
+        {
+            string name = fieldNames is not null && i < fieldNames.Count && !string.IsNullOrWhiteSpace(fieldNames[i])
+                ? fieldNames[i]
+                : $"Property[{i}]";
+            DetailProperties.Add(new EventPropertyDisplay { Name = name, Value = row.PropertyValues[i] });
+        }
+
+        BuildExplain(row);
     }
+
+    /// <summary>#118/#119/#120/#124/#125: builds the "what this usually means" explanation section
+    /// for the selected event - the local knowledge base (#117) first, falling back to the
+    /// provider's own registered event description (#119) when there's no KB entry, and "no
+    /// information available" only when neither exists. Also resolves any status codes embedded in
+    /// the message (#124) and whichever real app action (if any) the KB entry's next step maps to
+    /// (#125).</summary>
+    private void BuildExplain(EventRecordRow? row)
+    {
+        _statusCodeCts?.Cancel();
+        ExplainStatusCodes.Clear();
+        ExplainLikelyCauses.Clear();
+        _kbActionTargetRow = null;
+        ExplainActionLabel = null;
+        RunKbActionCommand.RaiseCanExecuteChanged();
+
+        if (row is null)
+        {
+            ExplainHasContent = false;
+            ExplainMeaning = null;
+            ExplainNextStep = null;
+            ExplainConfidenceLabel = null;
+            ExplainIsBenign = false;
+            ExplainSourceLabel = string.Empty;
+            return;
+        }
+
+        var entry = _kb.Lookup(row.ProviderName, row.EventId);
+        if (entry is not null)
+        {
+            ExplainHasContent = true;
+            ExplainMeaning = entry.Meaning;
+            foreach (var cause in entry.LikelyCauses) ExplainLikelyCauses.Add(cause);
+            ExplainNextStep = string.IsNullOrWhiteSpace(entry.NextStep) ? null : entry.NextStep;
+            ExplainConfidenceLabel = entry.Confidence switch
+            {
+                EventKbConfidence.High => "High confidence",
+                EventKbConfidence.Low => "Low confidence - worth a manual check",
+                _ => "Medium confidence",
+            };
+            ExplainIsBenign = entry.IsBenign;
+            ExplainSourceLabel = "Local knowledge base";
+
+            var (actionLabel, actionTarget) = ResolveKbAction(entry, row);
+            ExplainActionLabel = actionLabel;
+            _kbActionTargetRow = actionTarget;
+            RunKbActionCommand.RaiseCanExecuteChanged();
+        }
+        else
+        {
+            // #119: fall back to the provider's own registered message-template description rather
+            // than a bare "no information" - still real Windows-authored text, just not curated.
+            var detail = _service.GetProviderEventDetail(row.ProviderName, row.EventId);
+            ExplainNextStep = null;
+            ExplainIsBenign = false;
+            if (!string.IsNullOrWhiteSpace(detail.DescriptionTemplate))
+            {
+                ExplainHasContent = true;
+                ExplainMeaning = detail.DescriptionTemplate;
+                ExplainConfidenceLabel = "Not in the local knowledge base";
+                ExplainSourceLabel = "Provider's own event description (not curated)";
+            }
+            else
+            {
+                ExplainHasContent = false;
+                ExplainMeaning = null;
+                ExplainConfidenceLabel = null;
+                ExplainSourceLabel = "No information available for this event.";
+            }
+        }
+
+        _ = LoadStatusCodesAsync(row);
+    }
+
+    /// <summary>#125: maps a KB entry's ActionKind to a real, already-existing app action - only
+    /// RestartService is wired (Service Control Manager 7031/7009 -&gt; ServicesViewModel.
+    /// RestartCommand), and even then only when a live service with that name is currently found on
+    /// the Services tab. Every other ActionKind (i.e. None, which is every other entry in the
+    /// bundled KB) returns no label, so EventsView simply doesn't render a button - #125 explicitly
+    /// says to leave a KB category text-only rather than inventing a fake action for it, and a grep
+    /// of this codebase found no existing chkdsk/volume-repair action and no existing "rebuild
+    /// performance counters" (lodctr /R) action to wire for the storage/Perflib categories.</summary>
+    private (string? Label, EventRecordRow? Target) ResolveKbAction(EventKbEntry entry, EventRecordRow row)
+    {
+        if (entry.ActionKind == EventKbActionKind.RestartService)
+        {
+            string? serviceName = ExtractServiceName(row);
+            if (serviceName is not null && _services.Services.Any(s => string.Equals(s.ServiceName, serviceName, StringComparison.OrdinalIgnoreCase)))
+                return ($"Restart \"{serviceName}\" service", row);
+        }
+        return (null, null);
+    }
+
+    /// <summary>Service Control Manager 7031/7009's first insertion string is always the service's
+    /// display/internal name - the same convention EventLogService.ReadServiceStartDurations'
+    /// own 7036 parsing already relies on for a different SCM event.</summary>
+    private static string? ExtractServiceName(EventRecordRow row)
+        => row.PropertyValues.Count > 0 && !string.IsNullOrWhiteSpace(row.PropertyValues[0]) ? row.PropertyValues[0] : null;
+
+    private void RunKbAction()
+    {
+        var row = _kbActionTargetRow;
+        if (row is null) return;
+
+        var entry = _kb.Lookup(row.ProviderName, row.EventId);
+        if (entry?.ActionKind != EventKbActionKind.RestartService) return;
+
+        string? serviceName = ExtractServiceName(row);
+        var target = serviceName is null
+            ? null
+            : _services.Services.FirstOrDefault(s => string.Equals(s.ServiceName, serviceName, StringComparison.OrdinalIgnoreCase));
+        if (target is null)
+        {
+            StatusText = $"Couldn't find a live service named \"{serviceName}\" to restart - it may have been renamed or removed.";
+            return;
+        }
+
+        _services.SelectedService = target;
+        if (_services.RestartCommand.CanExecute(null)) _services.RestartCommand.Execute(null);
+        StatusText = $"Requested a restart of \"{target.ServiceName}\" from the Services tab.";
+    }
+
+    /// <summary>#124: resolves every status code found in the selected event's message, one at a
+    /// time (each is a small certutil.exe shell-out), appending to ExplainStatusCodes as each
+    /// resolves rather than waiting for all of them - and bails out if the selection has moved on
+    /// (either via the cancellation token or the ReferenceEquals guard) so a stale row's codes never
+    /// land on the wrong selection.</summary>
+    private async Task LoadStatusCodesAsync(EventRecordRow row)
+    {
+        var codes = StatusCodeResolverService.FindCodes(row.Message);
+        if (codes.Count == 0) return;
+
+        var cts = new CancellationTokenSource();
+        _statusCodeCts = cts;
+
+        foreach (var code in codes)
+        {
+            if (cts.IsCancellationRequested || !ReferenceEquals(SelectedEvent, row)) return;
+            string? resolved = await _statusCodes.ResolveAsync(code);
+            if (cts.IsCancellationRequested || !ReferenceEquals(SelectedEvent, row)) return;
+
+            ExplainStatusCodes.Add(new StatusCodeExplain
+            {
+                Code = code,
+                ResolvedText = resolved ?? "Unresolved - not recognized by certutil.",
+                IsResolved = resolved is not null,
+            });
+        }
+    }
+
+    /// <summary>#117/#126: annotates every freshly-read row with the knowledge base's opinion
+    /// (severity re-rank, benign flag, next step) before it's added to any bound collection, and
+    /// tracks the distinct (provider, eventId) combinations with no KB entry at all for #126's
+    /// coverage counter/export. Called from every place rows enter this ViewModel - LoadAsync,
+    /// SearchAllChannelsAsync, RunMultiChannelQueryAsync/ShowAroundTimeAsync, and the live-tail
+    /// callback in StartFollow.</summary>
+    private void RegisterKbCoverage(IEnumerable<EventRecordRow> rows)
+    {
+        bool changed = false;
+        foreach (var row in rows)
+        {
+            _kb.Annotate(row);
+            if (!row.KbHasEntry)
+            {
+                string key = EventKnowledgeBaseService.MakeKey(row.ProviderName, row.EventId);
+                if (!_unknownEventSamples.ContainsKey(key))
+                {
+                    _unknownEventSamples[key] = row;
+                    changed = true;
+                }
+            }
+        }
+        if (changed)
+        {
+            UnknownEventCount = _unknownEventSamples.Count;
+            ExportUnknownEventsCommand.RaiseCanExecuteChanged();
+        }
+    }
+
+    /// <summary>#121: recomputes the "N known-benign event(s) hidden" status line shown next to the
+    /// toggle - null (nothing shown) both when the toggle is off and when it's on but nothing
+    /// currently loaded happens to be flagged benign.</summary>
+    private void UpdateHiddenNoiseText()
+    {
+        if (!HideKnownNoise) { HiddenNoiseText = null; return; }
+
+        var hidden = Events.Where(r => r.KbIsBenign).ToList();
+        if (hidden.Count == 0) { HiddenNoiseText = null; return; }
+
+        var examples = hidden.Select(r => $"{r.ProviderName} {r.EventId}").Distinct().Take(3);
+        HiddenNoiseText = $"{hidden.Count} known-benign event(s) hidden (e.g. {string.Join(", ", examples)}) - flagged benign in the local knowledge base. Uncheck \"Hide known-noise\" to show them.";
+    }
+
+    /// <summary>#126: exports the distinct provider/eventId/sample-message list for every event seen
+    /// with no KB entry - both an honest "where coverage ends" report and the exact input needed to
+    /// grow event-kb-overrides.json.</summary>
+    private void ExportUnknownEvents()
+    {
+        var dialog = new SaveFileDialog
+        {
+            Title = "Export events with no knowledge-base entry",
+            Filter = "CSV (*.csv)|*.csv|Text (*.txt)|*.txt|All files (*.*)|*.*",
+            FileName = "unknown-events.csv",
+        };
+        if (dialog.ShowDialog() != true) return;
+
+        try
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine("Provider,EventId,SampleMessage");
+            foreach (var row in _unknownEventSamples.Values.OrderBy(r => r.ProviderName, StringComparer.OrdinalIgnoreCase).ThenBy(r => r.EventId))
+            {
+                string sample = string.IsNullOrWhiteSpace(row.Message) ? row.RawXml : row.Message;
+                sample = sample.Replace('\r', ' ').Replace('\n', ' ').Trim();
+                if (sample.Length > 300) sample = sample[..300] + "...";
+                sb.AppendLine($"{CsvEscape(row.ProviderName)},{row.EventId},{CsvEscape(sample)}");
+            }
+            File.WriteAllText(dialog.FileName, sb.ToString());
+            StatusText = $"Exported {_unknownEventSamples.Count} unknown event(s) to {dialog.FileName}.";
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Couldn't export unknown events: {ex.Message}";
+        }
+    }
+
+    private static string CsvEscape(string value)
+        => value.IndexOfAny(new[] { ',', '"', '\n' }) >= 0 ? "\"" + value.Replace("\"", "\"\"") + "\"" : value;
 
     private void StartFollow()
     {
@@ -454,8 +777,10 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
         _watchHandle = _service.StartWatch(channel.Name, xpath,
             row => Application.Current?.Dispatcher.Invoke(() =>
             {
+                RegisterKbCoverage(new[] { row });
                 Events.Insert(0, row);
                 StatusText = $"{Events.Count} event(s) loaded (following live).";
+                UpdateHiddenNoiseText();
             }),
             err => Application.Current?.Dispatcher.Invoke(() => StatusText = $"Follow stopped: {err}"));
 
@@ -642,6 +967,7 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
 
             var results = await Task.Run(() => _service.SearchAllChannels(xpath, keyword, IsRegexSearch, maxPerChannel: 5000, maxTotalResults: 2000, progress, token), token);
 
+            RegisterKbCoverage(results);
             foreach (var row in results) SearchResults.Add(row);
             SearchProgressText = $"Done - {SearchResults.Count} match(es) found across all readable channels.";
         }
@@ -704,6 +1030,7 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
                 return;
             }
 
+            RegisterKbCoverage(result.Rows);
             foreach (var row in result.Rows) MultiChannelResults.Add(row);
             _multiChannelBookmark = result.Bookmark;
             HasMoreMultiChannel = result.HasMore;
@@ -759,13 +1086,12 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
 
     // ---- #115: event row context menu ----
 
+    /// <summary>#117: selects the row so its explanation shows in the detail pane's "What this
+    /// usually means" section (BuildExplain runs automatically off the SelectedEvent setter) - the
+    /// #115-era placeholder note is gone now that a real knowledge base exists.</summary>
     private void ExplainEvent(EventRecordRow? row)
     {
         if (row is null) return;
-        // TODO(#117): wire this to the real event knowledge-base panel once it exists (later
-        // backlog chunk, items 117-126). Until then, this is a clearly-labeled placeholder rather
-        // than a silently-do-nothing menu item.
-        ExplainNote = $"Explain: no local knowledge base yet for {row.ProviderName} event {row.EventId} (see backlog item 117).";
         SelectedEvent = row;
     }
 
@@ -843,6 +1169,7 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
                 MultiChannelStatusText = $"Couldn't load the surrounding window: {result.ErrorText}";
                 return;
             }
+            RegisterKbCoverage(result.Rows);
             foreach (var r in result.Rows) MultiChannelResults.Add(r);
             _multiChannelBookmark = result.Bookmark;
             HasMoreMultiChannel = result.HasMore;
@@ -889,5 +1216,7 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
         StopFollow();
         _searchCts?.Cancel();
         _searchCts?.Dispose();
+        _statusCodeCts?.Cancel();
+        _statusCodeCts?.Dispose();
     }
 }

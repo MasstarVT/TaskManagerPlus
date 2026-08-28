@@ -20,8 +20,19 @@ public sealed class StabilityViewModel : ObservableObject
 {
     private readonly EventLogService _service = new();
 
+    // #122: the same knowledge base the Events tab uses (#117) - a second, independent instance
+    // rather than a shared reference, matching this app's existing "each ViewModel composes its own
+    // Services/* instances directly" convention (no DI container - see CLAUDE.md).
+    private readonly EventKnowledgeBaseService _kb = new();
+
     public ObservableCollection<StabilityEvent> RecentEvents { get; } = new();
     public ObservableCollection<MinidumpInfo> Minidumps { get; } = new();
+
+    /// <summary>#122: "Known-bad IDs present on this PC" - which KB-flagged serious event IDs
+    /// actually showed up in the lookback window, with count/last-seen/next-step, ordered by
+    /// re-ranked severity (worst first) then by how often they occurred - see
+    /// EventLogService.ScanForKnownBadIds and BuildKnownBadIdScorecard.</summary>
+    public ObservableCollection<KnownBadIdScorecardRow> KnownBadIdScorecard { get; } = new();
 
     // Round 10, #66: repeated crashes grouped by faulting module, most frequent first - see
     // FaultingModuleSummary's remarks. Pure derived aggregation over RecentEvents, no new query.
@@ -135,6 +146,14 @@ public sealed class StabilityViewModel : ObservableObject
         {
             var snapshot = await Task.Run(() => _service.Query());
             Apply(snapshot);
+
+            // #122: a second, narrow query scoped to exactly the KB's flagged serious IDs (folded
+            // into this same on-demand refresh, not a new timer) - see EventLogService.
+            // ScanForKnownBadIds's remarks for why this can't just reuse RecentEvents above.
+            var flaggedIds = _kb.SeriousFlaggedIds();
+            var hits = await Task.Run(() => _service.ScanForKnownBadIds(flaggedIds));
+            BuildKnownBadIdScorecard(hits);
+
             RefreshErrorText = null;
         }
         catch (Exception ex)
@@ -227,6 +246,36 @@ public sealed class StabilityViewModel : ObservableObject
         }
 
         return Math.Round(Math.Clamp(score, 0, 10), 1);
+    }
+
+    /// <summary>#122: joins each raw scan hit with its knowledge-base entry's text and sorts
+    /// worst-first (re-ranked severity, then occurrence count) - "the top of the list is actually
+    /// the top of the problem," the same ordering rule #120 asks for in the Events tab.</summary>
+    private void BuildKnownBadIdScorecard(List<KnownBadIdScanHit> hits)
+    {
+        var rows = new List<KnownBadIdScorecardRow>();
+        foreach (var hit in hits)
+        {
+            var entry = _kb.Lookup(hit.Provider, hit.EventId);
+            if (entry is null) continue; // shouldn't happen - hits come from the KB's own flagged-ID set
+
+            rows.Add(new KnownBadIdScorecardRow
+            {
+                Provider = hit.Provider,
+                EventId = hit.EventId,
+                Count = hit.Count,
+                LastSeen = hit.LastSeen,
+                Meaning = entry.Meaning,
+                NextStep = entry.NextStep,
+                SeverityLabel = entry.SeverityRank.ToString(),
+                SeverityRank = (int)entry.SeverityRank,
+            });
+        }
+
+        rows.Sort((a, b) => b.SeverityRank != a.SeverityRank ? b.SeverityRank - a.SeverityRank : b.Count - a.Count);
+
+        KnownBadIdScorecard.Clear();
+        foreach (var row in rows) KnownBadIdScorecard.Add(row);
     }
 
     private static string FormatSince(TimeSpan since)

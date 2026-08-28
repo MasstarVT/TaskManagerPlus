@@ -24,6 +24,16 @@
     <PackageReference Include="System.ServiceProcess.ServiceController" Version="10.0.11" />
   </ItemGroup>
 
+  <!-- #117: the bundled Event ID knowledge base - embedded into the assembly (rather than a
+       CopyToOutputDirectory loose file) so it always ships with the exe and needs no accompanying
+       file next to it; EventKnowledgeBaseService reads it back via
+       Assembly.GetManifestResourceStream. The user-editable override file
+       (event-kb-overrides.json) is a separate, real file under AppPaths.SettingsDirectory, not
+       this embedded one. -->
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\EventKnowledgeBase.json" />
+  </ItemGroup>
+
   <!-- Round 12, #85: UseWindowsForms's own implicit global usings (System.Drawing,
        System.Windows.Forms) collide with UseWPF's (System.Windows.Media, System.Windows.Controls,
        ...) - both define Color/Brush/UserControl/Application/KeyEventArgs, so every file in this

@@ -45,6 +45,17 @@
                               ToolTip="Client-side match against each event's description text" />
                 </WrapPanel>
 
+                <!-- #121: known-benign noise suppression - collapses rows the local knowledge base
+                     (#117) flags as benign (DCOM 10016 permission errors, Kernel-EventTracing 2/3
+                     session-start races, Group Policy 1129 on a non-domain PC, ...) rather than
+                     leaving them as ordinary rows. -->
+                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                    <CheckBox Content="Hide known-noise" IsChecked="{Binding HideKnownNoise}" VerticalAlignment="Center" Margin="0,0,10,0" />
+                    <TextBlock Text="{Binding HiddenNoiseText}" TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}"
+                                VerticalAlignment="Center" MaxWidth="520"
+                                Visibility="{Binding HiddenNoiseText, Converter={StaticResource NullToVisibilityConverter}}" />
+                </StackPanel>
+
                 <Grid Margin="0,10,0,0">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
@@ -114,6 +125,17 @@
                             </ComboBox>
                             <CheckBox Content="Show correlation ID columns" IsChecked="{Binding ShowCorrelationColumns}" VerticalAlignment="Center" Margin="0,0,18,0" />
                             <TextBlock Text="{Binding EvidenceBundle.Count, StringFormat='Evidence bundle: {0} item(s)'}" VerticalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        </WrapPanel>
+
+                        <!-- #117/#126: knowledge-base coverage - how many built-in/override entries
+                             loaded (transparency into the override-merge mechanism), and how many
+                             distinct events browsed so far have no KB entry at all, with an export
+                             to feed event-kb-overrides.json. -->
+                        <WrapPanel Margin="0,0,0,10">
+                            <TextBlock Text="{Binding KbStatusText}" VerticalAlignment="Center" Margin="0,0,18,0" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" />
+                            <TextBlock Text="{Binding UnknownEventCount, StringFormat='Events with no KB entry seen so far: {0}'}" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" />
+                            <Button Content="Export unknown events..." Command="{Binding ExportUnknownEventsCommand}" Padding="8,3" FontSize="11"
+                                     ToolTip="Exports the distinct provider / event ID / sample message list for every event browsed so far with no local knowledge-base entry (#126)." />
                         </WrapPanel>
 
                         <!-- #114: copy the active filter as a reproducible command line -->
@@ -428,6 +450,35 @@
                             </DataGridTemplateColumn>
                             <DataGridTextColumn Header="Provider" Binding="{Binding ProviderName}" Width="2*" />
                             <DataGridTextColumn Header="Event ID" Binding="{Binding EventId}" Width="70" />
+                            <!-- #120: this app's own re-ranked severity, next to (not instead of) Windows'
+                                 own Level column above - click to sort so the worst re-ranked events surface
+                                 first, since Windows' own level routinely disagrees (DCOM 10016 is an Error
+                                 that's cosmetic; disk 153 is a Warning that means a dying drive). Blank for
+                                 an event with no KB entry at all, rather than a misleading rank. -->
+                            <DataGridTemplateColumn Header="Re-ranked severity" Width="110" SortMemberPath="KbSeverityRank">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding KbSeverityLabel}" VerticalAlignment="Center">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding KbSeverityLabel}" Value="Critical">
+                                                            <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding KbSeverityLabel}" Value="Error">
+                                                            <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding KbSeverityLabel}" Value="Warning">
+                                                            <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
                             <DataGridTextColumn Header="Task/Opcode" Width="1.4*">
                                 <DataGridTextColumn.Binding>
                                     <MultiBinding StringFormat="{}{0} / {1}">
@@ -465,22 +516,6 @@
                         <TextBlock Grid.Column="0" Text="Event detail" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" FontSize="13" />
                         <CheckBox Grid.Column="1" Content="Raw XML" IsChecked="{Binding ShowRawXml}" VerticalAlignment="Center" />
                     </Grid>
-
-                    <!-- #115: "Explain" placeholder note - a real knowledge-base panel is item 117,
-                         not implemented yet; this just confirms the menu item did something. -->
-                    <Border DockPanel.Dock="Top" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="8,6" Margin="0,0,0,8">
-                        <TextBlock Text="{Binding ExplainNote}" TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource WarningBrush}" />
-                        <Border.Style>
-                            <Style TargetType="Border">
-                                <Setter Property="Visibility" Value="Collapsed" />
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding ExplainNote, Converter={StaticResource NullToVisibilityConverter}}" Value="Visible">
-                                        <Setter Property="Visibility" Value="Visible" />
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </Border.Style>
-                    </Border>
 
                     <ScrollViewer VerticalScrollBarVisibility="Auto">
                         <StackPanel>
@@ -524,15 +559,93 @@
                                             <DataTemplate DataType="{x:Type models:EventPropertyDisplay}">
                                                 <Grid Margin="0,0,0,4">
                                                     <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="90" />
+                                                        <ColumnDefinition Width="110" />
                                                         <ColumnDefinition Width="*" />
                                                     </Grid.ColumnDefinitions>
-                                                    <TextBlock Grid.Column="0" Text="{Binding Name}" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                                    <TextBlock Grid.Column="0" Text="{Binding Name}" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" />
                                                     <TextBlock Grid.Column="1" Text="{Binding Value}" FontSize="11" TextWrapping="Wrap" />
                                                 </Grid>
                                             </DataTemplate>
                                         </ItemsControl.ItemTemplate>
                                     </ItemsControl>
+
+                                    <!-- #118: "quick flag, not a verdict" - the standard informational
+                                         banner, framing everything below as a starting point for
+                                         troubleshooting, never a diagnosis (CLAUDE.md's heuristic-feature
+                                         convention, applied to the event knowledge base). -->
+                                    <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="8,6" Margin="0,14,0,8">
+                                        <TextBlock TextWrapping="Wrap" FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}">
+                                            <Run Text="Quick flag, not a verdict — " FontWeight="SemiBold" />
+                                            <Run Text="the section below is what this event usually means, separate from what Windows literally logged above; treat it as a troubleshooting starting point, not a confirmed diagnosis." />
+                                        </TextBlock>
+                                    </Border>
+
+                                    <TextBlock Text="What this usually means" Style="{StaticResource CardTitle}" FontSize="12" />
+                                    <StackPanel Margin="0,4,0,0">
+                                        <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                                            <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="8" Padding="6,2" Margin="0,0,6,0">
+                                                <TextBlock Text="{Binding ExplainSourceLabel}" FontSize="10" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                            </Border>
+                                            <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="8" Padding="6,2" Margin="0,0,6,0"
+                                                     Visibility="{Binding ExplainConfidenceLabel, Converter={StaticResource NullToVisibilityConverter}}">
+                                                <TextBlock Text="{Binding ExplainConfidenceLabel}" FontSize="10" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                            </Border>
+                                            <Border Background="{DynamicResource AccentMutedBrush}" CornerRadius="8" Padding="6,2"
+                                                     Visibility="{Binding ExplainIsBenign, Converter={StaticResource BoolToVisibilityConverter}}">
+                                                <TextBlock Text="Usually benign / noise" FontSize="10" Foreground="{DynamicResource AccentBrush}" />
+                                            </Border>
+                                        </StackPanel>
+
+                                        <TextBlock Text="{Binding ExplainMeaning}" TextWrapping="Wrap" FontSize="12" Margin="0,0,0,8"
+                                                    Visibility="{Binding ExplainMeaning, Converter={StaticResource NullToVisibilityConverter}}" />
+
+                                        <ItemsControl ItemsSource="{Binding ExplainLikelyCauses}" Margin="0,0,0,8">
+                                            <ItemsControl.Style>
+                                                <Style TargetType="ItemsControl">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding ExplainLikelyCauses.Count}" Value="0">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </ItemsControl.Style>
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock FontSize="11" TextWrapping="Wrap" Margin="0,0,0,2">
+                                                        <Run Text="• " /><Run Text="{Binding}" />
+                                                    </TextBlock>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+
+                                        <!-- #125: a real app action button, shown only when the KB entry
+                                             maps to one that actually exists (currently: restart the
+                                             matching service, for Service Control Manager 7031/7009). -->
+                                        <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="8,6" Margin="0,0,0,8"
+                                                 Visibility="{Binding ExplainNextStep, Converter={StaticResource NullToVisibilityConverter}}">
+                                            <StackPanel>
+                                                <TextBlock Text="Suggested next step" FontSize="10.5" FontWeight="SemiBold" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,3" />
+                                                <TextBlock Text="{Binding ExplainNextStep}" TextWrapping="Wrap" FontSize="11.5" />
+                                                <Button Content="{Binding ExplainActionLabel}" Command="{Binding RunKbActionCommand}" Padding="8,3" Margin="0,6,0,0" HorizontalAlignment="Left"
+                                                         Visibility="{Binding ExplainActionLabel, Converter={StaticResource NullToVisibilityConverter}}" />
+                                            </StackPanel>
+                                        </Border>
+
+                                        <!-- #124: status codes detected in the message, resolved via
+                                             `certutil -error` - hover for the full resolved text. -->
+                                        <ItemsControl ItemsSource="{Binding ExplainStatusCodes}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate DataType="{x:Type models:StatusCodeExplain}">
+                                                    <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="6,4" Margin="0,0,0,4" ToolTip="{Binding ResolvedText}">
+                                                        <TextBlock FontSize="11" TextWrapping="Wrap">
+                                                            <Run Text="{Binding Code}" FontFamily="Consolas" FontWeight="SemiBold" /><Run Text=" — " /><Run Text="{Binding ResolvedText}" />
+                                                        </TextBlock>
+                                                    </Border>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </StackPanel>
                                 </StackPanel>
 
                                 <TextBox Text="{Binding SelectedEvent.RawXml, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap"

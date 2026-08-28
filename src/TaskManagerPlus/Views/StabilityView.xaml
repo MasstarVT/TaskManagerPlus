@@ -68,6 +68,64 @@
                                 AccentBrush="{Binding StabilityIndex, Converter={StaticResource StabilityIndexToBrushConverter}}" />
             </UniformGrid>
 
+            <!-- #122: "Known-bad IDs present on this PC" - which KB-flagged serious event IDs
+                 (#117) actually showed up in the lookback window, with count/last-seen/next-step,
+                 worst re-ranked severity first - the "tell me what's wrong" answer the flat grid
+                 below otherwise makes the user derive by eye. Collapsed entirely when nothing
+                 flagged turned up (the common case on a healthy PC). -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding KnownBadIdScorecard.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Known-bad IDs present on this PC" Style="{StaticResource CardTitle}" />
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap">
+                        <Run Text="Quick flag, not a verdict — " FontWeight="SemiBold" />
+                        <Run Text="event IDs the local knowledge base flags as usually serious, found in the last 30 days across System/Application, worst re-ranked severity first." />
+                    </TextBlock>
+                    <ItemsControl ItemsSource="{Binding KnownBadIdScorecard}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,8" Margin="0,0,0,6">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Grid.Column="0">
+                                            <TextBlock FontSize="12.5" FontWeight="SemiBold">
+                                                <Run Text="{Binding Provider, Mode=OneWay}" /><Run Text=" " /><Run Text="{Binding EventId, Mode=OneWay}" />
+                                                <Run Text=" · " /><Run Text="{Binding SeverityLabel, Mode=OneWay}" />
+                                            </TextBlock>
+                                            <TextBlock Text="{Binding Meaning}" FontSize="11.5" TextWrapping="Wrap" Margin="0,2,0,2" />
+                                            <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap">
+                                                <Run Text="Next step: " FontWeight="SemiBold" /><Run Text="{Binding NextStep}" />
+                                            </TextBlock>
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="1" HorizontalAlignment="Right" Margin="10,0,0,0">
+                                            <Border Background="{DynamicResource DangerMutedBrush}" CornerRadius="10" Padding="8,2" HorizontalAlignment="Right">
+                                                <TextBlock Foreground="{DynamicResource DangerBrush}" FontSize="11.5" FontWeight="SemiBold">
+                                                    <Run Text="{Binding Count, Mode=OneWay}" /><Run Text="×" />
+                                                </TextBlock>
+                                            </Border>
+                                            <TextBlock FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,0" HorizontalAlignment="Right">
+                                                <Run Text="Last " /><Run Text="{Binding LastSeen, StringFormat={}{0:g}, Mode=OneWay}" />
+                                            </TextBlock>
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
             <!-- #1: Reliability History - daily Critical/Error counts over the lookback window,
                  the same "crash/failure events over time" chart Windows' own Reliability Monitor
                  shows, bucketed from the same event query as everything else on this tab. -->

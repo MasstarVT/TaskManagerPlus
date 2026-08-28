@@ -101,3 +101,31 @@ public sealed class ServiceStartDuration
     public double AvgStartDurationMs { get; init; }
     public int SampleCount { get; init; }
 }
+
+/// <summary>#122: one (Provider, EventId) pair from the event knowledge base's "seriously bad" set
+/// that actually turned up in the lookback window - raw count/last-seen only, before being joined
+/// with the KB entry's text; see EventLogService.ScanForKnownBadIds and
+/// StabilityViewModel.BuildKnownBadIdScorecard.</summary>
+public sealed class KnownBadIdScanHit
+{
+    public string Provider { get; init; } = string.Empty;
+    public int EventId { get; init; }
+    public int Count { get; init; }
+    public DateTime LastSeen { get; init; }
+}
+
+/// <summary>#122: one row of the Stability tab's "Known-bad IDs present on this PC" scorecard - a
+/// KnownBadIdScanHit joined with its knowledge-base entry's text, flattened to plain
+/// strings/ints for binding (rather than referencing Models.EventKbEntry directly) so this Stability-
+/// tab presentation model doesn't need to carry the Events tab's knowledge-base type shape.</summary>
+public sealed class KnownBadIdScorecardRow
+{
+    public string Provider { get; init; } = string.Empty;
+    public int EventId { get; init; }
+    public int Count { get; init; }
+    public DateTime LastSeen { get; init; }
+    public string Meaning { get; init; } = string.Empty;
+    public string NextStep { get; init; } = string.Empty;
+    public string SeverityLabel { get; init; } = string.Empty;
+    public int SeverityRank { get; init; }
+}

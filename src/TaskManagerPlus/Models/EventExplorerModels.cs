@@ -77,9 +77,11 @@ public sealed class EventRecordRow
     public string RawXml { get; init; } = string.Empty;
 
     /// <summary>EventRecord.Properties, captured as strings in original order (#105). Standard
-    /// EventRecord property values have no per-value name attached (that needs a provider-specific
-    /// EventLogPropertySelector, out of scope here) - the detail pane labels these positionally
-    /// ("Property 0", "Property 1", ...), which is what EventRecord.Properties itself actually is.</summary>
+    /// EventRecord property values have no per-value name attached on their own - #123 labels them
+    /// with the real field names parsed from the provider's manifest &lt;template&gt; XML
+    /// (EventLogExplorerService.GetProviderEventDetail) when one is registered, falling back to
+    /// positional "Property[0]", "Property[1]", ... naming (what EventRecord.Properties itself
+    /// actually is) when it isn't.</summary>
     public List<string> PropertyValues { get; init; } = new();
 
     /// <summary>An EventBookmark captured for this specific record - lets the grid resume paging
@@ -94,6 +96,18 @@ public sealed class EventRecordRow
     /// filter bar's "Correlation IDs" checkbox.</summary>
     public Guid? ActivityId { get; init; }
     public Guid? RelatedActivityId { get; init; }
+
+    // #117/#120/#121: knowledge-base annotations - plain mutable properties (unlike every field
+    // above, which is init-only and filled in by EventLogExplorerService.ConvertRecord) because
+    // these are filled in by a separate pass (EventKnowledgeBaseService.Annotate, called from
+    // EventsViewModel right after a row is read, before it's added to any bound collection) that
+    // EventLogExplorerService itself has no knowledge of - keeps the KB entirely out of the
+    // Event Viewer replacement's core read path.
+    public bool KbHasEntry { get; set; }
+    public int KbSeverityRank { get; set; }
+    public string KbSeverityLabel { get; set; } = string.Empty;
+    public bool KbIsBenign { get; set; }
+    public string? KbNextStep { get; set; }
 }
 
 /// <summary>Composes the XPath used by EventLogExplorerService.BuildXPath (#104) - a structured,
