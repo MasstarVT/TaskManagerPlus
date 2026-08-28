@@ -382,7 +382,12 @@ public sealed class ProcessMonitorService : IDisposable
             {
                 if (!_gpuEngineCounters.TryGetValue(instance, out var counter))
                 {
-                    try { _gpuEngineCounters[instance] = new PerformanceCounter("GPU Engine", "Utilization Percentage", instance, readOnly: true); }
+                    try
+                    {
+                        var newCounter = new PerformanceCounter("GPU Engine", "Utilization Percentage", instance, readOnly: true);
+                        newCounter.NextValue(); // prime it - a rate counter's first-ever sample is meaningless (always 0), so consume it now rather than let the next tick's read report a false 0.
+                        _gpuEngineCounters[instance] = newCounter;
+                    }
                     catch { /* instance disappeared between GetInstanceNames() and here - skip it */ }
                     continue;
                 }
