@@ -616,6 +616,61 @@ public sealed class SystemSpecsService
     private static readonly Regex PascalCaseSplitRegex = new(@"(?<!^)(?=[A-Z])", RegexOptions.Compiled);
     private static string SplitPascalCase(string name) => PascalCaseSplitRegex.Replace(name, " ");
 
+    /// <summary>Round 13, #323: MSFT_StorageReliabilityCounter's three latency-maximum fields
+    /// (ReadLatencyMax/WriteLatencyMax/FlushLatencyMax, milliseconds) - already present in the flat
+    /// ReadSmartDetails dump above, but promoted here to their own typed read so StorageViewModel
+    /// can drive three first-class VfdMeter tiles instead of scanning the label/value list for
+    /// them. Null (never 0) when the field isn't reported by this drive/driver, same as
+    /// ReadDiskWearByIndex's Wear.</summary>
+    public static (long? ReadMs, long? WriteMs, long? FlushMs) ReadReliabilityLatencies(int diskIndex)
+    {
+        try
+        {
+            using var searcher = new ManagementObjectSearcher(
+                @"root\Microsoft\Windows\Storage",
+                $"SELECT ReadLatencyMax, WriteLatencyMax, FlushLatencyMax FROM MSFT_StorageReliabilityCounter WHERE DeviceId = '{diskIndex}'");
+            foreach (ManagementObject mo in searcher.Get())
+            {
+                long? read = mo["ReadLatencyMax"] is null ? null : Convert.ToInt64(mo["ReadLatencyMax"]);
+                long? write = mo["WriteLatencyMax"] is null ? null : Convert.ToInt64(mo["WriteLatencyMax"]);
+                long? flush = mo["FlushLatencyMax"] is null ? null : Convert.ToInt64(mo["FlushLatencyMax"]);
+                return (read, write, flush);
+            }
+        }
+        catch
+        {
+            // Namespace/class unavailable, or this driver doesn't report reliability counters.
+        }
+        return (null, null, null);
+    }
+
+    /// <summary>Round 13, #323: invokes MSFT_StorageReliabilityCounter.ResetStatistics() for one
+    /// disk - the driver's own counter-reset method (Storage Management API), not a registry/file
+    /// hack. Returns a short status message either way rather than throwing, matching every other
+    /// on-demand action's try/catch-to-status-text convention.</summary>
+    public static string ResetReliabilityCounters(int diskIndex)
+    {
+        try
+        {
+            using var searcher = new ManagementObjectSearcher(
+                @"root\Microsoft\Windows\Storage",
+                $"SELECT * FROM MSFT_StorageReliabilityCounter WHERE DeviceId = '{diskIndex}'");
+            foreach (ManagementObject mo in searcher.Get())
+            {
+                using var result = mo.InvokeMethod("ResetStatistics", null, null);
+                int returnValue = result?["ReturnValue"] is null ? 0 : Convert.ToInt32(result["ReturnValue"]);
+                return returnValue == 0
+                    ? "Reliability counters reset."
+                    : $"ResetStatistics returned code {returnValue}.";
+            }
+            return "No MSFT_StorageReliabilityCounter instance found for this disk.";
+        }
+        catch (Exception ex)
+        {
+            return $"Failed: {ex.Message}";
+        }
+    }
+
     // Publishers that are effectively OS/runtime components, not something a user "installed" in
     // the sense of "did this correlate with when my problem started" - filtered out the same way
     // ReadOutdatedDrivers excludes Microsoft/Generic/Standard-manufacturer noise.

@@ -199,6 +199,43 @@
                         <Button Grid.Column="1" Content="Read SMART details" Padding="10,4" Command="{Binding ReadSmartDetailsCommand}" />
                     </Grid>
                     <TextBlock Text="{Binding SmartStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,8" />
+
+                    <!-- Round 13, #323: MSFT_StorageReliabilityCounter latency-maximum tiles,
+                         promoted out of the flat SMART-details dump above - any disk that reports
+                         them, not NVMe-specific. Hidden until at least one has actually been read. -->
+                    <StackPanel Margin="0,0,0,10">
+                        <StackPanel.Style>
+                            <Style TargetType="StackPanel">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding ShowReliabilityLatencyTiles}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </StackPanel.Style>
+                        <Grid Margin="0,0,0,6">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="Reliability-counter latency maxima" Style="{StaticResource SubStat}" VerticalAlignment="Center" />
+                            <Button Grid.Column="1" Content="Reset counters" Padding="8,3" FontSize="11.5" Command="{Binding ResetReliabilityCountersCommand}" />
+                        </Grid>
+                        <UniformGrid Columns="3">
+                            <views:VfdMeter Title="Read latency max" Glow="False" Margin="0,0,8,0" Percent="0" Unit="ms"
+                                            ValueText="{Binding ReliabilityReadLatencyText}" SubText="MSFT_StorageReliabilityCounter"
+                                            AccentBrush="{Binding Performance.DiskColor, Converter={StaticResource ColorToBrushConverter}}" />
+                            <views:VfdMeter Title="Write latency max" Glow="False" Margin="4,0,4,0" Percent="0" Unit="ms"
+                                            ValueText="{Binding ReliabilityWriteLatencyText}" SubText="MSFT_StorageReliabilityCounter"
+                                            AccentBrush="{Binding Performance.DiskColor, Converter={StaticResource ColorToBrushConverter}}" />
+                            <views:VfdMeter Title="Flush latency max" Glow="False" Margin="8,0,0,0" Percent="0" Unit="ms"
+                                            ValueText="{Binding ReliabilityFlushLatencyText}" SubText="MSFT_StorageReliabilityCounter"
+                                            AccentBrush="{Binding Performance.DiskColor, Converter={StaticResource ColorToBrushConverter}}" />
+                        </UniformGrid>
+                        <TextBlock Text="{Binding ReliabilityResetStatusText}" Style="{StaticResource SubStat}" Margin="0,4,0,0" TextWrapping="Wrap"
+                                   Visibility="{Binding ReliabilityResetStatusText, Converter={StaticResource StringToVisibilityConverter}}" />
+                    </StackPanel>
                     <DataGrid ItemsSource="{Binding SmartDetails}" IsReadOnly="True" MaxHeight="240" AutoGenerateColumns="False">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="Attribute" Binding="{Binding Label}" Width="1.4*" />
@@ -277,6 +314,174 @@
                             <DataGridTextColumn Header="Margin" Binding="{Binding MarginText}" Width="60" />
                             <DataGridTextColumn Header="Raw value" Binding="{Binding RawDisplay}" Width="1.2*" />
                             <DataGridTextColumn Header="Note" Binding="{Binding VendorNote}" Width="1.2*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- Round 13, #313-#322: NVMe health card - shown only when the disk selected above
+                 reports BusType NVMe, populated by the same "Read SMART details" action. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding ShowNvmeHealth}" Value="True">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="NVMe health" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="SMART/Health Information Log (page 0x02), Identify Controller, and on-demand error/self-test logs, all via IOCTL_STORAGE_QUERY_PROPERTY - no vendor driver required."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding NvmeHealthStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,10" TextWrapping="Wrap" />
+
+                    <!-- #322: Identify Controller facts + APST. -->
+                    <TextBlock Text="{Binding NvmeIdentifyText}" Style="{StaticResource SubStat}" Margin="0,0,0,2" TextWrapping="Wrap"
+                               Visibility="{Binding NvmeIdentifyText, Converter={StaticResource StringToVisibilityConverter}}" />
+                    <TextBlock Text="{Binding NvmeApstText}" Style="{StaticResource SubStat}" Margin="0,0,0,10" TextWrapping="Wrap"
+                               Visibility="{Binding NvmeApstText, Converter={StaticResource StringToVisibilityConverter}}" />
+
+                    <!-- #315: spare/threshold/percentage-used tiles. Available Spare turns red once
+                         it falls below its own reported threshold. -->
+                    <UniformGrid Columns="3" Margin="0,0,0,10">
+                        <views:VfdMeter Title="Available spare" Glow="False" Margin="0,0,8,0" Percent="0" Unit="%"
+                                        ValueText="{Binding NvmeSpareText}" SubText="{Binding NvmeSpareThresholdText, StringFormat=Threshold {0}}">
+                            <views:VfdMeter.Style>
+                                <Style TargetType="views:VfdMeter">
+                                    <Setter Property="AccentBrush" Value="{DynamicResource SuccessBrush}" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding NvmeSpareBelowThreshold}" Value="True">
+                                            <Setter Property="AccentBrush" Value="{DynamicResource DangerBrush}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </views:VfdMeter.Style>
+                        </views:VfdMeter>
+                        <views:VfdMeter Title="Spare threshold" Glow="False" Margin="4,0,4,0" Percent="0" Unit="%"
+                                        ValueText="{Binding NvmeSpareThresholdText}" SubText="Vendor-set floor"
+                                        AccentBrush="{DynamicResource TextSecondaryBrush}" />
+                        <views:VfdMeter Title="Percentage used" Glow="False" Margin="8,0,0,0" Percent="0"
+                                        ValueText="{Binding NvmePercentUsedText}" SubText="Not clamped at 100%"
+                                        AccentBrush="{Binding Performance.DiskColor, Converter={StaticResource ColorToBrushConverter}}" />
+                    </UniformGrid>
+
+                    <!-- #314: Critical Warning bit checklist. -->
+                    <TextBlock Text="Critical warning bits" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                    <ItemsControl ItemsSource="{Binding NvmeCriticalWarnings}" Margin="0,0,0,10">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="{Binding Label}" FontSize="12.5" VerticalAlignment="Center" />
+                                    <Border Grid.Column="1" CornerRadius="3" Padding="6,1">
+                                        <Border.Style>
+                                            <Style TargetType="Border">
+                                                <Setter Property="Background" Value="{DynamicResource SuccessBrush}" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsSet}" Value="True">
+                                                        <Setter Property="Background" Value="{DynamicResource DangerBrush}" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Border.Style>
+                                        <TextBlock FontSize="11" FontWeight="SemiBold" Foreground="White">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Text" Value="OK" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsSet}" Value="True">
+                                                            <Setter Property="Text" Value="SET" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </Border>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <!-- #316: data units / average I/O size. -->
+                    <TextBlock Text="{Binding NvmeDataUnitsText}" Style="{StaticResource SubStat}" Margin="0,0,0,2" TextWrapping="Wrap"
+                               Visibility="{Binding NvmeDataUnitsText, Converter={StaticResource StringToVisibilityConverter}}" />
+                    <TextBlock Text="{Binding NvmeAverageIoSizeText}" Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap"
+                               Visibility="{Binding NvmeAverageIoSizeText, Converter={StaticResource StringToVisibilityConverter}}" />
+
+                    <!-- #317: media/data-integrity errors - one of the few unambiguous NVMe "losing data" signals. -->
+                    <TextBlock Text="{Binding NvmeMediaErrorText}" Margin="0,0,0,8" TextWrapping="Wrap">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding NvmeMediaErrorsPresent}" Value="True">
+                                        <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                        <Setter Property="FontWeight" Value="SemiBold" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
+                    <!-- #318: temperature + cumulative throttle-time counters. -->
+                    <TextBlock Text="{Binding NvmeTemperatureText}" Style="{StaticResource SubStat}" Margin="0,0,0,2" TextWrapping="Wrap"
+                               Visibility="{Binding NvmeTemperatureText, Converter={StaticResource StringToVisibilityConverter}}" />
+                    <TextBlock Text="{Binding NvmeThrottleText}" Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap"
+                               Visibility="{Binding NvmeThrottleText, Converter={StaticResource StringToVisibilityConverter}}" />
+
+                    <!-- #319: controller busy time / power cycles / power-on hours / unsafe shutdowns. -->
+                    <TextBlock Text="{Binding NvmePowerText}" Style="{StaticResource SubStat}" Margin="0,0,0,12" TextWrapping="Wrap"
+                               Visibility="{Binding NvmePowerText, Converter={StaticResource StringToVisibilityConverter}}" />
+
+                    <!-- #320: on-demand Error Information Log (page 0x01) - separate round trip. -->
+                    <Grid Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Error Information Log (page 0x01)" Style="{StaticResource SubStat}" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Read error log" Padding="8,3" FontSize="11.5" Command="{Binding ReadNvmeErrorLogCommand}" />
+                    </Grid>
+                    <TextBlock Text="{Binding NvmeErrorLogStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,6" TextWrapping="Wrap" />
+                    <DataGrid ItemsSource="{Binding NvmeErrorLog}" IsReadOnly="True" MaxHeight="200" AutoGenerateColumns="False" Margin="0,0,0,12">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Count" Binding="{Binding ErrorCount}" Width="60" />
+                            <DataGridTextColumn Header="SQ ID" Binding="{Binding SubmissionQueueId}" Width="55" />
+                            <DataGridTextColumn Header="Cmd ID" Binding="{Binding CommandId}" Width="60" />
+                            <DataGridTextColumn Header="Status" Binding="{Binding StatusText}" Width="1.6*" />
+                            <DataGridTextColumn Header="LBA" Binding="{Binding Lba}" Width="90" />
+                            <DataGridTextColumn Header="NSID" Binding="{Binding NamespaceId}" Width="60" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+
+                    <!-- #321: Device Self-test Log (page 0x06) + Short/Extended triggers. -->
+                    <Grid Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Device self-test log (page 0x06)" Style="{StaticResource SubStat}" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Read log" Padding="8,3" FontSize="11.5" Margin="0,0,6,0" Command="{Binding ReadNvmeSelfTestLogCommand}" />
+                        <Button Grid.Column="2" Content="Short (~2 min)" Padding="8,3" FontSize="11.5" Margin="0,0,6,0" Command="{Binding RunNvmeShortSelfTestCommand}" />
+                        <Button Grid.Column="3" Content="Extended" Padding="8,3" FontSize="11.5" Command="{Binding RunNvmeExtendedSelfTestCommand}" />
+                    </Grid>
+                    <TextBlock Text="{Binding NvmeSelfTestStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,2" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding NvmeSelfTestTriggerStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,6" TextWrapping="Wrap"
+                               Visibility="{Binding NvmeSelfTestTriggerStatusText, Converter={StaticResource StringToVisibilityConverter}}" />
+                    <DataGrid ItemsSource="{Binding NvmeSelfTestResults}" IsReadOnly="True" MaxHeight="200" AutoGenerateColumns="False">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Test" Binding="{Binding OperationText}" Width="90" />
+                            <DataGridTextColumn Header="Result" Binding="{Binding StatusText}" Width="1.6*" />
+                            <DataGridTextColumn Header="Segment" Binding="{Binding SegmentNumber}" Width="65" />
+                            <DataGridTextColumn Header="Failing LBA" Binding="{Binding FailingLba}" Width="100" />
+                            <DataGridTextColumn Header="NSID" Binding="{Binding NamespaceId}" Width="60" />
                         </DataGrid.Columns>
                     </DataGrid>
                 </StackPanel>

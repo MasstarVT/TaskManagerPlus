@@ -55,6 +55,15 @@ public sealed class LargestItemRow
     public string Kind { get; init; } = string.Empty;
 }
 
+/// <summary>Round 13, #314: one decoded bit of the NVMe Health Log's Critical Warning byte - a
+/// named row with a red badge when set, rather than a raw hex mask. All six are always shown (not
+/// just the set ones) once a health log has been read, so the card reads as a checklist.</summary>
+public sealed class NvmeWarningRow
+{
+    public string Label { get; init; } = string.Empty;
+    public bool IsSet { get; init; }
+}
+
 /// <summary>
 /// Backs the Storage tab. Thin composition over the shared PerformanceViewModel sampler -
 /// see CpuViewModel's remarks for why this doesn't own its own timer. Also takes the shared
@@ -156,6 +165,110 @@ public sealed class StorageViewModel : ObservableObject
     private string _smartWearWarningText = string.Empty;
     public string SmartWearWarningText { get => _smartWearWarningText; private set => SetProperty(ref _smartWearWarningText, value); }
 
+    // Round 13, #313-#319: NVMe SMART/Health Information Log (page 0x02) - populated alongside the
+    // raw SMART read above (same ReadSmartDetailsCommand action) whenever the selected disk's
+    // BusType is NVMe; hidden entirely otherwise.
+    private bool _showNvmeHealth;
+    public bool ShowNvmeHealth { get => _showNvmeHealth; private set => SetProperty(ref _showNvmeHealth, value); }
+
+    private string _nvmeHealthStatusText = "Not read";
+    public string NvmeHealthStatusText { get => _nvmeHealthStatusText; private set => SetProperty(ref _nvmeHealthStatusText, value); }
+
+    // #314
+    public ObservableCollection<NvmeWarningRow> NvmeCriticalWarnings { get; } = new();
+
+    // #315
+    private string _nvmeSpareText = string.Empty;
+    public string NvmeSpareText { get => _nvmeSpareText; private set => SetProperty(ref _nvmeSpareText, value); }
+
+    private string _nvmeSpareThresholdText = string.Empty;
+    public string NvmeSpareThresholdText { get => _nvmeSpareThresholdText; private set => SetProperty(ref _nvmeSpareThresholdText, value); }
+
+    private bool _nvmeSpareBelowThreshold;
+    public bool NvmeSpareBelowThreshold { get => _nvmeSpareBelowThreshold; private set => SetProperty(ref _nvmeSpareBelowThreshold, value); }
+
+    private string _nvmePercentUsedText = string.Empty;
+    public string NvmePercentUsedText { get => _nvmePercentUsedText; private set => SetProperty(ref _nvmePercentUsedText, value); }
+
+    // #316
+    private string _nvmeDataUnitsText = string.Empty;
+    public string NvmeDataUnitsText { get => _nvmeDataUnitsText; private set => SetProperty(ref _nvmeDataUnitsText, value); }
+
+    private string _nvmeAverageIoSizeText = string.Empty;
+    public string NvmeAverageIoSizeText { get => _nvmeAverageIoSizeText; private set => SetProperty(ref _nvmeAverageIoSizeText, value); }
+
+    // #317
+    private string _nvmeMediaErrorText = string.Empty;
+    public string NvmeMediaErrorText { get => _nvmeMediaErrorText; private set => SetProperty(ref _nvmeMediaErrorText, value); }
+
+    private bool _nvmeMediaErrorsPresent;
+    public bool NvmeMediaErrorsPresent { get => _nvmeMediaErrorsPresent; private set => SetProperty(ref _nvmeMediaErrorsPresent, value); }
+
+    // #318
+    private string _nvmeTemperatureText = string.Empty;
+    public string NvmeTemperatureText { get => _nvmeTemperatureText; private set => SetProperty(ref _nvmeTemperatureText, value); }
+
+    private string _nvmeThrottleText = string.Empty;
+    public string NvmeThrottleText { get => _nvmeThrottleText; private set => SetProperty(ref _nvmeThrottleText, value); }
+
+    // #319
+    private string _nvmePowerText = string.Empty;
+    public string NvmePowerText { get => _nvmePowerText; private set => SetProperty(ref _nvmePowerText, value); }
+
+    // #320: Error Information Log (page 0x01) - separate round trip, behind its own button.
+    public ObservableCollection<NvmeErrorLogEntry> NvmeErrorLog { get; } = new();
+
+    private string _nvmeErrorLogStatusText = "Not read";
+    public string NvmeErrorLogStatusText { get => _nvmeErrorLogStatusText; private set => SetProperty(ref _nvmeErrorLogStatusText, value); }
+
+    private bool _isReadingNvmeErrorLog;
+    public bool IsReadingNvmeErrorLog { get => _isReadingNvmeErrorLog; private set => SetProperty(ref _isReadingNvmeErrorLog, value); }
+
+    public AsyncRelayCommand ReadNvmeErrorLogCommand { get; }
+
+    // #321: Device Self-test Log (page 0x06) + Short/Extended self-test triggers.
+    public ObservableCollection<NvmeSelfTestResult> NvmeSelfTestResults { get; } = new();
+
+    private string _nvmeSelfTestStatusText = "Not read";
+    public string NvmeSelfTestStatusText { get => _nvmeSelfTestStatusText; private set => SetProperty(ref _nvmeSelfTestStatusText, value); }
+
+    private bool _isReadingNvmeSelfTestLog;
+    public bool IsReadingNvmeSelfTestLog { get => _isReadingNvmeSelfTestLog; private set => SetProperty(ref _isReadingNvmeSelfTestLog, value); }
+
+    public AsyncRelayCommand ReadNvmeSelfTestLogCommand { get; }
+
+    private string _nvmeSelfTestTriggerStatusText = string.Empty;
+    public string NvmeSelfTestTriggerStatusText { get => _nvmeSelfTestTriggerStatusText; private set => SetProperty(ref _nvmeSelfTestTriggerStatusText, value); }
+
+    public RelayCommand RunNvmeShortSelfTestCommand { get; }
+    public RelayCommand RunNvmeExtendedSelfTestCommand { get; }
+
+    // #322: Identify Controller facts + best-effort APST (autonomous power state) detail.
+    private string _nvmeIdentifyText = string.Empty;
+    public string NvmeIdentifyText { get => _nvmeIdentifyText; private set => SetProperty(ref _nvmeIdentifyText, value); }
+
+    private string _nvmeApstText = string.Empty;
+    public string NvmeApstText { get => _nvmeApstText; private set => SetProperty(ref _nvmeApstText, value); }
+
+    // Round 13, #323: MSFT_StorageReliabilityCounter latency-maximum tiles - pure WMI, applies to
+    // any disk (not NVMe-specific), populated alongside the raw SMART read for the selected disk.
+    private bool _showReliabilityLatencyTiles;
+    public bool ShowReliabilityLatencyTiles { get => _showReliabilityLatencyTiles; private set => SetProperty(ref _showReliabilityLatencyTiles, value); }
+
+    private string _reliabilityReadLatencyText = "—";
+    public string ReliabilityReadLatencyText { get => _reliabilityReadLatencyText; private set => SetProperty(ref _reliabilityReadLatencyText, value); }
+
+    private string _reliabilityWriteLatencyText = "—";
+    public string ReliabilityWriteLatencyText { get => _reliabilityWriteLatencyText; private set => SetProperty(ref _reliabilityWriteLatencyText, value); }
+
+    private string _reliabilityFlushLatencyText = "—";
+    public string ReliabilityFlushLatencyText { get => _reliabilityFlushLatencyText; private set => SetProperty(ref _reliabilityFlushLatencyText, value); }
+
+    private string _reliabilityResetStatusText = string.Empty;
+    public string ReliabilityResetStatusText { get => _reliabilityResetStatusText; private set => SetProperty(ref _reliabilityResetStatusText, value); }
+
+    public AsyncRelayCommand ResetReliabilityCountersCommand { get; }
+
     // Round 9, #39: largest files/folders scanner - on-demand, depth-capped.
     private string _largestItemsRoot = (Path.GetPathRoot(Environment.SystemDirectory) ?? "C:\\");
     public string LargestItemsRoot { get => _largestItemsRoot; set => SetProperty(ref _largestItemsRoot, value); }
@@ -199,6 +312,16 @@ public sealed class StorageViewModel : ObservableObject
         ReadSmartDetailsCommand = new AsyncRelayCommand(ReadSmartDetailsAsync, () => SelectedSmartDisk is not null);
         ScanLargestItemsCommand = new AsyncRelayCommand(ScanLargestItemsAsync, () => !IsScanningLargestItems && Directory.Exists(LargestItemsRoot));
         RunThroughputTestCommand = new AsyncRelayCommand(RunThroughputTestAsync, () => !IsThroughputTesting && SelectedThroughputDrive is not null);
+
+        // #320/#321: separate log-page round trips, each gated on an NVMe disk actually having
+        // been read via ReadSmartDetailsCommand above (ShowNvmeHealth).
+        ReadNvmeErrorLogCommand = new AsyncRelayCommand(ReadNvmeErrorLogAsync, () => ShowNvmeHealth && !IsReadingNvmeErrorLog && SelectedSmartDisk is not null);
+        ReadNvmeSelfTestLogCommand = new AsyncRelayCommand(ReadNvmeSelfTestLogAsync, () => ShowNvmeHealth && !IsReadingNvmeSelfTestLog && SelectedSmartDisk is not null);
+        RunNvmeShortSelfTestCommand = new RelayCommand(() => RunNvmeSelfTest(extended: false), () => ShowNvmeHealth && SelectedSmartDisk is not null);
+        RunNvmeExtendedSelfTestCommand = new RelayCommand(() => RunNvmeSelfTest(extended: true), () => ShowNvmeHealth && SelectedSmartDisk is not null);
+
+        // #323: pure WMI, any disk - independent of the NVMe gating above.
+        ResetReliabilityCountersCommand = new AsyncRelayCommand(ResetReliabilityCountersAsync, () => SelectedSmartDisk is not null);
 
         _ = Task.Run(() =>
         {
@@ -271,10 +394,38 @@ public sealed class StorageViewModel : ObservableObject
         {
             var result = await Task.Run(() => SmartRawAttributeService.Read(disk.Index, disk.Model));
             ApplySmartRawResult(result);
+
+            // Round 13, #313/#322: bundle the NVMe health-log-page-0x02 read (and Identify
+            // Controller) into this same on-demand action - both are cheap single round trips, and
+            // CLAUDE.md's "bundle a cheap read into the existing on-demand flow rather than a new
+            // timer" guidance applies directly. #320/#321 (error log, self-test log/trigger) stay
+            // separate buttons since each is its own heavier log-page round trip.
+            ShowNvmeHealth = result.BusType == "NVMe";
+            if (ShowNvmeHealth)
+            {
+                NvmeHealthStatusText = "Reading NVMe SMART/Health Information Log (page 0x02)...";
+                var healthLog = await Task.Run(() => NvmeHealthLogService.ReadHealthLog(disk.Index));
+                ApplyNvmeHealth(healthLog);
+
+                var identify = await Task.Run(() => NvmeHealthLogService.ReadIdentify(disk.Index));
+                ApplyNvmeIdentify(identify);
+            }
         }
         catch (Exception ex)
         {
             SmartRawStatusText = $"Failed: {ex.Message}";
+        }
+
+        // Round 13, #323: reliability-counter latency maxima - pure WMI, independent of media/bus
+        // type, so read regardless of whether ShowNvmeHealth ended up true above.
+        try
+        {
+            var (readLatency, writeLatency, flushLatency) = await Task.Run(() => SystemSpecsService.ReadReliabilityLatencies(disk.Index));
+            ApplyReliabilityLatencies(readLatency, writeLatency, flushLatency);
+        }
+        catch
+        {
+            ApplyReliabilityLatencies(null, null, null);
         }
     }
 
@@ -294,6 +445,31 @@ public sealed class StorageViewModel : ObservableObject
         SmartEnduranceWafText = string.Empty;
         SmartWearLevelText = string.Empty;
         SmartWearWarningText = string.Empty;
+
+        // Round 13: reset NVMe + reliability-latency display so a previous disk's data doesn't
+        // linger while the new disk's data is still being read (or if it turns out non-NVMe).
+        ShowNvmeHealth = false;
+        NvmeHealthStatusText = "Not read";
+        NvmeCriticalWarnings.Clear();
+        NvmeSpareText = string.Empty;
+        NvmeSpareThresholdText = string.Empty;
+        NvmeSpareBelowThreshold = false;
+        NvmePercentUsedText = string.Empty;
+        NvmeDataUnitsText = string.Empty;
+        NvmeAverageIoSizeText = string.Empty;
+        NvmeMediaErrorText = string.Empty;
+        NvmeMediaErrorsPresent = false;
+        NvmeTemperatureText = string.Empty;
+        NvmeThrottleText = string.Empty;
+        NvmePowerText = string.Empty;
+        NvmeIdentifyText = string.Empty;
+        NvmeApstText = string.Empty;
+        NvmeErrorLog.Clear();
+        NvmeErrorLogStatusText = "Not read";
+        NvmeSelfTestResults.Clear();
+        NvmeSelfTestStatusText = "Not read";
+        NvmeSelfTestTriggerStatusText = string.Empty;
+        ApplyReliabilityLatencies(null, null, null);
     }
 
     private void ApplySmartRawResult(SmartRawResult result)
@@ -469,6 +645,198 @@ public sealed class StorageViewModel : ObservableObject
                     ? $"Raw attributes imply ~{derivedWear}% worn, but the driver's own Wear summary reports {driverWearPercent.Value}% - usually a stale driver summary, not a real disagreement. Quick flag, not a verdict."
                     : string.Empty;
             }
+        }
+    }
+
+    /// <summary>#314-#319: turns one NvmeHealthLog read into the card's display strings/rows.
+    /// Unavailable (non-NVMe controller doesn't answer the IOCTL, or the query otherwise failed)
+    /// is stated plainly rather than leaving the card blank with no explanation.</summary>
+    private void ApplyNvmeHealth(NvmeHealthLog log)
+    {
+        NvmeCriticalWarnings.Clear();
+        if (!log.Available)
+        {
+            NvmeHealthStatusText = $"NVMe health log unavailable: {log.UnavailableReason}";
+            return;
+        }
+
+        NvmeHealthStatusText = "NVMe SMART/Health Information Log (page 0x02) read.";
+
+        // #314: all six always shown (not just the set ones) so the card reads as a checklist.
+        NvmeCriticalWarnings.Add(new NvmeWarningRow { Label = "Available spare below threshold", IsSet = log.SpareBelowThreshold });
+        NvmeCriticalWarnings.Add(new NvmeWarningRow { Label = "Temperature exceeded a critical threshold", IsSet = log.TemperatureExceeded });
+        NvmeCriticalWarnings.Add(new NvmeWarningRow { Label = "NVM subsystem reliability degraded", IsSet = log.ReliabilityDegraded });
+        NvmeCriticalWarnings.Add(new NvmeWarningRow { Label = "Media placed in read-only mode - back up now", IsSet = log.MediaReadOnly });
+        NvmeCriticalWarnings.Add(new NvmeWarningRow { Label = "Volatile memory backup device failed", IsSet = log.VolatileBackupFailed });
+        NvmeCriticalWarnings.Add(new NvmeWarningRow { Label = "Persistent Memory Region read-only", IsSet = log.PmrReadOnly });
+
+        // #315: not clamped - Percentage Used legitimately exceeds 100 on a drive past rated endurance.
+        NvmeSpareText = $"{log.AvailableSparePercent}%";
+        NvmeSpareThresholdText = $"{log.AvailableSpareThresholdPercent}%";
+        NvmeSpareBelowThreshold = log.AvailableSpareBelowOwnThreshold;
+        NvmePercentUsedText = log.PercentageUsed > 100 ? $"{log.PercentageUsed}% (past rated endurance)" : $"{log.PercentageUsed}%";
+
+        // #316
+        string avgRead = log.AverageReadIoBytes is { } ar ? Formatting.FormatBytes(ar) : "n/a (no read commands)";
+        string avgWrite = log.AverageWriteIoBytes is { } aw ? Formatting.FormatBytes(aw) : "n/a (no write commands)";
+        NvmeDataUnitsText = $"{log.DataUnitsReadTb:0.###} TB read / {log.DataUnitsWrittenTb:0.###} TB written over the drive's life ({log.HostReadCommands:N0} host read / {log.HostWriteCommands:N0} host write commands).";
+        NvmeAverageIoSizeText = $"Average I/O size: {avgRead} per read, {avgWrite} per write.";
+
+        // #317: the one unambiguous "this drive is losing data" NVMe signal available without a vendor tool.
+        NvmeMediaErrorsPresent = log.MediaAndDataIntegrityErrors != 0;
+        string errorLogNote = log.ErrorInfoLogEntryCount > 0
+            ? $" {log.ErrorInfoLogEntryCount:N0} entries in the Error Information Log (read it below for detail)."
+            : " No entries in the Error Information Log.";
+        NvmeMediaErrorText = (log.MediaAndDataIntegrityErrors == 0
+            ? "0 media and data integrity errors."
+            : $"{log.MediaAndDataIntegrityErrors:N0} media and data integrity error(s) reported.") + errorLogNote;
+
+        // #318: composite + per-sensor temperature, plus cumulative throttle-time counters that
+        // survive reboots (unlike the live LibreHardwareMonitorLib reading above this card).
+        string tempText = log.CompositeTemperatureC is { } c ? $"{c:0.#}°C composite" : "Composite temperature not reported";
+        var sensorParts = log.TemperatureSensorsKelvin
+            .Select((k, i) => (Index: i + 1, Kelvin: k))
+            .Where(t => t.Kelvin != 0)
+            .Select(t => $"Sensor {t.Index}: {t.Kelvin - 273.15:0.#}°C")
+            .ToList();
+        NvmeTemperatureText = sensorParts.Count > 0 ? $"{tempText} · {string.Join(" · ", sensorParts)}" : tempText;
+        NvmeThrottleText = $"Lifetime time above warning threshold: {log.WarningCompositeTempTimeMinutes:N0} min · above critical threshold: {log.CriticalCompositeTempTimeMinutes:N0} min · thermal-mgmt state 1: {log.ThermalMgmtTemp1TransitionCount:N0} transitions / {log.ThermalMgmtTemp1TotalTimeSeconds:N0}s · state 2: {log.ThermalMgmtTemp2TransitionCount:N0} transitions / {log.ThermalMgmtTemp2TotalTimeSeconds:N0}s.";
+
+        // #319
+        NvmePowerText = $"{log.PowerOnHours:N0} power-on hours · {log.PowerCycles:N0} power cycles · {log.UnsafeShutdowns:N0} unsafe shutdowns · {log.ControllerBusyTimeMinutes:N0} min controller busy time.";
+    }
+
+    /// <summary>#322: Identify Controller facts + best-effort APST detail.</summary>
+    private void ApplyNvmeIdentify(NvmeIdentifyInfo info)
+    {
+        if (!info.Available)
+        {
+            NvmeIdentifyText = $"Identify Controller unavailable: {info.UnavailableReason}";
+            NvmeApstText = string.Empty;
+            return;
+        }
+
+        string mdtsText = info.MdtsRaw == 0 ? "no limit reported" : $"2^{info.MdtsRaw} pages";
+        NvmeIdentifyText = $"{info.ModelNumber} · Serial {info.SerialNumber} · Firmware {info.FirmwareRevision} · {info.NamespaceCount} namespace(s) · MDTS {mdtsText}.";
+
+        if (!info.ApstSupported)
+            NvmeApstText = "Autonomous Power State Transition (APST): not supported by this controller.";
+        else if (!info.ApstFeatureQuerySucceeded)
+            NvmeApstText = $"APST: supported ({info.PowerStateCount} power states) - current enable/configured-state detail unavailable (Get Features follow-up query failed).";
+        else
+            NvmeApstText = $"APST: supported and {(info.ApstEnabled ? "enabled" : "disabled")} - {info.ApstConfiguredStateCount} of {info.PowerStateCount} power states configured for autonomous transition. Where a drive \"disappears after idle\", this is usually the first place to look.";
+    }
+
+    /// <summary>#323: applies a reliability-latency read (or a reset's null clear) to the tiles.</summary>
+    private void ApplyReliabilityLatencies(long? readMs, long? writeMs, long? flushMs)
+    {
+        ReliabilityReadLatencyText = readMs?.ToString("N0") ?? "—";
+        ReliabilityWriteLatencyText = writeMs?.ToString("N0") ?? "—";
+        ReliabilityFlushLatencyText = flushMs?.ToString("N0") ?? "—";
+        ShowReliabilityLatencyTiles = readMs.HasValue || writeMs.HasValue || flushMs.HasValue;
+    }
+
+    /// <summary>#320: on-demand Error Information Log (page 0x01) read - a separate log-page round
+    /// trip from the health-log bundle above, so it stays behind its own button.</summary>
+    private async Task ReadNvmeErrorLogAsync()
+    {
+        var disk = SelectedSmartDisk;
+        if (disk is null) return;
+
+        IsReadingNvmeErrorLog = true;
+        NvmeErrorLogStatusText = "Reading Error Information Log (page 0x01)...";
+        NvmeErrorLog.Clear();
+        try
+        {
+            var (entries, available, reason) = await Task.Run(() => NvmeHealthLogService.ReadErrorLog(disk.Index));
+            if (!available)
+            {
+                NvmeErrorLogStatusText = $"Failed: {reason}";
+            }
+            else
+            {
+                foreach (var entry in entries) NvmeErrorLog.Add(entry);
+                NvmeErrorLogStatusText = entries.Count == 0
+                    ? "No entries - an empty error log is the normal, expected result on a healthy drive."
+                    : $"{entries.Count} error log entr{(entries.Count == 1 ? "y" : "ies")} (most recent first).";
+            }
+        }
+        catch (Exception ex)
+        {
+            NvmeErrorLogStatusText = $"Failed: {ex.Message}";
+        }
+        finally
+        {
+            IsReadingNvmeErrorLog = false;
+        }
+    }
+
+    /// <summary>#321: on-demand Device Self-test Log (page 0x06) read - the last 20 results plus
+    /// whatever self-test is currently in progress, if any.</summary>
+    private async Task ReadNvmeSelfTestLogAsync()
+    {
+        var disk = SelectedSmartDisk;
+        if (disk is null) return;
+
+        IsReadingNvmeSelfTestLog = true;
+        NvmeSelfTestStatusText = "Reading Device Self-test Log (page 0x06)...";
+        NvmeSelfTestResults.Clear();
+        try
+        {
+            var (results, currentOp, completion, available, reason) = await Task.Run(() => NvmeHealthLogService.ReadSelfTestLog(disk.Index));
+            if (!available)
+            {
+                NvmeSelfTestStatusText = $"Failed: {reason}";
+            }
+            else
+            {
+                foreach (var result in results) NvmeSelfTestResults.Add(result);
+                string progress = currentOp.StartsWith("No self-test", StringComparison.Ordinal) ? currentOp : $"{currentOp} ({completion}% complete)";
+                NvmeSelfTestStatusText = results.Count == 0
+                    ? $"{progress}. No past self-test results recorded."
+                    : $"{progress}. {results.Count} past result(s) shown (most recent first).";
+            }
+        }
+        catch (Exception ex)
+        {
+            NvmeSelfTestStatusText = $"Failed: {ex.Message}";
+        }
+        finally
+        {
+            IsReadingNvmeSelfTestLog = false;
+        }
+    }
+
+    /// <summary>#321: Short/Extended self-test trigger - see NvmeHealthLogService.TriggerSelfTest's
+    /// remarks for why this is currently a stated "not yet wired to hardware" rather than an
+    /// unverified admin-command encoding sent to a physical controller.</summary>
+    private void RunNvmeSelfTest(bool extended)
+    {
+        var disk = SelectedSmartDisk;
+        if (disk is null) return;
+        var (_, message) = NvmeHealthLogService.TriggerSelfTest(disk.Index, extended);
+        NvmeSelfTestTriggerStatusText = message;
+    }
+
+    /// <summary>#323: invokes MSFT_StorageReliabilityCounter.ResetStatistics() then immediately
+    /// re-reads the three latency tiles so they reflect the reset rather than showing stale
+    /// pre-reset maxima until the next full "Read SMART details" click.</summary>
+    private async Task ResetReliabilityCountersAsync()
+    {
+        var disk = SelectedSmartDisk;
+        if (disk is null) return;
+
+        ReliabilityResetStatusText = "Resetting...";
+        try
+        {
+            string message = await Task.Run(() => SystemSpecsService.ResetReliabilityCounters(disk.Index));
+            ReliabilityResetStatusText = message;
+            var (readLatency, writeLatency, flushLatency) = await Task.Run(() => SystemSpecsService.ReadReliabilityLatencies(disk.Index));
+            ApplyReliabilityLatencies(readLatency, writeLatency, flushLatency);
+        }
+        catch (Exception ex)
+        {
+            ReliabilityResetStatusText = $"Failed: {ex.Message}";
         }
     }
 

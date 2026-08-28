@@ -200,7 +200,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Network = new NetworkViewModel(Performance);
         Gpu = new GpuViewModel(Processes);
         Logging = new LoggingViewModel(Performance, EnergyThermals);
-        Summary = new SummaryViewModel(Performance, Processes, Services, EnergyThermals, SystemSpecs, Network, Stability);
+        Summary = new SummaryViewModel(Performance, Processes, Services, EnergyThermals, SystemSpecs, Network, Stability, Storage);
         Search = new GlobalSearchViewModel(Processes, Services, Startup, SystemSpecs);
 
         RemoteMonitor = new RemoteMonitorService(BuildRemoteMetricsSnapshot) { RequiredToken = _remoteMonitorSettings.Token };

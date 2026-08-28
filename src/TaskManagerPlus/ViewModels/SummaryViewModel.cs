@@ -27,6 +27,7 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
     private readonly SystemSpecsViewModel _systemSpecs;
     private readonly NetworkViewModel _network;
     private readonly StabilityViewModel _stability;
+    private readonly StorageViewModel _storage;
     private readonly DispatcherTimer _healthTimer;
 
     /// <summary>Round 10, #67: exposed publicly (the field above stays for this class's own
@@ -168,7 +169,8 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
 
     public SummaryViewModel(PerformanceViewModel performance, ProcessesViewModel processes,
         ServicesViewModel services, EnergyThermalsViewModel energyThermals,
-        SystemSpecsViewModel systemSpecs, NetworkViewModel network, StabilityViewModel stability)
+        SystemSpecsViewModel systemSpecs, NetworkViewModel network, StabilityViewModel stability,
+        StorageViewModel storage)
     {
         Performance = performance;
         Processes = processes;
@@ -177,6 +179,7 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         _systemSpecs = systemSpecs;
         _network = network;
         _stability = stability;
+        _storage = storage;
 
         GenerateReportCommand = new RelayCommand(_ => GenerateReport());
         GenerateHtmlReportCommand = new RelayCommand(_ => GenerateHtmlReport());
@@ -721,6 +724,20 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         {
             if (disk.IsHealthWarning)
                 issues.Add(new HealthIssue { Message = $"Drive health warning: {disk.Primary} ({disk.HealthText})", IsCritical = true });
+        }
+
+        // Round 13, #314/#317: NVMe critical-warning bits and media-error count, mirrored from the
+        // Storage tab's on-demand NVMe health-log read (#313). Only fires once that read has
+        // actually happened for an NVMe disk (ShowNvmeHealth) - like the SMART-derived
+        // disk.IsHealthWarning rule above, this reflects the last on-demand read rather than a
+        // live poll, since the underlying IOCTL round trip isn't cheap enough for the 2s timer.
+        if (_storage.ShowNvmeHealth)
+        {
+            foreach (var warning in _storage.NvmeCriticalWarnings.Where(w => w.IsSet))
+                issues.Add(new HealthIssue { Message = $"NVMe: {warning.Label}", IsCritical = true });
+
+            if (_storage.NvmeMediaErrorsPresent)
+                issues.Add(new HealthIssue { Message = "NVMe media and data integrity errors reported", IsCritical = true });
         }
 
         if (_energyThermals.CpuPackageTempC is { } cpuTemp && cpuTemp >= HotCpuTempC)
