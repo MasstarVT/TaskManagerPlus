@@ -222,4 +222,15 @@ public sealed class ProcessRow : ObservableObject
     /// pool. Explicitly a hint, not a diagnosis - see DotNetPerfCounterService.</summary>
     private bool _isThreadPoolStarvationSuspect;
     public bool IsThreadPoolStarvationSuspect { get => _isThreadPoolStarvationSuspect; set => SetProperty(ref _isThreadPoolStarvationSuspect, value); }
+
+    /// <summary>#283: a large, sudden working-set drop between two consecutive ticks - typically a
+    /// working-set trim (Windows reclaiming a process's resident pages under memory pressure, or an
+    /// explicit "Empty working set" trim from this app's own TrimWorkingSetCommand) that precedes a
+    /// burst of hard faults as the process pages everything back in on its next touch. Detected in
+    /// ProcessesViewModel.MergeInto - the app already polls working set every tick, so this is pure
+    /// detection logic over data already sampled, no new counter/syscall. Null until first observed
+    /// for this pid this session, never a fabricated timestamp; overwritten (not accumulated) on
+    /// each new trim, so the grid always shows the most recent one.</summary>
+    private string? _lastTrimmedText;
+    public string? LastTrimmedText { get => _lastTrimmedText; set => SetProperty(ref _lastTrimmedText, value); }
 }

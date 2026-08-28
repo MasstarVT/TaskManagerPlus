@@ -1308,6 +1308,242 @@
                 </StackPanel>
             </Border>
 
+            <!-- #278-283: Page-fault storms and memory-driven hitching (suggestions.md #278-283) -
+                 hard-fault rate separated from harmless soft faults (#278), per-process/per-file
+                 attribution in both an always-available approximate mode and an optional ETW deep
+                 mode (#279), standby-list depletion (#280), page-file placement/latency (#281), and
+                 memory-compression pressure (#282). #283 (working-set trim detector) lives on the
+                 Processes tab instead, directly on the process row. -->
+            <Separator Margin="0,4,0,20" />
+            <TextBlock Text="Page-fault storms &amp; memory-driven hitching" FontWeight="Bold" FontSize="18" Margin="0,0,0,12" />
+
+            <!-- #278/#279: hard-fault rate plus per-process/per-file attribution. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Hard-fault rate" FontWeight="SemiBold" Margin="0,0,0,6" />
+                    <TextBlock Text="Hard faults (a page actually read from disk) are what stall a thread and freeze the UI for a moment - this is the number behind &quot;the whole PC freezes for a second when I alt-tab&quot;. Soft faults (resolved straight from RAM) dominate Memory\Page Faults/sec and happen harmlessly by the thousand, so they're excluded here."
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,10" />
+                    <UniformGrid Columns="2" Margin="0,0,0,10">
+                        <views:VfdMeter Title="Hard faults (pages read from disk)" Glow="True" Margin="0,0,8,0"
+                                        ValueText="{Binding HardFaultRate.PagesInputPerSec, StringFormat={}{0:0}}" Unit="/s"
+                                        SubText="Memory\Pages Input/sec"
+                                        AccentBrush="{DynamicResource DangerBrush}" />
+                        <views:VfdMeter Title="Disk reads to resolve them" Glow="False" Margin="8,0,0,0"
+                                        ValueText="{Binding HardFaultRate.PageReadsPerSec, StringFormat={}{0:0}}" Unit="/s"
+                                        SubText="Memory\Page Reads/sec — one read can satisfy several pages"
+                                        AccentBrush="{DynamicResource TextSecondaryBrush}" />
+                    </UniformGrid>
+                    <lvc:CartesianChart Series="{Binding HardFaultSeries}" XAxes="{Binding HiddenXAxes}" YAxes="{Binding HardFaultYAxes}"
+                                         Height="140" TooltipPosition="Hidden" LegendPosition="Hidden" Background="Transparent" Margin="0,0,0,10" />
+                    <TextBlock Text="Hard-fault performance counters aren't available on this system." Foreground="{DynamicResource WarningBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,10">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding HardFaultRate.IsAvailable}" Value="False">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
+                    <Separator Margin="0,0,0,10" />
+                    <TextBlock Text="#279: per-process attribution (approximate mode)" FontWeight="SemiBold" FontSize="12.5" Margin="0,0,0,4" />
+                    <TextBlock Text="Process(*)\Page Faults/sec — approximate: this is total (soft+hard) faults per process, since Windows exposes no per-process hard-fault-only counter. Press Start below for genuinely hard-fault-only, per-file attribution."
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" FontStyle="Italic" TextWrapping="Wrap" Margin="0,0,0,8" />
+                    <DataGrid ItemsSource="{Binding TopPageFaultProcesses}" MaxHeight="200" IsReadOnly="True" Margin="0,0,0,14">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Process" Binding="{Binding ProcessName}" Width="1.4*" />
+                            <DataGridTextColumn Header="PID" Binding="{Binding Pid}" Width="70" />
+                            <DataGridTextColumn Header="Page faults/sec (approx.)" Binding="{Binding PageFaultsPerSec, StringFormat={}{0:0}}" Width="1.2*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+
+                    <TextBlock Text="#279: per-file attribution (ETW deep mode)" FontWeight="SemiBold" FontSize="12.5" Margin="0,0,0,4" />
+                    <TextBlock Text="An ETW capture of Microsoft-Windows-Kernel-Memory's hard-fault events, which do carry a faulting file name - genuinely hard-fault-only, unlike the approximate mode above."
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8" />
+                    <Border Background="{DynamicResource DangerMutedBrush}" BorderBrush="{DynamicResource DangerBrush}"
+                            BorderThickness="1" CornerRadius="8" Padding="14,10" Margin="0,0,0,8">
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding HardFaultEtwToolsAvailable}" Value="False">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                        <TextBlock Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" FontSize="12.5"
+                                   Text="Hard-fault ETW capture unavailable — logman.exe/tracerpt.exe weren't found on this system." />
+                    </Border>
+                    <WrapPanel Margin="0,0,0,8">
+                        <Button Content="Start" Command="{Binding StartHardFaultEtwCommand}" Style="{StaticResource SuccessButton}" Margin="0,0,8,4" />
+                        <Button Content="Stop" Command="{Binding StopHardFaultEtwCommand}" Style="{StaticResource DangerButton}" Margin="0,0,8,4" />
+                    </WrapPanel>
+                    <TextBlock Text="{Binding HardFaultEtwStatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,10" />
+                    <DataGrid ItemsSource="{Binding HardFaultEtwRows}" MaxHeight="200" IsReadOnly="True">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Process" Binding="{Binding ProcessName}" Width="1.2*" />
+                            <DataGridTextColumn Header="PID" Binding="{Binding Pid}" Width="70" />
+                            <DataGridTextColumn Header="File" Binding="{Binding FileName}" Width="2*" />
+                            <DataGridTextColumn Header="Hard faults" Binding="{Binding Count}" Width="90" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- #280: standby-list depletion - a collapsed standby list combined with a rising
+                 hard-fault rate means the machine is thrashing its cache and will hitch on every
+                 file touch. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Standby-list depletion" FontWeight="SemiBold" Margin="0,0,0,6" />
+                    <TextBlock Text="{Binding StandbyListInfo.StatusText}" Foreground="{DynamicResource WarningBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,10">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding StandbyListInfo.IsAvailable}" Value="False">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <TextBlock Text="{Binding StandbyThrashingStatusText}" TextWrapping="Wrap" FontSize="12.5" Margin="0,0,0,10">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding StandbyThrashingSuspected}" Value="True">
+                                        <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding StandbyListInfo.IsAvailable}" Value="False">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <UniformGrid Columns="3" Margin="0,0,0,6">
+                        <views:VfdMeter Title="Free &amp; zero list" Glow="False" Margin="0,0,6,0"
+                                        ValueText="{Binding StandbyListInfo.FreeZeroBytes, Converter={StaticResource BytesToReadableConverter}}"
+                                        AccentBrush="{DynamicResource TextSecondaryBrush}" />
+                        <views:VfdMeter Title="Standby list (total)" Glow="True" Margin="6,0,6,0"
+                                        ValueText="{Binding StandbyListInfo.StandbyTotalBytes, Converter={StaticResource BytesToReadableConverter}}"
+                                        SubText="Core + Normal + Reserve priority">
+                            <views:VfdMeter.Style>
+                                <Style TargetType="views:VfdMeter">
+                                    <Setter Property="AccentBrush" Value="{DynamicResource AccentBrush}" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding StandbyThrashingSuspected}" Value="True">
+                                            <Setter Property="AccentBrush" Value="{DynamicResource DangerBrush}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </views:VfdMeter.Style>
+                        </views:VfdMeter>
+                        <views:VfdMeter Title="Modified page list" Glow="False" Margin="6,0,0,0"
+                                        ValueText="{Binding StandbyListInfo.ModifiedPageListBytes, Converter={StaticResource BytesToReadableConverter}}"
+                                        AccentBrush="{DynamicResource TextSecondaryBrush}" />
+                    </UniformGrid>
+                    <TextBlock Text="See the Memory tab's &quot;Standby list&quot; meter (Diagnostics section) for a simpler at-a-glance view of the same reclaimable-cache figure."
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" FontStyle="Italic" TextWrapping="Wrap" Margin="0,4,0,0" />
+                </StackPanel>
+            </Border>
+
+            <!-- #281: page-file placement, current/peak usage, and (per row) fragmentation - a
+                 page file on a slow/fragmented drive converts every hard fault into a visible
+                 stall. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Page-file placement &amp; latency" FontWeight="SemiBold" Margin="0,0,0,6" />
+                    <TextBlock Text="{Binding PageFileVolumesStatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,10" />
+                    <UniformGrid Columns="2" Margin="0,0,0,10">
+                        <views:VfdMeter Title="System-wide committed" Glow="False" Margin="0,0,8,0"
+                                        Percent="{Binding Performance.CommittedPercent}"
+                                        ValueText="{Binding Performance.CommittedPercent, StringFormat={}{0:0.0}}" Unit="%"
+                                        SubText="Memory\% Committed Bytes In Use"
+                                        AccentBrush="{Binding Performance.CommittedPercent, Converter={StaticResource PercentToBrushConverter}}" />
+                        <views:VfdMeter Title="Disk read / write latency" Glow="False" Margin="8,0,0,0"
+                                        ValueText="{Binding Performance.DiskReadLatencyMs, StringFormat={}{0:0.0}}" Unit="ms"
+                                        SubText="{Binding Performance.DiskWriteLatencyMs, StringFormat={}write {0:0.0} ms (system-wide — not per-volume)}"
+                                        AccentBrush="{DynamicResource TextSecondaryBrush}" />
+                    </UniformGrid>
+                    <DataGrid ItemsSource="{Binding PageFileVolumes}" MaxHeight="220" IsReadOnly="True">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Path" Binding="{Binding ConfiguredPath}" Width="1.6*" />
+                            <DataGridTextColumn Header="Configured size" Binding="{Binding SizeText}" Width="1.2*" />
+                            <DataGridTextColumn Header="Media" Binding="{Binding MediaType}" Width="80" />
+                            <DataGridTextColumn Header="% Usage" Binding="{Binding PercentUsage, StringFormat={}{0:0.0}%}" Width="90" />
+                            <DataGridTextColumn Header="% Usage peak" Binding="{Binding PercentUsagePeak, StringFormat={}{0:0.0}%}" Width="100" />
+                            <DataGridTemplateColumn Header="Fragmentation" Width="2*">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Orientation="Horizontal">
+                                            <Button Content="Check" FontSize="10" Padding="6,1" Margin="0,0,8,0"
+                                                    Command="{Binding DataContext.CheckPageFileFragmentationCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                    CommandParameter="{Binding}" IsEnabled="{Binding IsMechanical}" />
+                                            <TextBlock Text="{Binding FragmentationStatusText}" VerticalAlignment="Center" FontSize="11.5">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsFragmentationWarning}" Value="True">
+                                                                <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <TextBlock Text="&quot;Check&quot; is disabled for an SSD page file - fragmentation isn't meaningful there, matching the Storage tab's own HDD-fragmentation card."
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" FontStyle="Italic" TextWrapping="Wrap" Margin="0,8,0,0" />
+                    <TextBlock Text="Disk read/write latency above is this app's only disk-latency figure - it's aggregated across every physical disk (PhysicalDisk\_Total), not broken out per volume, so it's shown as system-wide context rather than a number specific to whichever drive a page file happens to sit on."
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" FontStyle="Italic" TextWrapping="Wrap" Margin="0,4,0,0" />
+                </StackPanel>
+            </Border>
+
+            <!-- #282: memory-compression pressure - decompression cost shows up as CPU spikes/
+                 micro-stutter, not as a memory number alone. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Memory-compression pressure" FontWeight="SemiBold" Margin="0,0,0,6" />
+                    <TextBlock Text="{Binding MemoryCompression.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,10">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding MemoryCompression.IsAvailable}" Value="False">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <UniformGrid Columns="2" Margin="0,0,0,6">
+                        <views:VfdMeter Title="Compressed-memory working set" Glow="True" Margin="0,0,8,0"
+                                        Percent="{Binding MemoryCompression.PercentOfTotalRam}"
+                                        ValueText="{Binding MemoryCompression.WorkingSetBytes, Converter={StaticResource BytesToReadableConverter}}"
+                                        SubText="{Binding MemoryCompression.PercentOfTotalRam, StringFormat={}{0:0.1}% of total RAM}"
+                                        AccentBrush="{Binding MemoryCompression.PercentOfTotalRam, Converter={StaticResource PercentToBrushConverter}}" />
+                        <views:VfdMeter Title="Modified page list" Glow="False" Margin="8,0,0,0"
+                                        ValueText="{Binding StandbyListInfo.ModifiedPageListBytes, Converter={StaticResource BytesToReadableConverter}}"
+                                        AccentBrush="{DynamicResource TextSecondaryBrush}" />
+                    </UniformGrid>
+                    <TextBlock Text="A large compressed-memory pool means decompression is happening constantly under the hood - that cost shows up as CPU spikes/micro-stutter, not as a separate memory warning. See the Memory tab for overall RAM pressure."
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" FontStyle="Italic" TextWrapping="Wrap" Margin="0,4,0,0" />
+                </StackPanel>
+            </Border>
+
         </StackPanel>
     </ScrollViewer>
 </UserControl>

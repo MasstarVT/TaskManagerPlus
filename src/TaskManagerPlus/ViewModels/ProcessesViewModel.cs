@@ -395,6 +395,9 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
             {
                 existing.CpuPercent = fresh.CpuPercent;
                 existing.CpuPercent10sAvg = fresh.CpuPercent10sAvg;
+                // #283: detect a working-set trim before overwriting MemoryBytes with this tick's
+                // fresh value - needs the about-to-be-replaced old value as the "before" side.
+                DetectWorkingSetTrim(existing, fresh.MemoryBytes);
                 existing.MemoryBytes = fresh.MemoryBytes;
                 existing.PrivateBytes = fresh.PrivateBytes;
                 existing.VirtualBytes = fresh.VirtualBytes;
@@ -435,6 +438,25 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
         // Anything left in latestByPid is a newly-seen process.
         foreach (var row in latestByPid.Values)
             Processes.Add(row);
+    }
+
+    // #283: tuned thresholds, not a documented Windows event - Windows fires no public
+    // notification this app can subscribe to for "a process's working set just got trimmed", so
+    // this is inferred purely from the magnitude of the drop between two consecutive samples.
+    private const double TrimDropPercentThreshold = 0.30;
+    private const long TrimDropBytesThreshold = 50L * 1024 * 1024;
+
+    /// <summary>#283: flags a large, sudden working-set drop (more than 30% and more than 50MB in
+    /// one tick) as a probable working-set trim - it typically precedes a burst of hard faults as
+    /// the process pages everything back in on its next touch. Overwrites LastTrimmedText (rather
+    /// than appending a history) so the row always shows its most recent trim, matching the
+    /// "simplest correct shape" the item calls for over a full timeline visualization.</summary>
+    private static void DetectWorkingSetTrim(ProcessRow row, long freshMemoryBytes)
+    {
+        long previous = row.MemoryBytes;
+        long drop = previous - freshMemoryBytes;
+        if (previous > 0 && drop >= TrimDropBytesThreshold && drop >= previous * TrimDropPercentThreshold)
+            row.LastTrimmedText = $"Trimmed at {DateTime.Now:HH:mm:ss} ({Formatting.FormatBytes(drop)} freed)";
     }
 
     /// <summary>Round 7 #1: rebuilds the tree from the already-sampled flat Processes collection -

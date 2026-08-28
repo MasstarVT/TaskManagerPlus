@@ -529,6 +529,81 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
     private double _worstGcPercentTimeInGc;
     public double WorstGcPercentTimeInGc { get => _worstGcPercentTimeInGc; private set => SetProperty(ref _worstGcPercentTimeInGc, value); }
 
+    // ----- #278-283: Page-fault storms and memory-driven hitching ------------------------------
+
+    // #278/#279 fallback: hard-fault rate + per-process approximate attribution - both plain
+    // PerformanceCounter reads, riding the cheap _lightTimer like everything else in this section
+    // except the ETW deep mode below. See PageFaultService's remarks.
+    private readonly PageFaultService _pageFaults = new();
+
+    private HardFaultRateInfo _hardFaultRate = new() { StatusText = "Loading..." };
+    public HardFaultRateInfo HardFaultRate { get => _hardFaultRate; private set => SetProperty(ref _hardFaultRate, value); }
+
+    public ObservableCollection<double> HardFaultHistory { get; } = NewHistory(0);
+    private readonly LineSeries<double> _hardFaultGlow;
+    private readonly LineSeries<double> _hardFaultCore;
+    public ISeries[] HardFaultSeries { get; }
+    public Axis[] HardFaultYAxes { get; }
+
+    public ObservableCollection<ProcessPageFaultRow> TopPageFaultProcesses { get; } = new();
+
+    // #279 ETW deep mode: Start/Stop-gated (never runs on its own), mirroring #213's DPC
+    // measurement session shape exactly (StartMeasurementAsync/MeasureLoopAsync/StopMeasurement).
+    private readonly HardFaultEtwService _hardFaultEtw = new();
+    private CancellationTokenSource? _hardFaultEtwCts;
+    private Task? _hardFaultEtwLoopTask;
+
+    public bool HardFaultEtwToolsAvailable => _hardFaultEtw.ToolsAvailable;
+
+    private bool _isMeasuringHardFaultEtw;
+    public bool IsMeasuringHardFaultEtw { get => _isMeasuringHardFaultEtw; private set => SetProperty(ref _isMeasuringHardFaultEtw, value); }
+
+    private string _hardFaultEtwStatusText = "Not measuring — press Start for per-file hard-fault attribution.";
+    public string HardFaultEtwStatusText { get => _hardFaultEtwStatusText; private set => SetProperty(ref _hardFaultEtwStatusText, value); }
+
+    public ObservableCollection<HardFaultEtwRow> HardFaultEtwRows { get; } = new();
+
+    public AsyncRelayCommand StartHardFaultEtwCommand { get; }
+    public RelayCommand StopHardFaultEtwCommand { get; }
+
+    // #280: standby-list depletion - a pure data read (StandbyListInfo) plus a threshold-snapshot
+    // "is this actually thrashing" flag computed in SampleLight, which has both this and #278's
+    // hard-fault rate on hand each tick. Rides the cheap _lightTimer.
+    private readonly StandbyListService _standbyList = new();
+
+    private StandbyListInfo _standbyListInfo = new() { StatusText = "Loading..." };
+    public StandbyListInfo StandbyListInfo { get => _standbyListInfo; private set => SetProperty(ref _standbyListInfo, value); }
+
+    private bool _standbyThrashingSuspected;
+    public bool StandbyThrashingSuspected { get => _standbyThrashingSuspected; private set => SetProperty(ref _standbyThrashingSuspected, value); }
+
+    private string _standbyThrashingStatusText = "Sampling standby list...";
+    public string StandbyThrashingStatusText { get => _standbyThrashingStatusText; private set => SetProperty(ref _standbyThrashingStatusText, value); }
+
+    // "Quick flag, not a verdict" thresholds - a rough rule of thumb, not a documented Windows
+    // value: standby list down to a small share of total RAM while hard faults are running well
+    // above an idle baseline. A snapshot comparison, not a slope/trend over several ticks.
+    private const double StandbyDepletedPercentOfRam = 5.0;
+    private const double HardFaultElevatedPerSec = 50.0;
+
+    // #281: page-file placement/usage - loaded once at start-up (registry+perf-counter+WMI reads,
+    // all fast, but page-file configuration essentially never changes without a reboot, the same
+    // "on-demand load, not a per-tick timer" tier LoadDeviceTopologyAsync/the Storage tab's own
+    // HDD-volume enumeration use). Per-row fragmentation is its own on-demand action, reusing
+    // DiskFragmentationService.Analyze directly - same shape as the Storage tab's FragmentationRow.
+    public ObservableCollection<PageFileVolumeRow> PageFileVolumes { get; } = new();
+
+    private string _pageFileVolumesStatusText = "Loading...";
+    public string PageFileVolumesStatusText { get => _pageFileVolumesStatusText; private set => SetProperty(ref _pageFileVolumesStatusText, value); }
+
+    public AsyncRelayCommand CheckPageFileFragmentationCommand { get; }
+
+    // #282: memory-compression pressure - rides the cheap _lightTimer (Process.GetProcessesByName
+    // is a cheap call). ModifiedPageListBytes is reused from #280's StandbyListInfo rather than a
+    // second Memory\Modified Page List Bytes counter instance.
+    private MemoryCompressionInfo _memoryCompression = new() { StatusText = "Loading..." };
+    public MemoryCompressionInfo MemoryCompression { get => _memoryCompression; private set => SetProperty(ref _memoryCompression, value); }
+
     public ResponsivenessViewModel(ProcessesViewModel processes, PerformanceViewModel performance)
     {
         _processes = processes;
@@ -660,6 +735,36 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
         _execResCore = new LineSeries<double> { Values = ExecResourceContentionsHistory, Name = "Exec. resource contentions/sec", Stroke = new SolidColorPaint(execResColor, CoreStrokeWidth), Fill = null, GeometryStroke = null, GeometryFill = null, LineSmoothness = 0.3 };
         SynchronizationSeries = new ISeries[] { _spinAcqGlow, _spinAcqCore, _spinContGlow, _spinContCore, _execResGlow, _execResCore };
 
+        // #278: hard-fault rate (Memory\Pages Input/sec) - same glow+core pairing as every other
+        // history chart in this app.
+        HardFaultYAxes = new[]
+        {
+            new Axis
+            {
+                MinLimit = 0,
+                Labeler = v => $"{v:0}/s",
+                LabelsPaint = new SolidColorPaint(AxisTextColor),
+                SeparatorsPaint = new SolidColorPaint(AxisSeparatorColor) { StrokeThickness = 1 },
+            },
+        };
+        var hardFaultColor = SKColors.Crimson;
+        _hardFaultGlow = new LineSeries<double>
+        {
+            Values = HardFaultHistory,
+            Stroke = new SolidColorPaint(hardFaultColor.WithAlpha(70), GlowStrokeWidth),
+            Fill = null, GeometryStroke = null, GeometryFill = null,
+            LineSmoothness = 0.3, IsHoverable = false, IsVisibleAtLegend = false,
+        };
+        _hardFaultCore = new LineSeries<double>
+        {
+            Values = HardFaultHistory,
+            Name = "Hard faults/sec",
+            Stroke = new SolidColorPaint(hardFaultColor, CoreStrokeWidth),
+            Fill = new LinearGradientPaint(hardFaultColor.WithAlpha(90), hardFaultColor.WithAlpha(0), new SKPoint(0, 0), new SKPoint(0, 1)),
+            GeometryStroke = null, GeometryFill = null, LineSmoothness = 0.3,
+        };
+        HardFaultSeries = new ISeries[] { _hardFaultGlow, _hardFaultCore };
+
         // #251: frame-time-vs-index scatter for the headline present-monitor app - no glow pair,
         // matching EnergyThermalsViewModel's fan-curve scatter (a point cloud doesn't read well
         // with one).
@@ -704,6 +809,12 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
         StopPresentMonitorCommand = new RelayCommand(StopPresentMonitor, () => IsMeasuringPresent);
         StartInputLatencyCommand = new RelayCommand(StartInputLatency, () => !IsMeasuringInput);
         StopInputLatencyCommand = new RelayCommand(StopInputLatency, () => IsMeasuringInput);
+
+        // #279 ETW deep mode.
+        StartHardFaultEtwCommand = new AsyncRelayCommand(StartHardFaultEtwAsync, () => !IsMeasuringHardFaultEtw && HardFaultEtwToolsAvailable);
+        StopHardFaultEtwCommand = new RelayCommand(StopHardFaultEtw, () => IsMeasuringHardFaultEtw);
+        // #281
+        CheckPageFileFragmentationCommand = new AsyncRelayCommand(param => CheckPageFileFragmentationAsync(param as PageFileVolumeRow));
 
         // #237: load the persisted hang log before the first sample so HangsToday/LongestHang read
         // correctly even before this session has produced a single new hang.
@@ -750,6 +861,10 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
         // #253/#254/#255: display-mode/HAGS/GameDVR audit - fast reads, loaded once at start-up
         // plus LoadDisplayAuditCommand's manual refresh, same tier as the device-topology block.
         _ = LoadDisplayAuditAsync();
+
+        // #281: page-file placement/usage - loaded once at start-up, same tier as the blocks above
+        // (page-file configuration doesn't change without a reboot).
+        _ = LoadPageFileVolumesAsync();
     }
 
     /// <summary>#211/#216: driver metadata join plus the best-effort driver-file -> device-name
@@ -1167,6 +1282,52 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
         }
         WorstGcProcessName = worst?.ProcessName ?? "—";
         WorstGcPercentTimeInGc = worst?.PercentTimeInGc ?? 0;
+
+        // #278: hard-fault rate - only advances the history chart while data is actually
+        // available, same "if available" gating CompositionDropHistory/RunQueuePressureHistory use.
+        HardFaultRate = _pageFaults.SampleHardFaultRate();
+        if (HardFaultRate.IsAvailable)
+        {
+            HardFaultHistory.Add(HardFaultRate.PagesInputPerSec);
+            if (HardFaultHistory.Count > HistoryLength) HardFaultHistory.RemoveAt(0);
+        }
+
+        // #279 fallback: top processes by approximate (soft+hard) page-fault rate - a read-only
+        // display list with no selection state, so it clears+rebuilds each tick like
+        // GcProcessRows above rather than merging in place.
+        var faultRows = _pageFaults.SampleTopProcesses();
+        TopPageFaultProcesses.Clear();
+        foreach (var r in faultRows) TopPageFaultProcesses.Add(r);
+
+        // #280: standby-list depletion, plus the "is this actually thrashing" quick flag - a
+        // collapsed standby list (below StandbyDepletedPercentOfRam of total RAM) combined with an
+        // elevated hard-fault rate (#278, above HardFaultElevatedPerSec) means the machine is
+        // thrashing its cache. See the class remarks on StandbyDepletedPercentOfRam/
+        // HardFaultElevatedPerSec for why these are a snapshot comparison, not a trend.
+        StandbyListInfo = _standbyList.Sample();
+        if (StandbyListInfo.IsAvailable)
+        {
+            double totalRamBytesForStandby = _performance.RamTotalGb * 1024.0 * 1024.0 * 1024.0;
+            double standbyPercentOfRam = totalRamBytesForStandby > 0
+                ? StandbyListInfo.StandbyTotalBytes / totalRamBytesForStandby * 100.0
+                : 100;
+            bool depleted = standbyPercentOfRam < StandbyDepletedPercentOfRam;
+            bool hardFaultElevated = HardFaultRate.IsAvailable && HardFaultRate.PagesInputPerSec > HardFaultElevatedPerSec;
+            StandbyThrashingSuspected = depleted && hardFaultElevated;
+            StandbyThrashingStatusText = StandbyThrashingSuspected
+                ? $"Standby list is down to {standbyPercentOfRam:0.#}% of RAM while hard faults are running {HardFaultRate.PagesInputPerSec:0}/sec — the cache has collapsed and the machine is likely thrashing on every file touch. Quick flag, not a verdict."
+                : $"Standby list: {standbyPercentOfRam:0.#}% of RAM in reclaimable cache.";
+        }
+        else
+        {
+            StandbyThrashingSuspected = false;
+            StandbyThrashingStatusText = StandbyListInfo.StatusText;
+        }
+
+        // #282: memory-compression pressure - Modified Page List Bytes reused from #280's sample
+        // above rather than a second counter instance (see MemoryCompressionInfo's remarks).
+        long totalRamBytesForCompression = (long)(_performance.RamTotalGb * 1024.0 * 1024.0 * 1024.0);
+        MemoryCompression = MemoryCompressionService.Sample(StandbyListInfo.ModifiedPageListBytes, totalRamBytesForCompression);
     }
 
     /// <summary>#261-265/267: the shared thread sweep's own slower cadence - see the field remarks
@@ -1613,6 +1774,109 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
         InputLatencySnapshot = _inputLatency.GetSnapshot();
     }
 
+    /// <summary>#279 ETW deep mode: Start button - resets the session and kicks off a background
+    /// loop of short hard-fault captures until Stop is pressed, mirroring
+    /// StartMeasurementAsync/MeasureLoopAsync above exactly.</summary>
+    private async Task StartHardFaultEtwAsync()
+    {
+        if (IsMeasuringHardFaultEtw || !HardFaultEtwToolsAvailable) return;
+
+        _hardFaultEtw.ResetSession();
+        HardFaultEtwRows.Clear();
+        HardFaultEtwStatusText = "Starting hard-fault capture...";
+
+        _hardFaultEtwCts = new CancellationTokenSource();
+        IsMeasuringHardFaultEtw = true;
+        _hardFaultEtwLoopTask = HardFaultEtwLoopAsync(_hardFaultEtwCts.Token);
+        await Task.CompletedTask;
+    }
+
+    private async Task HardFaultEtwLoopAsync(CancellationToken ct)
+    {
+        var window = TimeSpan.FromSeconds(3);
+        try
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                var (ok, message, parsed) = await _hardFaultEtw.SampleOnceAsync(window, ct);
+                HardFaultEtwStatusText = message;
+
+                if (ok)
+                {
+                    HardFaultEtwRows.Clear();
+                    foreach (var r in _hardFaultEtw.BuildRows()) HardFaultEtwRows.Add(r);
+                }
+
+                if (parsed == 0 && !ok)
+                {
+                    // A hard failure (tools missing, access denied) won't fix itself by retrying -
+                    // stop rather than spin forever on the same error.
+                    await Application.Current.Dispatcher.InvokeAsync(StopHardFaultEtw);
+                    break;
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // expected on Stop
+        }
+    }
+
+    private void StopHardFaultEtw()
+    {
+        if (!IsMeasuringHardFaultEtw) return;
+        _hardFaultEtwCts?.Cancel();
+        IsMeasuringHardFaultEtw = false;
+        HardFaultEtwStatusText = "Stopped.";
+    }
+
+    /// <summary>#281: PagingFiles registry parse + media-type join + Paging File(*) usage counters
+    /// - see PageFileLatencyService.Load's remarks. Loaded once at start-up (constructor); no
+    /// manual refresh button since page-file configuration doesn't change without a reboot, same
+    /// reasoning DesktopHeapService's SharedSection read uses.</summary>
+    private async Task LoadPageFileVolumesAsync()
+    {
+        PageFileVolumesStatusText = "Loading page-file placement...";
+        try
+        {
+            var rows = await Task.Run(PageFileLatencyService.Load);
+            PageFileVolumes.Clear();
+            foreach (var r in rows) PageFileVolumes.Add(r);
+            PageFileVolumesStatusText = rows.Count == 0
+                ? "No configured page files found (or the PagingFiles registry value couldn't be read)."
+                : $"{rows.Count} configured page file(s).";
+        }
+        catch (Exception ex)
+        {
+            PageFileVolumesStatusText = $"Load failed: {ex.Message}";
+        }
+    }
+
+    /// <summary>#281: on-demand per-row fragmentation check - reuses DiskFragmentationService.Analyze
+    /// directly, the exact same call the Storage tab's own HDD-fragmentation card makes.</summary>
+    private async Task CheckPageFileFragmentationAsync(PageFileVolumeRow? row)
+    {
+        if (row is null || row.IsCheckingFragmentation || row.VolumeLetter.Length == 0) return;
+
+        row.IsCheckingFragmentation = true;
+        row.FragmentationStatusText = "Analyzing (this can take a while on a large drive)...";
+        try
+        {
+            var (success, percent, message) = await DiskFragmentationService.Analyze(row.VolumeLetter);
+            row.FragmentationStatusText = message;
+            row.IsFragmentationWarning = success && percent is { } p && p >= 10;
+        }
+        catch (Exception ex)
+        {
+            row.FragmentationStatusText = $"Failed: {ex.Message}";
+            row.IsFragmentationWarning = false;
+        }
+        finally
+        {
+            row.IsCheckingFragmentation = false;
+        }
+    }
+
     private void RebuildDriverRows()
     {
         DriverDpcRows.Clear();
@@ -1673,10 +1937,13 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
         _schedulerTimer.Stop();
         _measureCts?.Cancel();
         _presentCts?.Cancel();
+        _hardFaultEtwCts?.Cancel();
         _vblank.Dispose();
         _inputLatency.Dispose();
         _perCore.Dispose();
         _hungWindows.Dispose();
         _syncCounters.Dispose();
+        _pageFaults.Dispose();
+        _standbyList.Dispose();
     }
 }

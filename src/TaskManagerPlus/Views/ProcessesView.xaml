@@ -186,6 +186,17 @@
                         </DataTemplate>
                     </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>
+                <!-- #283: working-set trim detector - a large, sudden working-set drop (>30% and
+                     >50MB in one tick) typically precedes a burst of hard faults as the process
+                     pages everything back in on its next touch. Blank until a trim is observed. -->
+                <DataGridTextColumn Header="Last trim" Binding="{Binding LastTrimmedText}" Width="170">
+                    <DataGridTextColumn.ElementStyle>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                            <Setter Property="ToolTip" Value="A large, sudden working-set drop (more than 30% and more than 50MB in one tick) - typically a working-set trim, which precedes a burst of hard faults as the process pages everything back in on its next touch. See the Responsiveness tab's hard-fault rate monitor for the system-wide signal this feeds into." />
+                        </Style>
+                    </DataGridTextColumn.ElementStyle>
+                </DataGridTextColumn>
                 <!-- #36: per-process GPU engine utilization, via the "GPU Engine" perf-counter
                      category (the same source Task Manager's own GPU column reads). -->
                 <DataGridTemplateColumn Header="GPU" Width="80" SortMemberPath="GpuPercent">
