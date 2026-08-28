@@ -96,6 +96,10 @@
             <!-- Round 7 #17 - only meaningful for a svchost.exe row, see IsSvchostSelected. -->
             <Button Content="Hosted services" Margin="0,0,8,8" Command="{Binding ViewHostedServicesCommand}"
                     ToolTip="Which service names live inside this svchost.exe process" />
+            <!-- #761 - cross-links to the Services tab's svchost group breakdown, see ProcessesView.xaml.cs. -->
+            <Button Content="svchost groups" Margin="0,0,8,8" IsEnabled="{Binding IsSvchostRowSelected}"
+                    Click="ViewSvchostGroupsInServices_Click"
+                    ToolTip="Open the Services tab's svchost group breakdown (CPU/working set/handles/threads per -k group)" />
             <!-- Round 7 #4 -->
             <Button Content="Trim working set" Margin="0,0,8,8" Command="{Binding TrimWorkingSetCommand}"
                     ToolTip="Ask Windows to release the process's resident memory back to the system (EmptyWorkingSet)" />
@@ -1027,6 +1031,34 @@
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
                     </ScrollViewer>
+
+                    <!-- #799: whether this process's own PATH/TEMP has drifted from the current
+                         machine+user environment - computed alongside the dump above, no extra query. -->
+                    <Border CornerRadius="6" Padding="8,5" Margin="0,8,0,0"
+                            Visibility="{Binding SelectedProcessEnvironmentDrift, Converter={StaticResource NullToVisibilityConverter}}">
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Setter Property="Background" Value="{DynamicResource AccentMutedBrush}" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding SelectedProcessEnvironmentDrift.HasDrift}" Value="True">
+                                        <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                        <TextBlock FontSize="11.5" TextWrapping="Wrap" Text="{Binding SelectedProcessEnvironmentDrift.Detail}">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding SelectedProcessEnvironmentDrift.HasDrift}" Value="True">
+                                            <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </Border>
                 </StackPanel>
             </Border>
 

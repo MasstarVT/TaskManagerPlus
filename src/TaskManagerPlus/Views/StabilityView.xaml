@@ -447,6 +447,79 @@
                 </StackPanel>
             </Border>
 
+            <!-- #713: "Power & boot timeline" - correlates EventLog 6005/6006/6008/6013,
+                 Kernel-Power 41/109, and User32 1074 into one chronological strip - see
+                 PowerTimelineService's remarks. Linked from the Startup tab's boot chart (see
+                 StartupView.xaml's "View power & boot timeline" button). -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Power &amp; boot timeline" Style="{StaticResource CardTitle}" />
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap"
+                               Text="Boots, shutdowns, and who/what initiated them - last 30 days." />
+                    <ScrollViewer MaxHeight="280" VerticalScrollBarVisibility="Auto">
+                        <ItemsControl ItemsSource="{Binding PowerTimeline}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Margin="0,0,0,10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="120" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <Ellipse Grid.Column="0" Width="10" Height="10" Margin="0,3,10,0" VerticalAlignment="Top">
+                                            <Ellipse.Style>
+                                                <Style TargetType="Ellipse">
+                                                    <Setter Property="Fill" Value="{DynamicResource AccentBrush}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsWarning}" Value="True">
+                                                            <Setter Property="Fill" Value="{DynamicResource DangerBrush}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Ellipse.Style>
+                                        </Ellipse>
+                                        <TextBlock Grid.Column="1" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}"
+                                                   Text="{Binding TimeCreated, StringFormat={}{0:g}}" VerticalAlignment="Top" />
+                                        <StackPanel Grid.Column="2">
+                                            <TextBlock FontSize="12.5" FontWeight="SemiBold" Text="{Binding KindLabel}">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsWarning}" Value="True">
+                                                                <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                            <TextBlock FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap"
+                                                       Text="{Binding Summary}" />
+                                        </StackPanel>
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                    <TextBlock Text="No power/boot timeline events found in the last 30 days." Margin="0,4,0,0">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding PowerTimeline.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- #741: resume-from-hibernate entries that look like they failed - a Kernel-Boot
+                 event 27 boot type 2 followed by a 41/6008 failure signal before the next boot,
+                 see PowerTimelineService.ReadFailedResumes. Collapsed entirely when none are found
+                 (the common case). Points back at the Startup tab's hiberfile card. -->
             <!-- Round 15, item 34: GPU driver timeouts/resets (TDR) - per-event driver/app detail
                  plus the live TdrDelay/TdrDdiDelay/TdrLevel registry settings, beyond the plain
                  count tile in the summary row above. Collapsed entirely when no per-event detail
@@ -485,12 +558,78 @@
                     </Border>
                 </StackPanel>
             </Border>
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding FailedResumes.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Failed resumes" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Hiberfile card (Startup tab)" Padding="8,4" FontSize="11" Click="ViewHiberfileCard_Click" />
+                    </Grid>
+                    <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,8"
+                               Text="Quick flag, not a verdict - a resume from hibernate followed by an unexpected-shutdown signal before the next boot. Could be a genuine failed resume, or an unrelated hard power-off during a slow one." />
+                    <ItemsControl ItemsSource="{Binding FailedResumes}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Background="{DynamicResource DangerMutedBrush}" CornerRadius="6" Padding="10,8" Margin="0,0,0,6">
+                                    <TextBlock Foreground="{DynamicResource DangerBrush}" FontSize="11.5" TextWrapping="Wrap" Text="{Binding SummaryText}" />
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
 
-            <!-- Round 13, items 1/2/7/8: minidump files, backed by the authoritative BugCheck 1001
-                 record when found (falling back to the old nearby-Kernel-Power-41-timestamp guess),
-                 an expandable "Full crash record" (joined WER report), and an inline warning when
-                 volmgr logged a failed dump write - see EventLogService.ReadMinidumps/
-                 ReadBugCheckRecords/ReadDumpFailures. -->
+            <!-- #781: "did an update break this?" - a KB installed within 48 hours before a
+                 faulting module started recurring in the crash timeline below. Collapsed entirely
+                 when nothing correlates (the common case). Quick flag, not a verdict - jumps into
+                 the Windows Health tab's own update-uninstall list (#780). -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding UpdateBreakageFlags.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Did an update break this?" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Uninstall an update (Windows Health tab)" Padding="8,4" FontSize="11" Click="ViewUpdateUninstallInWindowsHealth_Click" />
+                    </Grid>
+                    <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,8"
+                               Text="Quick flag, not a verdict - a Windows Update installed within 48 hours before a faulting module below started crashing repeatedly. Worth testing by uninstalling that update, not a confirmed cause." />
+                    <ItemsControl ItemsSource="{Binding UpdateBreakageFlags}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Background="{DynamicResource DangerMutedBrush}" CornerRadius="6" Padding="10,8" Margin="0,0,0,6">
+                                    <TextBlock Foreground="{DynamicResource DangerBrush}" FontSize="11.5" TextWrapping="Wrap" Text="{Binding SummaryText}" />
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #3: minidump files, timestamp + best-effort bugcheck code correlated from a
+                 nearby Kernel-Power 41 event - see EventLogService.ReadMinidumps. -->
             <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
                 <StackPanel>
                     <TextBlock Text="Minidumps" Style="{StaticResource CardTitle}" />

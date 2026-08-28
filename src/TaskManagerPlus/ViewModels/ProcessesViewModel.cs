@@ -92,6 +92,7 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
                 SideLoadFindings.Clear();
                 SelectedProcessAppDirWarning = null;
                 SelectedProcessEnvironment.Clear();
+                SelectedProcessEnvironmentDrift = null;
                 SelectedProcessHandleTypes.Clear();
                 SelectedProcessHostedServices.Clear();
                 FileLockResults.Clear();
@@ -106,9 +107,16 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
                 WaitChainStatusText = string.Empty;
                 LoadAffinityForSelection();
                 RefreshSelectedWaitBreakdown();
+                OnPropertyChanged(nameof(IsSvchostRowSelected));
             }
         }
     }
+
+    /// <summary>#761: public mirror of IsSvchostSelected() (below), so the Services-tab cross-link
+    /// button's IsEnabled can bind to it directly - IsSvchostSelected() itself stays private since
+    /// it only otherwise backs ViewHostedServicesCommand's CanExecute, which doesn't need a bindable
+    /// property.</summary>
+    public bool IsSvchostRowSelected => IsSvchostSelected();
 
     /// <summary>Loaded modules/DLLs for SelectedProcess (#39, extended by Round 15 #849 with
     /// signature/publisher/user-writable-location trust columns), populated on demand via
@@ -157,6 +165,14 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
     /// ViewEnvironmentCommand - see ProcessEnvironmentService for why this needs a PEB memory walk
     /// and is best-effort/64-bit-only.</summary>
     public ObservableCollection<string> SelectedProcessEnvironment { get; } = new();
+
+    /// <summary>#799: whether SelectedProcess's own PATH/TEMP (from the environment dump just
+    /// above) has drifted from the current machine+user environment - populated alongside
+    /// SelectedProcessEnvironment by the same ViewEnvironmentCommand click (no extra query - it's a
+    /// pure comparison over data already read). Null until "View environment" has been run for this
+    /// selection. See ProcessEnvironmentDriftService.</summary>
+    private ProcessEnvironmentDrift? _selectedProcessEnvironmentDrift;
+    public ProcessEnvironmentDrift? SelectedProcessEnvironmentDrift { get => _selectedProcessEnvironmentDrift; private set => SetProperty(ref _selectedProcessEnvironmentDrift, value); }
 
     /// <summary>Round 7 #12: open-handle counts by object type for SelectedProcess, populated on
     /// demand via ViewHandleTypesCommand - see HandleInspectionService.</summary>
@@ -807,11 +823,16 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
     private void LoadSelectedProcessEnvironment()
     {
         SelectedProcessEnvironment.Clear();
+        SelectedProcessEnvironmentDrift = null;
         var target = SelectedProcess;
         if (target is null) return;
 
-        foreach (var entry in ProcessEnvironmentService.Read(target.Pid))
+        var env = ProcessEnvironmentService.Read(target.Pid);
+        foreach (var entry in env)
             SelectedProcessEnvironment.Add(entry);
+
+        // #799: pure comparison over the environment dump just read - no extra query.
+        SelectedProcessEnvironmentDrift = ProcessEnvironmentDriftService.CheckSingle(target.Pid, target.Name, env);
     }
 
     /// <summary>Round 7 #12: on-demand open-handle-by-type breakdown - see

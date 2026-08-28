@@ -10,6 +10,9 @@ public sealed class BootMsToSecondsConverter : IValueConverter
     public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture) => value switch
     {
         int ms => $"{ms / 1000.0:0.#}s",
+        // #701/#702: culprit-board totals are summed as doubles (fractional milliseconds can
+        // accumulate across many boots) - same formatting, just a wider source type.
+        double ms => $"{ms / 1000.0:0.#}s",
         null => "–",
         _ => "–",
     };

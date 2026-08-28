@@ -72,4 +72,10 @@ public sealed class AsyncRelayCommand : ICommand
             CommandManager.InvalidateRequerySuggested();
         }
     }
+
+    /// <summary>Manually requests a CanExecute re-query - same explicit-trigger escape hatch
+    /// RelayCommand.RaiseCanExecuteChanged already offers, for the cases (e.g. a background
+    /// Task.Run completing off any WPF input event) that CommandManager.RequerySuggested's own
+    /// automatic UI-event-driven heuristic won't catch on its own.</summary>
+    public void RaiseCanExecuteChanged() => CommandManager.InvalidateRequerySuggested();
 }

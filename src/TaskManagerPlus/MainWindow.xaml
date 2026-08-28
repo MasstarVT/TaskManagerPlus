@@ -123,6 +123,15 @@
                             Padding="8,3" Background="Transparent" BorderThickness="1" BorderBrush="{DynamicResource AccentBrush}" Foreground="{DynamicResource AccentBrush}" FontSize="11.5" />
                 </StackPanel>
             </Border>
+
+            <!-- #726: persistent safe-mode banner - visible on every tab (this is part of the
+                 shared header chrome, not any one tab's content), since safe mode changes what
+                 every tab is even able to observe. See MainViewModel.SafeMode/
+                 SafeModeDetectionService's remarks. Collapsed on a normal boot (the common case). -->
+            <Border Background="{DynamicResource DangerMutedBrush}" BorderBrush="{DynamicResource DangerBrush}" BorderThickness="0,1,0,0" Padding="20,7"
+                    Visibility="{Binding SafeMode.IsSafeMode, Converter={StaticResource BoolToVisibilityConverter}}">
+                <TextBlock Text="{Binding SafeMode.BannerText}" Foreground="{DynamicResource DangerBrush}" FontSize="12" FontWeight="SemiBold" TextWrapping="Wrap" />
+            </Border>
             </StackPanel>
         </Border>
 
@@ -376,6 +385,19 @@
                     </TabItem.Tag>
                     <views:SecurityView DataContext="{Binding Security}" />
                 </TabItem>
+
+                <!-- #769-800: new top-level tab - a simple heartbeat-pulse glyph, distinct
+                     from Stability's jagged crash-spike icon above. -->
+                <TabItem Header="Windows Health">
+                    <TabItem.Tag>
+                        <Viewbox Width="16" Height="16">
+                            <Canvas Width="16" Height="16">
+                                <Path Style="{StaticResource NavIconStroke}" Data="M 1,8.5 L 4.5,8.5 L 6,4.5 L 8.5,12.5 L 10,6.5 L 11.5,8.5 L 15,8.5" />
+                            </Canvas>
+                        </Viewbox>
+                    </TabItem.Tag>
+                    <views:WindowsHealthView DataContext="{Binding WindowsHealth}" />
+                </TabItem>
             </TabControl>
 
             <views:SettingsPanel Grid.Column="1" DataContext="{Binding Theme}">
@@ -492,7 +514,10 @@
                     </TextBlock>
                 </Button>
 
-                <TextBlock Grid.Column="5" Text="{Binding Performance.Uptime, StringFormat=Uptime {0}}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5" VerticalAlignment="Center" />
+                <!-- #734: "Uptime 3h" normally, or "Uptime 3h — but 41 days since your last full
+                     restart" once Fast Startup is on and the two figures meaningfully disagree -
+                     see MainViewModel.FooterUptimeText. -->
+                <TextBlock Grid.Column="5" Text="{Binding FooterUptimeText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5" VerticalAlignment="Center" />
             </Grid>
         </Border>
     </Grid>

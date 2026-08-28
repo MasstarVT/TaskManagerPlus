@@ -419,3 +419,74 @@ public sealed class AppHangEventSummary
     public DateTime LastSeen { get; init; }
     public string HangType { get; init; } = string.Empty;
 }
+
+/// <summary>#713: one entry on the "Power & boot timeline" strip - correlates System-log events
+/// 6005 (Event Log service started, i.e. a boot happened), 6006 (clean shutdown), 6008 (previous
+/// shutdown was unexpected), 6013 (periodic uptime report), Kernel-Power 41 (no clean shutdown
+/// recorded before this boot - the same event EventLogService.WasLastShutdownUnexpected already
+/// reads for a different purpose), Kernel-Power 109 (a shutdown's reason code), and User32 1074
+/// (who/what initiated a restart or shutdown, and why) into one chronological strip. See
+/// PowerTimelineService.Read.</summary>
+public sealed class PowerTimelineEntry
+{
+    public DateTime TimeCreated { get; init; }
+    public int EventId { get; init; }
+    public string ProviderName { get; init; } = string.Empty;
+    public string Kind { get; init; } = string.Empty;
+    public string Summary { get; init; } = string.Empty;
+
+    public string KindLabel => Kind switch
+    {
+        "Boot" => "Boot",
+        "CleanShutdown" => "Clean shutdown",
+        "UnexpectedShutdown" => "Unexpected shutdown",
+        "Uptime" => "Uptime report",
+        "NoCleanShutdown" => "No clean shutdown recorded",
+        "ShutdownReason" => "Shutdown reason",
+        "RestartInitiated" => "Restart initiated",
+        _ => Kind,
+    };
+
+    /// <summary>Drives the strip's dot color - a plain informational marker (Boot/CleanShutdown/
+    /// Uptime/RestartInitiated/ShutdownReason) vs. a flagged one (UnexpectedShutdown/
+    /// NoCleanShutdown) - same "quick flag, not a verdict" idea as the rest of this app's
+    /// heuristics, just surfaced as color instead of prose.</summary>
+    public bool IsWarning => Kind is "UnexpectedShutdown" or "NoCleanShutdown";
+}
+
+/// <summary>#741: one resume-from-hibernate that looks like it failed - a Kernel-Boot event 27
+/// boot type 2 (resume from hibernate, see BootType) followed, before the next recorded boot, by
+/// a Kernel-Power 41 ("no clean shutdown recorded") or System-log 6008 ("previous shutdown was
+/// unexpected") entry from the same Power &amp; boot timeline this correlates against - see
+/// PowerTimelineService.ReadFailedResumes. A flag, not a verdict (CLAUDE.md's cross-cutting
+/// conventions): a resume that failed for an unrelated reason (a hard power-button hold during a
+/// legitimately slow resume) looks identical to this heuristic as a genuine resume bug.</summary>
+public sealed class FailedResumeEntry
+{
+    public DateTime ResumeTime { get; init; }
+    public DateTime FailureTime { get; init; }
+    public string FailureKind { get; init; } = string.Empty;
+
+    public string SummaryText => $"Resumed from hibernate at {ResumeTime:g}, then {FailureKind} at {FailureTime:g}.";
+}
+
+/// <summary>#781: "did an update break this?" - a KB/update installed (per
+/// WindowsUpdateHistoryService.ReadUpdateClientHistory, event 19) within 48 hours before a faulting
+/// module (see StabilityEvent.FaultingModule) started recurring (2+ occurrences) in this tab's own
+/// crash timeline. Pure post-processing over two already-read lists - no new query. A quick flag,
+/// not a verdict (CLAUDE.md's cross-cutting conventions): plenty of recurring crashes have nothing
+/// to do with the update that happened to land beforehand - this is "worth testing by uninstalling",
+/// not a confirmed cause. See WindowsUpdateHistoryService.CorrelateWithStabilityFailures.</summary>
+public sealed class UpdateBreakageFlag
+{
+    public DateTime InstallTime { get; init; }
+    public string UpdateTitle { get; init; } = string.Empty;
+    public string FaultingModule { get; init; } = string.Empty;
+    public DateTime FirstFailureTime { get; init; }
+    public int FailureCount { get; init; }
+
+    public string SummaryText =>
+        $"{(UpdateTitle.Length > 0 ? UpdateTitle : "An update")} installed {InstallTime:g}, then {FaultingModule} " +
+        $"started crashing repeatedly ({FailureCount} times since {FirstFailureTime:g}) " +
+        $"{(FirstFailureTime - InstallTime).TotalHours:0.#}h later. Worth testing by uninstalling it - not a confirmed cause.";
+}

@@ -16,6 +16,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public StartupViewModel Startup { get; } = new();
     public SystemSpecsViewModel SystemSpecs { get; } = new();
     public StabilityViewModel Stability { get; } = new();
+
+    // #769-800: new 13th top-level tab - modeled directly on StabilityViewModel (on-demand, no
+    // DispatcherTimer) since event-log scans/registry sweeps/DISM calls aren't cheap enough to
+    // repeat on a tick, the same tradeoff every other on-demand tab in this app already makes.
+    public WindowsHealthViewModel WindowsHealth { get; } = new();
+
     public SummaryViewModel Summary { get; }
 
     // Round 13, #801: Security tab - on-demand, same shape as Startup/SystemSpecs/Stability
@@ -113,6 +119,22 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public bool IsElevated { get; } = new WindowsPrincipal(WindowsIdentity.GetCurrent())
         .IsInRole(WindowsBuiltInRole.Administrator);
 
+    /// <summary>#726: live safe-mode detection - read once here (safe mode can't change without
+    /// a reboot, so there's nothing to poll), drives a persistent header strip visible on every
+    /// tab (see MainWindow.xaml) rather than something scoped to the Startup tab alone.</summary>
+    public SafeModeInfo SafeMode { get; } = SafeModeDetectionService.Detect();
+
+    /// <summary>#734: the footer status bar's uptime text - "Uptime 3h" normally, or "Uptime 3h —
+    /// but 41 days since your last full restart" once Startup.FastStartupInfo says Fast Startup is
+    /// on and the two figures meaningfully disagree (see FastStartupInfo.UptimeReconciliationText).
+    /// Composed here (not on StartupViewModel) since it replaces the same footer text that used to
+    /// bind directly to Performance.Uptime - see the PropertyChanged wiring in the constructor for
+    /// why this keeps ticking live even though FastStartupInfo itself is only read once per Startup
+    /// tab load/refresh.</summary>
+    public string FooterUptimeText => Startup.FastStartupInfo is { } fastStartup
+        ? fastStartup.UptimeReconciliationText(TimeSpan.FromMilliseconds(Environment.TickCount64))
+        : $"Uptime {Performance.Uptime}";
+
     /// <summary>Round 12, #87: read-only "where is this app currently storing settings" status
     /// line for the Settings drawer - portable mode is a launch-time decision (AppPaths.Initialize,
     /// from App.xaml.cs), not something this drawer can toggle live.</summary>
@@ -189,9 +211,17 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     /// <summary>#80: the tab header each of Ctrl+1..Ctrl+9 jumps to, in order - falls back to this
     /// app's first nine tabs (in their normal strip order) when the user hasn't customized
-    /// ui-preferences.json's TabShortcuts list.</summary>
+    /// ui-preferences.json's TabShortcuts list. Only indices 0-8 are ever read (MainWindow.xaml.cs's
+    /// PreviewKeyDown handler only maps Ctrl+1..Ctrl+9), so "Windows Health" appended here past
+    /// Startup/System/Stability (already unreachable past index 8, same as this new tab) is inert
+    /// for the default order - kept anyway per this app's existing convention of listing every tab
+    /// header here, and so a customized ui-preferences.json that reorders past nine still has the
+    /// full tab-name list to choose from.</summary>
     public static readonly string[] DefaultTabShortcutOrder =
-        { "Summary", "CPU", "Memory", "Storage", "Network", "GPU", "Energy & Thermals", "Responsiveness", "Processes", "Services" };
+        {
+            "Summary", "CPU", "Memory", "Storage", "Network", "GPU", "Energy & Thermals", "Responsiveness", "Processes", "Services",
+            "Startup", "System", "Stability", "Windows Health",
+        };
 
     public IReadOnlyList<string> TabShortcutOrder =>
         _uiPreferences.TabShortcuts.Count > 0 ? _uiPreferences.TabShortcuts : DefaultTabShortcutOrder;
@@ -277,6 +307,13 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         ApplyAxisThemeToResponsiveness();
         Theme.ThemeModeChanged += ApplyAxisThemeToResponsiveness;
+
+        // #734: keep the footer's uptime text live - Performance.Uptime ticks every second, and
+        // Startup.FastStartupInfo changes once per Startup tab load/refresh, either of which
+        // should refresh FooterUptimeText's bound text (same "re-raise a composed property when
+        // one of its inputs changes" pattern MainWindow.xaml.cs's tray tooltip update uses).
+        Performance.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(PerformanceViewModel.Uptime)) OnPropertyChanged(nameof(FooterUptimeText)); };
+        Startup.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(StartupViewModel.FastStartupInfo)) OnPropertyChanged(nameof(FooterUptimeText)); };
     }
 
     private void ApplyThemeToPerformance()

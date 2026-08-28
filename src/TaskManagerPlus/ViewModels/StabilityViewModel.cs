@@ -470,6 +470,23 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
     // richer per-report detail, which Windows prunes sooner than the event log itself.
     public ObservableCollection<AppHangEventSummary> HangEventHistory { get; } = new();
 
+    // #713: "Power & boot timeline" - see PowerTimelineService's remarks. A separate targeted
+    // query (different providers/event IDs than the Critical/Error scan above), run alongside it
+    // on the same on-demand Refresh rather than a second button.
+    public ObservableCollection<PowerTimelineEntry> PowerTimeline { get; } = new();
+
+    // #741: resume-from-hibernate entries that look like they failed - correlated from the same
+    // timeline above (Kernel-Boot 27 boot type 2 followed by a 41/6008 failure signal), see
+    // PowerTimelineService.ReadFailedResumes. Cross-links back to the Startup tab's hiberfile card.
+    public ObservableCollection<FailedResumeEntry> FailedResumes { get; } = new();
+
+    // #781: "did an update break this?" - Windows Update install events (read fresh here, off the
+    // same Microsoft-Windows-WindowsUpdateClient/Operational log the Windows Health tab's own #769
+    // card reads) correlated against RecentEvents' own recurring-faulting-module groups below. Pure
+    // post-processing, see WindowsUpdateHistoryService.CorrelateWithStabilityFailures. Cross-links
+    // forward into the Windows Health tab's #780 update-uninstall list.
+    public ObservableCollection<UpdateBreakageFlag> UpdateBreakageFlags { get; } = new();
+
     private bool _isLoading;
     public bool IsLoading { get => _isLoading; private set => SetProperty(ref _isLoading, value); }
 
@@ -1660,7 +1677,16 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
             await Task.WhenAll(snapshotTask, appHangsTask, hangEventsTask);
 
             var snapshot = snapshotTask.Result;
-            Apply(snapshot);
+
+            var timeline = await Task.Run(PowerTimelineService.Read);
+            // #741: reuses the timeline just read above rather than re-querying the System log.
+            var failedResumes = await Task.Run(() => PowerTimelineService.ReadFailedResumes(timeline));
+            // #781: a second, independent event-log read (the WU client log, not the System/
+            // Application logs _service.Query() above already covers) - correlated against
+            // snapshot.RecentEvents' own faulting-module data, no new query beyond this one read.
+            var wuEvents = await Task.Run(WindowsUpdateHistoryService.ReadUpdateClientHistory);
+            var breakageFlags = WindowsUpdateHistoryService.CorrelateWithStabilityFailures(wuEvents, snapshot.RecentEvents);
+            Apply(snapshot, timeline, failedResumes, breakageFlags);
 
             AppHangs.Clear();
             foreach (var h in appHangsTask.Result) AppHangs.Add(h);
@@ -2268,8 +2294,17 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
         _dumpWatcher.Dispose();
     }
 
-    private void Apply(StabilitySnapshot snapshot)
+    private void Apply(StabilitySnapshot snapshot, List<PowerTimelineEntry> timeline, List<FailedResumeEntry> failedResumes, List<UpdateBreakageFlag> breakageFlags)
     {
+        PowerTimeline.Clear();
+        foreach (var e in timeline) PowerTimeline.Add(e);
+
+        FailedResumes.Clear();
+        foreach (var f in failedResumes) FailedResumes.Add(f);
+
+        UpdateBreakageFlags.Clear();
+        foreach (var f in breakageFlags) UpdateBreakageFlags.Add(f);
+
         RecentEvents.Clear();
         foreach (var e in snapshot.RecentEvents) RecentEvents.Add(e);
 

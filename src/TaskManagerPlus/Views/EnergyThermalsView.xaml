@@ -285,10 +285,21 @@
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
-                    <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" Style="{StaticResource SubStat}">
-                        <Run Text="Sleep state: " />
-                        <Run Text="{Binding SleepStateSupportText, Mode=OneWay}" FontSize="12.5" />
-                    </TextBlock>
+                    <Grid Margin="0,4,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" TextWrapping="Wrap" Style="{StaticResource SubStat}" VerticalAlignment="Center">
+                            <Run Text="Sleep state: " />
+                            <Run Text="{Binding SleepStateSupportText, Mode=OneWay}" FontSize="12.5" />
+                        </TextBlock>
+                        <!-- #736: cross-link over to the Startup tab's full hibernation/sleep-state
+                             inventory card (powercfg /a details, hiberfile size, and the confirmed
+                             on/off/type/size toggles) - same SelectTabByName mechanism as
+                             StartupView.xaml.cs's own cross-tab links. -->
+                        <Button Grid.Column="1" Content="Hibernation details (Startup tab)" Padding="8,4" FontSize="11" Click="ViewHibernationDetails_Click" />
+                    </Grid>
                 </StackPanel>
             </Border>
 

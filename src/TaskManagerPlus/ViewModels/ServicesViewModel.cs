@@ -1,6 +1,8 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.IO;
+using System.ServiceProcess;
+using System.Windows;
 using System.Windows.Data;
 using System.Windows.Threading;
 using Microsoft.Win32;
@@ -35,7 +37,32 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
         set
         {
             if (SetProperty(ref _showDrivers, value) && value)
+            {
+                ShowSvcHostGroups = false; // #761: the two sub-views share the same grid row - mutually exclusive
                 _ = RefreshDriversAsync();
+            }
+        }
+    }
+
+    /// <summary>#761/#762: svchost group breakdown sub-view - same "toggle checkbox loads/reveals a
+    /// second grid in the same row" shape ShowDrivers already uses. Cross-linked from the Processes
+    /// tab's svchost row (see ProcessesView.xaml.cs).</summary>
+    public ObservableCollection<SvcHostGroupInfo> SvcHostGroups { get; } = new();
+
+    private SvcHostSplitInfo? _svcHostSplitInfo;
+    public SvcHostSplitInfo? SvcHostSplitInfo { get => _svcHostSplitInfo; private set => SetProperty(ref _svcHostSplitInfo, value); }
+
+    private bool _showSvcHostGroups;
+    public bool ShowSvcHostGroups
+    {
+        get => _showSvcHostGroups;
+        set
+        {
+            if (SetProperty(ref _showSvcHostGroups, value) && value)
+            {
+                ShowDrivers = false;
+                _ = LoadSvcHostGroupsAsync();
+            }
         }
     }
 
@@ -47,7 +74,12 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
         {
             var previous = _selectedService;
             if (SetProperty(ref _selectedService, value) && previous is not null)
+            {
                 previous.FailureActionsText = string.Empty; // stale text from a previous selection would be misleading
+                previous.TriggerInfoText = string.Empty; // #756: same "stale text is misleading" reasoning
+                previous.HangDiagnosisText = string.Empty; // #763: same "stale text is misleading" reasoning
+                previous.IsHung = false;
+            }
         }
     }
 
@@ -73,10 +105,102 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
         }
     }
 
+    /// <summary>#750: filters to rows ServiceRow.IsCrashLooping flags - populated only after
+    /// LoadFailureHistoryCommand has run at least once (before that, no row is ever crash-looping).</summary>
+    private bool _crashLoopingOnly;
+    public bool CrashLoopingOnly
+    {
+        get => _crashLoopingOnly;
+        set
+        {
+            if (SetProperty(ref _crashLoopingOnly, value))
+                ServicesView.Refresh();
+        }
+    }
+
+    /// <summary>#753: filters to rows ServiceRow.IsOrphaned flags - populated only after
+    /// RunInventoryAuditCommand has run at least once.</summary>
+    private bool _orphanedOnly;
+    public bool OrphanedOnly
+    {
+        get => _orphanedOnly;
+        set
+        {
+            if (SetProperty(ref _orphanedOnly, value))
+                ServicesView.Refresh();
+        }
+    }
+
     private string? _statusMessage;
     public string? StatusMessage { get => _statusMessage; set => SetProperty(ref _statusMessage, value); }
 
     public bool IsBusy { get => _isBusy; private set => SetProperty(ref _isBusy, value); }
+
+    #region #757 - Bulk recovery-action audit
+
+    /// <summary>#757: results grid, populated only after RunRecoveryAuditCommand runs - see
+    /// ServiceControlService.RunRecoveryActionAuditAsync.</summary>
+    public ObservableCollection<ServiceRecoveryAuditEntry> RecoveryAuditResults { get; } = new();
+
+    private double _recoveryAuditProgress;
+    /// <summary>0-100 - driven by RunRecoveryActionAuditAsync's IProgress callback, which
+    /// Progress&lt;T&gt; automatically marshals back onto this (UI) thread since it's constructed
+    /// here.</summary>
+    public double RecoveryAuditProgress { get => _recoveryAuditProgress; private set => SetProperty(ref _recoveryAuditProgress, value); }
+
+    private bool _isRunningRecoveryAudit;
+    public bool IsRunningRecoveryAudit { get => _isRunningRecoveryAudit; private set => SetProperty(ref _isRunningRecoveryAudit, value); }
+
+    public RelayCommand RunRecoveryAuditCommand { get; }
+
+    /// <summary>Jumps the main grid/filter/selection to one audit result's service - a quick way to
+    /// go from "here's an outlier" to the row that lets you act on it (recovery-actions form,
+    /// delete, etc).</summary>
+    public RelayCommand JumpToRecoveryAuditServiceCommand { get; }
+
+    #endregion
+
+    #region #758 - Editable recovery actions
+
+    /// <summary>#758: options for each of the three failure-order dropdowns - "None" is represented
+    /// internally as an empty sc.exe action token (see ServiceControlService.SetFailureActionsAsync's
+    /// remarks), never the literal word "none" (sc.exe doesn't recognize that as an action keyword).</summary>
+    public static string[] RecoveryActionOptions { get; } = { "None", "Restart the service", "Restart the computer" };
+
+    private string _recoveryFirstFailureAction = "Restart the service";
+    public string RecoveryFirstFailureAction { get => _recoveryFirstFailureAction; set => SetProperty(ref _recoveryFirstFailureAction, value); }
+
+    private string _recoverySecondFailureAction = "Restart the service";
+    public string RecoverySecondFailureAction { get => _recoverySecondFailureAction; set => SetProperty(ref _recoverySecondFailureAction, value); }
+
+    private string _recoverySubsequentFailureAction = "None";
+    public string RecoverySubsequentFailureAction { get => _recoverySubsequentFailureAction; set => SetProperty(ref _recoverySubsequentFailureAction, value); }
+
+    private string _recoveryResetPeriodDays = "1";
+    public string RecoveryResetPeriodDays { get => _recoveryResetPeriodDays; set => SetProperty(ref _recoveryResetPeriodDays, value); }
+
+    private string _recoveryRestartDelaySeconds = "60";
+    public string RecoveryRestartDelaySeconds { get => _recoveryRestartDelaySeconds; set => SetProperty(ref _recoveryRestartDelaySeconds, value); }
+
+    public RelayCommand SaveRecoveryActionsCommand { get; }
+
+    #endregion
+
+    #region #759/#760 - Start-type change audit and new-install log
+
+    /// <summary>#759: "Recent configuration changes" list, alongside the existing snapshot-drift
+    /// detection above (CaptureConfigBaselineCommand/CheckConfigDriftCommand) - a second, independent
+    /// way to see the same kind of change, sourced from the System log's own event 7040 rather than a
+    /// user-captured baseline.</summary>
+    public ObservableCollection<ServiceStartTypeChangeEvent> RecentConfigChanges { get; } = new();
+    public RelayCommand LoadStartTypeChangesCommand { get; }
+
+    /// <summary>#760: "New since &lt;date&gt;" list - services/drivers installed within the lookback
+    /// window (event 7045), correlated against SignatureCheckService for signer status.</summary>
+    public ObservableCollection<NewServiceInstallEvent> NewServiceInstalls { get; } = new();
+    public RelayCommand LoadNewServiceInstallsCommand { get; }
+
+    #endregion
 
     public RelayCommand StartCommand { get; }
     public RelayCommand StopCommand { get; }
@@ -95,8 +219,35 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
     public RelayCommand CaptureConfigBaselineCommand { get; }
     public RelayCommand CheckConfigDriftCommand { get; }
 
+    /// <summary>#749/#750/#751: one shared SCM-event scan, merged onto every loaded row three ways -
+    /// see ApplyFailureHistory.</summary>
+    public RelayCommand LoadFailureHistoryCommand { get; }
+
+    /// <summary>#752/#753/#754: one shared registry pass over HKLM\...\Services, merged onto every
+    /// loaded row three ways - see ServiceControlService.RunInventoryAudit.</summary>
+    public RelayCommand RunInventoryAuditCommand { get; }
+
+    /// <summary>#753: `sc delete` for the selected row, confirmed first - only enabled once an audit
+    /// has flagged it as orphaned.</summary>
+    public RelayCommand DeleteOrphanedServiceCommand { get; }
+
+    /// <summary>#756: `sc qtriggerinfo` for the selected row - same on-demand cadence as
+    /// ViewFailureActionsCommand.</summary>
+    public RelayCommand ViewTriggerInfoCommand { get; }
+
+    /// <summary>#763: `sc queryex` hang diagnosis for the selected row, and a confirmed force-kill of
+    /// its host process once diagnosed.</summary>
+    public RelayCommand DiagnoseHangCommand { get; }
+    public RelayCommand ForceKillHostProcessCommand { get; }
+
     private string? _startDurationStatus;
     public string? StartDurationStatus { get => _startDurationStatus; set => SetProperty(ref _startDurationStatus, value); }
+
+    /// <summary>#763: when each currently-pending (START_PENDING/STOP_PENDING) row first became
+    /// pending, tracked live off MergeInto's per-tick status transitions - never fabricated for a
+    /// service that was already pending before this app started watching it (DiagnoseHangAsync then
+    /// reports "an unknown duration" instead of guessing).</summary>
+    private readonly Dictionary<string, DateTime> _pendingSince = new(StringComparer.OrdinalIgnoreCase);
 
     public ServicesViewModel()
     {
@@ -111,6 +262,21 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
         LoadStartDurationsCommand = new RelayCommand(_ => _ = LoadStartDurationsAsync());
         CaptureConfigBaselineCommand = new RelayCommand(_ => CaptureConfigBaseline());
         CheckConfigDriftCommand = new RelayCommand(_ => CheckConfigDrift());
+        LoadFailureHistoryCommand = new RelayCommand(_ => _ = LoadFailureHistoryAsync());
+        RunInventoryAuditCommand = new RelayCommand(_ => _ = RunInventoryAuditAsync());
+        DeleteOrphanedServiceCommand = new RelayCommand(_ => _ = DeleteOrphanedServiceAsync(), _ => !IsBusy && SelectedService is { IsOrphaned: true });
+        ViewTriggerInfoCommand = new RelayCommand(_ => _ = LoadTriggerInfoAsync(), _ => SelectedService is not null);
+
+        RunRecoveryAuditCommand = new RelayCommand(_ => _ = RunRecoveryAuditAsync(), _ => !IsRunningRecoveryAudit);
+        JumpToRecoveryAuditServiceCommand = new RelayCommand(param => JumpToRecoveryAuditService(param as ServiceRecoveryAuditEntry));
+        SaveRecoveryActionsCommand = new RelayCommand(_ => _ = SaveRecoveryActionsAsync(),
+            _ => !IsBusy && SelectedService is { } s && !ServiceControlService.IsProtectedCoreService(s.ServiceName));
+
+        LoadStartTypeChangesCommand = new RelayCommand(_ => _ = LoadStartTypeChangesAsync());
+        LoadNewServiceInstallsCommand = new RelayCommand(_ => _ = LoadNewServiceInstallsAsync());
+
+        DiagnoseHangCommand = new RelayCommand(_ => _ = DiagnoseHangAsync(), _ => !IsBusy && SelectedService is not null);
+        ForceKillHostProcessCommand = new RelayCommand(_ => _ = ForceKillHostProcessAsync(), _ => !IsBusy && SelectedService is { ProcessId: > 0 });
 
         // Round 12, #100: configurable poll interval - see PollIntervalSettingsService's remarks.
         _timer = new DispatcherTimer(DispatcherPriority.Background)
@@ -150,6 +316,8 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
         if (obj is not ServiceRow row) return false;
 
         if (FailedToStartOnly && !row.HasFailedToStart) return false;
+        if (CrashLoopingOnly && !row.IsCrashLooping) return false;
+        if (OrphanedOnly && !row.IsOrphaned) return false;
 
         if (string.IsNullOrWhiteSpace(FilterText)) return true;
         return row.DisplayName.Contains(FilterText, StringComparison.OrdinalIgnoreCase) ||
@@ -187,6 +355,13 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
             var existing = Services[i];
             if (latestByName.TryGetValue(existing.ServiceName, out var fresh))
             {
+                // #763: track when this row first became pending, live off this per-tick status
+                // transition - see _pendingSince's remarks.
+                bool wasPending = existing.Status is ServiceControllerStatus.StartPending or ServiceControllerStatus.StopPending;
+                bool isPending = fresh.Status is ServiceControllerStatus.StartPending or ServiceControllerStatus.StopPending;
+                if (isPending && !wasPending) _pendingSince[existing.ServiceName] = DateTime.Now;
+                else if (!isPending) _pendingSince.Remove(existing.ServiceName);
+
                 existing.Status = fresh.Status;
                 existing.StartType = fresh.StartType;
                 existing.ProcessId = fresh.ProcessId;
@@ -194,10 +369,13 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
                 existing.DependsOn = fresh.DependsOn;
                 existing.DependentServices = fresh.DependentServices;
                 existing.LogOnAs = fresh.LogOnAs;
+                existing.IsDelayedAutoStart = fresh.IsDelayedAutoStart;
+                existing.AutoStartDelaySeconds = fresh.AutoStartDelaySeconds;
                 latestByName.Remove(existing.ServiceName);
             }
             else
             {
+                _pendingSince.Remove(existing.ServiceName);
                 Services.Remove(existing);
             }
         }
@@ -369,6 +547,415 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
 
         StatusMessage = $"Compared {compared} services against baseline from {baseline.CapturedAt:g} - {drifted} changed.";
     }
+
+    /// <summary>#749/#750/#751: runs the one shared SCM failure-event scan and merges it onto every
+    /// currently-loaded row.</summary>
+    private async Task LoadFailureHistoryAsync()
+    {
+        StatusMessage = "Scanning the System event log for service failures…";
+        var events = await Task.Run(() => _eventLog.ReadServiceFailureEvents());
+        ApplyFailureHistory(events);
+
+        int crashLooping = Services.Count(r => r.IsCrashLooping);
+        StatusMessage = $"Loaded {events.Count} SCM failure event(s) from the last 30 days - {crashLooping} service(s) crash-looping.";
+    }
+
+    /// <summary>#749/#750/#751: merges one shared failure-event scan onto every currently-loaded row
+    /// three ways - the raw per-service timeline (#749), a rolling-24h crash-loop count (#750), and
+    /// (once every row's own events are assigned, so the walk below has something to look up) a
+    /// dependency-failure root-cause walk (#751). Matched onto rows by display name, since that's
+    /// what SCM's own formatted event messages embed - see EventLogService.ReadServiceFailureEvents.</summary>
+    private void ApplyFailureHistory(List<ServiceScmEvent> events)
+    {
+        var byDisplayName = new Dictionary<string, List<ServiceScmEvent>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var e in events)
+        {
+            if (!byDisplayName.TryGetValue(e.ServiceDisplayName, out var list))
+                byDisplayName[e.ServiceDisplayName] = list = new List<ServiceScmEvent>();
+            list.Add(e);
+        }
+
+        var cutoff = DateTime.Now.AddHours(-24);
+        foreach (var row in Services)
+        {
+            if (byDisplayName.TryGetValue(row.DisplayName, out var rowEvents))
+            {
+                row.ScmEvents = rowEvents.OrderByDescending(e => e.TimeCreated).ToList();
+                row.CrashLoopCount24H = rowEvents.Count(e => e.IsCrashEvent && e.TimeCreated >= cutoff);
+            }
+            else
+            {
+                row.ScmEvents = Array.Empty<ServiceScmEvent>();
+                row.CrashLoopCount24H = 0;
+            }
+        }
+
+        var rowsByDisplayName = Services.ToDictionary(r => r.DisplayName, StringComparer.OrdinalIgnoreCase);
+        foreach (var row in Services)
+            row.DependencyRootCauseText = BuildRootCause(row, rowsByDisplayName);
+    }
+
+    /// <summary>#751: walks DependsOn (display names, already loaded every tick - #37) one hop at a
+    /// time, following whichever dependency itself has failure history, until one is found with a
+    /// real failure of its own (not just a 7001 "a dependency of mine failed" event, which only
+    /// means the chain continues one hop further) or the chain runs out. Cycle-guarded since a
+    /// dependency graph isn't guaranteed acyclic in general.</summary>
+    private static string BuildRootCause(ServiceRow row, Dictionary<string, ServiceRow> rowsByDisplayName)
+    {
+        var chain = new List<string>();
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { row.DisplayName };
+        var current = row;
+
+        while (true)
+        {
+            var ownFailure = current.ScmEvents
+                .Where(e => e.EventId != 7001)
+                .OrderByDescending(e => e.TimeCreated)
+                .FirstOrDefault();
+
+            if (ownFailure is not null)
+            {
+                return chain.Count == 0
+                    ? $"Failed directly ({ownFailure.EventLabel}, {ownFailure.TimeCreated:g}): {ownFailure.Message}"
+                    : $"Blocked by: {string.Join(" -> ", chain)} -> {current.DisplayName}, which failed directly " +
+                      $"({ownFailure.EventLabel}, {ownFailure.TimeCreated:g}): {ownFailure.Message}";
+            }
+
+            var next = current.DependsOn
+                .Select(name => rowsByDisplayName.TryGetValue(name, out var r) ? r : null)
+                .FirstOrDefault(r => r is not null && r.ScmEvents.Count > 0 && !visited.Contains(r.DisplayName));
+
+            if (next is null)
+            {
+                return current.ScmEvents.Any(e => e.EventId == 7001)
+                    ? "Depends on a service reported as failed, but that dependency's own failure record wasn't found in the last 30 days."
+                    : string.Empty; // no failure history for this service or its dependencies - nothing to report
+            }
+
+            chain.Add(current.DisplayName);
+            visited.Add(next.DisplayName);
+            current = next;
+        }
+    }
+
+    /// <summary>#752/#753/#754: runs the one shared registry-inventory audit and merges its flags
+    /// onto every currently-loaded row (including the driver sub-view, since drivers are entries
+    /// under the same registry key and can be just as orphaned/unquoted/broken).</summary>
+    private async Task RunInventoryAuditAsync()
+    {
+        StatusMessage = "Auditing service registry entries…";
+        var flags = await Task.Run(ServiceControlService.RunInventoryAudit);
+        var byName = flags.ToDictionary(f => f.ServiceName, StringComparer.OrdinalIgnoreCase);
+
+        int orphaned = 0, unquoted = 0, broken = 0;
+
+        void Apply(ServiceRow row)
+        {
+            if (byName.TryGetValue(row.ServiceName, out var f))
+            {
+                row.HasBrokenDependency = f.HasBrokenDependency;
+                row.BrokenDependencyText = f.BrokenDependencyText;
+                row.IsOrphaned = f.IsOrphaned;
+                row.OrphanedImagePath = f.OrphanedImagePath;
+                row.HasUnquotedPath = f.HasUnquotedPath;
+                row.UnquotedPathOriginal = f.UnquotedPathOriginal;
+                row.UnquotedPathCorrected = f.UnquotedPathCorrected;
+            }
+            else
+            {
+                row.HasBrokenDependency = false;
+                row.BrokenDependencyText = string.Empty;
+                row.IsOrphaned = false;
+                row.OrphanedImagePath = string.Empty;
+                row.HasUnquotedPath = false;
+                row.UnquotedPathOriginal = string.Empty;
+                row.UnquotedPathCorrected = string.Empty;
+            }
+
+            if (row.IsOrphaned) orphaned++;
+            if (row.HasUnquotedPath) unquoted++;
+            if (row.HasBrokenDependency) broken++;
+        }
+
+        foreach (var row in Services) Apply(row);
+        foreach (var row in Drivers) Apply(row);
+
+        StatusMessage = $"Service audit: {orphaned} orphaned, {unquoted} unquoted path, {broken} broken dependency (of {flags.Count} flagged registry entries).";
+    }
+
+    /// <summary>#753: `sc delete` for the selected orphaned row - confirmed first, matching
+    /// CLAUDE.md's "mutating actions require explicit confirmation" rule (the same pattern
+    /// ProcessesViewModel.EndSelected and StartupViewModel's destructive actions already use).</summary>
+    private async Task DeleteOrphanedServiceAsync()
+    {
+        var target = SelectedService;
+        if (target is null || !target.IsOrphaned) return;
+
+        var confirm = MessageBox.Show(
+            $"This will run:\n\nsc delete \"{target.ServiceName}\"\n\n\"{target.DisplayName}\" points at a binary that no longer exists:\n{target.OrphanedImagePath}\n\nThis permanently removes the service registration. Continue?",
+            "Delete orphaned service",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        IsBusy = true;
+        try
+        {
+            var (success, error) = await ServiceControlService.DeleteAsync(target.ServiceName);
+            StatusMessage = success ? $"Deleted {target.DisplayName}." : $"Couldn't delete {target.DisplayName}: {error}";
+            if (success) Services.Remove(target);
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    /// <summary>#756: loads SelectedService's trigger-start conditions on demand - see
+    /// ServiceControlService.ReadTriggerInfoTextAsync for why this shells to sc.exe rather than
+    /// every tick.</summary>
+    private async Task LoadTriggerInfoAsync()
+    {
+        var target = SelectedService;
+        if (target is null) return;
+
+        target.TriggerInfoText = await ServiceControlService.ReadTriggerInfoTextAsync(target.ServiceName);
+    }
+
+    #region #757 - Bulk recovery-action audit
+
+    /// <summary>#757: runs ServiceControlService.RunRecoveryActionAuditAsync across every
+    /// currently-loaded row, reporting progress into RecoveryAuditProgress.</summary>
+    private async Task RunRecoveryAuditAsync()
+    {
+        IsRunningRecoveryAudit = true;
+        RecoveryAuditProgress = 0;
+        StatusMessage = "Auditing recovery actions across all services (this shells out to sc.exe once per service)…";
+        try
+        {
+            var services = Services.Select(r => (r.ServiceName, IsAutomaticStart: r.StartType == ServiceStartMode.Automatic)).ToList();
+            var progress = new Progress<(int Done, int Total)>(p =>
+                RecoveryAuditProgress = p.Total == 0 ? 0 : p.Done * 100.0 / p.Total);
+
+            var results = await ServiceControlService.RunRecoveryActionAuditAsync(services, progress);
+
+            RecoveryAuditResults.Clear();
+            foreach (var r in results) RecoveryAuditResults.Add(r);
+
+            StatusMessage = $"Recovery action audit: {results.Count} outlier(s) of {services.Count} services checked.";
+        }
+        finally
+        {
+            IsRunningRecoveryAudit = false;
+            RecoveryAuditProgress = 100;
+        }
+    }
+
+    /// <summary>Jumps FilterText/SelectedService to one audit result's row, so acting on an outlier
+    /// (e.g. opening the #758 recovery-actions form) is a single click away from finding it.</summary>
+    private void JumpToRecoveryAuditService(ServiceRecoveryAuditEntry? entry)
+    {
+        if (entry is null) return;
+        FilterText = entry.ServiceName;
+        var match = Services.FirstOrDefault(r => r.ServiceName.Equals(entry.ServiceName, StringComparison.OrdinalIgnoreCase));
+        if (match is not null) SelectedService = match;
+    }
+
+    #endregion
+
+    #region #758 - Editable recovery actions
+
+    /// <summary>
+    /// #758: builds the exact `sc failure` command from the form fields, shows it in a confirmation
+    /// dialog (CLAUDE.md's "mutating actions require confirmation with the exact command shown"),
+    /// then runs that same string. Declines outright for a protected core service - the command's
+    /// own CanExecute already keeps the button disabled for one, this is defense in depth matching
+    /// SetFailureActionsAsync's own server-side check.
+    /// </summary>
+    private async Task SaveRecoveryActionsAsync()
+    {
+        var target = SelectedService;
+        if (target is null) return;
+        if (ServiceControlService.IsProtectedCoreService(target.ServiceName))
+        {
+            StatusMessage = $"{target.DisplayName} is a protected core service - its recovery actions can't be edited here.";
+            return;
+        }
+
+        if (!int.TryParse(RecoveryResetPeriodDays, out int resetDays) || resetDays < 0)
+        {
+            StatusMessage = "Enter a reset period of 0 or more days.";
+            return;
+        }
+        if (!int.TryParse(RecoveryRestartDelaySeconds, out int delaySeconds) || delaySeconds < 0)
+        {
+            StatusMessage = "Enter a restart delay of 0 or more seconds.";
+            return;
+        }
+
+        string ActionToken(string action) => action switch
+        {
+            "Restart the service" => "restart",
+            "Restart the computer" => "reboot",
+            _ => string.Empty, // "None" - sc.exe has no "none" keyword; an empty slot is SC_ACTION_NONE
+        };
+
+        string BuildPair(string action)
+        {
+            string token = ActionToken(action);
+            int delayMs = token.Length == 0 ? 0 : delaySeconds * 1000;
+            return $"{token}/{delayMs}";
+        }
+
+        string actionsArg = string.Join("/", new[]
+        {
+            BuildPair(RecoveryFirstFailureAction),
+            BuildPair(RecoverySecondFailureAction),
+            BuildPair(RecoverySubsequentFailureAction),
+        });
+        long resetSeconds = resetDays * 86400L;
+        string args = $"failure \"{target.ServiceName}\" reset= {resetSeconds} actions= {actionsArg}";
+
+        var confirm = MessageBox.Show(
+            $"This will run:\n\nsc.exe {args}\n\nChange recovery actions for \"{target.DisplayName}\" now?",
+            "Change recovery actions",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        IsBusy = true;
+        try
+        {
+            var (success, error) = await ServiceControlService.SetFailureActionsAsync(target.ServiceName, args);
+            StatusMessage = success
+                ? $"Recovery actions updated for {target.DisplayName}."
+                : $"Couldn't update recovery actions for {target.DisplayName}: {error}";
+
+            // Refresh the on-demand "Recovery actions" text (if it was already loaded) so the
+            // confirmed change is visible immediately, without a second manual click.
+            if (success && target.FailureActionsText.Length > 0)
+                target.FailureActionsText = await ServiceControlService.ReadFailureActionsTextAsync(target.ServiceName);
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    #endregion
+
+    #region #759/#760 - Start-type change audit and new-install log
+
+    /// <summary>#759: mines System-log event 7040 for start-type changes within the lookback window.</summary>
+    private async Task LoadStartTypeChangesAsync()
+    {
+        StatusMessage = "Scanning the System event log for service start-type changes…";
+        var events = await Task.Run(() => _eventLog.ReadStartTypeChangeEvents());
+        RecentConfigChanges.Clear();
+        foreach (var e in events) RecentConfigChanges.Add(e);
+        StatusMessage = $"Found {events.Count} start-type change(s) in the last 30 days.";
+    }
+
+    /// <summary>#760: mines System-log event 7045 for services/drivers installed within the lookback
+    /// window, then correlates each against SignatureCheckService for signer status - the signature
+    /// check reads the file from disk, so this stays off the UI thread alongside the event scan.</summary>
+    private async Task LoadNewServiceInstallsAsync()
+    {
+        StatusMessage = "Scanning the System event log for newly installed services…";
+        var events = await Task.Run(() =>
+        {
+            var found = _eventLog.ReadNewServiceInstallEvents();
+            foreach (var e in found)
+                e.SignatureStatus = SignatureCheckService.GetStatus(StartupManagerService.ExtractPath(e.ImagePath));
+            return found;
+        });
+
+        NewServiceInstalls.Clear();
+        foreach (var e in events) NewServiceInstalls.Add(e);
+        StatusMessage = $"Found {events.Count} newly installed service(s)/driver(s) in the last 30 days.";
+    }
+
+    #endregion
+
+    #region #761/#762 - svchost group breakdown
+
+    /// <summary>#761/#762: reads the svchost group breakdown and split-threshold info together -
+    /// both are cheap registry/WMI-free reads plus a handful of Process snapshots, so one Task.Run
+    /// covers both rather than two round trips.</summary>
+    private async Task LoadSvcHostGroupsAsync()
+    {
+        StatusMessage = "Reading svchost group breakdown…";
+        var (groups, splitInfo) = await Task.Run(() =>
+            (ServiceControlService.ReadSvchostGroups(), ServiceControlService.ReadSvcHostSplitInfo()));
+
+        SvcHostGroups.Clear();
+        foreach (var g in groups) SvcHostGroups.Add(g);
+        SvcHostSplitInfo = splitInfo;
+
+        StatusMessage = $"Loaded {groups.Count} svchost group(s) across {groups.Sum(g => g.ProcessCount)} process(es).";
+    }
+
+    #endregion
+
+    #region #763 - Hung-service diagnosis
+
+    /// <summary>#763: samples SelectedService's `sc queryex` state twice (~3s apart) to tell "still
+    /// making progress" from "genuinely stuck" - see ServiceControlService.DiagnoseHangAsync.</summary>
+    private async Task DiagnoseHangAsync()
+    {
+        var target = SelectedService;
+        if (target is null) return;
+
+        IsBusy = true;
+        StatusMessage = $"Diagnosing {target.DisplayName} - sampling its checkpoint over ~3 seconds…";
+        try
+        {
+            _pendingSince.TryGetValue(target.ServiceName, out var since);
+            TimeSpan? pendingDuration = since == default ? null : DateTime.Now - since;
+
+            var diagnosis = await ServiceControlService.DiagnoseHangAsync(target.ServiceName, pendingDuration);
+            target.IsHung = diagnosis.IsPending && !diagnosis.CheckpointAdvancing;
+            target.HangDiagnosisText = diagnosis.SummaryText;
+            StatusMessage = diagnosis.SummaryText;
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    /// <summary>#763: force-ends the process hosting SelectedService - confirmed first, matching
+    /// CLAUDE.md's "mutating actions require confirmation" rule and ProcessesViewModel.EndSelected's
+    /// own phrasing for the same underlying action.</summary>
+    private async Task ForceKillHostProcessAsync()
+    {
+        var target = SelectedService;
+        if (target is null || target.ProcessId <= 0) return;
+
+        var confirm = MessageBox.Show(
+            $"This will forcibly end the process hosting \"{target.DisplayName}\" (PID {target.ProcessId}).\n\n" +
+            "Any unsaved data in that process, and any other services it hosts, will be lost. Continue?",
+            "Force-end host process",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        IsBusy = true;
+        try
+        {
+            var (success, error) = await Task.Run(() => ProcessMonitorService.EndProcess(target.ProcessId));
+            StatusMessage = success
+                ? $"Ended host process (PID {target.ProcessId})."
+                : $"Couldn't end host process: {error}";
+            if (success) await RefreshAsync();
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    #endregion
 
     public void Dispose() => _timer.Stop();
 }

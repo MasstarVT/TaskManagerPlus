@@ -107,6 +107,10 @@ public sealed class SystemSpecs
     /// <summary>Round 11, #73: Windows Update/servicing reboot-pending flag - see
     /// SystemSpecsService.ReadRebootPending for which indicator keys are checked.</summary>
     public bool RebootPending { get; init; }
+
+    /// <summary>#733: firmware boot mode (UEFI vs legacy BIOS) and the system disk's partition
+    /// style - see FirmwareDiskInfo's remarks.</summary>
+    public FirmwareDiskInfo FirmwareDisk { get; init; } = new();
 }
 
 /// <summary>One active display (#60) - resolution/refresh rate from Win32_VideoController's current
@@ -212,6 +216,29 @@ public sealed class SecurityInfo
     public string TpmVersion { get; init; } = string.Empty;
     public bool? VbsRunning { get; init; }
     public IReadOnlyList<string> VbsServicesRunning { get; init; } = Array.Empty<string>();
+
+    // #732: VBS/HVCI/hypervisor launch state - combines bcdedit's hypervisorlaunchtype with the
+    // two DeviceGuard policy registry locations (the legacy HypervisorEnforcedCodeIntegrity value
+    // and the newer per-scenario Enabled value the Windows Security app's Core Isolation toggle
+    // actually writes), alongside VbsRunning/VbsServicesRunning above for the *actually running*
+    // half of the picture. Each is read independently since "configured" and "running" commonly
+    // disagree (a policy change that needs a reboot to take effect) - see
+    // SystemSpecsViewModel.Apply for how these are combined into one Configured-vs-Running read.
+    public string? HypervisorLaunchType { get; init; }
+    public bool? VbsPolicyEnabled { get; init; }
+    public bool? HvciPolicyEnabled { get; init; }
+    public bool? HvciScenarioEnabled { get; init; }
+}
+
+/// <summary>#733: firmware boot mode (UEFI vs legacy BIOS) and the system disk's partition style
+/// (GPT vs MBR) - a legacy/MBR system disk is a hard blocker for both Windows 11 and Secure Boot,
+/// stated plainly rather than left for the user to infer from the raw values.</summary>
+public sealed class FirmwareDiskInfo
+{
+    public string FirmwareType { get; init; } = "Unknown";
+    public string SystemDiskPartitionStyle { get; init; } = "Unknown";
+
+    public bool IsHardBlocker => SystemDiskPartitionStyle.Equals("MBR", StringComparison.OrdinalIgnoreCase);
 }
 
 /// <summary>One third-party driver flagged as old enough to be worth checking for an update -
