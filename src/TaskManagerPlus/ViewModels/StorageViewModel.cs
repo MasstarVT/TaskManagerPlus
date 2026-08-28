@@ -163,6 +163,93 @@ public sealed class NvmeWarningRow
     public bool IsSet { get; init; }
 }
 
+/// <summary>Round 18, #363: one bucket of a per-disk latency histogram strip (see
+/// DiskLatencyHistoryService.HistogramBucketLabels) - same "Label + Percent" shape
+/// PerformanceViewModel.TurboHistogramBucket already uses for the CPU tab's turbo histogram.</summary>
+public sealed class LatencyHistogramBucket : ObservableObject
+{
+    public string Label { get; init; } = string.Empty;
+
+    private double _percent;
+    public double Percent { get => _percent; set => SetProperty(ref _percent, value); }
+}
+
+/// <summary>
+/// Round 18, #362/#363/#365: one physical disk's live bottleneck-diagnostics row - queue length/
+/// latency/throughput/utilization mirrored from PerformanceViewModel.PhysicalDisks each tick, plus
+/// this disk's rolling-window latency percentiles and histogram (#363). Updated in place, not
+/// rebuilt, by StorageViewModel.OnPerformanceSampledForDiskDiagnostics - same "merge, don't clear
+/// and rebuild" shape the rest of this file's per-tick handlers use.
+/// </summary>
+public sealed class PhysicalDiskDiagnosticsRow : ObservableObject
+{
+    public string DiskName { get; init; } = string.Empty;
+
+    private double _utilizationPercent;
+    public double UtilizationPercent { get => _utilizationPercent; set => SetProperty(ref _utilizationPercent, value); }
+
+    private double _activePercent;
+    public double ActivePercent { get => _activePercent; set => SetProperty(ref _activePercent, value); }
+
+    private bool _idleTimeAvailable;
+    public bool IdleTimeAvailable { get => _idleTimeAvailable; set => SetProperty(ref _idleTimeAvailable, value); }
+
+    private double _readBps;
+    public double ReadBps { get => _readBps; set => SetProperty(ref _readBps, value); }
+
+    private double _writeBps;
+    public double WriteBps { get => _writeBps; set => SetProperty(ref _writeBps, value); }
+
+    private double _queueLength;
+    public double QueueLength { get => _queueLength; set => SetProperty(ref _queueLength, value); }
+
+    private double _readLatencyMs;
+    public double ReadLatencyMs { get => _readLatencyMs; set => SetProperty(ref _readLatencyMs, value); }
+
+    private double _writeLatencyMs;
+    public double WriteLatencyMs { get => _writeLatencyMs; set => SetProperty(ref _writeLatencyMs, value); }
+
+    // #363
+    public ObservableCollection<LatencyHistogramBucket> HistogramBuckets { get; } = new(
+        DiskLatencyHistoryService.HistogramBucketLabels.Select(l => new LatencyHistogramBucket { Label = l }));
+
+    private string _percentileSummaryText = "Collecting samples...";
+    public string PercentileSummaryText { get => _percentileSummaryText; set => SetProperty(ref _percentileSummaryText, value); }
+
+    private string _percentileWindowText = string.Empty;
+    public string PercentileWindowText { get => _percentileWindowText; set => SetProperty(ref _percentileWindowText, value); }
+}
+
+/// <summary>Round 18, #364: one sample where a disk's "Avg. Disk sec/Transfer" exceeded the
+/// configurable stall threshold, plus a best-effort "what was likely responsible" from whatever
+/// ProcessesViewModel's own poller last measured - see StorageViewModel.FindTopDiskProcessText. A
+/// partial correlation, not a guarantee: ProcessesViewModel polls on its own independent timer, so
+/// the process reading isn't from this exact instant.</summary>
+public sealed class DiskStallEvent
+{
+    public DateTime TimestampLocal { get; init; }
+    public string DiskName { get; init; } = string.Empty;
+    public double TransferLatencyMs { get; init; }
+    public string TopProcessText { get; init; } = string.Empty;
+}
+
+/// <summary>Round 18, #369: wraps one immutable MinifilterVolumeInfo with this row's mutable "deep
+/// stack" quick-flag classification (recomputed whenever the user changes the threshold) - same
+/// wrap-the-immutable-fact shape VolumeFilesystemRow/NtfsBehaviorSettingRow use elsewhere in this
+/// file.</summary>
+public sealed class MinifilterVolumeRow : ObservableObject
+{
+    public MinifilterVolumeInfo Info { get; }
+    public MinifilterVolumeRow(MinifilterVolumeInfo info) => Info = info;
+
+    public string VolumeName => Info.VolumeName;
+    public IReadOnlyList<MinifilterInstanceInfo> Instances => Info.Instances;
+    public int InstanceCount => Info.Instances.Count;
+
+    private bool _isDeepStack;
+    public bool IsDeepStack { get => _isDeepStack; set => SetProperty(ref _isDeepStack, value); }
+}
+
 /// <summary>
 /// Round 15, #337/#338/#339/#343/#345: one fixed, lettered volume's combined filesystem card row -
 /// the static MSFT_Volume/physical-sector facts (#345, Facts) plus the mutable NTFS-specific
@@ -906,6 +993,9 @@ public sealed class StorageViewModel : ObservableObject
         onDisk.FreeSpacePercentThreshold = _alertThresholds.FreeSpacePercentThreshold;
         onDisk.FreeSpaceAbsoluteEnabled = _alertThresholds.FreeSpaceAbsoluteEnabled;
         onDisk.FreeSpaceAbsoluteGbThreshold = _alertThresholds.FreeSpaceAbsoluteGbThreshold;
+        // #364
+        onDisk.DiskStallDetectionEnabled = _alertThresholds.DiskStallDetectionEnabled;
+        onDisk.DiskStallThresholdMs = _alertThresholds.DiskStallThresholdMs;
         AlertThresholdsService.Save(onDisk);
     }
 
@@ -971,8 +1061,100 @@ public sealed class StorageViewModel : ObservableObject
     private string _pageFileStatusText = "Loading...";
     public string PageFileStatusText { get => _pageFileStatusText; private set => SetProperty(ref _pageFileStatusText, value); }
 
-    public StorageViewModel(PerformanceViewModel performance, EnergyThermalsViewModel energyThermals)
+    // ================================================================================
+    // Round 18, #362/#363/#364/#365/#366: per-physical-disk bottleneck diagnostics - one row per
+    // PhysicalDisk instance (not just the "_Total" aggregate the top of this tab already shows),
+    // each with its own rolling-window latency-percentile histogram, plus the disk-stall timeline.
+    // All fed off the same Performance.Sampled tick as #324/#349/#352 above - see
+    // OnPerformanceSampledForDiskDiagnostics.
+    // ================================================================================
+    public ObservableCollection<PhysicalDiskDiagnosticsRow> PhysicalDiskRows { get; } = new();
+
+    private readonly DiskLatencyHistoryService _diskLatencyHistory = new();
+    private readonly Dictionary<string, bool> _diskStallAlerted = new(StringComparer.OrdinalIgnoreCase);
+
+    // #364: persisted alongside the other alert-style thresholds (see PersistAlertThresholds) -
+    // on by default (unlike the opt-in Cpu/Memory/Temp/FreeSpace toggles above), since a stall the
+    // user isn't actively watching for is exactly the case this timeline exists to catch.
+    public ObservableCollection<DiskStallEvent> DiskStalls { get; } = new();
+
+    public bool DiskStallDetectionEnabled
     {
+        get => _alertThresholds.DiskStallDetectionEnabled;
+        set { _alertThresholds.DiskStallDetectionEnabled = value; OnPropertyChanged(); PersistAlertThresholds(); }
+    }
+    public double DiskStallThresholdMs
+    {
+        get => _alertThresholds.DiskStallThresholdMs;
+        set { _alertThresholds.DiskStallThresholdMs = Math.Max(1, value); OnPropertyChanged(); PersistAlertThresholds(); }
+    }
+
+    // ================================================================================
+    // Round 18, #367: StorPort driver-level latency tracing - a time-boxed, on-demand real-time
+    // ETW capture, never automatic (see StorPortTraceService's remarks on why this chunk ships the
+    // capture path without a live session wired up).
+    // ================================================================================
+    public ObservableCollection<StorPortLatencyEvent> StorPortEvents { get; } = new();
+
+    private int _storPortCaptureDurationSeconds = 15;
+    public int StorPortCaptureDurationSeconds { get => _storPortCaptureDurationSeconds; set => SetProperty(ref _storPortCaptureDurationSeconds, Math.Clamp(value, 5, 120)); }
+
+    private double _storPortThresholdMs = 20;
+    public double StorPortThresholdMs { get => _storPortThresholdMs; set => SetProperty(ref _storPortThresholdMs, Math.Max(0, value)); }
+
+    private bool _isCapturingStorPort;
+    public bool IsCapturingStorPort { get => _isCapturingStorPort; private set => SetProperty(ref _isCapturingStorPort, value); }
+
+    private string _storPortStatusText = "Not captured";
+    public string StorPortStatusText { get => _storPortStatusText; private set => SetProperty(ref _storPortStatusText, value); }
+
+    public AsyncRelayCommand StartStorPortCaptureCommand { get; }
+
+    // ================================================================================
+    // Round 18, #368: per-file I/O attribution - same time-boxed, on-demand ETW shape as #367
+    // above (see FileIoAttributionService's remarks).
+    // ================================================================================
+    public ObservableCollection<FileIoAttributionEntry> TopIoFiles { get; } = new();
+    public ObservableCollection<FileIoAttributionEntry> TopIoProcesses { get; } = new();
+
+    private int _ioCaptureDurationSeconds = 15;
+    public int IoCaptureDurationSeconds { get => _ioCaptureDurationSeconds; set => SetProperty(ref _ioCaptureDurationSeconds, Math.Clamp(value, 10, 60)); }
+
+    private bool _isCapturingIoAttribution;
+    public bool IsCapturingIoAttribution { get => _isCapturingIoAttribution; private set => SetProperty(ref _isCapturingIoAttribution, value); }
+
+    private string _ioAttributionStatusText = "Not captured";
+    public string IoAttributionStatusText { get => _ioAttributionStatusText; private set => SetProperty(ref _ioAttributionStatusText, value); }
+
+    public AsyncRelayCommand StartIoAttributionCaptureCommand { get; }
+
+    // ================================================================================
+    // Round 18, #369: minifilter (filesystem filter driver) stack audit - "quick flag, not a
+    // verdict" (see MinifilterAuditService's remarks). On-demand only, via fltmc shell-outs.
+    // ================================================================================
+    public ObservableCollection<MinifilterDriverInfo> MinifilterDrivers { get; } = new();
+    public ObservableCollection<MinifilterVolumeRow> MinifilterVolumes { get; } = new();
+
+    private bool _isCheckingMinifilters;
+    public bool IsCheckingMinifilters { get => _isCheckingMinifilters; private set => SetProperty(ref _isCheckingMinifilters, value); }
+
+    private string _minifilterStatusText = "Not checked";
+    public string MinifilterStatusText { get => _minifilterStatusText; private set => SetProperty(ref _minifilterStatusText, value); }
+
+    private int _minifilterDeepStackThreshold = 8;
+    public int MinifilterDeepStackThreshold
+    {
+        get => _minifilterDeepStackThreshold;
+        set { if (SetProperty(ref _minifilterDeepStackThreshold, Math.Max(1, value))) ReclassifyMinifilterVolumes(); }
+    }
+
+    public AsyncRelayCommand CheckMinifiltersCommand { get; }
+
+    private readonly ProcessesViewModel _processes;
+
+    public StorageViewModel(PerformanceViewModel performance, EnergyThermalsViewModel energyThermals, ProcessesViewModel processes)
+    {
+        _processes = processes;
         Performance = performance;
         EnergyThermals = energyThermals;
 
@@ -1068,6 +1250,13 @@ public sealed class StorageViewModel : ObservableObject
         // #356/#357/#358/#360: one shared refresh for the whole "reclaimable space" card.
         RefreshReclaimableSpaceCommand = new AsyncRelayCommand(RefreshReclaimableSpaceAsync);
 
+        // Round 18, #367/#368: time-boxed, on-demand ETW captures - never automatic.
+        StartStorPortCaptureCommand = new AsyncRelayCommand(RunStorPortCaptureAsync, () => !IsCapturingStorPort);
+        StartIoAttributionCaptureCommand = new AsyncRelayCommand(RunIoAttributionCaptureAsync, () => !IsCapturingIoAttribution);
+
+        // Round 18, #369
+        CheckMinifiltersCommand = new AsyncRelayCommand(CheckMinifiltersAsync, () => !IsCheckingMinifilters);
+
         // #324: subscribe to the shared sampler's tick rather than owning a new heavy timer -
         // see PerformanceViewModel.Sampled's remarks.
         Performance.Sampled += OnPerformanceSampled;
@@ -1080,6 +1269,13 @@ public sealed class StorageViewModel : ObservableObject
         // sampling and low-free-space alert evaluation are cheap (DriveInfo reads, no shell-out),
         // so this runs unthrottled too, same as #349's handler above.
         Performance.Sampled += OnPerformanceSampledForFreeSpace;
+
+        // Round 18, #362/#363/#364/#365/#366: fourth independent handler - pure in-memory work
+        // (mirroring PerformanceViewModel.PhysicalDisks, updating the rolling latency-percentile
+        // window, running the stall detector), so unlike the Task.Run-wrapped handlers above this
+        // one runs synchronously, per this round's brief that #362-366 are cheap enough to
+        // piggyback directly onto the tick.
+        Performance.Sampled += OnPerformanceSampledForDiskDiagnostics;
 
         _ = Task.Run(() =>
         {
@@ -3063,6 +3259,206 @@ public sealed class StorageViewModel : ObservableObject
         {
             alerted[letter] = false;
         }
+    }
+
+    // ================================================================================
+    // Round 18, #362/#363/#364/#365/#366: per-physical-disk diagnostics - mirrors
+    // PerformanceViewModel.PhysicalDisks into PhysicalDiskRows, feeds the rolling latency-
+    // percentile window (#363), and runs the stall detector (#364). All pure in-memory work (no
+    // WMI/shell-out), so unlike the Task.Run-wrapped handlers above this one runs synchronously.
+    // ================================================================================
+
+    private void OnPerformanceSampledForDiskDiagnostics()
+    {
+        foreach (var disk in Performance.PhysicalDisks)
+        {
+            var row = PhysicalDiskRows.FirstOrDefault(r => r.DiskName == disk.InstanceName);
+            if (row is null)
+            {
+                row = new PhysicalDiskDiagnosticsRow { DiskName = disk.InstanceName };
+                PhysicalDiskRows.Add(row);
+            }
+
+            row.ActivePercent = disk.ActivePercent;
+            row.UtilizationPercent = disk.UtilizationPercent;
+            row.IdleTimeAvailable = disk.IdleTimeAvailable;
+            row.ReadBps = disk.ReadBytesPerSec;
+            row.WriteBps = disk.WriteBytesPerSec;
+            row.QueueLength = disk.QueueLength;
+            row.ReadLatencyMs = disk.ReadLatencyMs;
+            row.WriteLatencyMs = disk.WriteLatencyMs;
+
+            // #363
+            _diskLatencyHistory.Record(disk.InstanceName, disk.ReadLatencyMs, disk.WriteLatencyMs, disk.TransferLatencyMs);
+            ApplyLatencyPercentiles(row, _diskLatencyHistory.GetPercentiles(disk.InstanceName));
+
+            // #364
+            CheckDiskStall(disk);
+        }
+
+        // Defensive only - the PhysicalDisk instance set is fixed at HardwareMonitorService
+        // construction time and shouldn't change while the app runs (see
+        // PerformanceViewModel.SyncPhysicalDisks' remarks).
+        for (int i = PhysicalDiskRows.Count - 1; i >= 0; i--)
+        {
+            if (!Performance.PhysicalDisks.Any(d => d.InstanceName == PhysicalDiskRows[i].DiskName))
+                PhysicalDiskRows.RemoveAt(i);
+        }
+    }
+
+    private static void ApplyLatencyPercentiles(PhysicalDiskDiagnosticsRow row, DiskLatencyPercentiles? p)
+    {
+        if (p is null || p.SampleCount < 3)
+        {
+            row.PercentileSummaryText = "Collecting samples...";
+            row.PercentileWindowText = string.Empty;
+            return;
+        }
+
+        row.PercentileSummaryText =
+            $"Read — p50 {p.ReadP50Ms:0.0} ms · p95 {p.ReadP95Ms:0.0} ms · p99 {p.ReadP99Ms:0.0} ms · max {p.ReadMaxMs:0.0} ms" +
+            $"   |   Write — p50 {p.WriteP50Ms:0.0} ms · p95 {p.WriteP95Ms:0.0} ms · p99 {p.WriteP99Ms:0.0} ms · max {p.WriteMaxMs:0.0} ms";
+        row.PercentileWindowText =
+            $"{p.SampleCount} samples over the last {(DateTime.UtcNow - p.WindowStartUtc).TotalMinutes:0.0} min " +
+            $"(rolling {DiskLatencyHistoryService.DefaultWindow.TotalMinutes:0}-min window)";
+
+        for (int i = 0; i < row.HistogramBuckets.Count && i < p.HistogramBucketPercents.Length; i++)
+            row.HistogramBuckets[i].Percent = Math.Round(p.HistogramBucketPercents[i], 1);
+    }
+
+    /// <summary>#364: edge-triggered per disk, same "one toast per crossing" shape
+    /// CheckFreeSpaceAlert above uses - every breaching sample is still logged to DiskStalls
+    /// (bounded to the most recent 500), just not re-toasted every tick while it stays breached.</summary>
+    private void CheckDiskStall(PhysicalDiskUsage disk)
+    {
+        bool breached = DiskStallDetectionEnabled && disk.TransferLatencyMs >= DiskStallThresholdMs;
+        bool wasAlerted = _diskStallAlerted.TryGetValue(disk.InstanceName, out var a) && a;
+
+        if (!breached)
+        {
+            _diskStallAlerted[disk.InstanceName] = false;
+            return;
+        }
+
+        DiskStalls.Add(new DiskStallEvent
+        {
+            TimestampLocal = DateTime.Now,
+            DiskName = disk.InstanceName,
+            TransferLatencyMs = disk.TransferLatencyMs,
+            TopProcessText = FindTopDiskProcessText(),
+        });
+        while (DiskStalls.Count > 500) DiskStalls.RemoveAt(0);
+
+        if (!wasAlerted)
+        {
+            _diskStallAlerted[disk.InstanceName] = true;
+            ToastService.Show("Disk stall", $"{disk.InstanceName} averaged {disk.TransferLatencyMs:0} ms per transfer (threshold {DiskStallThresholdMs:0} ms).", isCritical: true);
+        }
+    }
+
+    /// <summary>#364: best-effort "what was using the disk when it stalled" - reuses
+    /// ProcessesViewModel's already-polled per-process DiskBytesPerSec rather than standing up a
+    /// new sampler. ProcessesViewModel polls on its own independent timer (see CLAUDE.md's
+    /// architecture notes), so this is whatever it last measured, not a value from this exact
+    /// tick - a partial correlation, not a guarantee, and labeled as such.</summary>
+    private string FindTopDiskProcessText()
+    {
+        var top = _processes.Processes.OrderByDescending(p => p.DiskBytesPerSec).FirstOrDefault();
+        if (top is null || top.DiskBytesPerSec <= 0)
+            return "No dominant disk consumer in the last process sample (partial correlation only - process I/O and this disk sample aren't from the exact same instant).";
+        return $"{top.Name} (PID {top.Pid}) — {Formatting.FormatByteRate(top.DiskBytesPerSec)}";
+    }
+
+    // ================================================================================
+    // Round 18, #367/#368: time-boxed, on-demand ETW captures - StorPort driver-level latency and
+    // per-file I/O attribution. See StorPortTraceService/FileIoAttributionService's remarks for why
+    // this chunk ships these as labeled partials rather than a live ETW session.
+    // ================================================================================
+
+    private async Task RunStorPortCaptureAsync()
+    {
+        IsCapturingStorPort = true;
+        StorPortStatusText = $"Capturing for {StorPortCaptureDurationSeconds}s...";
+        try
+        {
+            var result = await StorPortTraceService.RunAsync(StorPortCaptureDurationSeconds, StorPortThresholdMs, CancellationToken.None);
+            StorPortEvents.Clear();
+            foreach (var e in result.Events) StorPortEvents.Add(e);
+            StorPortStatusText = result.StatusText;
+        }
+        catch (Exception ex)
+        {
+            StorPortStatusText = $"Failed: {ex.Message}";
+        }
+        finally
+        {
+            IsCapturingStorPort = false;
+        }
+    }
+
+    private async Task RunIoAttributionCaptureAsync()
+    {
+        IsCapturingIoAttribution = true;
+        IoAttributionStatusText = $"Capturing for {IoCaptureDurationSeconds}s...";
+        try
+        {
+            var result = await FileIoAttributionService.RunAsync(IoCaptureDurationSeconds, CancellationToken.None);
+            TopIoFiles.Clear();
+            foreach (var f in result.TopFiles) TopIoFiles.Add(f);
+            TopIoProcesses.Clear();
+            foreach (var p in result.TopProcesses) TopIoProcesses.Add(p);
+            IoAttributionStatusText = result.StatusText;
+        }
+        catch (Exception ex)
+        {
+            IoAttributionStatusText = $"Failed: {ex.Message}";
+        }
+        finally
+        {
+            IsCapturingIoAttribution = false;
+        }
+    }
+
+    // ================================================================================
+    // Round 18, #369: minifilter (filesystem filter driver) stack audit - "quick flag, not a
+    // verdict" (see MinifilterAuditService's remarks).
+    // ================================================================================
+
+    private async Task CheckMinifiltersAsync()
+    {
+        IsCheckingMinifilters = true;
+        MinifilterStatusText = "Running fltmc filters / fltmc instances...";
+        try
+        {
+            var result = await MinifilterAuditService.RunAsync();
+            MinifilterDrivers.Clear();
+            MinifilterVolumes.Clear();
+
+            if (!result.Available)
+            {
+                MinifilterStatusText = $"Failed: {result.UnavailableReason}";
+                return;
+            }
+
+            foreach (var f in result.Filters) MinifilterDrivers.Add(f);
+            foreach (var v in result.Volumes) MinifilterVolumes.Add(new MinifilterVolumeRow(v));
+            ReclassifyMinifilterVolumes();
+
+            MinifilterStatusText = $"{result.Filters.Count} filter driver(s) reported, attached across {result.Volumes.Count} volume(s). Quick flag only - a deep stack is a plausible latency contributor, not proof of one.";
+        }
+        catch (Exception ex)
+        {
+            MinifilterStatusText = $"Failed: {ex.Message}";
+        }
+        finally
+        {
+            IsCheckingMinifilters = false;
+        }
+    }
+
+    private void ReclassifyMinifilterVolumes()
+    {
+        foreach (var v in MinifilterVolumes) v.IsDeepStack = v.InstanceCount >= MinifilterDeepStackThreshold;
     }
 
     // ================================================================================

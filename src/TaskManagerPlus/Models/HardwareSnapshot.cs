@@ -96,6 +96,30 @@ public sealed class HardwareSnapshot
     public double DiskReadLatencyMs { get; init; }
     public double DiskWriteLatencyMs { get; init; }
 
+    /// <summary>#365: whether "PhysicalDisk\% Idle Time\_Total" was available on this system -
+    /// false means DiskUtilizationPercent below just mirrors DiskActivePercent (degraded, not
+    /// fabricated) rather than a real 100-minus-idle figure.</summary>
+    public bool DiskIdleTimeAvailable { get; init; }
+    public double DiskIdlePercent { get; init; }
+
+    /// <summary>#365: 100 - DiskIdlePercent - Task Manager's own "Active time" definition, which
+    /// doesn't saturate above 100% the way DiskActivePercent ("% Disk Time") can under a deep
+    /// queue. Shown alongside DiskActivePercent so a pinned-at-100% reading can be sanity-checked.</summary>
+    public double DiskUtilizationPercent { get; init; }
+
+    /// <summary>#366: "% Disk Read Time" / "% Disk Write Time" (_Total) - splits the aggregate
+    /// active-time figure above into how much of it was reads vs. writes.</summary>
+    public double DiskReadTimePercent { get; init; }
+    public double DiskWriteTimePercent { get; init; }
+
+    /// <summary>#366: "Disk Transfers/sec" (_Total) - paired with DiskReadBytesPerSec/
+    /// DiskWriteBytesPerSec by the ViewModel to derive average bytes per transfer (I/O size).</summary>
+    public double DiskTransfersPerSec { get; init; }
+
+    /// <summary>#362: per-PhysicalDisk-instance readings, alongside (not instead of) the "_Total"
+    /// aggregate fields above - so one slow drive isn't averaged away by others.</summary>
+    public IReadOnlyList<PhysicalDiskSample> PhysicalDisks { get; init; } = Array.Empty<PhysicalDiskSample>();
+
     public double NetworkReceiveBytesPerSec { get; init; }
     public double NetworkSendBytesPerSec { get; init; }
 

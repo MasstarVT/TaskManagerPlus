@@ -18,7 +18,26 @@
                         <TextBlock Text="Disk" Style="{StaticResource CardTitle}" Margin="0" />
                     </StackPanel>
                     <TextBlock Text="{Binding Performance.DiskPercent, StringFormat={}{0:0.0}%}" Style="{StaticResource BigStat}" />
-                    <TextBlock Text="Active time" Style="{StaticResource SubStat}" />
+                    <TextBlock Text="Active time (% Disk Time - a busy-time counter that can read above 100% under a deep queue)"
+                               Style="{StaticResource SubStat}" TextWrapping="Wrap" />
+                    <!-- #365: Task Manager's own "Active time" is really 100 - % Idle Time, not
+                         % Disk Time - shown alongside so a pinned-at-100% reading above can be
+                         sanity-checked against it. Hidden when % Idle Time isn't available on this
+                         system, rather than showing a fabricated/duplicate figure. -->
+                    <TextBlock Margin="0,4,0,0" TextWrapping="Wrap">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding Performance.DiskIdleTimeAvailable}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                        <Run Text="Corrected utilization (100 − % Idle Time, matches Task Manager's own &quot;Active time&quot;): " />
+                        <Run Text="{Binding Performance.DiskUtilizationPercent, StringFormat={}{0:0.0}%}" FontWeight="SemiBold" />
+                    </TextBlock>
                 </StackPanel>
             </Border>
 
@@ -52,6 +71,128 @@
                                 ValueText="{Binding Performance.DiskWriteLatencyMs, StringFormat={}{0:0.0}}" Unit="ms"
                                 SubText="Avg. per write" AccentBrush="{Binding Performance.DiskColor, Converter={StaticResource ColorToBrushConverter}}" />
             </UniformGrid>
+
+            <!-- Round 18, #366: read/write activity split ("% Disk Read Time" vs. "% Disk Write
+                 Time") and average I/O size (Bytes/sec ÷ Transfers/sec), beside the queue-length/
+                 latency tiles above. -->
+            <UniformGrid Columns="3" Margin="0,0,0,16">
+                <views:VfdMeter Title="Read time" Glow="False" Margin="0,0,8,0" Unit="%"
+                                Percent="{Binding Performance.DiskReadTimePercent}"
+                                ValueText="{Binding Performance.DiskReadTimePercent, StringFormat={}{0:0.0}}"
+                                SubText="% Disk Read Time" AccentBrush="{Binding Performance.DiskColor, Converter={StaticResource ColorToBrushConverter}}" />
+                <views:VfdMeter Title="Write time" Glow="False" Margin="4,0,4,0" Unit="%"
+                                Percent="{Binding Performance.DiskWriteTimePercent}"
+                                ValueText="{Binding Performance.DiskWriteTimePercent, StringFormat={}{0:0.0}}"
+                                SubText="% Disk Write Time" AccentBrush="{Binding Performance.DiskColor, Converter={StaticResource ColorToBrushConverter}}" />
+                <views:VfdMeter Title="Avg. I/O size" Glow="False" Margin="8,0,0,0" Percent="0"
+                                ValueText="{Binding Performance.DiskAverageBytesPerTransfer, Converter={StaticResource BytesToReadableConverter}, TargetNullValue=–}"
+                                SubText="Bytes/sec ÷ Transfers/sec" AccentBrush="{Binding Performance.DiskColor, Converter={StaticResource ColorToBrushConverter}}" />
+            </UniformGrid>
+
+            <!-- Round 18, #362/#363/#365: per-physical-disk bottleneck diagnostics - one row per
+                 PhysicalDisk instance Windows reports (not just the "_Total" aggregate above), so
+                 one slow drive isn't averaged away by others, plus a rolling-window latency-
+                 percentile summary and bucketed histogram per disk (#363) - this is where stutter
+                 lives, which the flat mean above hides. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Per-disk diagnostics" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="One row per physical disk Windows reports, each with its own queue length, latency, throughput, and a rolling 5-minute latency-percentile window - a single slow drive doesn't get averaged into the aggregate figures above."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+                    <ItemsControl ItemsSource="{Binding PhysicalDiskRows}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10" Margin="0,0,0,10">
+                                    <StackPanel>
+                                        <TextBlock Text="{Binding DiskName}" FontWeight="SemiBold" FontSize="13" Margin="0,0,0,8" />
+                                        <UniformGrid Columns="5" Margin="0,0,0,8">
+                                            <views:VfdMeter Title="Utilization" Glow="False" Margin="0,0,4,0" Unit="%"
+                                                            Percent="{Binding UtilizationPercent}"
+                                                            ValueText="{Binding UtilizationPercent, StringFormat={}{0:0.0}}"
+                                                            SubText="100 − % Idle Time"
+                                                            AccentBrush="{Binding DataContext.Performance.DiskColor, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource ColorToBrushConverter}}" />
+                                            <views:VfdMeter Title="Active time" Glow="False" Margin="4,0,4,0" Unit="%"
+                                                            Percent="{Binding ActivePercent}"
+                                                            ValueText="{Binding ActivePercent, StringFormat={}{0:0.0}}"
+                                                            SubText="% Disk Time"
+                                                            AccentBrush="{Binding DataContext.Performance.DiskColor, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource ColorToBrushConverter}}" />
+                                            <views:VfdMeter Title="Queue length" Glow="False" Margin="4,0,4,0" Percent="0"
+                                                            ValueText="{Binding QueueLength, StringFormat={}{0:0.00}}"
+                                                            SubText="Requests waiting"
+                                                            AccentBrush="{Binding DataContext.Performance.DiskColor, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource ColorToBrushConverter}}" />
+                                            <views:VfdMeter Title="Read latency" Glow="False" Margin="4,0,4,0" Unit="ms" Percent="0"
+                                                            ValueText="{Binding ReadLatencyMs, StringFormat={}{0:0.0}}"
+                                                            SubText="Avg. per read"
+                                                            AccentBrush="{Binding DataContext.Performance.DiskColor, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource ColorToBrushConverter}}" />
+                                            <views:VfdMeter Title="Write latency" Glow="False" Margin="4,0,0,0" Unit="ms" Percent="0"
+                                                            ValueText="{Binding WriteLatencyMs, StringFormat={}{0:0.0}}"
+                                                            SubText="Avg. per write"
+                                                            AccentBrush="{Binding DataContext.Performance.DiskColor, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource ColorToBrushConverter}}" />
+                                        </UniformGrid>
+
+                                        <TextBlock Text="{Binding PercentileSummaryText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,2" />
+                                        <TextBlock Text="{Binding PercentileWindowText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" FontSize="10.5" Margin="0,0,0,8"
+                                                   Visibility="{Binding PercentileWindowText, Converter={StaticResource StringToVisibilityConverter}}" />
+
+                                        <ItemsControl ItemsSource="{Binding HistogramBuckets}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Grid Margin="0,0,0,4">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="70" />
+                                                            <ColumnDefinition Width="160" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <TextBlock Grid.Column="0" Text="{Binding Label}" VerticalAlignment="Center" FontSize="10.5"
+                                                                   Foreground="{DynamicResource TextSecondaryBrush}" />
+                                                        <Border Grid.Column="1" Height="10" CornerRadius="3" Background="{DynamicResource BgPanelBrush}" HorizontalAlignment="Left" Width="160">
+                                                            <Border CornerRadius="3" Background="{DynamicResource AccentBrush}" HorizontalAlignment="Left"
+                                                                    Width="{Binding Percent, Converter={StaticResource PercentToWidthConverter}, ConverterParameter=160}" />
+                                                        </Border>
+                                                        <TextBlock Grid.Column="2" Text="{Binding Percent, StringFormat={}{0:0.#}%}" Margin="8,0,0,0"
+                                                                   VerticalAlignment="Center" FontSize="10.5" FontWeight="SemiBold" />
+                                                    </Grid>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- Round 18, #364: disk stall timeline - every sample where "Avg. Disk sec/Transfer"
+                 exceeded the threshold below, logged chronologically with a best-effort top disk
+                 process (see StorageViewModel.FindTopDiskProcessText). Always watching (unlike most
+                 of this tab's other on-demand cards) since a stall the user isn't looking for is
+                 exactly what this exists to catch. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Disk stalls" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Logs every sample where a disk's average per-transfer latency crosses the threshold below, with a best-effort guess at the top disk-consuming process at that moment (a partial correlation, not a guarantee - see the note on each row)."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Stall threshold (ms)" VerticalAlignment="Center" Margin="0,0,8,0" FontSize="12.5" />
+                        <TextBox Grid.Column="1" Width="70" Text="{Binding DiskStallThresholdMs, UpdateSourceTrigger=PropertyChanged}" VerticalContentAlignment="Center" Margin="0,0,16,0" />
+                        <CheckBox Grid.Column="2" Content="Watch for stalls" IsChecked="{Binding DiskStallDetectionEnabled}" VerticalAlignment="Center" />
+                    </Grid>
+                    <DataGrid ItemsSource="{Binding DiskStalls}" IsReadOnly="True" MaxHeight="240" AutoGenerateColumns="False">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Time" Binding="{Binding TimestampLocal, StringFormat={}{0:HH:mm:ss}}" Width="80" />
+                            <DataGridTextColumn Header="Disk" Binding="{Binding DiskName}" Width="110" />
+                            <DataGridTextColumn Header="Latency" Binding="{Binding TransferLatencyMs, StringFormat={}{0:0} ms}" Width="80" />
+                            <DataGridTextColumn Header="Top disk process (approx.)" Binding="{Binding TopProcessText}" Width="2.6*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
 
             <!-- #17: per-drive temperature, filtered from the same LibreHardwareMonitorLib
                  sensor poll the Energy & Thermals tab already runs - see StorageViewModel. -->
@@ -1583,6 +1724,141 @@
                         <Button Grid.Column="1" Content="Run test" Padding="10,4" Command="{Binding RunThroughputTestCommand}" />
                     </Grid>
                     <TextBlock Text="{Binding ThroughputResultText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+
+            <!-- Round 18, #367: StorPort driver-level latency tracing - time-boxed, on-demand
+                 real-time ETW capture, never automatic. This chunk ships the capture path (button,
+                 duration/threshold, results grid) without a live ETW session wired up - see
+                 StorPortTraceService's remarks; StorPortStatusText explains why after every run. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="StorPort driver-level latency (ETW)" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Real-time trace of Microsoft-Windows-StorPort's per-request start/complete events - the lowest-level per-I/O timing source available, below the filesystem and cache layer entirely. Not implemented in this build (see the status line below after running) - the capture controls are wired up and ready."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Duration (s)" VerticalAlignment="Center" Margin="0,0,8,0" FontSize="12.5" />
+                        <TextBox Grid.Column="1" Width="50" Text="{Binding StorPortCaptureDurationSeconds, UpdateSourceTrigger=PropertyChanged}" VerticalContentAlignment="Center" Margin="0,0,16,0" />
+                        <TextBlock Grid.Column="2" Text="Threshold (ms)" VerticalAlignment="Center" Margin="0,0,8,0" FontSize="12.5" />
+                        <TextBox Grid.Column="3" Width="60" Text="{Binding StorPortThresholdMs, UpdateSourceTrigger=PropertyChanged}" VerticalContentAlignment="Center" Margin="0,0,16,0" />
+                        <Button Grid.Column="5" Content="Start capture" Padding="10,4" Command="{Binding StartStorPortCaptureCommand}" />
+                    </Grid>
+                    <TextBlock Text="{Binding StorPortStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" />
+                    <DataGrid ItemsSource="{Binding StorPortEvents}" IsReadOnly="True" MaxHeight="220" AutoGenerateColumns="False">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Time" Binding="{Binding TimestampUtc, StringFormat={}{0:HH:mm:ss.fff}}" Width="110" />
+                            <DataGridTextColumn Header="Device" Binding="{Binding Device}" Width="1.4*" />
+                            <DataGridTextColumn Header="Direction" Binding="{Binding Direction}" Width="90" />
+                            <DataGridTextColumn Header="Duration (ms)" Binding="{Binding DurationMs, StringFormat={}{0:0.0}}" Width="100" />
+                            <DataGridTextColumn Header="I/O size" Binding="{Binding IoSizeBytes, Converter={StaticResource BytesToReadableConverter}}" Width="90" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- Round 18, #368: per-file I/O attribution - same time-boxed, on-demand ETW shape
+                 as #367 above (see FileIoAttributionService's remarks). -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="I/O capture (per-file / per-process attribution)" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Real-time trace of Microsoft-Windows-Kernel-File/Kernel-Disk, aggregating bytes read/written by file path and by process for the capture window - the &quot;what's actually hitting the disk&quot; view raw counters can't give. Not implemented in this build (see the status line below after running) - the capture controls are wired up and ready."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Duration (10-60s)" VerticalAlignment="Center" Margin="0,0,8,0" FontSize="12.5" />
+                        <TextBox Grid.Column="1" Width="50" Text="{Binding IoCaptureDurationSeconds, UpdateSourceTrigger=PropertyChanged}" VerticalContentAlignment="Center" Margin="0,0,16,0" />
+                        <Button Grid.Column="3" Content="Start capture" Padding="10,4" Command="{Binding StartIoAttributionCaptureCommand}" />
+                    </Grid>
+                    <TextBlock Text="{Binding IoAttributionStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,10" TextWrapping="Wrap" />
+
+                    <TextBlock Text="Top 20 files" FontWeight="SemiBold" FontSize="13" Margin="0,0,0,4" />
+                    <DataGrid ItemsSource="{Binding TopIoFiles}" IsReadOnly="True" MaxHeight="180" AutoGenerateColumns="False" Margin="0,0,0,12">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Path" Binding="{Binding Key}" Width="2.2*" />
+                            <DataGridTextColumn Header="Read" Binding="{Binding BytesRead, Converter={StaticResource BytesToReadableConverter}}" Width="90" />
+                            <DataGridTextColumn Header="Written" Binding="{Binding BytesWritten, Converter={StaticResource BytesToReadableConverter}}" Width="90" />
+                            <DataGridTextColumn Header="Total" Binding="{Binding TotalBytes, Converter={StaticResource BytesToReadableConverter}}" Width="90" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+
+                    <TextBlock Text="Top 20 processes" FontWeight="SemiBold" FontSize="13" Margin="0,0,0,4" />
+                    <DataGrid ItemsSource="{Binding TopIoProcesses}" IsReadOnly="True" MaxHeight="180" AutoGenerateColumns="False">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Process" Binding="{Binding Key}" Width="2.2*" />
+                            <DataGridTextColumn Header="Read" Binding="{Binding BytesRead, Converter={StaticResource BytesToReadableConverter}}" Width="90" />
+                            <DataGridTextColumn Header="Written" Binding="{Binding BytesWritten, Converter={StaticResource BytesToReadableConverter}}" Width="90" />
+                            <DataGridTextColumn Header="Total" Binding="{Binding TotalBytes, Converter={StaticResource BytesToReadableConverter}}" Width="90" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- Round 18, #369: minifilter (filesystem filter driver) stack audit - "quick flag,
+                 not a verdict" (see MinifilterAuditService's remarks). -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Filesystem filter driver stack" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Check now" Padding="10,4" Command="{Binding CheckMinifiltersCommand}" />
+                    </Grid>
+                    <TextBlock Text="Parses `fltmc filters` / `fltmc instances` - every filesystem filter driver, its altitude, and the volumes it's attached to. Quick flag only: a high instance count on one volume is a plausible latency contributor (e.g. multiple AV products plus a backup agent plus a sync client all filtering the same I/O), not proof of one - a clean modern Windows install already carries several in-box filters, so review the list yourself rather than trusting the flag alone."
+                               Style="{StaticResource SubStat}" Margin="0,-6,0,10" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding MinifilterStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,10" TextWrapping="Wrap" />
+
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Deep-stack threshold (instances)" VerticalAlignment="Center" Margin="0,0,8,0" FontSize="12.5" />
+                        <TextBox Grid.Column="1" Width="50" Text="{Binding MinifilterDeepStackThreshold, UpdateSourceTrigger=PropertyChanged}" VerticalContentAlignment="Center" />
+                    </Grid>
+
+                    <TextBlock Text="Volumes" FontWeight="SemiBold" FontSize="13" Margin="0,0,0,4" />
+                    <DataGrid ItemsSource="{Binding MinifilterVolumes}" IsReadOnly="True" MaxHeight="160" AutoGenerateColumns="False" Margin="0,0,0,12">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Volume" Binding="{Binding VolumeName}" Width="100" />
+                            <DataGridTextColumn Header="Filter instances" Binding="{Binding InstanceCount}" Width="120" />
+                        </DataGrid.Columns>
+                        <DataGrid.RowStyle>
+                            <Style TargetType="DataGridRow">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsDeepStack}" Value="True">
+                                        <Setter Property="Background" Value="{DynamicResource WarningBrush}" />
+                                        <Setter Property="Opacity" Value="0.85" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </DataGrid.RowStyle>
+                    </DataGrid>
+
+                    <TextBlock Text="Filters (sorted by altitude, highest first)" FontWeight="SemiBold" FontSize="13" Margin="0,0,0,4" />
+                    <DataGrid ItemsSource="{Binding MinifilterDrivers}" IsReadOnly="True" MaxHeight="240" AutoGenerateColumns="False">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Filter" Binding="{Binding Name}" Width="1.4*" />
+                            <DataGridTextColumn Header="Altitude" Binding="{Binding Altitude}" Width="90" />
+                            <DataGridTextColumn Header="Instances" Binding="{Binding InstanceCount}" Width="80" />
+                            <DataGridTextColumn Header="Attached volumes" Binding="{Binding AttachedVolumesText}" Width="1.4*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
                 </StackPanel>
             </Border>
 

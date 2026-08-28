@@ -284,6 +284,35 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
     public double DiskReadLatencyGaugePercent => Math.Clamp(DiskReadLatencyMs / 50.0 * 100.0, 0, 100);
     public double DiskWriteLatencyGaugePercent => Math.Clamp(DiskWriteLatencyMs / 50.0 * 100.0, 0, 100);
 
+    // ---- Round 18, #365/#366: corrected utilization + read/write split + avg I/O size ---------
+    private bool _diskIdleTimeAvailable;
+    public bool DiskIdleTimeAvailable { get => _diskIdleTimeAvailable; private set => SetProperty(ref _diskIdleTimeAvailable, value); }
+
+    private double _diskIdlePercent;
+    public double DiskIdlePercent { get => _diskIdlePercent; private set => SetProperty(ref _diskIdlePercent, value); }
+
+    /// <summary>#365: 100 - % Idle Time - Task Manager's own "Active time" definition, which
+    /// doesn't saturate above 100% under a deep queue the way DiskPercent ("% Disk Time") can.</summary>
+    private double _diskUtilizationPercent;
+    public double DiskUtilizationPercent { get => _diskUtilizationPercent; private set => SetProperty(ref _diskUtilizationPercent, value); }
+
+    private double _diskReadTimePercent;
+    public double DiskReadTimePercent { get => _diskReadTimePercent; private set => SetProperty(ref _diskReadTimePercent, value); }
+
+    private double _diskWriteTimePercent;
+    public double DiskWriteTimePercent { get => _diskWriteTimePercent; private set => SetProperty(ref _diskWriteTimePercent, value); }
+
+    private double _diskTransfersPerSec;
+    public double DiskTransfersPerSec { get => _diskTransfersPerSec; private set => SetProperty(ref _diskTransfersPerSec, value); }
+
+    /// <summary>#366: derived, not a raw counter - (read + write bytes/sec) / transfers/sec.</summary>
+    public double DiskAverageBytesPerTransfer => DiskTransfersPerSec <= 0 ? 0 : (DiskReadBps + DiskWriteBps) / DiskTransfersPerSec;
+
+    // ---- Round 18, #362: per-physical-disk usage, merged in place each tick (same shape Cores
+    // above uses for per-core CPU usage) - not rebuilt, so a bound DataGrid/ItemsControl doesn't
+    // flicker every tick.
+    public ObservableCollection<PhysicalDiskUsage> PhysicalDisks { get; } = new();
+
     private double _networkReceiveBps;
     public double NetworkReceiveBps { get => _networkReceiveBps; private set => SetProperty(ref _networkReceiveBps, value); }
 
@@ -635,6 +664,15 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
         DiskReadLatencyMs = snapshot.DiskReadLatencyMs;
         DiskWriteLatencyMs = snapshot.DiskWriteLatencyMs;
 
+        DiskIdleTimeAvailable = snapshot.DiskIdleTimeAvailable;
+        DiskIdlePercent = snapshot.DiskIdlePercent;
+        DiskUtilizationPercent = snapshot.DiskUtilizationPercent;
+        DiskReadTimePercent = snapshot.DiskReadTimePercent;
+        DiskWriteTimePercent = snapshot.DiskWriteTimePercent;
+        DiskTransfersPerSec = snapshot.DiskTransfersPerSec;
+        OnPropertyChanged(nameof(DiskAverageBytesPerTransfer));
+        SyncPhysicalDisks(snapshot.PhysicalDisks);
+
         NetworkReceiveBps = snapshot.NetworkReceiveBytesPerSec;
         NetworkSendBps = snapshot.NetworkSendBytesPerSec;
         NetworkInErrors = snapshot.NetworkInErrors;
@@ -712,6 +750,40 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
     // now" without needing to scan the whole per-core grid.
     private int _parkedCoreCount;
     public int ParkedCoreCount { get => _parkedCoreCount; private set => SetProperty(ref _parkedCoreCount, value); }
+
+    /// <summary>#362: merges this tick's per-disk samples into PhysicalDisks in place - the set of
+    /// PhysicalDisk instances is fixed at HardwareMonitorService construction time (disks don't
+    /// come and go while the app runs), so in practice this is always an update, never an add/
+    /// remove; both are still handled defensively rather than assumed.</summary>
+    private void SyncPhysicalDisks(IReadOnlyList<PhysicalDiskSample> samples)
+    {
+        for (int i = PhysicalDisks.Count - 1; i >= 0; i--)
+        {
+            if (!samples.Any(s => s.InstanceName == PhysicalDisks[i].InstanceName))
+                PhysicalDisks.RemoveAt(i);
+        }
+
+        foreach (var s in samples)
+        {
+            var row = PhysicalDisks.FirstOrDefault(d => d.InstanceName == s.InstanceName);
+            if (row is null)
+            {
+                row = new PhysicalDiskUsage { InstanceName = s.InstanceName };
+                PhysicalDisks.Add(row);
+            }
+
+            row.ActivePercent = s.ActivePercent;
+            row.IdlePercent = s.IdlePercent;
+            row.IdleTimeAvailable = s.IdleTimeAvailable;
+            row.UtilizationPercent = s.UtilizationPercent;
+            row.ReadBytesPerSec = s.ReadBytesPerSec;
+            row.WriteBytesPerSec = s.WriteBytesPerSec;
+            row.QueueLength = s.QueueLength;
+            row.ReadLatencyMs = s.ReadLatencyMs;
+            row.WriteLatencyMs = s.WriteLatencyMs;
+            row.TransferLatencyMs = s.TransferLatencyMs;
+        }
+    }
 
     public void Dispose()
     {

@@ -196,7 +196,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         EnergyThermals = new EnergyThermalsViewModel(Performance);
         Cpu = new CpuViewModel(Performance, EnergyThermals, Processes);
         Memory = new MemoryViewModel(Performance, Processes);
-        Storage = new StorageViewModel(Performance, EnergyThermals);
+        Storage = new StorageViewModel(Performance, EnergyThermals, Processes);
         Network = new NetworkViewModel(Performance);
         Gpu = new GpuViewModel(Processes);
         Logging = new LoggingViewModel(Performance, EnergyThermals);

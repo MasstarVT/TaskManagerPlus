@@ -30,5 +30,14 @@ public sealed class AlertThresholds
     public bool FreeSpaceAbsoluteEnabled { get; set; }
     public double FreeSpaceAbsoluteGbThreshold { get; set; } = 10;
 
+    // Round 18, #364: disk stall detector - a sample where a disk's "Avg. Disk sec/Transfer"
+    // exceeds this threshold gets logged to the Storage tab's stall timeline (plus an edge-
+    // triggered toast, same "one toast per crossing" shape the thresholds above use). On by
+    // default (unlike the opt-in toggles above) since a stall the user isn't watching for is
+    // exactly the case this exists to catch. Owned/persisted by StorageViewModel, same reasoning
+    // as FreeSpacePercentEnabled/FreeSpacePercentThreshold above.
+    public bool DiskStallDetectionEnabled { get; set; } = true;
+    public double DiskStallThresholdMs { get; set; } = 500;
+
     public static AlertThresholds Defaults => new();
 }
