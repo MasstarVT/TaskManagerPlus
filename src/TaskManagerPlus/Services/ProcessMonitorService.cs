@@ -139,6 +139,19 @@ public sealed class ProcessMonitorService : IDisposable
                 bool isSuspended = false;
                 try { isSuspended = ProcessControlService.IsSuspended(proc); } catch { /* ignore */ }
 
+                // Round 15, #852(a)/(c): integrity level + AppContainer flag, reusing this same
+                // already-open process handle (proc.Handle, the same one ReadGuiResourceCounts just
+                // used above) - both are cheap single-token-query calls, safe for a per-tick column.
+                // #852(b): protection level (PS_PROTECTION) opens its own short-lived handle since it
+                // needs PROCESS_QUERY_LIMITED_INFORMATION specifically - see
+                // ProcessTokenInspectionService's remarks.
+                string integrityLevel = "Unknown";
+                bool isAppContainer = false;
+                string protectionLevel = "Unknown";
+                try { integrityLevel = ProcessTokenInspectionService.ReadIntegrityLevel(proc.Handle); } catch { /* ignore */ }
+                try { isAppContainer = ProcessTokenInspectionService.ReadIsAppContainer(proc.Handle); } catch { /* ignore */ }
+                try { protectionLevel = ProcessTokenInspectionService.ReadProtectionLevel(pid); } catch { /* ignore */ }
+
                 string status = "Running";
                 int notRespondingSeconds = 0;
                 try
@@ -204,6 +217,9 @@ public sealed class ProcessMonitorService : IDisposable
                     GdiHandleCount = gdiHandles,
                     UserHandleCount = userHandles,
                     IsSuspended = isSuspended,
+                    IntegrityLevel = integrityLevel,
+                    IsAppContainer = isAppContainer,
+                    ProtectionLevel = protectionLevel,
                 });
             }
             catch (Exception)

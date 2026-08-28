@@ -174,4 +174,24 @@ public sealed class ProcessRow : ObservableObject
     public long PagedPoolBytes { get => _pagedPoolBytes; set => SetProperty(ref _pagedPoolBytes, value); }
 
     public double MemoryMb => MemoryBytes / 1024.0 / 1024.0;
+
+    /// <summary>Round 15, #852(a): integrity level (Untrusted/Low/Medium/Medium+/High/System/
+    /// Protected/Unknown) - see ProcessTokenInspectionService.ReadIntegrityLevel. Cheap enough
+    /// (one OpenProcessToken + one GetTokenInformation call) to read every tick.</summary>
+    private string _integrityLevel = "Unknown";
+    public string IntegrityLevel { get => _integrityLevel; set => SetProperty(ref _integrityLevel, value); }
+
+    /// <summary>Round 15, #852(c): TokenIsAppContainer - true for a sandboxed AppContainer process
+    /// (most UWP/Store apps, some browser renderer processes) - see
+    /// ProcessTokenInspectionService.ReadIsAppContainer.</summary>
+    private bool _isAppContainer;
+    public bool IsAppContainer { get => _isAppContainer; set => SetProperty(ref _isAppContainer, value); }
+
+    /// <summary>Round 15, #852(b): protection level (None/PPL/Protected, plus a signer subtype like
+    /// "PPL (Antimalware)") via NtQueryInformationProcess's PS_PROTECTION byte - see
+    /// ProcessTokenInspectionService.ReadProtectionLevel. A single native call, cheap enough for a
+    /// per-tick column - see that class's remarks on why the direct PS_PROTECTION read was chosen
+    /// over the access-denied-heuristic proxy #852 offers as a fallback.</summary>
+    private string _protectionLevel = "Unknown";
+    public string ProtectionLevel { get => _protectionLevel; set => SetProperty(ref _protectionLevel, value); }
 }
