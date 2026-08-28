@@ -211,6 +211,7 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
         var target = SelectedService;
         if (target is null) return;
 
+        string before = target.Status.ToString();
         IsBusy = true;
         try
         {
@@ -218,11 +219,28 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
             StatusMessage = success
                 ? $"{target.DisplayName} {verbPast}."
                 : $"Couldn't control {target.DisplayName}: {error}";
+
+            await RefreshAsync();
+
+            // #972: record every mutation this app performs - after the refresh above so
+            // AfterValue reflects the service's actual post-action status, not a stale
+            // pre-refresh read (MergeInto updates `target` in place, so it's still the right row).
+            ChangeJournalService.Append(new ChangeJournalEntry
+            {
+                Kind = ChangeKind.ServiceStateChange,
+                Target = target.DisplayName,
+                ActionDescription = $"Service {verbPast}",
+                BeforeValue = before,
+                AfterValue = target.Status.ToString(),
+                TriggeredBy = "Services tab",
+                Success = success,
+                IsUndoable = success,
+                ServiceName = target.ServiceName,
+            });
         }
         finally
         {
             IsBusy = false;
-            await RefreshAsync();
         }
     }
 

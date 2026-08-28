@@ -83,4 +83,11 @@ public sealed class Rule
     public int? EscalateAfterRepeats { get; set; }
 
     public int? EscalateWindowSeconds { get; set; }
+
+    /// <summary>#967: ids of RemediationActionCatalog actions this rule's finding can offer a
+    /// "Fix this" affordance for - resolved to concrete RemediationAction instances at fire time
+    /// by RemediationActionCatalog.Resolve (some ids need extra live context, e.g. which drive/
+    /// service, pulled from the fired HealthIssue's own Evidence/live ViewModel state). Null/empty
+    /// for the majority of rules that have no applicable fix.</summary>
+    public List<string>? ActionIds { get; set; }
 }

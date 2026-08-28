@@ -96,6 +96,15 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
 
     public RelayCommand UnsuppressFindingCommand { get; }
 
+    /// <summary>#967: "Fix this" on a finding that declares Rule.ActionIds - resolves them to
+    /// concrete RemediationAction instances (RemediationActionCatalog.Resolve, using this finding's
+    /// own resolved Message plus live ServicesViewModel state for whatever context a parameterized
+    /// action needs) and opens the review dialog. A finding whose ids don't resolve to anything
+    /// this pass (e.g. the drive letter couldn't be parsed) just does nothing - HasFixAction already
+    /// gates the button's visibility on the ids being present, not on them being resolvable, so this
+    /// is a rare, silent no-op rather than a dead button shown as broken.</summary>
+    public RelayCommand FixFindingCommand { get; }
+
     // #933: sort order for HealthIssues/GroupedHealthIssues - persisted only in memory for this
     // session (see RefreshHealthIssues/SortIssues for the composite "Impact" score formula).
     public static Array FindingSortModes { get; } = Enum.GetValues(typeof(HealthFindingSortMode));
@@ -265,6 +274,7 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
                 RefreshHealthIssues();
             }
         });
+        FixFindingCommand = new RelayCommand(p => OpenFixDialog(p), p => p is HealthIssue { HasFixAction: true });
 
         NotAProblemCommand = new RelayCommand(p => RecordNotAProblemFeedback(p));
         SuppressLastFeedbackRuleCommand = new RelayCommand(_ => SuppressLastFeedbackRule(), _ => _lastFeedbackRuleId is not null);
@@ -1058,6 +1068,23 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         if (parameter is not HealthIssue { RuleId: { Length: > 0 } ruleId }) return;
         _rulesEngine.Suppress(ruleId, reason, duration is null ? null : DateTime.UtcNow.Add(duration.Value));
         RefreshHealthIssues();
+    }
+
+    /// <summary>#967: resolves `parameter`'s ActionIds to concrete actions and opens the review
+    /// dialog - see RemediationActionCatalog.Resolve and RemediationReviewViewModel's remarks.</summary>
+    private void OpenFixDialog(object? parameter)
+    {
+        if (parameter is not HealthIssue issue) return;
+
+        var actions = RemediationActionCatalog.Resolve(issue, _services);
+        if (actions.Count == 0) return; // couldn't resolve a concrete target this pass - see FixFindingCommand's remarks
+
+        var dialogViewModel = new RemediationReviewViewModel(issue, actions);
+        var window = new Views.RemediationReviewWindow(dialogViewModel)
+        {
+            Owner = System.Windows.Application.Current?.MainWindow,
+        };
+        window.ShowDialog();
     }
 
     /// <summary>#935: records a "not a problem" click to feedback.jsonl (purely local - see

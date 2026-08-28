@@ -175,8 +175,12 @@
                         <Button Content="Background Health" Padding="10,4" Margin="0,0,8,0" VerticalAlignment="Center"
                                 Command="{Binding ShowBackgroundHealthCommand}" />
                         <!-- #915: reopen a saved run's transcript, or re-run its symptom fresh. -->
-                        <Button Content="Past runs" Padding="10,4" VerticalAlignment="Center"
+                        <Button Content="Past runs" Padding="10,4" Margin="0,0,8,0" VerticalAlignment="Center"
                                 Command="{Binding ShowPastRunsCommand}" />
+                        <!-- #973: everything this app has changed on the system, with Undo where
+                             reversible. -->
+                        <Button Content="Changes" Padding="10,4" VerticalAlignment="Center"
+                                Command="{Binding ShowChangeJournalCommand}" />
                     </StackPanel>
                 </Grid>
                 <TextBlock Text="Pick the symptom that best matches what you're seeing - this runs a scripted set of checks instead of making you guess which tab to open."
@@ -235,6 +239,11 @@
              landing page. -->
         <views:BackgroundHealthView DataContext="{Binding BackgroundHealth}"
                              Visibility="{Binding DataContext.ShowBackgroundHealth, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource BoolToVisibilityConverter}}" />
+
+        <!-- #973: the "Changes made by this app" panel - visible only when explicitly opened from
+             the landing page. -->
+        <views:ChangeJournalView DataContext="{Binding ChangeJournal}"
+                             Visibility="{Binding DataContext.ShowChangeJournal, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource BoolToVisibilityConverter}}" />
 
         <!-- Run view - ordered step list plus a verdict card. Visible only once a run exists. -->
         <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16"

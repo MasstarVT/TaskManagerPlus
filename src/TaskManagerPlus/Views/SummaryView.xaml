@@ -279,10 +279,29 @@
                             </StackPanel>
                         </Expander>
 
-                        <!-- #924/#935: snooze/ignore/feedback - only a rule-engine finding has a
-                             rule id to act on. -->
+                        <!-- #924/#935/#967: snooze/ignore/feedback/fix - only a rule-engine finding
+                             has a rule id to act on. -->
                         <StackPanel Orientation="Horizontal" Margin="0,6,0,0"
                                     Visibility="{Binding RuleId, Converter={StaticResource NullToVisibilityConverter}}">
+                            <!-- #967: "Fix this" - only rendered when the firing rule declared at
+                                 least one applicable RemediationAction id (HealthIssue.HasFixAction).
+                                 Opens a review dialog (RemediationReviewWindow), never runs anything
+                                 directly from this button. -->
+                            <Button Content="Fix this" FontSize="10.5" Padding="6,1" Margin="0,0,4,0"
+                                    Background="{DynamicResource AccentMutedBrush}" BorderBrush="{DynamicResource AccentBrush}"
+                                    Command="{Binding DataContext.FixFindingCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                    CommandParameter="{Binding}">
+                                <Button.Style>
+                                    <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding HasFixAction}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Button.Style>
+                            </Button>
                             <Button Content="Snooze 7d" FontSize="10.5" Padding="6,1" Margin="0,0,4,0"
                                     Command="{Binding DataContext.SnoozeFindingCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                     CommandParameter="{Binding}" />

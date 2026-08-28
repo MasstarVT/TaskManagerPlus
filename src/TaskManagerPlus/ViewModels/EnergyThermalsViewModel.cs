@@ -421,8 +421,28 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
     {
         if (param is not string guid || string.IsNullOrWhiteSpace(guid)) return;
 
+        var previouslyActive = PowerPlans.FirstOrDefault(p => p.IsActive);
+        var target = PowerPlans.FirstOrDefault(p => string.Equals(p.Guid, guid, StringComparison.OrdinalIgnoreCase));
+
         var (success, error) = await PowerPlanService.SetActivePlanAsync(guid);
         PowerPlanStatusText = success ? "Power plan switched." : $"Couldn't switch power plan: {error}";
+
+        // #972: record every mutation this app performs - IsUndoable only when the prior plan's
+        // guid was actually known (it always should be, since PowerPlans is loaded before this
+        // command is ever reachable, but degrade honestly rather than assume).
+        ChangeJournalService.Append(new ChangeJournalEntry
+        {
+            Kind = ChangeKind.PowerPlanChange,
+            Target = target?.Name ?? guid,
+            ActionDescription = "Switched active power plan",
+            BeforeValue = previouslyActive?.Guid,
+            AfterValue = guid,
+            TriggeredBy = "Energy & Thermals tab",
+            Success = success,
+            IsUndoable = success && previouslyActive is not null,
+            NotUndoableReason = previouslyActive is null ? "The prior power plan wasn't known." : null,
+        });
+
         if (success) await LoadPowerInfoAsync();
     }
 

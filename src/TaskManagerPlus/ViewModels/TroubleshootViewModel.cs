@@ -60,6 +60,13 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
     // Baselines above (see ShowBackgroundHealth/IsShowingBackgroundHealth).
     public BackgroundHealthViewModel BackgroundHealth { get; }
 
+    // #973: the "Changes made by this app" panel - a fifth sibling "page", same shape as
+    // Timeline/Baselines/BackgroundHealth above (see ShowChangeJournal/IsShowingChangeJournal).
+    // No live ViewModel dependencies of its own - it reads change-journal.jsonl on demand and
+    // undoes through the plain static Services/*.cs methods directly, so a plain parameterless
+    // ChangeJournalViewModel() is enough.
+    public ChangeJournalViewModel ChangeJournal { get; } = new();
+
     public ObservableCollection<SymptomCard> Symptoms { get; } = new();
 
     /// <summary>#915: saved run transcripts, newest first - populated on demand when the "Past
@@ -80,6 +87,7 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
                 OnPropertyChanged(nameof(ShowTimeline));
                 OnPropertyChanged(nameof(ShowBaselines));
                 OnPropertyChanged(nameof(ShowBackgroundHealth));
+                OnPropertyChanged(nameof(ShowChangeJournal));
             }
         }
     }
@@ -143,8 +151,24 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
         }
     }
 
+    // #973: landing page <-> "Changes made by this app" panel, mirroring IsShowingBackgroundHealth above.
+    private bool _isShowingChangeJournal;
+    public bool IsShowingChangeJournal
+    {
+        get => _isShowingChangeJournal;
+        private set
+        {
+            if (SetProperty(ref _isShowingChangeJournal, value))
+            {
+                OnPropertyChanged(nameof(ShowLanding));
+                OnPropertyChanged(nameof(ShowChangeJournal));
+                if (value) ChangeJournal.Refresh();
+            }
+        }
+    }
+
     /// <summary>True for the symptom-card landing grid.</summary>
-    public bool ShowLanding => SelectedRun is null && !IsShowingPastRuns && !IsShowingTimeline && !IsShowingBaselines && !IsShowingBackgroundHealth;
+    public bool ShowLanding => SelectedRun is null && !IsShowingPastRuns && !IsShowingTimeline && !IsShowingBaselines && !IsShowingBackgroundHealth && !IsShowingChangeJournal;
 
     /// <summary>True for the "Past runs" list.</summary>
     public bool ShowPastRuns => SelectedRun is null && IsShowingPastRuns;
@@ -157,6 +181,9 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
 
     /// <summary>True for the Background Health panel.</summary>
     public bool ShowBackgroundHealth => SelectedRun is null && IsShowingBackgroundHealth;
+
+    /// <summary>True for the "Changes made by this app" panel.</summary>
+    public bool ShowChangeJournal => SelectedRun is null && IsShowingChangeJournal;
 
     public bool IsRunning { get => _isRunning; private set => SetProperty(ref _isRunning, value); }
 
@@ -179,6 +206,10 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
     // #959-966: landing page <-> Background Health panel, mirroring ShowBaselinesCommand/HideBaselinesCommand.
     public RelayCommand ShowBackgroundHealthCommand { get; }
     public RelayCommand HideBackgroundHealthCommand { get; }
+
+    // #973: landing page <-> "Changes made by this app" panel, mirroring ShowBackgroundHealthCommand/HideBackgroundHealthCommand.
+    public RelayCommand ShowChangeJournalCommand { get; }
+    public RelayCommand HideChangeJournalCommand { get; }
 
     public TroubleshootViewModel(PerformanceViewModel performance, ProcessesViewModel processes, LoggingViewModel logging,
         EnergyThermalsViewModel energyThermals, SystemSpecsViewModel systemSpecs, ServicesViewModel services, RulesEngineService rulesEngine,
@@ -220,6 +251,8 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
         HideBaselinesCommand = new RelayCommand(_ => IsShowingBaselines = false);
         ShowBackgroundHealthCommand = new RelayCommand(_ => IsShowingBackgroundHealth = true, _ => !IsRunning && SelectedRun is null);
         HideBackgroundHealthCommand = new RelayCommand(_ => IsShowingBackgroundHealth = false);
+        ShowChangeJournalCommand = new RelayCommand(_ => IsShowingChangeJournal = true, _ => !IsRunning && SelectedRun is null);
+        HideChangeJournalCommand = new RelayCommand(_ => IsShowingChangeJournal = false);
         OpenSavedRunCommand = new RelayCommand(param =>
         {
             if (param is not TroubleshootRunRecord record) return;

@@ -1,0 +1,178 @@
+<UserControl x:Class="TaskManagerPlus.Views.ChangeJournalView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:TaskManagerPlus.ViewModels"
+             d:DataContext="{d:DesignInstance Type=vm:ChangeJournalViewModel}"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d">
+    <UserControl.Resources>
+        <!-- #973: one journaled change - what happened, when, what triggered it, and (if
+             reversible right now) an Undo button running the recorded inverse operation. -->
+        <DataTemplate x:Key="ChangeJournalRowTemplate" DataType="{x:Type vm:ChangeJournalRow}">
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,10" Padding="14,12">
+                <StackPanel>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" Margin="0,0,10,0">
+                            <TextBlock FontSize="13" FontWeight="SemiBold" TextWrapping="Wrap">
+                                <Run Text="{Binding Entry.ActionDescription, Mode=OneWay}" />
+                                <Run Text=" — " />
+                                <Run Text="{Binding Entry.Target, Mode=OneWay}" />
+                            </TextBlock>
+                            <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap">
+                                <Run Text="{Binding Entry.TimestampUtc, StringFormat={}{0:g}, Mode=OneWay}" />
+                                <Run Text=" (UTC) · " />
+                                <Run Text="{Binding Entry.TriggeredBy, Mode=OneWay}" />
+                            </TextBlock>
+                            <TextBlock FontSize="11.5" TextWrapping="Wrap" Margin="0,4,0,0"
+                                       Visibility="{Binding Entry.BeforeValue, Converter={StaticResource NullToVisibilityConverter}}">
+                                <Run Text="Before: " Foreground="{DynamicResource TextTertiaryBrush}" />
+                                <Run Text="{Binding Entry.BeforeValue, Mode=OneWay}" />
+                                <Run Text="   After: " Foreground="{DynamicResource TextTertiaryBrush}" />
+                                <Run Text="{Binding Entry.AfterValue, Mode=OneWay}" />
+                            </TextBlock>
+                            <TextBlock FontSize="11.5" Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" Margin="0,4,0,0">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding Entry.Success}" Value="False">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                                <Run Text="This action didn't succeed." />
+                            </TextBlock>
+                        </StackPanel>
+
+                        <StackPanel Grid.Column="1" VerticalAlignment="Top" HorizontalAlignment="Right">
+                            <!-- Undone / not-undoable status, or the Undo button itself. -->
+                            <TextBlock Text="Undone" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource SuccessBrush}"
+                                       HorizontalAlignment="Right">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding Entry.Undone}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+
+                            <!-- #973: "Entries whose inverse can't be reconstructed ... show
+                                 greyed with a clear reason" - the button itself stays visible, and
+                                 IsEnabled is left to the bound Command's own CanExecute (which
+                                 checks both CanUndoNow and IsBusy), so the standard disabled/dimmed
+                                 button style applies automatically rather than a second, competing
+                                 IsEnabled binding; BlockedReason below is that clear reason. -->
+                            <Button Content="Undo" Padding="10,4" HorizontalAlignment="Right"
+                                    Command="{Binding DataContext.UndoCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                    CommandParameter="{Binding}">
+                                <Button.Style>
+                                    <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding Entry.Undone}" Value="True">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Button.Style>
+                            </Button>
+
+                            <TextBlock Text="{Binding BlockedReason}" FontSize="10.5" TextWrapping="Wrap" MaxWidth="180"
+                                       Foreground="{DynamicResource TextTertiaryBrush}" HorizontalAlignment="Right" TextAlignment="Right" Margin="0,2,0,0">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding CanUndoNow}" Value="True">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding Entry.Undone}" Value="True">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+
+                            <!-- #971: secondary "restore from registry backup" option, offered
+                                 alongside the primary Undo whenever a backup was taken. -->
+                            <Button Content="Restore reg backup" Padding="8,3" Margin="0,4,0,0" FontSize="10.5" HorizontalAlignment="Right"
+                                    Command="{Binding DataContext.RestoreFromBackupCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                    CommandParameter="{Binding}">
+                                <Button.Style>
+                                    <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding HasRegistryBackup}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Button.Style>
+                            </Button>
+                        </StackPanel>
+                    </Grid>
+
+                    <TextBlock Text="{Binding ResultText}" FontSize="11.5" TextWrapping="Wrap" Margin="0,8,0,0">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding ResultText}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+        </DataTemplate>
+    </UserControl.Resources>
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16">
+        <StackPanel>
+            <Grid Margin="0,0,0,12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <!-- HideChangeJournalCommand lives on TroubleshootViewModel - AncestorLevel=2 skips
+                     past this UserControl to reach it, same as TimelineView's Back button. -->
+                <Button Grid.Column="0" Content="&#8592; Back"
+                        Command="{Binding DataContext.HideChangeJournalCommand, RelativeSource={RelativeSource AncestorType=UserControl, AncestorLevel=2}}"
+                        Padding="10,4" Margin="0,0,14,0" VerticalAlignment="Center" />
+                <TextBlock Grid.Column="1" Text="Changes made by this app" FontSize="17" FontWeight="SemiBold" VerticalAlignment="Center" />
+                <Button Grid.Column="2" Content="Refresh" Padding="10,4" Command="{Binding RefreshCommand}" />
+            </Grid>
+            <TextBlock Text="Every service/startup/process/power-plan change (and every #967 remediation action run) this app has made, newest first. Undo runs the same underlying action, in reverse."
+                       Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,14" />
+
+            <TextBlock Text="No changes recorded yet." Margin="0,0,0,12">
+                <TextBlock.Style>
+                    <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding Entries.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </TextBlock.Style>
+            </TextBlock>
+
+            <ItemsControl ItemsSource="{Binding Entries}" ItemTemplate="{StaticResource ChangeJournalRowTemplate}" />
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

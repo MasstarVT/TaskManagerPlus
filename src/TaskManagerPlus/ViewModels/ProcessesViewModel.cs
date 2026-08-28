@@ -446,6 +446,21 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
         StatusMessage = success
             ? $"Trimmed working set for {target.Name} (PID {target.Pid})."
             : $"Couldn't trim working set for {target.Name}: {error}";
+
+        // #972: recorded but never undoable - Windows lets a trimmed working set regrow on
+        // demand, there's no "before" figure worth restoring.
+        ChangeJournalService.Append(new ChangeJournalEntry
+        {
+            Kind = ChangeKind.ProcessTrimWorkingSet,
+            Target = $"{target.Name} (PID {target.Pid})",
+            ActionDescription = "Trimmed working set",
+            TriggeredBy = "Processes tab",
+            Success = success,
+            IsUndoable = false,
+            NotUndoableReason = "Trimming a working set can't be undone - Windows lets it regrow on demand.",
+            Pid = target.Pid,
+            ProcessName = target.Name,
+        });
     }
 
     /// <summary>Round 7 #8: suspend/resume the selected process - see
@@ -462,6 +477,21 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
         StatusMessage = success
             ? $"{(suspend ? "Suspended" : "Resumed")} {target.Name} (PID {target.Pid})."
             : $"Couldn't {(suspend ? "suspend" : "resume")} {target.Name}: {error}";
+
+        // #972: record every mutation this app performs - suspend's inverse is resume and vice
+        // versa (both checked, at undo time, against the process still actually being alive - see
+        // ChangeJournalViewModel.Evaluate).
+        ChangeJournalService.Append(new ChangeJournalEntry
+        {
+            Kind = suspend ? ChangeKind.ProcessSuspend : ChangeKind.ProcessResume,
+            Target = $"{target.Name} (PID {target.Pid})",
+            ActionDescription = suspend ? "Suspended" : "Resumed",
+            TriggeredBy = "Processes tab",
+            Success = success,
+            IsUndoable = success,
+            Pid = target.Pid,
+            ProcessName = target.Name,
+        });
 
         if (success) _ = RefreshAsync();
     }
@@ -503,10 +533,29 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
             return;
         }
 
+        long? before = ProcessControlService.GetAffinity(target.Pid);
         var (success, error) = ProcessControlService.SetAffinity(target.Pid, mask);
         StatusMessage = success
             ? $"Updated CPU affinity for {target.Name} (PID {target.Pid})."
             : $"Couldn't set affinity for {target.Name}: {error}";
+
+        // #972: record every mutation this app performs - IsUndoable only when a "before" mask
+        // was actually readable, since ProcessControlService.SetAffinity needs a concrete mask
+        // to restore, not just "success".
+        ChangeJournalService.Append(new ChangeJournalEntry
+        {
+            Kind = ChangeKind.ProcessAffinityChange,
+            Target = $"{target.Name} (PID {target.Pid})",
+            ActionDescription = "Changed CPU affinity",
+            BeforeValue = before?.ToString(),
+            AfterValue = mask.ToString(),
+            TriggeredBy = "Processes tab",
+            Success = success,
+            IsUndoable = success && before is not null,
+            NotUndoableReason = before is null ? "The prior affinity mask couldn't be read." : null,
+            Pid = target.Pid,
+            ProcessName = target.Name,
+        });
     }
 
     /// <summary>Round 7 #6: applies the toolbar-selected priority class to SelectedProcess - see
@@ -516,10 +565,31 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
         var target = SelectedProcess;
         if (target is null || !Enum.TryParse<ProcessPriorityClass>(SelectedPriorityName, out var priority)) return;
 
+        string? before = Enum.TryParse<ProcessPriorityClass>(target.PriorityClassName, out var beforePriority)
+            ? beforePriority.ToString()
+            : null;
+
         var (success, error) = ProcessControlService.SetPriority(target.Pid, priority);
         StatusMessage = success
             ? $"Set {target.Name} (PID {target.Pid}) priority to {priority}."
             : $"Couldn't change priority for {target.Name}: {error}";
+
+        // #972: record every mutation this app performs - IsUndoable only when a "before"
+        // priority was actually known, same reasoning as ApplyAffinity above.
+        ChangeJournalService.Append(new ChangeJournalEntry
+        {
+            Kind = ChangeKind.ProcessPriorityChange,
+            Target = $"{target.Name} (PID {target.Pid})",
+            ActionDescription = "Changed priority",
+            BeforeValue = before,
+            AfterValue = priority.ToString(),
+            TriggeredBy = "Processes tab",
+            Success = success,
+            IsUndoable = success && before is not null,
+            NotUndoableReason = before is null ? "The prior priority couldn't be read." : null,
+            Pid = target.Pid,
+            ProcessName = target.Name,
+        });
 
         if (success) _ = RefreshAsync();
     }

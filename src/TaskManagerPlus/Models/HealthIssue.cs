@@ -66,4 +66,14 @@ public sealed class HealthIssue
     /// a fabricated or partially-filled-in figure - a rule with nothing honest to report here
     /// just leaves it null.</summary>
     public string? ImpactText { get; init; }
+
+    /// <summary>#967: the firing rule's Rule.ActionIds, copied straight through - null/empty for
+    /// every finding whose rule declares no fix (which is most of them), or for the couple of
+    /// hand-rolled checks noted above that have no Rule behind them at all.</summary>
+    public List<string>? ActionIds { get; init; }
+
+    /// <summary>#967: whether the Health Check card should render a "Fix this" button for this
+    /// finding - a plain computed property (like ConfidenceWord above) rather than a second
+    /// ActionIds-is-non-empty check duplicated in XAML.</summary>
+    public bool HasFixAction => ActionIds is { Count: > 0 };
 }

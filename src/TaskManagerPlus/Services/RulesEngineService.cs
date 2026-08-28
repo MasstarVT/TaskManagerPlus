@@ -857,6 +857,9 @@ public sealed class RulesEngineService : IDisposable
                 CounterEvidence = rule.CounterEvidence,
                 ImpactText = TryResolveImpactText(rule.ImpactTemplate, augmentedBag),
                 ConditionReadings = readings,
+                // #967: straight passthrough - RemediationActionCatalog.Resolve does the actual
+                // id -> concrete-action work, using this finding's own Evidence/RuleId for context.
+                ActionIds = rule.ActionIds,
                 // #930: for the built-in pack's simple metric-threshold rules, the evidence IS the
                 // metric bag key/value pairs the condition read - legitimate evidence in its own
                 // right, not a placeholder for a future richer source. DistinctBy(Label): a
@@ -1101,6 +1104,7 @@ public sealed class RulesEngineService : IDisposable
           "Confidence": 95,
           "Category": "Storage",
           "GroupKey": "disk",
+          "ActionIds": ["storage.chkdsk-scan"],
           "Condition": { "Metric": "disk.anyDirty", "Op": "eq", "Value": true }
         },
         {
@@ -1121,6 +1125,7 @@ public sealed class RulesEngineService : IDisposable
           "Confidence": 80,
           "Category": "Thermals",
           "CounterEvidence": "Ambient room temperature or a recent dust buildup can also cause this, not just a software issue.",
+          "ActionIds": ["power.lower-min-proc-state"],
           "Condition": { "All": [
             { "Metric": "thermal.cpuPackageC", "Op": "gte", "Value": 90 },
             { "Metric": "thermal.cpuPackageC", "Op": "lt", "Value": 100 }
@@ -1134,6 +1139,7 @@ public sealed class RulesEngineService : IDisposable
           "Confidence": 90,
           "Category": "Thermals",
           "CounterEvidence": "Ambient room temperature or a recent dust buildup can also cause this, not just a software issue.",
+          "ActionIds": ["power.lower-min-proc-state"],
           "Condition": { "Metric": "thermal.cpuPackageC", "Op": "gte", "Value": 100 }
         },
         {
@@ -1187,6 +1193,7 @@ public sealed class RulesEngineService : IDisposable
           "Confidence": 70,
           "Category": "Network",
           "CounterEvidence": "A flaky cable or an adapter that was recently unplugged/replugged can also cause a transient error count, not necessarily a failing NIC.",
+          "ActionIds": ["network.reset-tcpip"],
           "Condition": { "Metric": "network.hasErrors", "Op": "eq", "Value": true }
         },
         {
@@ -1197,6 +1204,7 @@ public sealed class RulesEngineService : IDisposable
           "Confidence": 80,
           "Category": "Services",
           "ImpactTemplate": "{services.failedCount} service(s) not running",
+          "ActionIds": ["services.restart-failed", "system.sfc-scannow", "system.dism-restorehealth"],
           "Condition": { "Metric": "services.failedCount", "Op": "gt", "Value": 0 }
         },
         {
