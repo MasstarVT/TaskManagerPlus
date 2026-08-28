@@ -449,6 +449,20 @@ per file:
   user (or a future update mechanism) can replace it without a rebuild.
   Both existing lists are explicitly labelled in-code and in the UI as a
   curated/partial subset, never a complete authority.
+- **Palette colors must clear WCAG AA (4.5:1) against their own family's
+  three surfaces.** `ThemeViewModel.Palettes` is the authority at runtime —
+  `Dark.xaml`'s literal palette only mirrors the Dark entry for the moment
+  before `ApplyPalette` first runs, so a color changed in one and not the
+  other silently does nothing. Ten values across six families used to fail
+  (`TextTertiary` in every family but High Contrast, worst 2.85:1 — and it
+  is what the `FontCaption` step is colored with), as did the
+  color-blind-safe triple, which used one fixed set on both light and dark
+  surfaces and so was the *least* readable mode in the app. All were lifted
+  in lightness with hue preserved; the color-blind set is now two
+  Okabe-Ito-hued sets chosen by background luminance. Check new colors
+  before adding them, and keep the primary/secondary/tertiary ramp visibly
+  stepped rather than just individually compliant.
+
 - **Type and spacing come from tokens in `Dark.xaml`, not literals.** The
   views once carried 1,889 hardcoded `FontSize` values across 18 distinct
   sizes (the most common body size was 11.5px), 179 distinct `Margin`

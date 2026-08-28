@@ -15,13 +15,19 @@
     <Color x:Key="AccentHoverColor">#61B7FF</Color>
     <Color x:Key="AccentMutedColor">#28496B</Color>
 
+    <!-- Three text steps, each meeting WCAG AA (4.5:1) against all three surfaces above.
+         Secondary was #9A9AA2 and tertiary #6B6B72; tertiary in particular sat at 3.14:1 on a
+         panel and 2.85:1 on an elevated surface, i.e. below AA on the very surfaces it was most
+         used on, and it is what the FontCaption step is coloured with. Both were lifted rather
+         than only tertiary, so the primary/secondary/tertiary ramp stays visibly stepped
+         (roughly 1.8x then 1.6x between neighbours) instead of collapsing into two shades. -->
     <Color x:Key="TextPrimaryColor">#F2F2F3</Color>
-    <Color x:Key="TextSecondaryColor">#9A9AA2</Color>
-    <Color x:Key="TextTertiaryColor">#6B6B72</Color>
+    <Color x:Key="TextSecondaryColor">#A7A7AE</Color>
+    <Color x:Key="TextTertiaryColor">#8E8E95</Color>
 
     <Color x:Key="SuccessColor">#3DD68C</Color>
     <Color x:Key="WarningColor">#F5B942</Color>
-    <Color x:Key="DangerColor">#F0546A</Color>
+    <Color x:Key="DangerColor">#F15A6F</Color>
     <Color x:Key="DangerHoverColor">#FF6E82</Color>
     <Color x:Key="DangerMutedColor">#3D2530</Color>
 
