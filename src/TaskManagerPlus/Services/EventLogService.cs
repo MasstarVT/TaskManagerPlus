@@ -1,4 +1,5 @@
 using System.Diagnostics.Eventing.Reader;
+using System.Globalization;
 using System.IO;
 using System.Text.RegularExpressions;
 using TaskManagerPlus.Models;
@@ -68,6 +69,7 @@ public sealed class EventLogService
             LowMemoryEventCount = lowMemCount,
             LastLowMemoryEvent = lowMemLast,
             ThermalCriticalEvents = ReadThermalCriticalEvents(),
+            LastUnexpectedShutdownBugcheckCode = mostRecentShutdownEvent?.BugcheckCode,
         };
     }
 
@@ -179,6 +181,161 @@ public sealed class EventLogService
         {
             // Provider/log unavailable - degrade to "none found", same as every other event-log
             // read in this service.
+        }
+        return result.OrderByDescending(e => e.TimeCreated).ToList();
+    }
+
+    // #636: WHEA-Logger (Windows Hardware Error Architecture) events - the app's first WHEA
+    // surface. Event 1 is a fatal/uncorrected machine check; 17 is a corrected machine check;
+    // 18/19/20 are corrected platform/PCIe errors; 47 is a corrected memory error. IDs are stable
+    // across the Windows versions this app targets (unlike the thermal-critical family above,
+    // which varies by build), so this is filtered by EventID the same way ReadFirmwareThrottleEvents
+    // filters Kernel-Processor-Power 37/38.
+    private const string WheaProvider = "Microsoft-Windows-WHEA-Logger";
+    private static readonly int[] WheaEventIds = { 1, 17, 18, 19, 20, 47 };
+
+    private static readonly Regex WheaErrorSourceRegex = new(@"Error Source:\s*([^\r\n]+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex WheaErrorTypeRegex = new(@"Error Type:\s*([^\r\n]+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex WheaBankRegex = new(@"Bank\s*(?:Number)?:\s*(\d+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex WheaBusDeviceFunctionRegex = new(
+        @"Bus:Device:Function:\s*(?:0x)?([0-9A-Fa-f]+):(?:0x)?([0-9A-Fa-f]+):(?:0x)?([0-9A-Fa-f]+)",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex WheaSegmentRegex = new(@"Segment:\s*(?:0x)?([0-9A-Fa-f]+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    /// <summary>#636: parses WHEA-Logger System-log events into a typed list - error source, bank
+    /// (machine-check events), and PCIe segment/bus/device/function (platform/PCIe events) where
+    /// the formatted message contains them. Every field not found in the message is left null/
+    /// empty rather than guessed - WHEA-Logger's message layout is exactly as undocumented/
+    /// unversioned as Kernel-Power 41's insertion strings (see ExtractBugcheckCode's remarks).</summary>
+    public List<WheaEvent> ReadWheaEvents()
+    {
+        var result = new List<WheaEvent>();
+        try
+        {
+            long maxAgeMs = LookbackDays * 24L * 60 * 60 * 1000;
+            var idFilter = string.Join(" or ", WheaEventIds.Select(id => $"EventID={id}"));
+            var query = new EventLogQuery("System", PathType.LogName,
+                $"*[System[Provider[@Name='{WheaProvider}'] and ({idFilter}) and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]")
+            {
+                ReverseDirection = true,
+            };
+
+            using var reader = new EventLogReader(query);
+            int count = 0;
+            const int maxEvents = 500;
+            while (count < maxEvents && reader.ReadEvent() is { } record)
+            {
+                using (record)
+                {
+                    count++;
+                    string message;
+                    try { message = record.FormatDescription() ?? string.Empty; }
+                    catch { message = string.Empty; } // provider's message file isn't registered - a known, common gap
+
+                    string errorSource = WheaErrorSourceRegex.Match(message) is { Success: true } srcMatch
+                        ? srcMatch.Groups[1].Value.Trim() : string.Empty;
+                    string errorType = WheaErrorTypeRegex.Match(message) is { Success: true } typeMatch
+                        ? typeMatch.Groups[1].Value.Trim() : string.Empty;
+
+                    int? bank = WheaBankRegex.Match(message) is { Success: true } bankMatch && int.TryParse(bankMatch.Groups[1].Value, out var b)
+                        ? b : null;
+
+                    int? segment = null, bus = null, device = null, function = null;
+                    var bdf = WheaBusDeviceFunctionRegex.Match(message);
+                    if (bdf.Success &&
+                        int.TryParse(bdf.Groups[1].Value, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var busVal) &&
+                        int.TryParse(bdf.Groups[2].Value, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var devVal) &&
+                        int.TryParse(bdf.Groups[3].Value, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var funcVal))
+                    {
+                        bus = busVal; device = devVal; function = funcVal;
+                        var segMatch = WheaSegmentRegex.Match(message);
+                        if (segMatch.Success && int.TryParse(segMatch.Groups[1].Value, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var segVal))
+                            segment = segVal;
+                    }
+
+                    result.Add(new WheaEvent
+                    {
+                        TimeCreated = record.TimeCreated ?? DateTime.MinValue,
+                        EventId = record.Id,
+                        IsFatal = record.Id == 1,
+                        CategoryText = DescribeWheaCategory(record.Id),
+                        ErrorSourceText = errorSource,
+                        Bank = bank,
+                        BankHintText = MceBankHintLookup.Describe(string.IsNullOrEmpty(errorType) ? errorSource : errorType),
+                        PcieSegment = segment,
+                        PcieBus = bus,
+                        PcieDevice = device,
+                        PcieFunction = function,
+                        Message = Truncate(message, 400),
+                    });
+                }
+            }
+        }
+        catch
+        {
+            // Provider/log unavailable (no WHEA-capable hardware ever logged anything, or the
+            // provider isn't registered on this Windows build) - degrade to "none found".
+        }
+        return result.OrderByDescending(e => e.TimeCreated).ToList();
+    }
+
+    private static string DescribeWheaCategory(int eventId) => eventId switch
+    {
+        1 => "Fatal machine check",
+        17 => "Corrected machine check",
+        18 => "Corrected platform error",
+        19 => "Corrected PCIe error",
+        20 => "Corrected platform error",
+        47 => "Corrected memory error",
+        _ => "WHEA event",
+    };
+
+    // #626: Kernel-Power event 105 - AC/DC power-source transitions. A stable, well-known event ID
+    // commonly used for exactly this purpose (e.g. Task Scheduler's built-in "on AC/DC power
+    // change" triggers), unlike the thermal-critical family above.
+    private const string KernelPowerProvider = "Microsoft-Windows-Kernel-Power";
+    private const int PowerSourceChangeEventId = 105;
+
+    /// <summary>#626: reads Kernel-Power 105 (AC/DC power-source change) events - the raw list;
+    /// EnergyThermalsViewModel derives the "N times in the last hour" flapping count from these
+    /// timestamps.</summary>
+    public List<PowerSourceChangeEvent> ReadPowerSourceChangeEvents()
+    {
+        var result = new List<PowerSourceChangeEvent>();
+        try
+        {
+            long maxAgeMs = LookbackDays * 24L * 60 * 60 * 1000;
+            var query = new EventLogQuery("System", PathType.LogName,
+                $"*[System[Provider[@Name='{KernelPowerProvider}'] and (EventID={PowerSourceChangeEventId}) and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]")
+            {
+                ReverseDirection = true,
+            };
+
+            using var reader = new EventLogReader(query);
+            int count = 0;
+            const int maxEvents = 500;
+            while (count < maxEvents && reader.ReadEvent() is { } record)
+            {
+                using (record)
+                {
+                    count++;
+                    string message;
+                    try { message = record.FormatDescription() ?? string.Empty; }
+                    catch { message = string.Empty; }
+
+                    result.Add(new PowerSourceChangeEvent
+                    {
+                        TimeCreated = record.TimeCreated ?? DateTime.MinValue,
+                        Message = Truncate(message, 200),
+                    });
+                }
+            }
+        }
+        catch
+        {
+            // Provider/log unavailable, or (the common desktop case) this event simply never
+            // fires because there's no battery/AC adapter to transition between - degrade to
+            // "none found".
         }
         return result.OrderByDescending(e => e.TimeCreated).ToList();
     }

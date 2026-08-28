@@ -561,6 +561,137 @@
                 </StackPanel>
             </Border>
 
+            <!-- #623: VRM-specific temperature - a narrower, VRM/MOS-named-sensor-only reading
+                 distinct from the generic motherboard trend above, plus a "VRM hot while package
+                 is not" flag that indicts a poorly-cooled VRM heatsink rather than the CPU cooler.
+                 Collapsed entirely when no VRM-named motherboard sensor is reported at all. -->
+            <Border Margin="0,16,0,0">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding VrmTempC}" Value="{x:Null}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" Style="{StaticResource TitleRow}" Margin="0">
+                            <Border Style="{StaticResource ColorDot}" Background="#FF6347" />
+                            <TextBlock Text="VRM temperature" Style="{StaticResource CardTitle}" Margin="0" />
+                        </StackPanel>
+                        <TextBlock Grid.Column="1" Text="{Binding VrmTempC, StringFormat={}{0:0.#}°C}" Style="{StaticResource SubStat}" VerticalAlignment="Center" />
+                    </Grid>
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,-4,0,8" TextWrapping="Wrap"
+                               Text="Explicit VRM/MOSFET-named sensor(s) only - separate from the generic motherboard trend above." />
+                    <Border Background="{DynamicResource DangerMutedBrush}" BorderBrush="{DynamicResource DangerBrush}"
+                            BorderThickness="1" CornerRadius="8" Padding="10,8" Margin="0,0,0,8">
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding VrmHotWhilePackageNotFlag}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                        <TextBlock Foreground="{DynamicResource DangerBrush}" FontSize="12" TextWrapping="Wrap"
+                                   Text="VRM is hot while the CPU package is not - points at a poorly-cooled VRM heatsink rather than the CPU cooler. Quick flag, not a verdict." />
+                    </Border>
+                    <lvc:CartesianChart Series="{Binding VrmTempSeries}" XAxes="{Binding HiddenXAxes}" YAxes="{Binding VrmTempYAxes}"
+                                         Height="140" TooltipPosition="Hidden" LegendPosition="Hidden" Background="Transparent" />
+                </StackPanel>
+            </Border>
+
+            <!-- #621/#622: "Power delivery" section - rail-sag-under-load correlation and Vcore
+                 droop/load-line behavior, both rolling scatter clouds with a live fitted line. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <TextBlock Text="Power delivery" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="A 12V rail that measurably drops as system power rises is a loaded or failing PSU; a noisy-but-uncorrelated reading is just a poor sensor. Vcore plotted against package power exposes the effective load-line calibration curve - excessive droop shows as an unusually steep slope."
+                               Style="{StaticResource SubStat}" Margin="0,-6,0,10" TextWrapping="Wrap" />
+
+                    <TextBlock Text="Rail sag under load" FontSize="12.5" FontWeight="SemiBold"
+                               Foreground="{DynamicResource TextPrimaryBrush}" Margin="0,0,0,4" />
+                    <lvc:CartesianChart Series="{Binding RailSagSeries}" XAxes="{Binding RailSagXAxes}" YAxes="{Binding RailSagYAxes}"
+                                         Height="160" TooltipPosition="Hidden" LegendPosition="Hidden" Background="Transparent" Margin="0,0,0,4" />
+                    <TextBlock Text="{Binding RailSagVerdictText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,14" />
+
+                    <TextBlock Text="Vcore vs. load (load-line behavior)" FontSize="12.5" FontWeight="SemiBold"
+                               Foreground="{DynamicResource TextPrimaryBrush}" Margin="0,0,0,4" />
+                    <lvc:CartesianChart Series="{Binding VcoreLoadSeries}" XAxes="{Binding VcoreLoadXAxes}" YAxes="{Binding VcoreLoadYAxes}"
+                                         Height="160" TooltipPosition="Hidden" LegendPosition="Hidden" Background="Transparent" Margin="0,0,0,4" />
+                    <TextBlock Text="{Binding VcoreLoadSlopeText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+
+            <!-- #624: PSU inventory + wattage sanity check - a WMI-reported wattage (rare) or a
+                 user-entered one, compared against estimated total draw (CPU package + GPU + a
+                 fixed platform allowance). -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <TextBlock Text="PSU inventory &amp; wattage sanity check" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="{Binding PsuInventoryText}" Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+
+                    <Border Background="{DynamicResource DangerMutedBrush}" BorderBrush="{DynamicResource DangerBrush}"
+                            BorderThickness="1" CornerRadius="8" Padding="10,8" Margin="0,0,0,10">
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding PsuBrownoutRiskDetected}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                        <TextBlock Foreground="{DynamicResource DangerBrush}" FontSize="12" TextWrapping="Wrap"
+                                   Text="Sustained estimated draw above ~80% of rated wattage - a brownout/shutdown risk under this PSU's rated capacity. Quick flag, not a verdict." />
+                    </Border>
+
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBox Grid.Column="0" Text="{Binding PsuWattageInputText, UpdateSourceTrigger=PropertyChanged}"
+                                 VerticalContentAlignment="Center" Padding="8,5" Margin="0,0,8,0" ToolTip="PSU rated wattage (e.g. 650)" />
+                        <Button Grid.Column="1" Content="Save wattage" Command="{Binding SavePsuWattageCommand}" Margin="0,0,8,0" />
+                        <Button Grid.Column="2" Content="Re-check WMI" Command="{Binding LoadPsuInfoCommand}" />
+                    </Grid>
+
+                    <UniformGrid Columns="3">
+                        <views:VfdMeter Title="Rated wattage" Glow="False" Margin="0,0,6,0"
+                                        ValueText="{Binding PsuRatedWattageW, StringFormat={}{0:0}, TargetNullValue=–}" Unit="W"
+                                        SubText="From WMI or user entry" AccentBrush="{DynamicResource AccentBrush}" />
+                        <views:VfdMeter Title="Estimated draw" Glow="False" Margin="3,0,3,0"
+                                        ValueText="{Binding EstimatedTotalDrawW, StringFormat={}{0:0}, TargetNullValue=–}" Unit="W"
+                                        SubText="CPU package + GPU + platform allowance" AccentBrush="{DynamicResource DangerBrush}" />
+                        <views:VfdMeter Title="PSU load" Glow="False" Margin="6,0,0,0"
+                                        ValueText="{Binding PsuLoadPercent, StringFormat={}{0:0}, TargetNullValue=–}" Unit="%"
+                                        SubText="Of rated wattage">
+                            <views:VfdMeter.Style>
+                                <Style TargetType="views:VfdMeter">
+                                    <Setter Property="AccentBrush" Value="{DynamicResource AccentBrush}" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding PsuBrownoutRiskDetected}" Value="True">
+                                            <Setter Property="AccentBrush" Value="{DynamicResource DangerBrush}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </views:VfdMeter.Style>
+                        </views:VfdMeter>
+                    </UniformGrid>
+                </StackPanel>
+            </Border>
+
             <!-- #34: fan curve (RPM vs. temp) - a fan that isn't ramping with load shows up as a
                  flat/scattered cloud instead of a rising trend. Collapsed until at least one
                  (temp, RPM) sample has been recorded. -->
@@ -857,25 +988,37 @@
             </Border>
 
             <!-- Voltages -->
-            <TextBlock Text="Voltages" Style="{StaticResource SubStat}" Margin="0,0,0,10" />
+            <TextBlock Text="Voltages" Style="{StaticResource SubStat}" Margin="0,0,0,4" />
+            <!-- #620: ATX rail verdict caveat - shown once per section, not per row, since it
+                 applies to every Super I/O voltage reading here regardless of in/out-of-spec. -->
+            <TextBlock Text="Super I/O rail readings are uncalibrated on many boards - treat the deviation/excursion figures below as informational, not a certified measurement."
+                       Style="{StaticResource SubStat}" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,6" />
             <ItemsControl ItemsSource="{Binding Voltages}" Margin="0,0,0,16">
                 <ItemsControl.ItemsPanel>
                     <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
                 </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
                     <DataTemplate>
-                        <!-- Round 12, #96: out-of-spec 12V/5V/3.3V rail flagging - a recognized
-                             rail more than ~5% off nominal tints red; anything else (unrecognized
-                             rail name, or within spec) stays the normal accent color. -->
+                        <!-- Round 12, #96/#620: out-of-spec 12V/5V/3.3V rail flagging - a recognized
+                             rail more than ~5% off nominal tints red and its SubText becomes a
+                             verdict ("6% low, 14 excursions/hr") instead of the bare hardware
+                             name; an in-spec recognized rail or unrecognized rail name keeps the
+                             normal accent color (RailVerdictText already reads "in spec (±5%)" or
+                             the hardware name respectively - see EnergyThermalsViewModel.TrackVoltageExcursions). -->
+                        <!-- AccentBrush's default is set via the Style's own base Setter (not a
+                             local attribute on the element) so the Style.Triggers override below
+                             can actually win - a locally-set value always beats a style trigger in
+                             WPF's property-value precedence, which would otherwise silently make
+                             this "out of spec" tint never render. -->
                         <views:VfdMeter Title="{Binding SensorName}" Glow="False" Width="172" Margin="0,0,8,8"
                                         ValueText="{Binding Value, StringFormat={}{0:0.###}, TargetNullValue=–}" Unit="V"
-                                        SubText="{Binding HardwareName}" AccentBrush="{DynamicResource AccentBrush}">
+                                        SubText="{Binding RailVerdictText}">
                             <views:VfdMeter.Style>
                                 <Style TargetType="views:VfdMeter">
+                                    <Setter Property="AccentBrush" Value="{DynamicResource AccentBrush}" />
                                     <Style.Triggers>
                                         <DataTrigger Binding="{Binding IsVoltageOutOfSpec}" Value="True">
                                             <Setter Property="AccentBrush" Value="{DynamicResource DangerBrush}" />
-                                            <Setter Property="SubText" Value="Out of spec (±5%)" />
                                         </DataTrigger>
                                     </Style.Triggers>
                                 </Style>
@@ -946,6 +1089,30 @@
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>
+
+                <!-- #626: DC-jack/adapter power-source flapping - Kernel-Power 105 (AC/DC
+                     transition) events, on-demand. Rapid flapping while plugged in points at a
+                     failing barrel jack, bad USB-C PD negotiation, or a bad cable. -->
+                <Grid Margin="0,10,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="{Binding PowerSourceFlapText}"
+                               TextWrapping="Wrap" VerticalAlignment="Center">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding PowerSourceFlapWarning}" Value="True">
+                                        <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <Button Grid.Column="1" Content="Check power-source events" FontSize="11" Padding="8,3"
+                            Command="{Binding LoadPowerSourceEventsCommand}" />
+                </Grid>
             </StackPanel>
 
         </StackPanel>

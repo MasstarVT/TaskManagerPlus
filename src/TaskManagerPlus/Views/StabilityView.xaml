@@ -26,10 +26,27 @@
                         </Style.Triggers>
                     </Style>
                 </Border.Style>
-                <TextBlock Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" FontSize="12.5">
-                    <Run Text="Last shutdown looks unexpected — " /><Run Text="{Binding LastUnexpectedShutdownText, Mode=OneWay}" />
-                    <Run Text=" (Kernel-Power 41 / unclean shutdown near the last boot time)." />
-                </TextBlock>
+                <StackPanel>
+                    <TextBlock Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" FontSize="12.5">
+                        <Run Text="Last shutdown looks unexpected — " /><Run Text="{Binding LastUnexpectedShutdownText, Mode=OneWay}" />
+                        <Run Text=" (Kernel-Power 41 / unclean shutdown near the last boot time)." />
+                    </TextBlock>
+                    <!-- #625: power-draw-at-reboot correlation annotation - a reboot at peak draw
+                         with no bugcheck code is the classic PSU-under-load signature. -->
+                    <TextBlock Text="{Binding PowerDrawAtRebootText}" Foreground="{DynamicResource DangerBrush}"
+                               TextWrapping="Wrap" FontSize="11.5" Margin="0,6,0,0" Opacity="0.9">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding PowerDrawAtRebootText}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
             </Border>
 
             <!-- #606: thermal-critical/shutdown event scan - a firmware thermal shutdown is
@@ -196,6 +213,170 @@
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #636-640: "Hardware errors (WHEA)" card - the app's first WHEA (Windows Hardware
+                 Error Architecture) surface. Fatal + corrected machine-check/platform/PCIe/memory
+                 events, a corrected-error-rate trend chart, and a conditions-at-the-moment-of-
+                 each-error table. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Hardware errors (WHEA)" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Check WHEA events" Command="{Binding LoadWheaEventsCommand}" />
+                    </Grid>
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,-2,0,10" TextWrapping="Wrap"
+                               Text="Windows Hardware Error Architecture events, last 30 days - a rising corrected-error rate is the earliest hardware-failure warning Windows produces, and is entirely invisible in Reliability Monitor. Bank/error-type hints are a quick interpretation, not a verdict." />
+
+                    <UniformGrid Columns="2" Margin="0,0,0,12">
+                        <views:VfdMeter Title="Fatal" Glow="False" Margin="0,0,6,0"
+                                        ValueText="{Binding WheaFatalCount}"
+                                        SubText="Uncorrected machine checks" AccentBrush="{DynamicResource DangerBrush}" />
+                        <views:VfdMeter Title="Corrected" Glow="False" Margin="6,0,0,0"
+                                        ValueText="{Binding WheaCorrectedCount}"
+                                        SubText="Machine check / platform / PCIe / memory" AccentBrush="{DynamicResource WarningBrush}" />
+                    </UniformGrid>
+
+                    <!-- #637: corrected-WHEA-errors-per-day trend. -->
+                    <TextBlock Text="Corrected-error rate" FontSize="12.5" FontWeight="SemiBold"
+                               Foreground="{DynamicResource TextPrimaryBrush}" Margin="0,0,0,4" />
+                    <lvc:CartesianChart Series="{Binding WheaCorrectedSeries}" XAxes="{Binding WheaCorrectedXAxes}" YAxes="{Binding WheaCorrectedYAxes}"
+                                         Height="120" TooltipPosition="Top" LegendPosition="Hidden" Background="Transparent" Margin="0,0,0,14" />
+
+                    <!-- #636/#639/#640: event list - category, error source, bank hint, and (for
+                         PCIe events) the resolved device name in place of raw bus/device/function. -->
+                    <TextBlock Text="Events" FontSize="12.5" FontWeight="SemiBold"
+                               Foreground="{DynamicResource TextPrimaryBrush}" Margin="0,0,0,6" />
+                    <ItemsControl ItemsSource="{Binding WheaEvents}" Margin="0,0,0,14">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Border Grid.Column="0" CornerRadius="10" Padding="7,2" Margin="0,0,8,0" VerticalAlignment="Top">
+                                        <Border.Style>
+                                            <Style TargetType="Border">
+                                                <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsFatal}" Value="False">
+                                                        <Setter Property="Background" Value="{DynamicResource BgElevatedBrush}" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Border.Style>
+                                        <TextBlock FontSize="10.5" FontWeight="SemiBold" Text="{Binding CategoryText}">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsFatal}" Value="True">
+                                                            <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </Border>
+                                    <StackPanel Grid.Column="1">
+                                        <TextBlock FontSize="12">
+                                            <Run Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}" />
+                                            <Run Text=" — " /><Run Text="{Binding ErrorSourceText}" />
+                                        </TextBlock>
+                                        <!-- #636: raw bank number - machine-check events (1/17) only, null/hidden for
+                                             platform/PCIe/memory events. -->
+                                        <TextBlock Style="{StaticResource SubStat}" Visibility="{Binding Bank, Converter={StaticResource NullToVisibilityConverter}}">
+                                            <Run Text="Bank " /><Run Text="{Binding Bank, Mode=OneWay}" />
+                                        </TextBlock>
+                                        <!-- #639: resolved PCIe device name in place of raw bus/device/function, when available. -->
+                                        <TextBlock TextWrapping="Wrap">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding ResolvedDeviceName}" Value="">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                            <Run Text="Device: " /><Run Text="{Binding ResolvedDeviceName}" />
+                                        </TextBlock>
+                                        <!-- #640: plain-English machine-check bank/status hint - quick interpretation, not a verdict. -->
+                                        <TextBlock Style="{StaticResource SubStat}" FontStyle="Italic" TextWrapping="Wrap"
+                                                   Text="{Binding BankHintText}" />
+                                    </StackPanel>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="No WHEA hardware-error events found in the last 30 days.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding WheaEvents.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
+                    <!-- #638: two-column "conditions at the moment of each error" table, joined
+                         against the persisted power-history log. -->
+                    <StackPanel Margin="0,14,0,0">
+                        <StackPanel.Style>
+                            <Style TargetType="StackPanel">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding WheaConditionRows.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </StackPanel.Style>
+                        <TextBlock Text="Conditions at each error" FontSize="12.5" FontWeight="SemiBold"
+                                   Foreground="{DynamicResource TextPrimaryBrush}" Margin="0,0,0,4" />
+                        <TextBlock Text="Errors clustered at high temperature point at cooling; errors at idle point at memory, VRM, or PSU."
+                                   Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" />
+                        <Grid Margin="0,0,0,4">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="Error" Style="{StaticResource SubStat}" FontWeight="SemiBold" />
+                            <TextBlock Grid.Column="1" Text="Temp / power" Style="{StaticResource SubStat}" FontWeight="SemiBold" />
+                        </Grid>
+                        <ItemsControl ItemsSource="{Binding WheaConditionRows}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Margin="0,0,0,6">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Grid.Column="0">
+                                            <TextBlock FontSize="11.5">
+                                                <Run Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}" />
+                                            </TextBlock>
+                                            <TextBlock Style="{StaticResource SubStat}" Text="{Binding ErrorSummary}" TextWrapping="Wrap" />
+                                        </StackPanel>
+                                        <TextBlock Grid.Column="1" FontSize="11.5" VerticalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}">
+                                            <Run Text="{Binding TempCAtEvent, StringFormat={}{0:0.#}°C, TargetNullValue=Unknown temp, Mode=OneWay}" />
+                                            <Run Text=" / " /><Run Text="{Binding PowerWAtEvent, StringFormat={}{0:0}W, TargetNullValue=Unknown power, Mode=OneWay}" />
+                                        </TextBlock>
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
                 </StackPanel>
             </Border>
 

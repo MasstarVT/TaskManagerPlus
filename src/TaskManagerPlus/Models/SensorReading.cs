@@ -40,6 +40,26 @@ public sealed class SensorReading
     /// only tints a row red when this is explicitly true, never for null/false.</summary>
     public bool? IsVoltageOutOfSpec { get; init; }
 
+    /// <summary>#620: signed percent deviation from nominal (e.g. -6.2 for "6.2% low") for a
+    /// recognized 12V/5V/3.3V rail - null for any unrecognized rail, same "null means not
+    /// checked" rule IsVoltageOutOfSpec already follows. Set alongside IsVoltageOutOfSpec by
+    /// EnergyThermalsViewModel.WithVoltageSpecCheck.</summary>
+    public float? VoltageDeviationPercent { get; init; }
+
+    /// <summary>#620: count of times this rail has transitioned into an out-of-spec state within
+    /// the trailing hour (edge-triggered - a rail that's been continuously out of spec for an hour
+    /// counts once, not once per tick) - so one startup glitch doesn't read the same as continuous
+    /// instability. Null for an unrecognized rail.</summary>
+    public double? VoltageExcursionsPerHour { get; init; }
+
+    /// <summary>#620: the row's full verdict text - "6% low, 14 excursions/hr" for a recognized,
+    /// out-of-spec rail; "in spec (±5%)" for a recognized, healthy rail; the bare hardware name for
+    /// an unrecognized rail (same text VfdMeter's SubText showed before this round). Set by
+    /// EnergyThermalsViewModel so the view can bind one property instead of assembling this string
+    /// itself. Explicitly caveated in the UI (not per-row - see the Voltages section header) that
+    /// Super I/O rail readings are uncalibrated on many boards.</summary>
+    public string RailVerdictText { get; init; } = string.Empty;
+
     /// <summary>#615: per-fan-channel status ("OK"/"Slow"/"Stopped"/"Not reporting"), computed by
     /// comparing every fan channel reported at the same tick instead of relying on a single
     /// global dead-fan flag - a chassis fan pinned well below its siblings under identical load

@@ -256,6 +256,13 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
     private double? _gpuPowerLimitW;
     public double? GpuPowerLimitW { get => _gpuPowerLimitW; private set => SetProperty(ref _gpuPowerLimitW, value); }
 
+    /// <summary>#621/#625/#638: actual instantaneous GPU power draw (distinct from
+    /// GpuPowerLimitW's configured ceiling above) - needed as the "GPU power" half of "package and
+    /// GPU power" for the rail-sag correlation, the power-history log, and the reboot/WHEA
+    /// power-draw correlations. Null when no discrete GPU wattage sensor is reported.</summary>
+    private double? _gpuPowerDrawW;
+    public double? GpuPowerDrawW { get => _gpuPowerDrawW; private set => SetProperty(ref _gpuPowerDrawW, value); }
+
     /// <summary>GPU hotspot-vs-edge temperature differential (#29) - a large, sustained gap is a
     /// common sign of degraded thermal paste/pads on a GPU cooler, distinct from either reading
     /// alone being high. Null when either sensor isn't reported (no discrete GPU, or the vendor's
@@ -289,6 +296,124 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
 
     private string _deadFanName = string.Empty;
     public string DeadFanName { get => _deadFanName; private set => SetProperty(ref _deadFanName, value); }
+
+    // ---- #620: ATX rail out-of-spec verdict + excursion counter --------------------------------
+    // Turns the flat IsVoltageOutOfSpec bool (Round 12, #96) into a verdict: signed deviation
+    // percent plus a per-hour excursion count, so one boot-time glitch doesn't read the same as
+    // continuous instability. Excursions are edge-triggered (a transition from in-spec to
+    // out-of-spec), tracked per rail identifier in a rolling one-hour timestamp window.
+    private readonly Dictionary<string, bool> _railWasOutOfSpec = new();
+    private readonly Dictionary<string, List<DateTime>> _railExcursionTimestamps = new();
+    private static readonly TimeSpan RailExcursionWindow = TimeSpan.FromHours(1);
+
+    // ---- #621/#622: rail-sag-under-load correlation + Vcore droop/load-line chart --------------
+    // "Power delivery" section: a 12V rail that measurably drops as system power rises is a loaded
+    // or failing PSU (#621); Vcore plotted against package power exposes the effective load-line
+    // calibration curve, where excessive droop shows as an unusually steep slope (#622). Both are
+    // rolling-window scatter clouds with a live least-squares fit line, the same shape the fan
+    // curve's ghost-overlay regression already established, just recomputed live instead of
+    // persisted per month.
+    private const int PowerDeliveryWindow = 180;
+
+    public ObservableCollection<ObservablePoint> RailSagPoints { get; } = new();
+    private readonly ScatterSeries<ObservablePoint> _railSagScatter;
+    public ObservableCollection<ObservablePoint> RailSagFitLine { get; } = new();
+    private readonly LineSeries<ObservablePoint> _railSagFitSeries;
+    public ISeries[] RailSagSeries { get; }
+    public Axis[] RailSagXAxes { get; }
+    public Axis[] RailSagYAxes { get; }
+
+    private string _railSagVerdictText = "Not enough samples yet to assess rail sag under load.";
+    public string RailSagVerdictText { get => _railSagVerdictText; private set => SetProperty(ref _railSagVerdictText, value); }
+
+    public ObservableCollection<ObservablePoint> VcoreLoadPoints { get; } = new();
+    private readonly ScatterSeries<ObservablePoint> _vcoreLoadScatter;
+    public ObservableCollection<ObservablePoint> VcoreLoadFitLine { get; } = new();
+    private readonly LineSeries<ObservablePoint> _vcoreLoadFitSeries;
+    public ISeries[] VcoreLoadSeries { get; }
+    public Axis[] VcoreLoadXAxes { get; }
+    public Axis[] VcoreLoadYAxes { get; }
+
+    private string _vcoreLoadSlopeText = "Not enough samples yet to chart Vcore load-line behavior.";
+    public string VcoreLoadSlopeText { get => _vcoreLoadSlopeText; private set => SetProperty(ref _vcoreLoadSlopeText, value); }
+
+    private static readonly (string[] Hints, float Nominal)[] Rail12VHints = { (new[] { "12V", "+12V", "12 V" }, 12.0f) };
+    private static readonly string[] VcoreNameHints = { "Vcore", "CPU Vcore", "CPU Core Voltage", "Core Voltage", "CPU Core" };
+
+    // ---- #623: VRM temperature attribution ------------------------------------------------------
+    // The tab already trends generic motherboard temperature (MotherboardTempC, hint list
+    // "VRM"/"System"/"Motherboard"/"PCH"/"Chipset"); this adds an explicit VRM/MOS-named-sensor-
+    // only reading plus a "VRM hot while package is not" flag, which indicts a poorly-cooled VRM
+    // heatsink rather than the CPU cooler. Its own tile and history line, hidden entirely when no
+    // VRM-named motherboard sensor exists at all.
+    private static readonly string[] VrmNameHints = { "VRM", "MOS", "MOSFET" };
+    private const double VrmHotThresholdC = 75.0;
+    private const double VrmHotPackageNotHotThresholdC = 60.0;
+
+    private double? _vrmTempC;
+    public double? VrmTempC { get => _vrmTempC; private set => SetProperty(ref _vrmTempC, value); }
+
+    public ObservableCollection<double> VrmTempHistory { get; } = NewHistory();
+    private readonly LineSeries<double> _vrmTempGlow;
+    private readonly LineSeries<double> _vrmTempCore;
+    public ISeries[] VrmTempSeries { get; }
+    public Axis[] VrmTempYAxes { get; }
+
+    private bool _vrmHotWhilePackageNotFlag;
+    public bool VrmHotWhilePackageNotFlag { get => _vrmHotWhilePackageNotFlag; private set => SetProperty(ref _vrmHotWhilePackageNotFlag, value); }
+
+    // ---- #624: PSU inventory + wattage sanity check ---------------------------------------------
+    // Win32_PowerSupply/Win32_SystemEnclosure (PsuService) when an OEM populated them; otherwise
+    // (the common case) a user-entered wattage persisted to psu.json (PsuSettingsService). Either
+    // way, estimated total draw (CPU package + GPU + a fixed platform allowance) is compared
+    // against it, and sustained draw above ~80% flags a brownout/shutdown risk.
+    private const double PsuPlatformAllowanceW = 30.0;
+    private const double PsuBrownoutLoadFraction = 0.80;
+    private const int PsuSustainedSampleCount = 10; // ~10 ticks at the default poll interval
+
+    private PsuInfo? _psuInventory;
+    private string _psuInventoryText = "Not checked yet.";
+    public string PsuInventoryText { get => _psuInventoryText; private set => SetProperty(ref _psuInventoryText, value); }
+
+    private double? _psuRatedWattageW;
+    public double? PsuRatedWattageW { get => _psuRatedWattageW; private set => SetProperty(ref _psuRatedWattageW, value); }
+
+    private string _psuWattageInputText = string.Empty;
+    public string PsuWattageInputText { get => _psuWattageInputText; set => SetProperty(ref _psuWattageInputText, value); }
+
+    private double? _estimatedTotalDrawW;
+    public double? EstimatedTotalDrawW { get => _estimatedTotalDrawW; private set => SetProperty(ref _estimatedTotalDrawW, value); }
+
+    private double? _psuLoadPercent;
+    public double? PsuLoadPercent { get => _psuLoadPercent; private set => SetProperty(ref _psuLoadPercent, value); }
+
+    private bool _psuBrownoutRiskDetected;
+    public bool PsuBrownoutRiskDetected { get => _psuBrownoutRiskDetected; private set => SetProperty(ref _psuBrownoutRiskDetected, value); }
+
+    private readonly List<double> _psuLoadPercentSamples = new();
+
+    public AsyncRelayCommand LoadPsuInfoCommand { get; }
+    public RelayCommand SavePsuWattageCommand { get; }
+
+    // ---- #625: coarse power-history log (correlated against reboot/WHEA timestamps after the
+    // fact by StabilityViewModel) ------------------------------------------------------------------
+    private static readonly TimeSpan PowerHistoryAppendInterval = TimeSpan.FromMinutes(1);
+    private DateTime _lastPowerHistoryAppend = DateTime.MinValue;
+
+    // ---- #626: DC-jack / adapter power-source flapping -------------------------------------------
+    // On-demand (event-log query), same "loaded once at startup plus a manual refresh" shape as
+    // #602's firmware-limit events.
+    public ObservableCollection<PowerSourceChangeEvent> PowerSourceChangeEvents { get; } = new();
+    public AsyncRelayCommand LoadPowerSourceEventsCommand { get; }
+
+    private int _powerSourceChangesLastHour;
+    public int PowerSourceChangesLastHour { get => _powerSourceChangesLastHour; private set => SetProperty(ref _powerSourceChangesLastHour, value); }
+
+    private string _powerSourceFlapText = string.Empty;
+    public string PowerSourceFlapText { get => _powerSourceFlapText; private set => SetProperty(ref _powerSourceFlapText, value); }
+
+    private bool _powerSourceFlapWarning;
+    public bool PowerSourceFlapWarning { get => _powerSourceFlapWarning; private set => SetProperty(ref _powerSourceFlapWarning, value); }
 
     // ---- #611: same-load-hotter-over-months cooling-degradation tracking ----------------------
     // Every tick with a valid (temp, load, power) triple is bucketed into (load decile x power
@@ -551,6 +676,9 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         SetPowerPlanCommand = new AsyncRelayCommand(SetPowerPlanAsync);
         LoadUsbDevicesCommand = new AsyncRelayCommand(_ => LoadUsbDevicesAsync());
         LoadFirmwareEventsCommand = new AsyncRelayCommand(_ => LoadFirmwareEventsAsync());
+        LoadPsuInfoCommand = new AsyncRelayCommand(_ => LoadPsuInfoAsync());
+        SavePsuWattageCommand = new RelayCommand(_ => SavePsuWattage());
+        LoadPowerSourceEventsCommand = new AsyncRelayCommand(_ => LoadPowerSourceEventsAsync());
 
         // #604: per-week episode-count sparkline - same glow+core LineOf pattern as every other
         // history chart on this tab.
@@ -665,6 +793,111 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         };
         CooldownSeries = new ISeries[] { _cooldownGlow, _cooldownCore };
 
+        // #621: rail-sag-under-load scatter (system power W on X, 12V rail volts on Y) with a
+        // live least-squares fit line - same scatter+ghosted-fit-line shape as the fan curve chart
+        // above, just recomputed live from the rolling window instead of persisted per month.
+        RailSagXAxes = new[]
+        {
+            new Axis
+            {
+                Name = "System power (W)", NameTextSize = 11,
+                Labeler = v => $"{v:0}",
+                LabelsPaint = new SolidColorPaint(AxisTextColor),
+                SeparatorsPaint = new SolidColorPaint(AxisSeparatorColor) { StrokeThickness = 1 },
+            },
+        };
+        RailSagYAxes = new[]
+        {
+            new Axis
+            {
+                Name = "12V rail (V)", NameTextSize = 11,
+                Labeler = v => $"{v:0.###}",
+                LabelsPaint = new SolidColorPaint(AxisTextColor),
+                SeparatorsPaint = new SolidColorPaint(AxisSeparatorColor) { StrokeThickness = 1 },
+            },
+        };
+        _railSagScatter = new ScatterSeries<ObservablePoint>
+        {
+            Values = RailSagPoints,
+            Fill = new SolidColorPaint(SKColors.OrangeRed.WithAlpha(140)),
+            Stroke = null,
+            GeometrySize = 7,
+        };
+        _railSagFitSeries = new LineSeries<ObservablePoint>
+        {
+            Values = RailSagFitLine,
+            Stroke = new SolidColorPaint(SKColors.OrangeRed, 2f),
+            Fill = null, GeometryStroke = null, GeometryFill = null,
+            LineSmoothness = 0, IsHoverable = false, IsVisibleAtLegend = false,
+        };
+        RailSagSeries = new ISeries[] { _railSagFitSeries, _railSagScatter };
+
+        // #622: Vcore-vs-package-power scatter - the effective load-line calibration curve.
+        VcoreLoadXAxes = new[]
+        {
+            new Axis
+            {
+                Name = "Package power (W)", NameTextSize = 11,
+                Labeler = v => $"{v:0}",
+                LabelsPaint = new SolidColorPaint(AxisTextColor),
+                SeparatorsPaint = new SolidColorPaint(AxisSeparatorColor) { StrokeThickness = 1 },
+            },
+        };
+        VcoreLoadYAxes = new[]
+        {
+            new Axis
+            {
+                Name = "Vcore (V)", NameTextSize = 11,
+                Labeler = v => $"{v:0.###}",
+                LabelsPaint = new SolidColorPaint(AxisTextColor),
+                SeparatorsPaint = new SolidColorPaint(AxisSeparatorColor) { StrokeThickness = 1 },
+            },
+        };
+        _vcoreLoadScatter = new ScatterSeries<ObservablePoint>
+        {
+            Values = VcoreLoadPoints,
+            Fill = new SolidColorPaint(SKColors.MediumPurple.WithAlpha(140)),
+            Stroke = null,
+            GeometrySize = 7,
+        };
+        _vcoreLoadFitSeries = new LineSeries<ObservablePoint>
+        {
+            Values = VcoreLoadFitLine,
+            Stroke = new SolidColorPaint(SKColors.MediumPurple, 2f),
+            Fill = null, GeometryStroke = null, GeometryFill = null,
+            LineSmoothness = 0, IsHoverable = false, IsVisibleAtLegend = false,
+        };
+        VcoreLoadSeries = new ISeries[] { _vcoreLoadFitSeries, _vcoreLoadScatter };
+
+        // #623: VRM temperature history, same glow+core LineOf pattern as every other history
+        // chart on this tab.
+        VrmTempYAxes = new[]
+        {
+            new Axis
+            {
+                MinLimit = 0,
+                Labeler = v => $"{v:0}°C",
+                LabelsPaint = new SolidColorPaint(AxisTextColor),
+                SeparatorsPaint = new SolidColorPaint(AxisSeparatorColor) { StrokeThickness = 1 },
+            },
+        };
+        var vrmColor = SKColors.Tomato;
+        _vrmTempGlow = new LineSeries<double>
+        {
+            Values = VrmTempHistory,
+            Stroke = new SolidColorPaint(vrmColor.WithAlpha(70), GlowStrokeWidth),
+            Fill = null, GeometryStroke = null, GeometryFill = null,
+            LineSmoothness = 0.3, IsHoverable = false, IsVisibleAtLegend = false,
+        };
+        _vrmTempCore = new LineSeries<double>
+        {
+            Values = VrmTempHistory,
+            Stroke = new SolidColorPaint(vrmColor, CoreStrokeWidth),
+            Fill = new LinearGradientPaint(vrmColor.WithAlpha(90), vrmColor.WithAlpha(0), new SKPoint(0, 0), new SKPoint(0, 1)),
+            GeometryStroke = null, GeometryFill = null, LineSmoothness = 0.3,
+        };
+        VrmTempSeries = new ISeries[] { _vrmTempGlow, _vrmTempCore };
+
         // #604/#605: load persisted throttle-episode history once at startup (kept in memory and
         // updated in place as new episodes close, rather than re-read from disk every tick).
         _persistedEpisodes = ThrottleHistoryService.Load();
@@ -689,6 +922,19 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
 
         // #602: cheap enough for a one-time startup read (not per-tick) - see LoadFirmwareEventsAsync.
         _ = LoadFirmwareEventsAsync();
+
+        // #624: user-entered PSU wattage (if any) loaded once at startup, plus a best-effort WMI
+        // inventory read - the WMI read is a bit more than a trivial registry poke, so it goes
+        // through the same "on-demand" AsyncRelayCommand as the power-plan/USB reads above, just
+        // also kicked off once here so the card isn't empty until the user clicks the button.
+        var psuSettings = PsuSettingsService.Load();
+        PsuRatedWattageW = psuSettings.UserRatedWattageW;
+        PsuWattageInputText = psuSettings.UserRatedWattageW is { } w ? w.ToString("0") : string.Empty;
+        _ = LoadPsuInfoAsync();
+
+        // #626: power-source-change events - same "cheap enough for startup, not per-tick" shape
+        // as the firmware-limit events above.
+        _ = LoadPowerSourceEventsAsync();
 
         // Round 12, #100: configurable poll interval - see PollIntervalSettingsService's remarks.
         // Loaded fresh (not cached in a field) on every read/write so a slider change here can
@@ -802,6 +1048,16 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         CooldownXAxes[0].LabelsPaint = new SolidColorPaint(textSk);
         CooldownYAxes[0].LabelsPaint = new SolidColorPaint(textSk);
         CooldownYAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
+        RailSagXAxes[0].LabelsPaint = new SolidColorPaint(textSk);
+        RailSagXAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
+        RailSagYAxes[0].LabelsPaint = new SolidColorPaint(textSk);
+        RailSagYAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
+        VcoreLoadXAxes[0].LabelsPaint = new SolidColorPaint(textSk);
+        VcoreLoadXAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
+        VcoreLoadYAxes[0].LabelsPaint = new SolidColorPaint(textSk);
+        VcoreLoadYAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
+        VrmTempYAxes[0].LabelsPaint = new SolidColorPaint(textSk);
+        VrmTempYAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
     }
 
     private async Task RefreshAsync()
@@ -861,8 +1117,11 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
 
         // #616: coolant-pump variance card - rebuilt from the same enriched readings.
         RefreshCoolantPumps(enrichedFanReadings);
-        // #96: out-of-spec voltage-rail flagging - see WithVoltageSpecCheck's remarks.
-        Replace(Voltages, readings.Where(r => r.Type == SensorType.Voltage && HasNonZeroReading(r)).Select(WithVoltageSpecCheck));
+        // #96/#620: out-of-spec voltage-rail flagging, deviation percent, and per-hour excursion
+        // count - see WithVoltageSpecCheck/TrackVoltageExcursions' remarks.
+        var voltageReadingsList = readings.Where(r => r.Type == SensorType.Voltage && HasNonZeroReading(r)).Select(WithVoltageSpecCheck).ToList();
+        voltageReadingsList = TrackVoltageExcursions(voltageReadingsList);
+        Replace(Voltages, voltageReadingsList);
         var wattageReadings = readings.Where(r => r.Type == SensorType.Power && HasNonZeroReading(r)).ToList();
         Replace(Wattages, wattageReadings);
         // Battery sensors mix several SensorTypes (Level for charge %/degradation %, Voltage,
@@ -909,6 +1168,13 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         // on the CPU-vs-GPU temperature lookups.
         var mbTemps = tempReadings.Where(r => r.HardwareType == HardwareType.Motherboard).ToList();
         MotherboardTempC = FindByNameContains(mbTemps, "VRM", "System", "Motherboard", "PCH", "Chipset");
+
+        // #623: VRM-specific temperature - a narrower hint list than MotherboardTempC's above (no
+        // "System"/"PCH"/"Chipset" fallback), so this is null (and the tile/history hidden) unless
+        // a sensor is actually named for the VRM/MOSFETs, never the generic board temperature.
+        VrmTempC = FindByNameContains(mbTemps, VrmNameHints);
+        VrmHotWhilePackageNotFlag = VrmTempC is { } vrmTemp && vrmTemp >= VrmHotThresholdC &&
+            (CpuPackageTempC is null || CpuPackageTempC < VrmHotPackageNotHotThresholdC);
 
         // #29: GPU hotspot/junction vs. edge/core temperature differential - restricted to GPU
         // hardware entries specifically (unlike the CPU lookups above) since sensor names like
@@ -959,6 +1225,14 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         var gpuWattages = wattageReadings.Where(r => IsGpu(r.HardwareType)).ToList();
         GpuPowerLimitW = FindByNameContains(gpuWattages, "Power Limit", "TDP Limit", "TDP");
 
+        // #621/#625/#638: actual GPU power draw, distinct from the configured limit above -
+        // excludes any sensor whose name itself says "Limit"/"TDP" so this can't accidentally
+        // resolve to the same reading as GpuPowerLimitW.
+        var gpuDrawCandidates = gpuWattages.Where(r =>
+            !r.SensorName.Contains("Limit", StringComparison.OrdinalIgnoreCase) &&
+            !r.SensorName.Contains("TDP", StringComparison.OrdinalIgnoreCase)).ToList();
+        GpuPowerDrawW = FindByNameContains(gpuDrawCandidates, "GPU Power", "Power");
+
         // #43: first Storage-hardware component that reports more than one temperature sensor -
         // the differential between its hottest and coolest reading (controller vs. flash die).
         var storageGroup = tempReadings
@@ -986,6 +1260,13 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         {
             MotherboardTempHistory.Add(mbTemp);
             if (MotherboardTempHistory.Count > HistoryLength) MotherboardTempHistory.RemoveAt(0);
+        }
+
+        // #623: VRM temperature history, same rolling-window shape as every other history chart.
+        if (VrmTempC is { } vrmTempHist)
+        {
+            VrmTempHistory.Add(vrmTempHist);
+            if (VrmTempHistory.Count > HistoryLength) VrmTempHistory.RemoveAt(0);
         }
 
         // #34: one (temp, RPM) sample per tick for the primary CPU fan (falling back to whatever
@@ -1058,6 +1339,18 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         // reading (lowest motherboard "System"/drive temperature) for the normalize-to-ambient
         // toggle.
         TrackIdleBaseline(CpuPackageTempC, tempReadings);
+
+        // #621/#622: rail-sag-under-load correlation + Vcore droop/load-line sampling.
+        TrackPowerDelivery(voltageReadingsList, TotalPackagePowerW, GpuPowerDrawW);
+
+        // #624: PSU wattage sanity check - estimated draw vs. rated wattage, with a sustained-
+        // above-80% brownout-risk flag.
+        TrackPsuLoad(TotalPackagePowerW, GpuPowerDrawW);
+
+        // #625/#638: coarse power-history log append, at most once a minute - see
+        // PowerHistoryLogService's remarks for why this is a periodic append rather than a
+        // per-tick write.
+        AppendPowerHistorySampleIfDue(CpuPackageTempC, TotalPackagePowerW, GpuPowerDrawW);
     }
 
     private static string DescribeReasonClass(ThrottleReasonClass c) => c switch
@@ -1765,7 +2058,11 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         {
             if (!hints.Any(h => reading.SensorName.Contains(h, StringComparison.OrdinalIgnoreCase))) continue;
 
-            bool outOfSpec = Math.Abs(value - nominal) / nominal > 0.05f;
+            // #620: signed deviation percent (negative = low, positive = high) alongside the
+            // existing flat out-of-spec bool - lets the view show "6% low" instead of just a
+            // color change.
+            float deviationPercent = (value - nominal) / nominal * 100f;
+            bool outOfSpec = Math.Abs(deviationPercent) > 5f;
             return new SensorReading
             {
                 HardwareName = reading.HardwareName,
@@ -1777,10 +2074,305 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
                 SessionMin = reading.SessionMin,
                 SessionMax = reading.SessionMax,
                 IsVoltageOutOfSpec = outOfSpec,
+                VoltageDeviationPercent = deviationPercent,
             };
         }
 
         return reading; // unrecognized rail name - IsVoltageOutOfSpec stays null, not flagged
+    }
+
+    /// <summary>#620: edge-triggered excursion counting - a rail transitioning from in-spec to
+    /// out-of-spec counts as one excursion, timestamped and kept in a rolling
+    /// <see cref="RailExcursionWindow"/> window per rail identifier, so a single startup glitch
+    /// reads as "1 excursion/hr" rather than the same as being continuously out of spec for that
+    /// whole hour. Stamps the final RailVerdictText shown in the UI onto every recognized-and-
+    /// unrecognized reading alike (unrecognized rails just keep showing their hardware name, the
+    /// same text VfdMeter's SubText showed before this round).</summary>
+    private List<SensorReading> TrackVoltageExcursions(List<SensorReading> voltageReadings)
+    {
+        var now = DateTime.Now;
+        var seenIdentifiers = new HashSet<string>();
+        var result = new List<SensorReading>(voltageReadings.Count);
+
+        foreach (var reading in voltageReadings)
+        {
+            if (reading.IsVoltageOutOfSpec is not { } outOfSpec)
+            {
+                // Unrecognized rail - never tracked for excursions, keep the pre-#620 fallback
+                // text (the bare hardware name, same as before this round).
+                result.Add(CloneVoltageReading(reading, reading.HardwareName, null));
+                continue;
+            }
+
+            seenIdentifiers.Add(reading.Identifier);
+            bool wasOutOfSpec = _railWasOutOfSpec.TryGetValue(reading.Identifier, out var prev) && prev;
+            if (outOfSpec && !wasOutOfSpec)
+            {
+                if (!_railExcursionTimestamps.TryGetValue(reading.Identifier, out var timestamps))
+                    _railExcursionTimestamps[reading.Identifier] = timestamps = new List<DateTime>();
+                timestamps.Add(now);
+            }
+            _railWasOutOfSpec[reading.Identifier] = outOfSpec;
+
+            double excursionsPerHour = 0;
+            if (_railExcursionTimestamps.TryGetValue(reading.Identifier, out var window))
+            {
+                window.RemoveAll(t => now - t > RailExcursionWindow);
+                excursionsPerHour = window.Count;
+            }
+
+            string direction = reading.VoltageDeviationPercent is { } dev && dev < 0 ? "low" : "high";
+            string verdict = outOfSpec
+                ? $"{Math.Abs(reading.VoltageDeviationPercent ?? 0):0}% {direction}, {excursionsPerHour:0} excursions/hr"
+                : "in spec (±5%)";
+
+            result.Add(CloneVoltageReading(reading, verdict, excursionsPerHour));
+        }
+
+        // Drop tracking state for rails no longer reporting, same housekeeping RefreshCoolantPumps
+        // already does for pump windows.
+        foreach (var stale in _railWasOutOfSpec.Keys.Where(k => !seenIdentifiers.Contains(k)).ToList())
+            _railWasOutOfSpec.Remove(stale);
+        foreach (var stale in _railExcursionTimestamps.Keys.Where(k => !seenIdentifiers.Contains(k)).ToList())
+            _railExcursionTimestamps.Remove(stale);
+
+        return result;
+    }
+
+    private static SensorReading CloneVoltageReading(SensorReading reading, string verdictText, double? excursionsPerHour) => new()
+    {
+        HardwareName = reading.HardwareName,
+        HardwareType = reading.HardwareType,
+        SensorName = reading.SensorName,
+        Type = reading.Type,
+        Value = reading.Value,
+        Identifier = reading.Identifier,
+        SessionMin = reading.SessionMin,
+        SessionMax = reading.SessionMax,
+        IsVoltageOutOfSpec = reading.IsVoltageOutOfSpec,
+        VoltageDeviationPercent = reading.VoltageDeviationPercent,
+        VoltageExcursionsPerHour = excursionsPerHour,
+        RailVerdictText = verdictText,
+    };
+
+    // ================================================================================
+    // #621/#622: rail-sag-under-load correlation + Vcore droop/load-line chart
+    // ================================================================================
+
+    /// <summary>Samples the recognized 12V rail alongside total system power (#621) and Vcore
+    /// alongside package power alone (#622) into their respective rolling scatter windows, then
+    /// recomputes each chart's live least-squares fit line and verdict text. Both stay empty/
+    /// hidden until their required sensors (a recognized 12V rail; a Vcore-hinted voltage sensor)
+    /// are actually present - never fabricated from an unrelated rail.</summary>
+    private void TrackPowerDelivery(List<SensorReading> voltageReadings, double? packagePowerW, double? gpuPowerW)
+    {
+        double? rail12V = FindByNameContains(voltageReadings, Rail12VHints[0].Hints);
+        double? vcoreV = FindByNameContains(voltageReadings, VcoreNameHints);
+
+        if (rail12V is { } rail && packagePowerW is { } pkg)
+        {
+            double totalPowerW = pkg + (gpuPowerW ?? 0);
+            RailSagPoints.Add(new ObservablePoint(totalPowerW, rail));
+            while (RailSagPoints.Count > PowerDeliveryWindow) RailSagPoints.RemoveAt(0);
+            RefreshRailSagFit();
+        }
+
+        if (vcoreV is { } vcore && packagePowerW is { } pkgOnly)
+        {
+            VcoreLoadPoints.Add(new ObservablePoint(pkgOnly, vcore));
+            while (VcoreLoadPoints.Count > PowerDeliveryWindow) VcoreLoadPoints.RemoveAt(0);
+            RefreshVcoreLoadFit();
+        }
+    }
+
+    /// <summary>#621: fits the current rail-sag window and reports both the slope (V per W) and
+    /// the Pearson correlation coefficient - a rail that's measurably dropping as power rises
+    /// (negative slope, meaningful |r|) is a loaded/failing PSU rail; a noisy-but-uncorrelated
+    /// reading (|r| near 0) is just a poor sensor, not a real sag.</summary>
+    private void RefreshRailSagFit()
+    {
+        if (RailSagPoints.Count < 10)
+        {
+            RailSagFitLine.Clear();
+            RailSagVerdictText = "Not enough samples yet to assess rail sag under load.";
+            return;
+        }
+
+        var points = RailSagPoints.Select(p => (X: p.X ?? 0, Y: p.Y ?? 0)).ToList();
+        var (slope, intercept) = LinearRegression(points);
+        double r = PearsonR(points);
+
+        double minX = points.Min(p => p.X), maxX = points.Max(p => p.X);
+        RailSagFitLine.Clear();
+        RailSagFitLine.Add(new ObservablePoint(minX, (slope * minX) + intercept));
+        RailSagFitLine.Add(new ObservablePoint(maxX, (slope * maxX) + intercept));
+
+        RailSagVerdictText = Math.Abs(r) >= 0.4 && slope < 0
+            ? $"12V rail correlates with system power (r = {r:0.00}, slope {slope * 1000:0.#} mV/W) - measurable sag under load, a loaded or possibly failing PSU rail."
+            : $"No meaningful sag correlation (r = {r:0.00}) - looks like sensor noise rather than a loaded/failing rail.";
+    }
+
+    /// <summary>#622: fits the current Vcore-vs-package-power window - the slope is the effective
+    /// load-line calibration curve; an unusually steep (large-magnitude negative) slope is
+    /// excessive droop, which correlates with the instability items elsewhere on this tab.</summary>
+    private void RefreshVcoreLoadFit()
+    {
+        if (VcoreLoadPoints.Count < 10)
+        {
+            VcoreLoadFitLine.Clear();
+            VcoreLoadSlopeText = "Not enough samples yet to chart Vcore load-line behavior.";
+            return;
+        }
+
+        var points = VcoreLoadPoints.Select(p => (X: p.X ?? 0, Y: p.Y ?? 0)).ToList();
+        var (slope, intercept) = LinearRegression(points);
+
+        double minX = points.Min(p => p.X), maxX = points.Max(p => p.X);
+        VcoreLoadFitLine.Clear();
+        VcoreLoadFitLine.Add(new ObservablePoint(minX, (slope * minX) + intercept));
+        VcoreLoadFitLine.Add(new ObservablePoint(maxX, (slope * maxX) + intercept));
+
+        VcoreLoadSlopeText = $"Load-line slope: {slope * 1000:0.#} mV/W over {VcoreLoadPoints.Count} samples - a steeper (more negative) slope means more Vcore droop under load.";
+    }
+
+    /// <summary>Pearson correlation coefficient between a set of (X, Y) points - 0 when there's no
+    /// variance to correlate (e.g. every sample landed at the same power reading).</summary>
+    private static double PearsonR(IReadOnlyList<(double X, double Y)> points)
+    {
+        double meanX = points.Average(p => p.X);
+        double meanY = points.Average(p => p.Y);
+        double covXY = points.Sum(p => (p.X - meanX) * (p.Y - meanY));
+        double varX = points.Sum(p => (p.X - meanX) * (p.X - meanX));
+        double varY = points.Sum(p => (p.Y - meanY) * (p.Y - meanY));
+        double denom = Math.Sqrt(varX * varY);
+        return denom < 1e-9 ? 0 : covXY / denom;
+    }
+
+    // ================================================================================
+    // #624: PSU inventory + wattage sanity check
+    // ================================================================================
+
+    /// <summary>On-demand WMI read (Win32_PowerSupply / Win32_SystemEnclosure) - see PsuService's
+    /// remarks for why a populated wattage is the uncommon case. When WMI reports a wattage, it
+    /// takes priority over any previously user-entered figure for the sanity-check denominator
+    /// (an OEM-reported figure is more trustworthy than a guess); otherwise the user-entered
+    /// figure (if any) keeps being used.</summary>
+    private async Task LoadPsuInfoAsync()
+    {
+        _psuInventory = await Task.Run(() => PsuService.ReadPsuInventory());
+        if (_psuInventory is null)
+        {
+            PsuInventoryText = "No PSU information reported by firmware/WMI on this system - enter your PSU's rated wattage below for the sanity check.";
+        }
+        else if (_psuInventory.RatedWattageW is { } w)
+        {
+            PsuInventoryText = $"{_psuInventory.Name} - {w:0} W rated (via {_psuInventory.Source}).";
+            PsuRatedWattageW = w;
+            PsuWattageInputText = w.ToString("0");
+        }
+        else
+        {
+            PsuInventoryText = $"{_psuInventory.Name} (via {_psuInventory.Source}) - no wattage reported; enter your PSU's rated wattage below for the sanity check.";
+        }
+    }
+
+    /// <summary>Parses and persists the user-entered PSU wattage textbox to psu.json - a plain
+    /// synchronous RelayCommand since PsuSettingsService's write is a tiny local JSON file, the
+    /// same "no async needed for a JSON write" shape ThrottleHistoryService/ThermalBaselineService
+    /// already use.</summary>
+    private void SavePsuWattage()
+    {
+        if (!double.TryParse(PsuWattageInputText, out var watts) || watts <= 0)
+        {
+            PsuInventoryText = "Enter a positive number of watts (e.g. 650) before saving.";
+            return;
+        }
+
+        PsuSettingsService.Save(new PsuSettings { UserRatedWattageW = watts });
+        PsuRatedWattageW = watts;
+        if (_psuInventory?.RatedWattageW is null)
+            PsuInventoryText = $"Using user-entered PSU wattage: {watts:0} W.";
+    }
+
+    /// <summary>#624: estimated total system draw (CPU package + GPU + a fixed platform
+    /// allowance for motherboard/fans/drives/RAM) against the rated wattage from either source
+    /// above - flags sustained (not momentary) draw over ~80% as a brownout/shutdown risk, tracked
+    /// via a small rolling window of recent load-percent samples so one transient spike doesn't
+    /// trip the flag.</summary>
+    private void TrackPsuLoad(double? packagePowerW, double? gpuPowerW)
+    {
+        if (packagePowerW is not { } pkg)
+        {
+            EstimatedTotalDrawW = null;
+            PsuLoadPercent = null;
+            return;
+        }
+
+        double estimated = pkg + (gpuPowerW ?? 0) + PsuPlatformAllowanceW;
+        EstimatedTotalDrawW = estimated;
+
+        if (PsuRatedWattageW is not { } rated || rated <= 0)
+        {
+            PsuLoadPercent = null;
+            PsuBrownoutRiskDetected = false;
+            _psuLoadPercentSamples.Clear();
+            return;
+        }
+
+        double loadPercent = estimated / rated * 100.0;
+        PsuLoadPercent = loadPercent;
+
+        _psuLoadPercentSamples.Add(loadPercent);
+        while (_psuLoadPercentSamples.Count > PsuSustainedSampleCount) _psuLoadPercentSamples.RemoveAt(0);
+
+        PsuBrownoutRiskDetected = _psuLoadPercentSamples.Count >= PsuSustainedSampleCount &&
+            _psuLoadPercentSamples.All(p => p >= PsuBrownoutLoadFraction * 100.0);
+    }
+
+    // ================================================================================
+    // #625/#638: coarse power-history log
+    // ================================================================================
+
+    /// <summary>Appends one sample to power-history-log.json at most once a minute - see
+    /// PowerHistoryLogService's remarks for why this needs to be a persisted (not in-memory) trail
+    /// at all, and why it's periodic rather than per-tick.</summary>
+    private void AppendPowerHistorySampleIfDue(double? tempC, double? packagePowerW, double? gpuPowerW)
+    {
+        var now = DateTime.Now;
+        if (now - _lastPowerHistoryAppend < PowerHistoryAppendInterval) return;
+        _lastPowerHistoryAppend = now;
+
+        if (tempC is null && packagePowerW is null && gpuPowerW is null) return; // nothing worth logging yet
+
+        PowerHistoryLogService.Append(new PowerTempSample
+        {
+            Timestamp = now,
+            TempC = tempC,
+            PackagePowerW = packagePowerW,
+            GpuPowerW = gpuPowerW,
+        });
+    }
+
+    // ================================================================================
+    // #626: DC-jack / adapter power-source flapping
+    // ================================================================================
+
+    /// <summary>On-demand Kernel-Power 105 (AC/DC transition) event-log read - see
+    /// EventLogService.ReadPowerSourceChangeEvents' remarks.</summary>
+    private async Task LoadPowerSourceEventsAsync()
+    {
+        var events = await Task.Run(() => _eventLog.ReadPowerSourceChangeEvents());
+        PowerSourceChangeEvents.Clear();
+        foreach (var e in events.Take(20)) PowerSourceChangeEvents.Add(e);
+
+        var cutoff = DateTime.Now.AddHours(-1);
+        PowerSourceChangesLastHour = events.Count(e => e.TimeCreated >= cutoff);
+        PowerSourceFlapWarning = PowerSourceChangesLastHour >= 3;
+        PowerSourceFlapText = PowerSourceFlapWarning
+            ? $"AC source changed {PowerSourceChangesLastHour} times in the last hour - rapid flapping while plugged in points at a failing barrel jack, bad USB-C PD negotiation, or a bad cable."
+            : events.Count > 0
+                ? $"AC source changed {PowerSourceChangesLastHour} time(s) in the last hour."
+                : string.Empty;
     }
 
     private static void Replace(ObservableCollection<SensorReading> target, IEnumerable<SensorReading> source)

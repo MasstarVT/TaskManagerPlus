@@ -76,7 +76,42 @@ public sealed class StabilityViewModel : ObservableObject
     private string _hitchThrottleCorrelationText = string.Empty;
     public string HitchThrottleCorrelationText { get => _hitchThrottleCorrelationText; private set => SetProperty(ref _hitchThrottleCorrelationText, value); }
 
+    // #625: cross-references the shutdown banner's own Kernel-Power 41 timestamp against
+    // PowerHistoryLogService's coarse persisted power trail - a reboot at peak draw with no
+    // bugcheck code is the classic PSU-under-load signature. Empty (annotation hidden) until
+    // there's both an unexpected shutdown and power-history data recorded near it.
+    private string _powerDrawAtRebootText = string.Empty;
+    public string PowerDrawAtRebootText { get => _powerDrawAtRebootText; private set => SetProperty(ref _powerDrawAtRebootText, value); }
+
     public AsyncRelayCommand RefreshCommand { get; }
+
+    // #636-640: "Hardware errors (WHEA)" card - the app's first WHEA (Windows Hardware Error
+    // Architecture) surface. On-demand (its own event-log query, separate from RefreshCommand's
+    // System/Application scan above, reusing the same _service instance), loaded once at startup
+    // plus a manual refresh button, same shape as EnergyThermalsViewModel's firmware-limit events.
+    public ObservableCollection<WheaEvent> WheaEvents { get; } = new();
+
+    // #638: two-column "conditions at the moment of each error" table, one row per WheaEvent -
+    // temperature/power at the nearest PowerHistoryLogService sample to that event's timestamp.
+    public ObservableCollection<WheaConditionRow> WheaConditionRows { get; } = new();
+
+    public AsyncRelayCommand LoadWheaEventsCommand { get; }
+
+    private int _wheaFatalCount;
+    public int WheaFatalCount { get => _wheaFatalCount; private set => SetProperty(ref _wheaFatalCount, value); }
+
+    private int _wheaCorrectedCount;
+    public int WheaCorrectedCount { get => _wheaCorrectedCount; private set => SetProperty(ref _wheaCorrectedCount, value); }
+
+    // #637: corrected-WHEA-errors-per-day column chart, alongside the existing reliability-history
+    // chart above - a rising corrected-error rate is the earliest hardware-failure warning Windows
+    // produces and is entirely invisible in Reliability Monitor.
+    private const int WheaLookbackDays = 30; // matches EventLogService.LookbackDays
+    public ObservableCollection<double> WheaCorrectedDailyCounts { get; } = new();
+    private readonly ColumnSeries<double> _wheaCorrectedColumns;
+    public ISeries[] WheaCorrectedSeries { get; }
+    public Axis[] WheaCorrectedXAxes { get; }
+    public Axis[] WheaCorrectedYAxes { get; }
 
     // #1: Reliability History - daily Critical/Error counts over the lookback window, the same
     // "crash/failure events over time" chart Windows' own Reliability Monitor shows, themed to
@@ -93,6 +128,7 @@ public sealed class StabilityViewModel : ObservableObject
     public StabilityViewModel()
     {
         RefreshCommand = new AsyncRelayCommand(RefreshAsync);
+        LoadWheaEventsCommand = new AsyncRelayCommand(_ => LoadWheaEventsAsync());
 
         _dailyEventColumns = new ColumnSeries<double>
         {
@@ -126,7 +162,43 @@ public sealed class StabilityViewModel : ObservableObject
             },
         };
 
+        // #637: corrected-WHEA-errors-per-day column chart - same ColumnSeries shape as the
+        // reliability-history chart above, a different (Goldenrod) color to read as a distinct
+        // series when the two cards are visually close together on the tab.
+        _wheaCorrectedColumns = new ColumnSeries<double>
+        {
+            Values = WheaCorrectedDailyCounts,
+            Fill = new SolidColorPaint(SKColors.Goldenrod.WithAlpha(200)),
+            Stroke = null,
+            MaxBarWidth = 12,
+        };
+        WheaCorrectedSeries = new ISeries[] { _wheaCorrectedColumns };
+        WheaCorrectedXAxes = new[]
+        {
+            new Axis
+            {
+                Labels = Array.Empty<string>(),
+                LabelsRotation = 0,
+                MinStep = 1,
+                ForceStepToMin = true,
+                LabelsPaint = new SolidColorPaint(AxisTextColor),
+                SeparatorsPaint = null,
+            },
+        };
+        WheaCorrectedYAxes = new[]
+        {
+            new Axis
+            {
+                MinLimit = 0,
+                MinStep = 1,
+                Labeler = v => $"{v:0}",
+                LabelsPaint = new SolidColorPaint(AxisTextColor),
+                SeparatorsPaint = new SolidColorPaint(AxisSeparatorColor) { StrokeThickness = 1 },
+            },
+        };
+
         _ = RefreshAsync();
+        _ = LoadWheaEventsAsync();
     }
 
     /// <summary>Repaints chart axis text/gridlines to match the active theme family - see
@@ -138,6 +210,9 @@ public sealed class StabilityViewModel : ObservableObject
         DailyEventXAxes[0].LabelsPaint = new SolidColorPaint(textSk);
         DailyEventYAxes[0].LabelsPaint = new SolidColorPaint(textSk);
         DailyEventYAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
+        WheaCorrectedXAxes[0].LabelsPaint = new SolidColorPaint(textSk);
+        WheaCorrectedYAxes[0].LabelsPaint = new SolidColorPaint(textSk);
+        WheaCorrectedYAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
     }
 
     private async Task RefreshAsync()
@@ -211,6 +286,10 @@ public sealed class StabilityViewModel : ObservableObject
         // #610: throttle-to-stutter correlation - cross-references #604's persisted throttle
         // episodes against the same RecentEvents timestamps this tab already shows.
         ComputeHitchThrottleCorrelation();
+
+        // #625: cross-references the shutdown banner's own unexpected-shutdown timestamp against
+        // the persisted power-history log.
+        ComputePowerDrawAtRebootCorrelation(snapshot);
     }
 
     /// <summary>#610: "N of M recorded hitches occurred while thermally throttled - quick flag,
@@ -229,6 +308,169 @@ public sealed class StabilityViewModel : ObservableObject
         int total = RecentEvents.Count;
         int inWindow = RecentEvents.Count(e => episodes.Any(ep => e.TimeCreated >= ep.Start && e.TimeCreated <= ep.End));
         HitchThrottleCorrelationText = $"{inWindow} of {total} recorded hitches occurred while thermally throttled — quick flag, not a verdict.";
+    }
+
+    /// <summary>#625: joins the shutdown banner's own most-recent-unexpected-shutdown timestamp
+    /// against PowerHistoryLogService's coarse persisted power trail (EnergyThermalsViewModel
+    /// appends to it about once a minute). A reboot recorded near this machine's recent peak draw,
+    /// with no bugcheck code extracted from the Kernel-Power 41 event itself, is the classic
+    /// PSU-under-load signature (a clean, instant power-off rather than a Windows-detected
+    /// exception) - quick flag, not a verdict, same tier as every other heuristic in this app.
+    /// Empty (annotation hidden) until there's both an unexpected shutdown and power-history data
+    /// recorded anywhere near it.</summary>
+    private void ComputePowerDrawAtRebootCorrelation(StabilitySnapshot snapshot)
+    {
+        if (!snapshot.WasLastShutdownUnexpected || snapshot.LastUnexpectedShutdown is not { } shutdownAt)
+        {
+            PowerDrawAtRebootText = string.Empty;
+            return;
+        }
+
+        var history = PowerHistoryLogService.Load();
+        var nearest = PowerHistoryLogService.FindNearest(history, shutdownAt, TimeSpan.FromMinutes(10));
+        if (nearest is null || (nearest.PackagePowerW is null && nearest.GpuPowerW is null))
+        {
+            PowerDrawAtRebootText = "No power-draw history recorded close enough to the last unexpected shutdown to correlate yet.";
+            return;
+        }
+
+        double drawAtShutdown = (nearest.PackagePowerW ?? 0) + (nearest.GpuPowerW ?? 0);
+        var recentWindow = history.Where(s => s.Timestamp >= shutdownAt.AddDays(-7) && s.Timestamp <= shutdownAt.AddMinutes(10)).ToList();
+        double peakRecentDraw = recentWindow.Count > 0
+            ? recentWindow.Max(s => (s.PackagePowerW ?? 0) + (s.GpuPowerW ?? 0))
+            : drawAtShutdown;
+
+        bool nearPeak = peakRecentDraw > 0 && drawAtShutdown >= peakRecentDraw * 0.85;
+        bool noBugcheck = string.IsNullOrEmpty(snapshot.LastUnexpectedShutdownBugcheckCode);
+
+        PowerDrawAtRebootText = nearPeak && noBugcheck
+            ? $"Power draw near the last unexpected reboot was {drawAtShutdown:0}W - close to this machine's recent peak ({peakRecentDraw:0}W), with no bugcheck code recorded. That's the classic PSU-under-load reboot signature - quick flag, not a verdict."
+            : $"Power draw near the last unexpected reboot was {drawAtShutdown:0}W (recent peak {peakRecentDraw:0}W).";
+    }
+
+    // ================================================================================
+    // #636-640: WHEA (Windows Hardware Error Architecture) hardware-error card
+    // ================================================================================
+
+    /// <summary>On-demand WHEA-Logger event-log read (#636), resolving PCIe device names (#639)
+    /// in one WMI pass shared across every event in this batch, then joining each event against
+    /// the persisted power-history log for the "conditions at the moment of each error" table
+    /// (#638). The whole batch runs off the UI thread, same shape as RefreshAsync above.</summary>
+    private async Task LoadWheaEventsAsync()
+    {
+        var (events, conditionRows) = await Task.Run(() =>
+        {
+            var raw = _service.ReadWheaEvents();
+
+            // #639: one WMI enumeration for the whole batch, not one per event.
+            var locationMap = PciDeviceResolverService.BuildLocationMap();
+            var resolved = raw.Select(e => ResolveWheaPcieDevice(e, locationMap)).ToList();
+
+            // #638: joined against whatever power-history samples exist - null fields (shown as
+            // "Unknown") when nothing was recorded within the join's tolerance window.
+            var history = PowerHistoryLogService.Load();
+            var rows = resolved.Select(e => BuildWheaConditionRow(e, history)).ToList();
+
+            return (resolved, rows);
+        });
+
+        WheaEvents.Clear();
+        foreach (var e in events) WheaEvents.Add(e);
+
+        WheaConditionRows.Clear();
+        foreach (var r in conditionRows) WheaConditionRows.Add(r);
+
+        WheaFatalCount = events.Count(e => e.IsFatal);
+        WheaCorrectedCount = events.Count(e => !e.IsFatal);
+
+        RefreshWheaCorrectedDailyChart(events);
+    }
+
+    /// <summary>#639: resolves a parsed PCIe bus/device/function against the shared location map -
+    /// returns the event unchanged (ResolvedDeviceName stays empty) when there's no PCIe location
+    /// on this event at all. When there IS a location but no Win32_PnPEntity matched it (a device
+    /// that's since been removed, or a location string format this app's regex didn't recognize),
+    /// still surfaces the raw address rather than showing nothing - marked "(unresolved)" so it
+    /// reads differently from a genuinely named device.</summary>
+    private static WheaEvent ResolveWheaPcieDevice(WheaEvent e, Dictionary<(int Bus, int Device, int Function), (string Name, string DeviceId)> locationMap)
+    {
+        if (e.PcieBus is not { } bus || e.PcieDevice is not { } device || e.PcieFunction is not { } function) return e;
+
+        string name;
+        string deviceId;
+        if (locationMap.TryGetValue((bus, device, function), out var resolved))
+        {
+            name = string.IsNullOrEmpty(resolved.DeviceId) ? resolved.Name : $"{resolved.Name} ({resolved.DeviceId})";
+            deviceId = resolved.DeviceId;
+        }
+        else
+        {
+            name = $"PCIe Bus {bus}, Device {device}, Function {function} (unresolved)";
+            deviceId = string.Empty;
+        }
+
+        return new WheaEvent
+        {
+            TimeCreated = e.TimeCreated,
+            EventId = e.EventId,
+            IsFatal = e.IsFatal,
+            CategoryText = e.CategoryText,
+            ErrorSourceText = e.ErrorSourceText,
+            Bank = e.Bank,
+            BankHintText = e.BankHintText,
+            PcieSegment = e.PcieSegment,
+            PcieBus = e.PcieBus,
+            PcieDevice = e.PcieDevice,
+            PcieFunction = e.PcieFunction,
+            ResolvedDeviceName = name,
+            ResolvedDeviceId = deviceId,
+            Message = e.Message,
+        };
+    }
+
+    /// <summary>#638: one WHEA event joined against the nearest power-history sample within a
+    /// 5-minute tolerance - wider than #625's 10-minute reboot-correlation tolerance since a WHEA
+    /// event doesn't kill the app's own sampling the way a reboot does, so a closer match is
+    /// usually available.</summary>
+    private static WheaConditionRow BuildWheaConditionRow(WheaEvent e, List<PowerTempSample> history)
+    {
+        var nearest = PowerHistoryLogService.FindNearest(history, e.TimeCreated, TimeSpan.FromMinutes(5));
+        string summary = string.IsNullOrEmpty(e.ResolvedDeviceName) ? e.CategoryText : $"{e.CategoryText} — {e.ResolvedDeviceName}";
+        double? powerW = nearest is null || (!nearest.PackagePowerW.HasValue && !nearest.GpuPowerW.HasValue)
+            ? null
+            : (nearest.PackagePowerW ?? 0) + (nearest.GpuPowerW ?? 0);
+
+        return new WheaConditionRow
+        {
+            TimeCreated = e.TimeCreated,
+            ErrorSummary = summary,
+            TempCAtEvent = nearest?.TempC,
+            PowerWAtEvent = powerW,
+        };
+    }
+
+    /// <summary>#637: corrected (non-fatal) WHEA events per day over the same lookback window
+    /// EventLogService.ReadWheaEvents queries, zero-filled for days with none - same bucketing
+    /// shape as the reliability-history chart's BuildDailyCounts.</summary>
+    private void RefreshWheaCorrectedDailyChart(List<WheaEvent> events)
+    {
+        var counts = events.Where(e => !e.IsFatal)
+            .GroupBy(e => e.TimeCreated.Date)
+            .ToDictionary(g => g.Key, g => g.Count());
+
+        var today = DateTime.Now.Date;
+        var values = new double[WheaLookbackDays];
+        var labels = new string[WheaLookbackDays];
+        for (int i = 0; i < WheaLookbackDays; i++)
+        {
+            var day = today.AddDays(-(WheaLookbackDays - 1 - i));
+            values[i] = counts.TryGetValue(day, out var c) ? c : 0;
+            labels[i] = i % 5 == 0 ? day.ToString("M/d") : string.Empty;
+        }
+
+        WheaCorrectedDailyCounts.Clear();
+        foreach (var v in values) WheaCorrectedDailyCounts.Add(v);
+        WheaCorrectedXAxes[0].Labels = labels;
     }
 
     /// <summary>

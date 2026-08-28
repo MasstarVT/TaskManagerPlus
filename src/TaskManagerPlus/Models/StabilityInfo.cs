@@ -51,6 +51,13 @@ public sealed class StabilitySnapshot
     public bool WasLastShutdownUnexpected { get; init; }
     public DateTime? LastUnexpectedShutdown { get; init; }
 
+    /// <summary>#625: bugcheck code (if any) tied to the most recent unexpected-shutdown event -
+    /// see EventLogService.ExtractBugcheckCode. Null both when the shutdown wasn't unexpected and
+    /// when it was but no bugcheck code could be extracted (the "clean reboot at peak draw, no
+    /// bugcheck" shape that's the classic PSU-under-load signature StabilityViewModel's
+    /// power-draw-at-reboot correlation looks for).</summary>
+    public string? LastUnexpectedShutdownBugcheckCode { get; init; }
+
     /// <summary>GPU driver timeout/reset (TDR, event 4101) count and most recent occurrence (#5)
     /// within the lookback window.</summary>
     public int TdrEventCount { get; init; }
