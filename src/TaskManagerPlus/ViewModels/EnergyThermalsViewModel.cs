@@ -558,6 +558,112 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
     private const float CoreStrokeWidth = 2f;
     private const float GlowStrokeWidth = 7f;
 
+    // ================================================================================
+    // #641-#648: battery report panel - powercfg /batteryreport + WMI fallback, capacity-fade
+    // projection, SRUM drain attribution, charge-rate/stall detection, design-vs-actual runtime,
+    // gauge-dropout log, and charge-ceiling/hot-pack-charging awareness. See
+    // RefreshBatteryReportLiveStateAsync for the per-tick half of this and LoadBatteryReportAsync/
+    // LoadBatteryDrainAttributionAsync for the on-demand (button-gated) half.
+    // ================================================================================
+
+    // #647: sticky "this session has seen real battery hardware at least once" flag. The
+    // pre-existing Battery-section visibility gate in EnergyThermalsView.xaml used to bind
+    // directly to Battery.Count == 0 - fine for "hide entirely on a desktop that never has a
+    // battery", but that would also hide this whole panel (including the dropout log below)
+    // during the very gauge dropout #647 exists to catch, since Battery.Count genuinely does hit
+    // 0 for the duration of a dropout. Latches true the first time either data source reports a
+    // battery and never reverts, so a laptop's Energy tab stays visible through a transient
+    // dropout while a real desktop (never any battery evidence, ever) still collapses the section
+    // exactly as before - same hide-the-section outcome, just backed by a flag robust to the one
+    // new failure mode this round explicitly adds detection for.
+    private bool _hasBattery;
+    public bool HasBattery { get => _hasBattery; private set => SetProperty(ref _hasBattery, value); }
+
+    private double? _batteryChargePercent;
+    public double? BatteryChargePercent { get => _batteryChargePercent; private set => SetProperty(ref _batteryChargePercent, value); }
+
+    /// <summary>#648: battery-pack temperature, when a vendor sensor happens to report one (rare -
+    /// most laptops don't expose this at all). Battery is already scoped to HardwareType.Battery,
+    /// so a Type==Temperature entry there specifically means "this reading is the pack", not the
+    /// CPU/motherboard. Null (card hidden) is the common, honest case.</summary>
+    private double? _batteryTemperatureC;
+    public double? BatteryTemperatureC { get => _batteryTemperatureC; private set => SetProperty(ref _batteryTemperatureC, value); }
+
+    // ---- #641/#643: full battery report (powercfg /batteryreport XML, WMI fallback) ------------
+    private BatteryReportInfo? _batteryReport;
+    public BatteryReportInfo? BatteryReport { get => _batteryReport; private set => SetProperty(ref _batteryReport, value); }
+    public bool HasBatteryReport => BatteryReport is not null;
+
+    private string _batteryReportStatusText = "Not checked yet.";
+    public string BatteryReportStatusText { get => _batteryReportStatusText; private set => SetProperty(ref _batteryReportStatusText, value); }
+
+    public AsyncRelayCommand LoadBatteryReportCommand { get; }
+
+    // ---- #642: capacity-fade chart + linear projection to 50% of design capacity ---------------
+    public ObservableCollection<ObservablePoint> CapacityHistoryPoints { get; } = new();
+    private readonly LineSeries<ObservablePoint> _capacityHistoryGlow;
+    private readonly LineSeries<ObservablePoint> _capacityHistoryCore;
+    public ObservableCollection<ObservablePoint> CapacityProjectionLine { get; } = new();
+    private readonly LineSeries<ObservablePoint> _capacityProjectionSeries;
+    public ISeries[] CapacityHistorySeries { get; }
+    public Axis[] CapacityHistoryXAxes { get; }
+    public Axis[] CapacityHistoryYAxes { get; }
+    private DateTime _capacityHistoryOriginDate = DateTime.Now;
+
+    private string _capacityProjectionText = string.Empty;
+    public string CapacityProjectionText { get => _capacityProjectionText; private set => SetProperty(ref _capacityProjectionText, value); }
+
+    // ---- #644: SRUM battery-drain-by-process attribution -----------------------------------------
+    public ObservableCollection<BatteryDrainAttributionRow> BatteryDrainAttribution { get; } = new();
+
+    private string _batteryDrainAttributionStatusText = "Not scanned yet.";
+    public string BatteryDrainAttributionStatusText { get => _batteryDrainAttributionStatusText; private set => SetProperty(ref _batteryDrainAttributionStatusText, value); }
+
+    public AsyncRelayCommand LoadBatteryDrainAttributionCommand { get; }
+
+    // ---- #645: charge-rate / charge-stall detection -----------------------------------------------
+    private const double ChargeStallWindowMinutes = 15.0;
+    private const double ChargeStallMinDeltaPercent = 1.0;
+    private const double ChargeStallMaxPercent = 99.0;
+    private const double WeakChargerFraction = 0.6;
+    private const double WeakChargerBelowPercent = 90.0;
+
+    private readonly List<(DateTime When, double Percent)> _chargePercentSamples = new();
+
+    private double? _chargeRateSessionMaxW;
+    public double? ChargeRateSessionMaxW { get => _chargeRateSessionMaxW; private set => SetProperty(ref _chargeRateSessionMaxW, value); }
+
+    private string _chargeRateVerdictText = string.Empty;
+    public string ChargeRateVerdictText { get => _chargeRateVerdictText; private set => SetProperty(ref _chargeRateVerdictText, value); }
+
+    private bool _weakChargerSuspected;
+    public bool WeakChargerSuspected { get => _weakChargerSuspected; private set => SetProperty(ref _weakChargerSuspected, value); }
+
+    private bool _chargeStallDetected;
+    public bool ChargeStallDetected { get => _chargeStallDetected; private set => SetProperty(ref _chargeStallDetected, value); }
+
+    // ---- #646: design-vs-actual runtime estimate ---------------------------------------------------
+    private string _runtimeComparisonText = string.Empty;
+    public string RuntimeComparisonText { get => _runtimeComparisonText; private set => SetProperty(ref _runtimeComparisonText, value); }
+
+    // ---- #647: intermittent battery / gauge-dropout log ---------------------------------------------
+    private bool? _batteryPresentLastTick;
+    public ObservableCollection<BatteryPresenceEvent> BatteryDropoutEvents { get; } = new();
+
+    // ---- #648: charge-threshold (vendor conservation ceiling) + hot-pack charge throttle ------------
+    private const double ChargeCeilingWindowMinutes = 20.0;
+    private const double ChargeCeilingStableSpreadPercent = 2.0;
+    private const double HotBatteryThresholdC = 45.0;
+    private static readonly double[] CommonChargeCeilings = { 50, 60, 70, 75, 80, 85, 90 };
+
+    private readonly List<(DateTime When, double Percent, bool OnAcNotCharging)> _chargeCeilingSamples = new();
+
+    private string _chargeCeilingText = string.Empty;
+    public string ChargeCeilingText { get => _chargeCeilingText; private set => SetProperty(ref _chargeCeilingText, value); }
+
+    private string _hotChargeThrottleText = string.Empty;
+    public string HotChargeThrottleText { get => _hotChargeThrottleText; private set => SetProperty(ref _hotChargeThrottleText, value); }
+
     public EnergyThermalsViewModel(PerformanceViewModel performance)
     {
         _performance = performance;
@@ -727,6 +833,13 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         LoadPsuInfoCommand = new AsyncRelayCommand(_ => LoadPsuInfoAsync());
         SavePsuWattageCommand = new RelayCommand(_ => SavePsuWattage());
         LoadPowerSourceEventsCommand = new AsyncRelayCommand(_ => LoadPowerSourceEventsAsync());
+
+        // #641/#644: both real subprocess calls (powercfg /batteryreport, /srumutil) - gated
+        // behind their own explicit buttons only, never auto-run at startup or on the tick timer
+        // (unlike the cheap WMI/event-log on-demand reads above, which this app does fire once at
+        // startup for a non-empty first paint - see CLAUDE.md's on-demand-vs-polled convention).
+        LoadBatteryReportCommand = new AsyncRelayCommand(_ => LoadBatteryReportAsync());
+        LoadBatteryDrainAttributionCommand = new AsyncRelayCommand(_ => LoadBatteryDrainAttributionAsync());
 
         // #604: per-week episode-count sparkline - same glow+core LineOf pattern as every other
         // history chart on this tab.
@@ -946,6 +1059,56 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         };
         VrmTempSeries = new ISeries[] { _vrmTempGlow, _vrmTempCore };
 
+        // #642: battery capacity-fade chart - a numeric (not categorical) X axis in days-since-
+        // first-report-period, since the projection segment below needs to extend past the real
+        // data's own date range. Labeler converts back to a real date via _capacityHistoryOriginDate
+        // (updated whenever RefreshCapacityHistoryChart rebuilds the series).
+        CapacityHistoryXAxes = new[]
+        {
+            new Axis
+            {
+                Labeler = v => _capacityHistoryOriginDate.AddDays(v).ToString("MMM d"),
+                LabelsPaint = new SolidColorPaint(AxisTextColor),
+                SeparatorsPaint = new SolidColorPaint(AxisSeparatorColor) { StrokeThickness = 1 },
+            },
+        };
+        CapacityHistoryYAxes = new[]
+        {
+            new Axis
+            {
+                MinLimit = 0,
+                Labeler = v => $"{v:0} Wh",
+                LabelsPaint = new SolidColorPaint(AxisTextColor),
+                SeparatorsPaint = new SolidColorPaint(AxisSeparatorColor) { StrokeThickness = 1 },
+            },
+        };
+        var capacityColor = SKColors.LightSeaGreen;
+        _capacityHistoryGlow = new LineSeries<ObservablePoint>
+        {
+            Values = CapacityHistoryPoints,
+            Stroke = new SolidColorPaint(capacityColor.WithAlpha(70), GlowStrokeWidth),
+            Fill = null, GeometryStroke = null, GeometryFill = null,
+            LineSmoothness = 0.2, IsHoverable = false, IsVisibleAtLegend = false,
+        };
+        _capacityHistoryCore = new LineSeries<ObservablePoint>
+        {
+            Values = CapacityHistoryPoints,
+            Stroke = new SolidColorPaint(capacityColor, CoreStrokeWidth),
+            Fill = new LinearGradientPaint(capacityColor.WithAlpha(90), capacityColor.WithAlpha(0), new SKPoint(0, 0), new SKPoint(0, 1)),
+            GeometryStroke = null, GeometryFill = null, LineSmoothness = 0.2,
+        };
+        // Projection segment - same ghosted/undecorated-line treatment as the fan-curve monthly
+        // overlay (#612), just in a contrasting color so "measured" vs. "projected" reads clearly
+        // even without relying on a legend (every other chart on this tab hides its legend too).
+        _capacityProjectionSeries = new LineSeries<ObservablePoint>
+        {
+            Values = CapacityProjectionLine,
+            Stroke = new SolidColorPaint(SKColors.OrangeRed.WithAlpha(180), 2f),
+            Fill = null, GeometryStroke = null, GeometryFill = null,
+            LineSmoothness = 0, IsHoverable = false, IsVisibleAtLegend = false,
+        };
+        CapacityHistorySeries = new ISeries[] { _capacityHistoryGlow, _capacityHistoryCore, _capacityProjectionSeries };
+
         // #604/#605: load persisted throttle-episode history once at startup (kept in memory and
         // updated in place as new episodes close, rather than re-read from disk every tick).
         _persistedEpisodes = ThrottleHistoryService.Load();
@@ -1106,6 +1269,10 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         VcoreLoadYAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
         VrmTempYAxes[0].LabelsPaint = new SolidColorPaint(textSk);
         VrmTempYAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
+        CapacityHistoryXAxes[0].LabelsPaint = new SolidColorPaint(textSk);
+        CapacityHistoryXAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
+        CapacityHistoryYAxes[0].LabelsPaint = new SolidColorPaint(textSk);
+        CapacityHistoryYAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
     }
 
     private async Task RefreshAsync()
@@ -1191,6 +1358,10 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         else if (chargeReading is not null) { BatteryDrainRateW = Math.Abs(chargeReading.Value!.Value); BatteryIsCharging = true; }
         else if (anyPowerReading is not null) { BatteryDrainRateW = Math.Abs(anyPowerReading.Value!.Value); BatteryIsCharging = anyPowerReading.Value!.Value < 0; }
         else { BatteryDrainRateW = null; BatteryIsCharging = false; }
+
+        // #645-#648: the live half of the battery report panel, built on top of the Battery
+        // sensor collection and BatteryDrainRateW/BatteryIsCharging above.
+        await RefreshBatteryReportLiveStateAsync();
 
         // #41: a fan pinned at 0 RPM while some temperature reading is clearly under load is a
         // real "this fan stopped spinning" signal, not a normal idle/passive-cooling reading.
@@ -2477,6 +2648,259 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
             : events.Count > 0
                 ? $"AC source changed {PowerSourceChangesLastHour} time(s) in the last hour."
                 : string.Empty;
+    }
+
+    // ================================================================================
+    // #641-#648: battery report panel
+    // ================================================================================
+
+    /// <summary>#641/#643: on-demand `powercfg /batteryreport` (falling back to WMI) - a real
+    /// subprocess call, so this only ever runs from LoadBatteryReportCommand, never the tick
+    /// timer or app startup (see CLAUDE.md's on-demand-vs-polled convention).</summary>
+    private async Task LoadBatteryReportAsync()
+    {
+        BatteryReportStatusText = "Reading battery report...";
+        var (report, statusText) = await BatteryReportService.GetReportAsync();
+        BatteryReport = report;
+        BatteryReportStatusText = statusText.Length > 0
+            ? statusText
+            : report is null
+                ? "No battery report available."
+                : report.ReportGeneratedAt is { } generated
+                    ? $"Report generated {generated:g} ({report.Source})."
+                    : $"Report loaded ({report.Source}).";
+        OnPropertyChanged(nameof(HasBatteryReport));
+        RefreshCapacityHistoryChart();
+    }
+
+    /// <summary>#642: rebuilds the capacity-fade chart and its linear 50%-of-design projection
+    /// from whatever BatteryReport.CapacityHistory currently holds - called once after each
+    /// LoadBatteryReportAsync completes (there's no per-tick source for this, the report is only
+    /// ever refreshed on demand).</summary>
+    private void RefreshCapacityHistoryChart()
+    {
+        CapacityHistoryPoints.Clear();
+        CapacityProjectionLine.Clear();
+        CapacityProjectionText = string.Empty;
+
+        var usable = (BatteryReport?.CapacityHistory ?? new List<BatteryCapacityHistoryEntry>())
+            .Where(e => e.FullChargeCapacityMwh is > 0)
+            .OrderBy(e => e.PeriodStart)
+            .ToList();
+        if (usable.Count == 0) return;
+
+        _capacityHistoryOriginDate = usable[0].PeriodStart;
+        var points = usable
+            .Select(e => (X: (e.PeriodStart - _capacityHistoryOriginDate).TotalDays, Y: e.FullChargeCapacityMwh!.Value / 1000.0))
+            .ToList();
+        foreach (var p in points) CapacityHistoryPoints.Add(new ObservablePoint(p.X, p.Y));
+
+        if (points.Count < 3)
+        {
+            CapacityProjectionText = "Not enough capacity-history entries yet for a fade projection (needs at least 3).";
+            return;
+        }
+
+        double? designWh = BatteryReport?.DesignCapacityMwh is { } d && d > 0 ? d / 1000.0 : null;
+        if (designWh is null)
+        {
+            CapacityProjectionText = "Design capacity is unknown, so a 50%-of-design projection can't be computed.";
+            return;
+        }
+
+        var (slope, intercept) = LinearRegression(points);
+        if (slope >= -0.0001)
+        {
+            CapacityProjectionText = "Capacity isn't trending downward over this history yet - no fade projection to show.";
+            return;
+        }
+
+        double threshold = designWh.Value * 0.5;
+        double lastX = points[^1].X;
+        double lastFitY = (slope * lastX) + intercept;
+        double firstFitY = (slope * points[0].X) + intercept;
+        double projectedX = (threshold - intercept) / slope;
+
+        if (projectedX <= lastX)
+        {
+            CapacityProjectionLine.Add(new ObservablePoint(points[0].X, firstFitY));
+            CapacityProjectionLine.Add(new ObservablePoint(lastX, lastFitY));
+            CapacityProjectionText = "This battery's fitted capacity trend is already at or below 50% of its design capacity.";
+            return;
+        }
+
+        CapacityProjectionLine.Add(new ObservablePoint(lastX, lastFitY));
+        CapacityProjectionLine.Add(new ObservablePoint(projectedX, threshold));
+
+        var projectedDate = _capacityHistoryOriginDate.AddDays(projectedX);
+        double whPerYear = Math.Abs(slope) * 365.0;
+        CapacityProjectionText =
+            $"At the current fade rate (~{whPerYear:0.#} Wh/year), a linear projection crosses 50% of design capacity " +
+            $"({threshold:0.#} Wh) around {projectedDate:MMMM yyyy} - a rough estimate from {points.Count} report periods, not a guarantee.";
+    }
+
+    /// <summary>#644: on-demand SRUM battery-drain-by-process scan - see
+    /// BatteryDrainAttributionService's remarks for why this is a real subprocess call (gated
+    /// behind its own button, same as LoadBatteryReportAsync above) and why the result is an
+    /// adaptively-parsed best-effort ranking rather than a calibrated watt-hour table.</summary>
+    private async Task LoadBatteryDrainAttributionAsync()
+    {
+        BatteryDrainAttributionStatusText = "Scanning SRUM energy history (this can take a moment)...";
+        var (rows, statusText) = await BatteryDrainAttributionService.ReadRecentDrainAsync();
+        BatteryDrainAttribution.Clear();
+        foreach (var row in rows) BatteryDrainAttribution.Add(row);
+        BatteryDrainAttributionStatusText = statusText.Length > 0
+            ? statusText
+            : $"{rows.Count} app(s) found in the last several days of SRUM energy history (informational ranking, not calibrated Wh - see the panel's own note).";
+    }
+
+    /// <summary>#645-#648: the live (per-tick) half of the battery report panel - cheap enough for
+    /// the tick timer (a single Win32_Battery WMI SELECT plus pure in-memory bookkeeping over the
+    /// Battery sensor collection RefreshCoreAsync already built above), unlike LoadBatteryReportAsync/
+    /// LoadBatteryDrainAttributionAsync's real subprocess calls.</summary>
+    private async Task RefreshBatteryReportLiveStateAsync()
+    {
+        BatteryStatusService.Win32BatterySnapshot win32;
+        try { win32 = await Task.Run(BatteryStatusService.Read); }
+        catch { win32 = BatteryStatusService.Win32BatterySnapshot.NotPresent; }
+
+        // #647: gauge dropout - either data source reporting a battery counts as "present". See
+        // HasBattery's remarks for why the section-visibility gate is latched off this, not the
+        // instantaneous Battery.Count.
+        bool presentNow = Battery.Count > 0 || win32.Present;
+        if (presentNow) HasBattery = true;
+        if (_batteryPresentLastTick is { } wasPresent && wasPresent != presentNow)
+        {
+            BatteryDropoutEvents.Insert(0, new BatteryPresenceEvent { Timestamp = DateTime.Now, BecamePresent = presentNow });
+            while (BatteryDropoutEvents.Count > 20) BatteryDropoutEvents.RemoveAt(BatteryDropoutEvents.Count - 1);
+        }
+        _batteryPresentLastTick = presentNow;
+
+        if (!presentNow)
+        {
+            BatteryChargePercent = null;
+            BatteryTemperatureC = null;
+            _chargePercentSamples.Clear();
+            _chargeCeilingSamples.Clear();
+            ChargeStallDetected = false;
+            WeakChargerSuspected = false;
+            ChargeRateVerdictText = string.Empty;
+            ChargeCeilingText = string.Empty;
+            HotChargeThrottleText = string.Empty;
+            RuntimeComparisonText = string.Empty;
+            return;
+        }
+
+        // Charge % - prefer LibreHardwareMonitorLib's own "Charge Level" sensor (the same source
+        // the drain-rate readout above uses), falling back to Win32_Battery's
+        // EstimatedChargeRemaining when the sensor tree doesn't report one. Excludes "Degradation
+        // Level", which is also a Level-typed Battery sensor but an entirely different figure.
+        var chargeLevelReading = Battery.FirstOrDefault(r => r.Type == SensorType.Level &&
+            r.SensorName.Contains("Charge", StringComparison.OrdinalIgnoreCase) &&
+            !r.SensorName.Contains("Degrad", StringComparison.OrdinalIgnoreCase));
+        BatteryChargePercent = chargeLevelReading?.Value ?? win32.EstimatedChargePercent;
+
+        // #648: battery-pack temperature, if any vendor sensor reports one.
+        BatteryTemperatureC = Battery.FirstOrDefault(r => r.Type == SensorType.Temperature)?.Value;
+
+        var now = DateTime.Now;
+
+        // ---- #645: charge-rate / charge-stall -------------------------------------------------
+        if (BatteryIsCharging && BatteryDrainRateW is { } chargeW)
+        {
+            ChargeRateSessionMaxW = ChargeRateSessionMaxW is { } max ? Math.Max(max, chargeW) : chargeW;
+
+            if (BatteryChargePercent is { } pctForStall)
+            {
+                _chargePercentSamples.Add((now, pctForStall));
+                _chargePercentSamples.RemoveAll(s => s.When < now.AddMinutes(-ChargeStallWindowMinutes));
+            }
+
+            bool stalled = BatteryChargePercent is { } pct2 && pct2 < ChargeStallMaxPercent &&
+                _chargePercentSamples.Count >= 2 &&
+                now - _chargePercentSamples[0].When >= TimeSpan.FromMinutes(ChargeStallWindowMinutes) &&
+                pct2 - _chargePercentSamples[0].Percent < ChargeStallMinDeltaPercent;
+            ChargeStallDetected = stalled;
+
+            bool weak = !stalled && ChargeRateSessionMaxW is { } sessionMax && sessionMax > 1.0 &&
+                chargeW < sessionMax * WeakChargerFraction && BatteryChargePercent is < WeakChargerBelowPercent;
+            WeakChargerSuspected = weak;
+
+            string adapterRef = PsuRatedWattageW is { } rated ? $" - this system's adapter is rated {rated:0} W" : string.Empty;
+            ChargeRateVerdictText = stalled
+                ? $"Charging appears stalled at ~{BatteryChargePercent:0}% - no meaningful progress in the last {ChargeStallWindowMinutes:0} minutes (quick flag, not a verdict - a vendor charge-limit ceiling can look similar; see below)."
+                : weak
+                    ? $"Charging at {chargeW:0.#} W, well under the {ChargeRateSessionMaxW:0.#} W this battery has accepted this session{adapterRef} - a weak or wrong adapter is one possible cause (informational only, not a confirmed fault)."
+                    : $"Charging at {chargeW:0.#} W.";
+        }
+        else
+        {
+            _chargePercentSamples.Clear();
+            ChargeStallDetected = false;
+            WeakChargerSuspected = false;
+            ChargeRateVerdictText = string.Empty;
+        }
+
+        // ---- #646: design-vs-actual runtime, both at the *same* live draw rate so the gap
+        // reflects capacity fade alone, not a workload difference between "now" and "when new". --
+        if (!BatteryIsCharging && BatteryDrainRateW is { } drawW && drawW > 0.05 && BatteryReport is { } report)
+        {
+            double? designHours = report.DesignCapacityMwh is { } design && design > 0
+                ? design / 1000.0 / drawW : null;
+            double? actualHours = win32.EstimatedRunTime?.TotalHours ??
+                (report.FullChargeCapacityMwh is { } fcc && fcc > 0 ? fcc / 1000.0 / drawW : null);
+
+            RuntimeComparisonText = designHours is { } dh && actualHours is { } ah
+                ? $"Getting an estimated {FormatHoursMinutes(ah)} of a designed ~{FormatHoursMinutes(dh)} at the current draw ({drawW:0.#} W)."
+                : string.Empty;
+        }
+        else if (BatteryReport is null)
+        {
+            RuntimeComparisonText = "Run the battery report below to compare against design capacity.";
+        }
+        else
+        {
+            RuntimeComparisonText = string.Empty;
+        }
+
+        // ---- #648: charge-ceiling (vendor conservation policy) + hot-pack charge throttle -----
+        if (BatteryChargePercent is { } chargePct)
+        {
+            _chargeCeilingSamples.Add((now, chargePct, win32.BatteryStatusText == "On AC (not charging)"));
+            _chargeCeilingSamples.RemoveAll(s => s.When < now.AddMinutes(-ChargeCeilingWindowMinutes));
+
+            if (_chargeCeilingSamples.Count >= 2 && now - _chargeCeilingSamples[0].When >= TimeSpan.FromMinutes(ChargeCeilingWindowMinutes))
+            {
+                double spread = _chargeCeilingSamples.Max(s => s.Percent) - _chargeCeilingSamples.Min(s => s.Percent);
+                double avg = _chargeCeilingSamples.Average(s => s.Percent);
+                bool mostlyNotCharging = _chargeCeilingSamples.Count(s => s.OnAcNotCharging) >= _chargeCeilingSamples.Count / 2;
+
+                ChargeCeilingText = spread <= ChargeCeilingStableSpreadPercent && avg is >= 40 and <= 90 && mostlyNotCharging
+                    ? $"Charge has held steady near {avg:0}% (~{CommonChargeCeilings.OrderBy(c => Math.Abs(c - avg)).First():0}%) for over " +
+                      $"{ChargeCeilingWindowMinutes:0} minutes on AC - this looks like a vendor battery-conservation charge limit, not a charging fault or wear (quick flag, not a verdict)."
+                    : string.Empty;
+            }
+        }
+        else
+        {
+            _chargeCeilingSamples.Clear();
+            ChargeCeilingText = string.Empty;
+        }
+
+        HotChargeThrottleText = BatteryTemperatureC is { } tempC && tempC >= HotBatteryThresholdC &&
+            !BatteryIsCharging && win32.BatteryStatusText is "On AC (not charging)" or "Discharging"
+            ? $"Battery pack reads {tempC:0.#}°C and isn't charging while on AC - many batteries pause or slow charging above " +
+              $"~{HotBatteryThresholdC:0}°C to protect the cell. Normal protective behavior, not a fault (quick flag, not a verdict)."
+            : string.Empty;
+    }
+
+    /// <summary>"2h 10m" / "45m" - hour-scale duration formatting for the #646 runtime comparison
+    /// (distinct from the existing FormatDuration helper below, which is minute/second-scale for
+    /// throttle/cooldown durations).</summary>
+    private static string FormatHoursMinutes(double hours)
+    {
+        var ts = TimeSpan.FromHours(Math.Max(0, hours));
+        return ts.TotalHours >= 1 ? $"{(int)ts.TotalHours}h {ts.Minutes}m" : $"{ts.Minutes}m";
     }
 
     private static void Replace(ObservableCollection<SensorReading> target, IEnumerable<SensorReading> source)

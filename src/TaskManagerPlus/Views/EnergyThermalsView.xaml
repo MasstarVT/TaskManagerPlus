@@ -1074,13 +1074,16 @@
 
             <!-- Battery: empty (and the whole section collapsed) on any desktop - see
                  EnergyThermalsViewModel.Battery's remarks. "Degradation Level" is the closest
-                 thing to a real battery-health figure this app can show. -->
+                 thing to a real battery-health figure this app can show. Gated on HasBattery
+                 (sticky - see its remarks) rather than the instantaneous Battery.Count, so a
+                 transient #647 gauge dropout doesn't hide this whole section along with the very
+                 dropout log it's meant to reveal. -->
             <StackPanel>
                 <StackPanel.Style>
                     <Style TargetType="StackPanel">
                         <Setter Property="Visibility" Value="Visible" />
                         <Style.Triggers>
-                            <DataTrigger Binding="{Binding Battery.Count}" Value="0">
+                            <DataTrigger Binding="{Binding HasBattery}" Value="False">
                                 <Setter Property="Visibility" Value="Collapsed" />
                             </DataTrigger>
                         </Style.Triggers>
@@ -1143,6 +1146,249 @@
                             Command="{Binding LoadPowerSourceEventsCommand}" />
                 </Grid>
             </StackPanel>
+
+            <!-- #641-#648: full battery report panel - powercfg /batteryreport + WMI fallback
+                 (#641/#643), capacity-fade chart + 50%-of-design projection (#642), charge-rate/
+                 stall detection (#645), design-vs-actual runtime (#646), gauge-dropout log
+                 (#647), and charge-ceiling/hot-pack charge-throttle awareness (#648). SRUM
+                 per-app drain attribution (#644) is its own card further below - a separate,
+                 slower on-demand scan. Lives inside this same HasBattery-gated section. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Battery report" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Run battery report" FontSize="11" Padding="8,3"
+                                Command="{Binding LoadBatteryReportCommand}" />
+                    </Grid>
+                    <TextBlock Text="{Binding BatteryReportStatusText}" Style="{StaticResource SubStat}"
+                               TextWrapping="Wrap" Margin="0,6,0,10" />
+
+                    <!-- #641/#643: identity/capacity figures + #642's chart + #641's recent-usage
+                         table - all only meaningful once a report has actually loaded. -->
+                    <StackPanel>
+                        <StackPanel.Style>
+                            <Style TargetType="StackPanel">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding HasBatteryReport}" Value="False">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </StackPanel.Style>
+
+                        <WrapPanel Margin="0,0,0,4">
+                            <StackPanel Margin="0,0,20,10">
+                                <TextBlock Text="Manufacturer" Style="{StaticResource SpecLabel}" />
+                                <TextBlock Text="{Binding BatteryReport.Manufacturer, TargetNullValue=Unknown}" Style="{StaticResource SpecValue}" />
+                            </StackPanel>
+                            <StackPanel Margin="0,0,20,10">
+                                <TextBlock Text="Chemistry" Style="{StaticResource SpecLabel}" />
+                                <TextBlock Text="{Binding BatteryReport.Chemistry, TargetNullValue=Unknown}" Style="{StaticResource SpecValue}" />
+                            </StackPanel>
+                            <StackPanel Margin="0,0,20,10">
+                                <TextBlock Text="Cycle count" Style="{StaticResource SpecLabel}" />
+                                <TextBlock Text="{Binding BatteryReport.CycleCount, TargetNullValue=Unknown}" Style="{StaticResource SpecValue}" />
+                            </StackPanel>
+                            <StackPanel Margin="0,0,20,10">
+                                <TextBlock Text="Design capacity" Style="{StaticResource SpecLabel}" />
+                                <TextBlock Text="{Binding BatteryReport.DesignCapacityMwh, StringFormat={}{0:0} mWh, TargetNullValue=Unknown}" Style="{StaticResource SpecValue}" />
+                            </StackPanel>
+                            <StackPanel Margin="0,0,20,10">
+                                <TextBlock Text="Full-charge capacity" Style="{StaticResource SpecLabel}" />
+                                <TextBlock Text="{Binding BatteryReport.FullChargeCapacityMwh, StringFormat={}{0:0} mWh, TargetNullValue=Unknown}" Style="{StaticResource SpecValue}" />
+                            </StackPanel>
+                            <StackPanel Margin="0,0,0,10">
+                                <TextBlock Text="Health (full-charge / design)" Style="{StaticResource SpecLabel}" />
+                                <TextBlock Text="{Binding BatteryReport.HealthPercent, StringFormat={}{0:0.#}%, TargetNullValue=Unknown}" Style="{StaticResource SpecValue}" />
+                            </StackPanel>
+                        </WrapPanel>
+
+                        <!-- #642: capacity-fade chart - empty (and hidden) whenever the report
+                             has no usable capacity-history rows, which is always true on the WMI
+                             fallback path (no history table exists in WMI). -->
+                        <StackPanel Margin="0,6,0,0">
+                            <StackPanel.Style>
+                                <Style TargetType="StackPanel">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding CapacityHistoryPoints.Count}" Value="0">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </StackPanel.Style>
+                            <TextBlock Text="Capacity fade" Style="{StaticResource CardTitle}" Margin="0,0,0,4" />
+                            <lvc:CartesianChart Series="{Binding CapacityHistorySeries}" XAxes="{Binding CapacityHistoryXAxes}" YAxes="{Binding CapacityHistoryYAxes}"
+                                                 Height="160" TooltipPosition="Top" LegendPosition="Hidden" Background="Transparent" />
+                        </StackPanel>
+                        <TextBlock Text="{Binding CapacityProjectionText}" TextWrapping="Wrap" Margin="0,6,0,10">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding CapacityProjectionText}" Value="">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+
+                        <!-- #641: recent-usage table from the report itself - empty on the WMI
+                             fallback path, same reasoning as the chart above. -->
+                        <StackPanel Margin="0,0,0,4">
+                            <StackPanel.Style>
+                                <Style TargetType="StackPanel">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding BatteryReport.RecentUsage.Count}" Value="0">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </StackPanel.Style>
+                            <TextBlock Text="Recent usage" Style="{StaticResource CardTitle}" Margin="0,0,0,4" />
+                            <DataGrid ItemsSource="{Binding BatteryReport.RecentUsage}" Height="180" IsReadOnly="True">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Period" Binding="{Binding PeriodStart, StringFormat={}{0:g}}" Width="150" />
+                                    <DataGridTextColumn Header="State" Binding="{Binding State}" Width="*" />
+                                    <DataGridTextColumn Header="Source" Binding="{Binding PowerSource}" Width="*" />
+                                    <DataGridTextColumn Header="Capacity remaining" Binding="{Binding CapacityRemainingMwh, StringFormat={}{0:0} mWh}" Width="150" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </StackPanel>
+                    </StackPanel>
+
+                    <!-- #646: design-vs-actual runtime estimate - independent of whether a report
+                         has loaded yet (shows a prompt to run one until it has). -->
+                    <TextBlock Text="{Binding RuntimeComparisonText}" TextWrapping="Wrap" Margin="0,4,0,0">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding RuntimeComparisonText}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
+                    <!-- #645: charge-rate / charge-stall - only meaningful while actually
+                         charging, tinted as a warning when a stall or a suspiciously weak charge
+                         rate is flagged. Quick flag, not a verdict (see the text itself). -->
+                    <TextBlock Text="{Binding ChargeRateVerdictText}" TextWrapping="Wrap" Margin="0,4,0,0">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding ChargeRateVerdictText}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding ChargeStallDetected}" Value="True">
+                                        <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding WeakChargerSuspected}" Value="True">
+                                        <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
+                    <!-- #648: charge-ceiling (vendor conservation policy) + hot-pack charge
+                         throttle - both purely informational/protective-behavior notes, never
+                         tinted as a warning (the whole point is "this isn't a fault"). -->
+                    <TextBlock Text="{Binding ChargeCeilingText}" TextWrapping="Wrap" Margin="0,4,0,0">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding ChargeCeilingText}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <TextBlock Text="{Binding HotChargeThrottleText}" TextWrapping="Wrap" Margin="0,4,0,0">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding HotChargeThrottleText}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
+                    <!-- #647: gauge-dropout log - the battery instance disappearing and
+                         reappearing between polls, timestamped. Hidden entirely until at least
+                         one transition has actually been observed this session. -->
+                    <StackPanel Margin="0,10,0,0">
+                        <StackPanel.Style>
+                            <Style TargetType="StackPanel">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding BatteryDropoutEvents.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </StackPanel.Style>
+                        <TextBlock Text="Gauge presence log" Style="{StaticResource CardTitle}" Margin="0,0,0,4" />
+                        <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,6"
+                                   Text="The battery instance disappearing and reappearing between polls points at a failing battery connector or gauge IC - quick flag, not a verdict." />
+                        <ItemsControl ItemsSource="{Binding BatteryDropoutEvents}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock FontSize="12" Margin="0,0,0,3" Foreground="{DynamicResource WarningBrush}">
+                                        <Run Text="{Binding Timestamp, StringFormat={}{0:g}, Mode=OneWay}" />
+                                        <Run Text=" — " />
+                                        <Run Text="{Binding DescriptionText, Mode=OneWay}" />
+                                    </TextBlock>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- #644: SRUM per-app battery-drain attribution - a separate card since it's its
+                 own, slower on-demand scan (powercfg /srumutil), independent of the battery
+                 report button above. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Battery drain by app (SRUM)" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Scan drain history" FontSize="11" Padding="8,3"
+                                Command="{Binding LoadBatteryDrainAttributionCommand}" />
+                    </Grid>
+                    <TextBlock TextWrapping="Wrap" Style="{StaticResource SubStat}" Margin="0,4,0,10"
+                               Text="What's been draining the battery over the last several days - a best-effort, informational ranking built from Windows' own SRUM energy-estimation data, not a calibrated watt-hour reading. This is a real subprocess scan and can take a moment." />
+                    <TextBlock Text="{Binding BatteryDrainAttributionStatusText}" Style="{StaticResource SubStat}"
+                               TextWrapping="Wrap" Margin="0,0,0,10" />
+                    <DataGrid ItemsSource="{Binding BatteryDrainAttribution}" Height="240" IsReadOnly="True">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="App" Binding="{Binding AppName}" Width="2*" />
+                            <DataGridTextColumn Header="Energy (relative)" Binding="{Binding EnergyEstimate, StringFormat={}{0:0.#}}" Width="*" />
+                            <DataGridTextColumn Header="Samples" Binding="{Binding SampleCount}" Width="*" />
+                            <DataGridTextColumn Header="Last seen" Binding="{Binding LastSeen, StringFormat={}{0:g}}" Width="1.5*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
 
         </StackPanel>
     </ScrollViewer>
