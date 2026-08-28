@@ -465,6 +465,287 @@ public sealed class EventLogService
         return result.OrderByDescending(t => t).ToList();
     }
 
+    // ================================================================================
+    // #670/#677: GPU driver timeout/reset (TDR) detail, DXGI device-removed crashes, and the
+    // "unrecovered reset" correlation against a Kernel-Power 41 bugcheck - all System/Application
+    // log reads, same on-demand shape as every query above. TdrEventId (4101) above already backs
+    // the flat StabilitySnapshot.TdrEventCount; these read the same event family for actual detail
+    // rather than duplicating that counting query.
+    // ================================================================================
+
+    // 4101 = "Display driver X stopped responding and has successfully recovered." 4104 is the
+    // vendor/DXGKRNL-side sibling some driver stacks log alongside it - both come from the
+    // "Display" provider (not a vendor-specific one; the driver module name lives in the message
+    // text, not the provider name).
+    private const string DisplayProvider = "Display";
+    private const int TdrRecoveredEventId4104 = 4104;
+
+    private static readonly string[] KnownGpuDriverModules =
+    {
+        "nvlddmkm", "amdkmdag", "amdkmdap", "atikmdag", "atikmpag", "igdkmd64", "igdkmdn64", "igfxdrv",
+    };
+
+    private static readonly Regex TdrDriverNameRegex = new(
+        @"[Dd]isplay driver\s+(\S+?)(\.sys)?\s+stopped responding", RegexOptions.Compiled);
+
+    /// <summary>#670: parses the driver module name and recovery outcome out of each TDR event's
+    /// own formatted message - see GpuTdrEvent's remarks for why both are best-effort. Naming the
+    /// module is what makes a TDR actionable at a glance instead of just a count.</summary>
+    public List<GpuTdrEvent> ReadGpuTdrEvents()
+    {
+        var result = new List<GpuTdrEvent>();
+        try
+        {
+            long maxAgeMs = LookbackDays * 24L * 60 * 60 * 1000;
+            var query = new EventLogQuery("System", PathType.LogName,
+                $"*[System[(EventID={TdrEventId} or EventID={TdrRecoveredEventId4104}) and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]")
+            {
+                ReverseDirection = true,
+            };
+
+            using var reader = new EventLogReader(query);
+            int count = 0;
+            const int maxEvents = 300;
+            while (count < maxEvents && reader.ReadEvent() is { } record)
+            {
+                using (record)
+                {
+                    count++;
+                    string message;
+                    try { message = record.FormatDescription() ?? string.Empty; }
+                    catch { message = string.Empty; } // provider's message file isn't registered - a known, common gap
+
+                    string module = ExtractGpuDriverModule(message);
+                    bool? recovered = message.Length == 0 ? null
+                        : message.Contains("successfully recovered", StringComparison.OrdinalIgnoreCase) ? true
+                        : message.Contains("stopped responding", StringComparison.OrdinalIgnoreCase) ? false
+                        : null;
+
+                    result.Add(new GpuTdrEvent
+                    {
+                        TimeCreated = record.TimeCreated ?? DateTime.MinValue,
+                        EventId = record.Id,
+                        DriverModule = module,
+                        Recovered = recovered,
+                        Message = Truncate(message, 300),
+                    });
+                }
+            }
+        }
+        catch
+        {
+            // Provider/log unavailable - degrade to "none found", same as every other event-log
+            // read in this service.
+        }
+        return result.OrderByDescending(e => e.TimeCreated).ToList();
+    }
+
+    private static string ExtractGpuDriverModule(string message)
+    {
+        var match = TdrDriverNameRegex.Match(message);
+        if (match.Success) return match.Groups[1].Value;
+
+        // Fall back to a plain substring search for a known module name anywhere in the message -
+        // covers vendor-specific 4104 wording this app hasn't seen an exact "stopped responding"
+        // phrasing for.
+        foreach (var known in KnownGpuDriverModules)
+            if (message.Contains(known, StringComparison.OrdinalIgnoreCase)) return known;
+
+        return "Unknown";
+    }
+
+    // #677: Windows Error Reporting logs an "Application Error" (event 1000) to the Application log
+    // for an unhandled crash; a renderer/game that lost its GPU device mid-frame typically names the
+    // DXGI_ERROR_DEVICE_REMOVED HRESULT (0x887A0005) directly in that entry's own formatted text -
+    // matched by keyword the same way ReadThermalCriticalEvents matches its own message family,
+    // since there's no dedicated stable event ID for this specific HRESULT.
+    private static readonly string[] DeviceRemovedKeywords = { "DXGI_ERROR_DEVICE_REMOVED", "887a0005" };
+    private static readonly Regex FaultingAppNameRegex = new(@"Faulting application name:\s*([^,\r\n]+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    public List<GpuDeviceRemovedEvent> ReadGpuDeviceRemovedEvents()
+    {
+        var result = new List<GpuDeviceRemovedEvent>();
+        try
+        {
+            long maxAgeMs = LookbackDays * 24L * 60 * 60 * 1000;
+            var query = new EventLogQuery("Application", PathType.LogName,
+                $"*[System[TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]")
+            {
+                ReverseDirection = true,
+            };
+
+            using var reader = new EventLogReader(query);
+            int count = 0;
+            const int maxEvents = 2000; // Application log is noisy - keyword-filtered below, so a generous scan cap
+            while (count < maxEvents && reader.ReadEvent() is { } record)
+            {
+                using (record)
+                {
+                    count++;
+                    string message;
+                    try { message = record.FormatDescription() ?? string.Empty; }
+                    catch { continue; } // can't keyword-match without the formatted message
+
+                    if (!DeviceRemovedKeywords.Any(k => message.Contains(k, StringComparison.OrdinalIgnoreCase)))
+                        continue;
+
+                    string processName = FaultingAppNameRegex.Match(message) is { Success: true } m
+                        ? m.Groups[1].Value.Trim() : string.Empty;
+
+                    result.Add(new GpuDeviceRemovedEvent
+                    {
+                        TimeCreated = record.TimeCreated ?? DateTime.MinValue,
+                        ProviderName = record.ProviderName ?? string.Empty,
+                        ProcessName = processName,
+                        Message = Truncate(message, 300),
+                    });
+                }
+            }
+        }
+        catch
+        {
+            // Provider/log unavailable - degrade to "none found", same as every other event-log
+            // read in this service.
+        }
+        return result.OrderByDescending(e => e.TimeCreated).ToList();
+    }
+
+    // #677: a TDR/device-removed event counts as "unrecovered" when a Kernel-Power 41 bugcheck
+    // naming 0x116 (VIDEO_TDR_ERROR) or 0x117 (VIDEO_TDR_TIMEOUT_DETECTED) landed within a few
+    // minutes of it - the same "nearest event within a short window" correlation ReadMinidumps
+    // already uses for minidump-to-bugcheck pairing. This needs its own full-window Kernel-Power 41
+    // scan (not RecentEvents, which is capped at 120 total events across both logs and could miss
+    // an older 41 entirely on a busy machine).
+    private static readonly string[] GpuTdrBugcheckSuffixes = { "116", "117" };
+
+    private List<StabilityEvent> ReadKernelPower41BugcheckEvents()
+    {
+        var result = new List<StabilityEvent>();
+        try
+        {
+            long maxAgeMs = LookbackDays * 24L * 60 * 60 * 1000;
+            var query = new EventLogQuery("System", PathType.LogName,
+                $"*[System[(EventID={KernelPowerEventId}) and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]")
+            {
+                ReverseDirection = true,
+            };
+
+            using var reader = new EventLogReader(query);
+            int count = 0;
+            const int maxEvents = 300;
+            while (count < maxEvents && reader.ReadEvent() is { } record)
+            {
+                using (record)
+                {
+                    count++;
+                    result.Add(new StabilityEvent
+                    {
+                        TimeCreated = record.TimeCreated ?? DateTime.MinValue,
+                        LogName = "System",
+                        EventId = record.Id,
+                        BugcheckCode = ExtractBugcheckCode(record),
+                    });
+                }
+            }
+        }
+        catch
+        {
+            // Provider/log unavailable - degrade to "no bugcheck correlation available".
+        }
+        return result;
+    }
+
+    /// <summary>#677: composes ReadGpuTdrEvents/ReadGpuDeviceRemovedEvents with the unrecovered-
+    /// reset correlation above into one snapshot for the GPU tab's event list.</summary>
+    public GpuResetSummary ReadGpuResetSummary()
+    {
+        var tdrEvents = ReadGpuTdrEvents();
+        var deviceRemoved = ReadGpuDeviceRemovedEvents();
+        var bugchecks = ReadKernelPower41BugcheckEvents()
+            .Where(e => e.BugcheckCode is not null &&
+                        GpuTdrBugcheckSuffixes.Any(s => e.BugcheckCode!.EndsWith(s, StringComparison.OrdinalIgnoreCase)))
+            .ToList();
+
+        int unrecovered = 0;
+        if (bugchecks.Count > 0)
+        {
+            var resetTimestamps = tdrEvents.Select(e => e.TimeCreated).Concat(deviceRemoved.Select(e => e.TimeCreated));
+            unrecovered = resetTimestamps.Count(t => bugchecks.Any(b => Math.Abs((b.TimeCreated - t).TotalMinutes) < 10));
+        }
+
+        return new GpuResetSummary
+        {
+            TdrEvents = tdrEvents,
+            DeviceRemovedEvents = deviceRemoved,
+            UnrecoveredResetCount = unrecovered,
+        };
+    }
+
+    // #673: broader set of GPU-related crash-module hints than KnownGpuDriverModules above - a
+    // driver-crash-to-version correlation needs application-side GPU user-mode DLL crashes too
+    // (OpenGL/D3D user-mode drivers), not just the kernel-mode TDR module names.
+    private static readonly string[] GpuCrashModuleHints =
+    {
+        "nvlddmkm", "nvoglv", "nvwgf2um", "nvcuda", "nvd3dum",
+        "amdkmdag", "amdkmdap", "atidxx", "atiumd", "aticfx", "atig6txx",
+        "atikmdag", "atikmpag",
+        "igdkmd", "igdumdim", "igd10iumd", "igdusc",
+        "dxgkrnl",
+    };
+
+    /// <summary>#673: Application-log Level 1/2 crash events whose faulting module names a known
+    /// GPU driver component - the same FaultingModule extraction ReadLog already performs for the
+    /// general Recent Events grid, re-queried here on its own (full lookback window, not the
+    /// general 120-event cap) so a driver-version bucket count isn't silently short on a busy
+    /// machine.</summary>
+    public List<StabilityEvent> ReadGpuDriverCrashEvents()
+    {
+        var result = new List<StabilityEvent>();
+        try
+        {
+            long maxAgeMs = LookbackDays * 24L * 60 * 60 * 1000;
+            var query = new EventLogQuery("Application", PathType.LogName,
+                $"*[System[(Level=1 or Level=2) and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]")
+            {
+                ReverseDirection = true,
+            };
+
+            using var reader = new EventLogReader(query);
+            int count = 0;
+            const int maxEvents = 2000;
+            while (count < maxEvents && reader.ReadEvent() is { } record)
+            {
+                using (record)
+                {
+                    count++;
+                    string message;
+                    try { message = record.FormatDescription() ?? string.Empty; }
+                    catch { continue; }
+
+                    string? module = ExtractFaultingModule(message);
+                    if (module is null || !GpuCrashModuleHints.Any(h => module.Contains(h, StringComparison.OrdinalIgnoreCase)))
+                        continue;
+
+                    result.Add(new StabilityEvent
+                    {
+                        TimeCreated = record.TimeCreated ?? DateTime.MinValue,
+                        LogName = "Application",
+                        ProviderName = record.ProviderName ?? string.Empty,
+                        EventId = record.Id,
+                        FaultingModule = module,
+                        Message = Truncate(message, 300),
+                    });
+                }
+            }
+        }
+        catch
+        {
+            // Provider/log unavailable - degrade to "none found", same as every other event-log
+            // read in this service.
+        }
+        return result.OrderByDescending(e => e.TimeCreated).ToList();
+    }
+
     // Round 8 #40: low-memory resource-exhaustion events are logged by a dedicated Windows
     // component at Warning level, not Critical/Error - outside the Level=1|2 filter the main scan
     // above uses - so this is a second, separately targeted query for just this one provider,

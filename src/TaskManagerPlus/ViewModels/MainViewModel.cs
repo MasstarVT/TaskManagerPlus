@@ -254,6 +254,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         ApplyAxisThemeToLogging();
         Theme.ThemeModeChanged += ApplyAxisThemeToLogging;
+
+        // #674: GPU tab's VRAM-spillover trend chart.
+        ApplyAxisThemeToGpu();
+        Theme.ThemeModeChanged += ApplyAxisThemeToGpu;
     }
 
     private void ApplyThemeToPerformance()
@@ -290,6 +294,15 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Color TextOf(string key) => (resources[key] as SolidColorBrush)?.Color ?? Colors.Gray;
 
         Cpu.ApplyAxisTheme(TextOf("TextSecondaryBrush"), TextOf("BorderBrush2"));
+    }
+
+    /// <summary>#674: repaints GpuViewModel's VRAM-spillover trend chart axes.</summary>
+    private void ApplyAxisThemeToGpu()
+    {
+        var resources = Application.Current.Resources;
+        Color TextOf(string key) => (resources[key] as SolidColorBrush)?.Color ?? Colors.Gray;
+
+        Gpu.ApplyAxisTheme(TextOf("TextSecondaryBrush"), TextOf("BorderBrush2"));
     }
 
     private void ApplyAxisThemeToStability()
@@ -389,6 +402,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Theme.ThemeModeChanged -= ApplyAxisThemeToStability;
         Theme.ThemeModeChanged -= ApplyAxisThemeToStartup;
         Theme.ThemeModeChanged -= ApplyAxisThemeToLogging;
+        Theme.ThemeModeChanged -= ApplyAxisThemeToGpu;
         Processes.Dispose();
         Performance.Dispose();
         Services.Dispose();

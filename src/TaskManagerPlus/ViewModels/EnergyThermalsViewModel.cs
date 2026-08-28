@@ -350,6 +350,22 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
     private double? _gpuHotspotDeltaC;
     public double? GpuHotspotDeltaC { get => _gpuHotspotDeltaC; private set => SetProperty(ref _gpuHotspotDeltaC, value); }
 
+    /// <summary>#675: GPU memory-junction temperature - present only on GDDR6X-equipped cards
+    /// (LibreHardwareMonitorLib names it "GPU Memory Junction"/"Memory Junction"), tracked
+    /// separately from GpuTempC (core/edge) and GpuHotspotDeltaC (hotspot vs. edge) since VRAM
+    /// throttling is entirely invisible in either of those - a card can look comfortably cool at
+    /// the core while its memory is already past the ~105°C throttle reference. Null (tile hidden)
+    /// on every card without this sensor, which is most of them - never inferred from the core/
+    /// hotspot readings.</summary>
+    private double? _gpuMemoryJunctionTempC;
+    public double? GpuMemoryJunctionTempC { get => _gpuMemoryJunctionTempC; private set => SetProperty(ref _gpuMemoryJunctionTempC, value); }
+
+    // #675: the well-known ~105°C GDDR6X memory-junction throttle reference (Micron/Samsung GDDR6X
+    // datasheets and NVIDIA's own driver both target this figure) - not a per-card reported limit
+    // (no LibreHardwareMonitorLib backend exposes one), so this is a fixed comparison point, shown
+    // as such in the UI rather than a measured/reported ceiling.
+    public const double GpuMemoryJunctionThrottleReferenceC = 105.0;
+
     /// <summary>NVMe controller-vs-flash-die temperature split (round 9, #43) - the same "more
     /// than one temperature sensor on one hardware component" shape the GPU hotspot differential
     /// above already handles, restricted to HardwareType.Storage instead. LibreHardwareMonitorLib
@@ -1790,10 +1806,20 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         // "Core" collide with per-core CPU temperature readings otherwise.
         var gpuTemps = tempReadings.Where(r => IsGpu(r.HardwareType)).ToList();
         var gpuEdge = FindByNameContains(gpuTemps, "GPU Core", "Edge", "Core");
-        var gpuHotspot = FindByNameContains(gpuTemps, "Hot Spot", "Junction");
+        // #675: excludes any sensor named for the memory junction specifically - otherwise its
+        // "Junction" hint below would collide with GpuMemoryJunctionTempC's own lookup and get
+        // double-counted as both the die hotspot and the memory junction.
+        var gpuHotspotCandidates = gpuTemps.Where(r => !r.SensorName.Contains("Memory", StringComparison.OrdinalIgnoreCase)).ToList();
+        var gpuHotspot = FindByNameContains(gpuHotspotCandidates, "Hot Spot", "Junction");
         GpuHotspotDeltaC = gpuEdge.HasValue && gpuHotspot.HasValue && gpuHotspot > gpuEdge
             ? gpuHotspot - gpuEdge : null;
         GpuTempC = gpuEdge;
+
+        // #675: memory-junction temperature - GDDR6X-only, so null (tile hidden) is the expected
+        // common case, not a bug. Kept as its own lookup rather than folded into the hotspot hint
+        // list above so a "Junction" sensor name can't be double-counted as both the GPU die
+        // hotspot and the memory junction.
+        GpuMemoryJunctionTempC = FindByNameContains(gpuTemps, "GPU Memory Junction", "Memory Junction");
 
         // #607: per-core temperature spread (max - min across "Core #N" sensors) - a persistently
         // large spread on a desktop points at uneven cooler mount or poor pump contact rather than

@@ -144,11 +144,28 @@ public sealed class StabilityViewModel : ObservableObject
     private bool _undervoltInstabilitySuspected;
     public bool UndervoltInstabilitySuspected { get => _undervoltInstabilitySuspected; private set => SetProperty(ref _undervoltInstabilitySuspected, value); }
 
+    // #677: GPU resets (TDR + DXGI device-removed) and pre-TDR hang detections - the same
+    // EventLogService.ReadGpuResetSummary GpuViewModel's own GPU-tab card reads, surfaced here too
+    // since an *unrecovered* GPU reset (one that took the whole system down with it) is exactly the
+    // kind of event this tab's bugcheck-focused view exists to catch. GpuHangEvents comes from
+    // GpuHangHistoryService's persisted log, not a live poll - this tab never runs a timer.
+    public ObservableCollection<GpuTdrEvent> GpuTdrEvents { get; } = new();
+    public ObservableCollection<GpuHangEvent> GpuHangEvents { get; } = new();
+
+    private int _gpuUnrecoveredResetCount;
+    public int GpuUnrecoveredResetCount { get => _gpuUnrecoveredResetCount; private set => SetProperty(ref _gpuUnrecoveredResetCount, value); }
+
+    public AsyncRelayCommand LoadGpuResetHistoryCommand { get; }
+
+    private string _gpuResetHistoryStatusText = string.Empty;
+    public string GpuResetHistoryStatusText { get => _gpuResetHistoryStatusText; private set => SetProperty(ref _gpuResetHistoryStatusText, value); }
+
     public StabilityViewModel(EnergyThermalsViewModel energyThermals)
     {
         _energyThermals = energyThermals;
         RefreshCommand = new AsyncRelayCommand(RefreshAsync);
         LoadWheaEventsCommand = new AsyncRelayCommand(_ => LoadWheaEventsAsync());
+        LoadGpuResetHistoryCommand = new AsyncRelayCommand(_ => LoadGpuResetHistoryAsync());
 
         _dailyEventColumns = new ColumnSeries<double>
         {
@@ -219,6 +236,28 @@ public sealed class StabilityViewModel : ObservableObject
 
         _ = RefreshAsync();
         _ = LoadWheaEventsAsync();
+        _ = LoadGpuResetHistoryAsync();
+    }
+
+    /// <summary>#677: on-demand GPU reset/hang read - same "button + startup load" shape as
+    /// LoadWheaEventsAsync above, reusing EventLogService.ReadGpuResetSummary (owned by this class's
+    /// own _service instance, same as every other on-demand query on this tab) rather than
+    /// duplicating its TDR-parsing logic.</summary>
+    private async Task LoadGpuResetHistoryAsync()
+    {
+        var summary = await Task.Run(() => _service.ReadGpuResetSummary());
+        var hangs = await Task.Run(GpuHangHistoryService.Load);
+
+        GpuTdrEvents.Clear();
+        foreach (var e in summary.TdrEvents) GpuTdrEvents.Add(e);
+        GpuUnrecoveredResetCount = summary.UnrecoveredResetCount;
+
+        GpuHangEvents.Clear();
+        foreach (var h in hangs) GpuHangEvents.Add(h);
+
+        GpuResetHistoryStatusText = summary.TdrEvents.Count == 0 && summary.DeviceRemovedEvents.Count == 0 && hangs.Count == 0
+            ? "No GPU resets or pre-TDR hangs found."
+            : string.Empty;
     }
 
     /// <summary>Repaints chart axis text/gridlines to match the active theme family - see

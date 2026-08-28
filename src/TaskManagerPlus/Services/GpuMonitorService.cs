@@ -43,6 +43,11 @@ public sealed class GpuMonitorService : IDisposable
     private readonly Dictionary<string, PerformanceCounter> _dedicatedMemCounters = new();
     private readonly Dictionary<string, PerformanceCounter> _sharedMemCounters = new();
 
+    /// <summary>#674: "\GPU Adapter Memory(*)\Total Committed" - a third counter on the same
+    /// category as Dedicated/Shared Usage above, confirmed present on this app's target Windows
+    /// builds (`Get-Counter -ListSet "GPU Adapter Memory"`). See GpuAdapterSnapshot.TotalCommittedBytes.</summary>
+    private readonly Dictionary<string, PerformanceCounter> _totalCommittedCounters = new();
+
     public IReadOnlyList<GpuAdapterIdentity> Adapters { get; }
 
     /// <summary>False when this system exposes neither Win32_VideoController rows nor the "GPU
@@ -66,7 +71,7 @@ public sealed class GpuMonitorService : IDisposable
     public List<GpuAdapterSnapshot> Sample()
     {
         var engineByLuid = ReadEngineUtilizationByLuid();
-        var (dedicatedByLuid, sharedByLuid) = ReadAdapterMemoryByLuid();
+        var (dedicatedByLuid, sharedByLuid, committedByLuid) = ReadAdapterMemoryByLuid();
 
         var liveLuids = engineByLuid.Keys.Union(dedicatedByLuid.Keys).Union(sharedByLuid.Keys)
             .OrderBy(l => l, StringComparer.OrdinalIgnoreCase)
@@ -81,6 +86,7 @@ public sealed class GpuMonitorService : IDisposable
             engineByLuid.TryGetValue(luid, out var engines);
             dedicatedByLuid.TryGetValue(luid, out var dedicatedUsed);
             sharedByLuid.TryGetValue(luid, out var sharedUsed);
+            committedByLuid.TryGetValue(luid, out var committedUsed);
 
             var identity = canPairOrdinal ? Adapters[i] : null;
             var engineList = (engines ?? new Dictionary<string, double>())
@@ -99,6 +105,7 @@ public sealed class GpuMonitorService : IDisposable
                 DedicatedVramUsedBytes = dedicatedUsed,
                 DedicatedVramTotalBytes = identity?.AdapterRamBytes ?? 0,
                 SharedVramUsedBytes = sharedUsed,
+                TotalCommittedBytes = committedUsed,
                 DriverVersion = identity?.DriverVersion ?? string.Empty,
                 DriverDate = identity?.DriverDate ?? string.Empty,
                 WddmVersion = identity?.WddmVersion ?? "Unknown",
@@ -162,10 +169,11 @@ public sealed class GpuMonitorService : IDisposable
     /// <summary>Sums "Dedicated Usage"/"Shared Usage" per LUID - plain instantaneous byte gauges
     /// (not rates, unlike the engine counters above), so no priming is needed, the same treatment
     /// the Memory tab's Committed/Cache counters get.</summary>
-    private (Dictionary<string, long> Dedicated, Dictionary<string, long> Shared) ReadAdapterMemoryByLuid()
+    private (Dictionary<string, long> Dedicated, Dictionary<string, long> Shared, Dictionary<string, long> Committed) ReadAdapterMemoryByLuid()
     {
         var dedicated = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
         var shared = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+        var committed = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
         try
         {
             var instances = new PerformanceCounterCategory("GPU Adapter Memory").GetInstanceNames();
@@ -180,6 +188,11 @@ public sealed class GpuMonitorService : IDisposable
             {
                 _sharedMemCounters[stale].Dispose();
                 _sharedMemCounters.Remove(stale);
+            }
+            foreach (var stale in _totalCommittedCounters.Keys.Where(k => !seen.Contains(k)).ToList())
+            {
+                _totalCommittedCounters[stale].Dispose();
+                _totalCommittedCounters.Remove(stale);
             }
 
             foreach (var instance in instances)
@@ -217,13 +230,28 @@ public sealed class GpuMonitorService : IDisposable
                     }
                     catch { /* leave unset for this tick */ }
                 }
+
+                if (!_totalCommittedCounters.TryGetValue(instance, out var commCounter))
+                {
+                    try { _totalCommittedCounters[instance] = commCounter = new PerformanceCounter("GPU Adapter Memory", "Total Committed", instance, readOnly: true); }
+                    catch { commCounter = null; } // older Windows builds may not expose this counter - degrade to 0 (Committed hidden in the UI)
+                }
+                if (commCounter is not null)
+                {
+                    try
+                    {
+                        long v = (long)commCounter.NextValue();
+                        committed[luid] = committed.TryGetValue(luid, out var c) ? c + v : v;
+                    }
+                    catch { /* leave unset for this tick */ }
+                }
             }
         }
         catch
         {
             // "GPU Adapter Memory" category missing entirely - degrade to "no live VRAM data".
         }
-        return (dedicated, shared);
+        return (dedicated, shared, committed);
     }
 
     /// <summary>One-time static read (#55/#56) - Win32_VideoController for name/driver version/date,
@@ -341,5 +369,6 @@ public sealed class GpuMonitorService : IDisposable
         foreach (var c in _engineCounters.Values) c.Dispose();
         foreach (var c in _dedicatedMemCounters.Values) c.Dispose();
         foreach (var c in _sharedMemCounters.Values) c.Dispose();
+        foreach (var c in _totalCommittedCounters.Values) c.Dispose();
     }
 }

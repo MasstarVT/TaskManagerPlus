@@ -34,8 +34,26 @@ public sealed class GpuAdapterSnapshot
     public long DedicatedVramTotalBytes { get; init; }
     public long SharedVramUsedBytes { get; init; }
 
+    /// <summary>#674: "\GPU Adapter Memory(*)\Total Committed" - the sum of everything currently
+    /// committed against this adapter (dedicated + shared) across every process, as Windows itself
+    /// accounts it. This is the closest thing to a real usage-vs-budget figure this app can read
+    /// without the native IDXGIAdapter3::QueryVideoMemoryInfo COM interface (not reachable from
+    /// managed code without a DirectX interop dependency this project doesn't take on) - it is
+    /// still not the same number as the OS's dynamic memory *budget* (which can shrink under system
+    /// memory pressure independent of what's committed), so the GPU tab labels this "Committed",
+    /// never "Budget". See GpuViewModel's VRAM pressure card remarks.</summary>
+    public long TotalCommittedBytes { get; init; }
+
     public double DedicatedVramPercent => DedicatedVramTotalBytes > 0
         ? Math.Clamp((double)DedicatedVramUsedBytes / DedicatedVramTotalBytes * 100.0, 0, 100)
+        : 0;
+
+    /// <summary>#674: total committed vs. this adapter's installed dedicated VRAM capacity - a
+    /// proxy for "budget pressure" (see TotalCommittedBytes' remarks for why this isn't the real
+    /// OS-reported budget), clamped to 999% so a wildly over-committed shared-memory-heavy adapter
+    /// doesn't blow out the bar's layout.</summary>
+    public double CommittedVsCapacityPercent => DedicatedVramTotalBytes > 0
+        ? Math.Clamp((double)TotalCommittedBytes / DedicatedVramTotalBytes * 100.0, 0, 999)
         : 0;
 
     public string DriverVersion { get; init; } = string.Empty;
