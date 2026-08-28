@@ -219,6 +219,11 @@ public sealed class RulesEditorViewModel : ObservableObject, IDisposable
                 Condition = condition,
                 ImportedFromFile = SelectedRow.Rule.ImportedFromFile,
                 ImportSourceFileName = SelectedRow.Rule.ImportSourceFileName,
+                // #931/#932: not exposed in this edit form (yet) - carried over from the rule
+                // being edited so saving an unrelated field (e.g. Body/Confidence) doesn't
+                // silently drop a built-in rule's counter-evidence/impact template.
+                CounterEvidence = SelectedRow.Rule.CounterEvidence,
+                ImpactTemplate = SelectedRow.Rule.ImpactTemplate,
             };
             _engine.SaveUserRule(rule);
             StatusText = "Saved to your rule overrides (user-overrides.json) - the built-in pack file was not touched.";
@@ -237,7 +242,7 @@ public sealed class RulesEditorViewModel : ObservableObject, IDisposable
             Title = "New rule",
             Body = "New rule fired",
             Category = "Custom",
-            Severity = RuleSeverity.Warning,
+            Severity = RuleSeverity.Medium,
             Confidence = 70,
             Condition = new RuleCondition { Metric = "cpu.percent", Op = "gt", Value = 90 },
         };

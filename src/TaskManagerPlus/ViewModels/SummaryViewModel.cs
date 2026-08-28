@@ -12,6 +12,16 @@ using TaskManagerPlus.Services;
 
 namespace TaskManagerPlus.ViewModels;
 
+/// <summary>#933: sort key for the Health Check card's finding list - see
+/// SummaryViewModel.SortIssues for the composite "Impact" score formula.</summary>
+public enum HealthFindingSortMode
+{
+    Impact,
+    Severity,
+    Confidence,
+    Category,
+}
+
 /// <summary>
 /// Backs the Summary dashboard page. Mostly a thin composition over the Performance/Processes
 /// view-models MainViewModel already polls, the same live data just re-presented as a mosaic of
@@ -49,6 +59,23 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
 
     public ObservableCollection<HealthIssue> HealthIssues { get; } = new();
 
+    /// <summary>#934: HealthIssues re-shaped into one row per GroupKey (a standalone finding with
+    /// no GroupKey is its own singleton row) - what the Health Check card's ItemsControl actually
+    /// binds to now. Rebuilt alongside HealthIssues every RefreshHealthIssues pass.</summary>
+    public ObservableCollection<HealthFindingGroup> GroupedHealthIssues { get; } = new();
+
+    /// <summary>#937: enabled rules the engine could not meaningfully evaluate this pass because
+    /// their condition touched a metric BuildMetricBag marked unavailable - rendered as its own
+    /// small grey "couldn't check" list, visibly distinct from both a fired finding and "checked,
+    /// clean".</summary>
+    public ObservableCollection<CouldNotEvaluateInfo> CouldNotCheckFindings { get; } = new();
+
+    /// <summary>#936: rules that were firing in a recent RefreshHealthIssues pass but aren't in
+    /// the current one - seeded from findings-history.jsonl at construction (FindingsHistoryService.
+    /// LoadRecentResolved) so "it cleared up" survives an app restart, then appended to live as
+    /// resolutions are detected this session.</summary>
+    public ObservableCollection<ResolvedFinding> RecentlyResolvedFindings { get; } = new();
+
     // #924: findings whose rule is currently suppressed (snoozed and not yet expired, or
     // permanently ignored) - kept in their own collection, revealed via IsSuppressedListExpanded,
     // rather than just dropped, so a suppression is easy to find and undo later.
@@ -68,6 +95,32 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
     public RelayCommand IgnoreFindingCommand { get; }
 
     public RelayCommand UnsuppressFindingCommand { get; }
+
+    // #933: sort order for HealthIssues/GroupedHealthIssues - persisted only in memory for this
+    // session (see RefreshHealthIssues/SortIssues for the composite "Impact" score formula).
+    public static Array FindingSortModes { get; } = Enum.GetValues(typeof(HealthFindingSortMode));
+
+    private HealthFindingSortMode _findingSortMode = HealthFindingSortMode.Impact;
+    public HealthFindingSortMode FindingSortMode
+    {
+        get => _findingSortMode;
+        set { if (SetProperty(ref _findingSortMode, value)) RefreshHealthIssues(); }
+    }
+
+    // #935: "Not a problem" feedback, kept purely local (FeedbackService/feedback.jsonl) - a
+    // status line plus a one-click "suppress this rule?" follow-up, mirroring this card's other
+    // status-text-under-a-button conventions (CopySummaryStatusText, SnapshotStatusText, ...).
+    private string? _lastFeedbackRuleId;
+    private string _feedbackStatusText = string.Empty;
+    public string FeedbackStatusText { get => _feedbackStatusText; private set => SetProperty(ref _feedbackStatusText, value); }
+    public RelayCommand NotAProblemCommand { get; }
+    public RelayCommand SuppressLastFeedbackRuleCommand { get; }
+
+    // #936: previous pass's fired rule ids (RuleId-bearing findings only - the hand-rolled checks
+    // have no stable id to track resolution for) plus their last-known titles, diffed each
+    // RefreshHealthIssues pass to detect first-seen/resolved transitions.
+    private readonly HashSet<string> _previousFiredRuleIds = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _lastKnownRuleTitles = new(StringComparer.OrdinalIgnoreCase);
 
     // Round 11, #69: hideable/reorderable dashboard tiles - see DashboardTileConfig's remarks for
     // why this is up/down reordering within a fixed two-column layout rather than freeform
@@ -212,6 +265,13 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
                 RefreshHealthIssues();
             }
         });
+
+        NotAProblemCommand = new RelayCommand(p => RecordNotAProblemFeedback(p));
+        SuppressLastFeedbackRuleCommand = new RelayCommand(_ => SuppressLastFeedbackRule(), _ => _lastFeedbackRuleId is not null);
+
+        // #936: best-effort load of prior sessions' resolved transitions so "Recently resolved"
+        // isn't empty the moment the app starts.
+        foreach (var r in FindingsHistoryService.LoadRecentResolved(15)) RecentlyResolvedFindings.Add(r);
 
         // #921: a rule-pack hot reload (or a rule-editor edit/override/suppression elsewhere)
         // should be reflected on the live Health Check card without waiting for the next 2s tick -
@@ -743,14 +803,22 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         // packs (see RulesEngineService.BuiltInPackJson) rather than C# checks. #924's suppressions
         // are already filtered out of ruleResult.Findings (into ruleResult.Suppressed) by the
         // engine itself.
-        var bag = RulesEngineService.BuildMetricBag(Performance, _energyThermals, _systemSpecs, _services, Processes);
-        var ruleResult = _rulesEngine.Evaluate(bag);
+        var bag = RulesEngineService.BuildMetricBag(Performance, _energyThermals, _systemSpecs, _services, Processes, out var unavailableMetrics);
+        var ruleResult = _rulesEngine.Evaluate(bag, unavailableMetrics);
         var issues = new List<HealthIssue>(ruleResult.Findings);
 
         if (!ruleResult.Suppressed.Select(i => i.RuleId).SequenceEqual(SuppressedFindings.Select(i => i.RuleId)))
         {
             SuppressedFindings.Clear();
             foreach (var s in ruleResult.Suppressed) SuppressedFindings.Add(s);
+        }
+
+        // #937: rules the engine couldn't meaningfully evaluate this pass - visibly distinct from
+        // both a fired finding and "checked, clean".
+        if (!ruleResult.CouldNotCheck.Select(c => c.RuleId).SequenceEqual(CouldNotCheckFindings.Select(c => c.RuleId)))
+        {
+            CouldNotCheckFindings.Clear();
+            foreach (var c in ruleResult.CouldNotCheck) CouldNotCheckFindings.Add(c);
         }
 
         // A few checks stay hand-rolled here rather than becoming rule-pack JSON, because they
@@ -776,6 +844,10 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
             {
                 Message = $"{changedCount} change{(changedCount == 1 ? "" : "s")} since your last baseline snapshot may be waiting on the pending restart to fully apply",
                 IsCritical = false,
+                // #928: this is a correlation between two already-independent signals, not a
+                // verified cause - HealthIssue.Confidence defaults to 100 ("likely") when unset,
+                // which would overstate a heuristic like this one.
+                Confidence = 55,
             });
         }
 
@@ -786,7 +858,7 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         // API (Windows exposes none), the same tier as the process signature check.
         var defender = Processes.Processes.FirstOrDefault(p => p.Name.Equals("MsMpEng", StringComparison.OrdinalIgnoreCase));
         if (defender is not null && defender.CpuPercent >= 20)
-            issues.Add(new HealthIssue { Message = $"Windows Defender may be actively scanning (MsMpEng at {defender.CpuPercent:0}% CPU)", IsCritical = false });
+            issues.Add(new HealthIssue { Message = $"Windows Defender may be actively scanning (MsMpEng at {defender.CpuPercent:0}% CPU)", IsCritical = false, Confidence = 60 });
 
         // #67: anomaly highlighting - flags CPU/RAM/Disk usage that's a statistical outlier vs.
         // its own last-minute history, even without a fixed threshold. Requires both a meaningful
@@ -796,6 +868,9 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         CheckAnomaly(issues, "Memory", Performance.RamHistory, Performance.RamPercent);
         CheckAnomaly(issues, "Disk activity", Performance.DiskHistory, Performance.DiskPercent);
 
+        // #933: sort by the selected criterion before anything below renders/diffs the list.
+        issues = SortIssues(issues, FindingSortMode);
+
         // Replace in place only when the content actually changed, so the UI doesn't flicker/
         // lose scroll position on every 2s tick when nothing is different.
         if (!issues.Select(i => i.Message).SequenceEqual(HealthIssues.Select(i => i.Message)))
@@ -803,6 +878,121 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
             HealthIssues.Clear();
             foreach (var issue in issues) HealthIssues.Add(issue);
         }
+
+        // #934: re-shape the same sorted list into grouped rows for the card's ItemsControl.
+        RebuildGroupedHealthIssues(issues);
+
+        // #936: diff this pass's fired rule ids against the previous pass's to detect first-seen/
+        // resolved transitions - edge-triggered only (see FindingsHistoryEntry's remarks on why
+        // "still-firing" is never logged on every 2s tick a chronic finding keeps firing).
+        RecordFindingsHistory(issues);
+    }
+
+    /// <summary>#933: orders `issues` by the selected sort mode. "Impact" is a composite proxy -
+    /// a true numeric "impact" isn't available for most findings, so this combines the rule
+    /// author's own severity judgment with the rule's confidence, plus a small tie-breaking boost
+    /// for a finding that can honestly back itself with a concrete ImpactText (#932):
+    ///   score = severityWeight(severity) * (confidence / 100.0) * (hasImpactText ? 1.15 : 1.0)
+    ///   severityWeight: Info=1, Low=2, Medium=3, High=4
+    /// "Severity"/"Confidence" sort by that field directly (tie-broken by the other); "Category"
+    /// groups alphabetically by Rule.Category, empty/hand-rolled findings sorting last.</summary>
+    private static List<HealthIssue> SortIssues(List<HealthIssue> issues, HealthFindingSortMode mode) => mode switch
+    {
+        HealthFindingSortMode.Severity => issues.OrderByDescending(SeverityWeight).ThenByDescending(i => i.Confidence).ToList(),
+        HealthFindingSortMode.Confidence => issues.OrderByDescending(i => i.Confidence).ThenByDescending(SeverityWeight).ToList(),
+        HealthFindingSortMode.Category => issues
+            .OrderBy(i => string.IsNullOrEmpty(i.Category) ? 1 : 0)
+            .ThenBy(i => i.Category, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(i => i.Title ?? i.Message, StringComparer.OrdinalIgnoreCase)
+            .ToList(),
+        _ => issues.OrderByDescending(ImpactScore).ToList(),
+    };
+
+    private static int SeverityWeight(HealthIssue issue) => issue.Severity switch
+    {
+        RuleSeverity.Info => 1,
+        RuleSeverity.Low => 2,
+        RuleSeverity.Medium => 3,
+        RuleSeverity.High => 4,
+        _ => 1,
+    };
+
+    private static double ImpactScore(HealthIssue issue)
+    {
+        double confidenceFactor = Math.Clamp(issue.Confidence, 0, 100) / 100.0;
+        double impactBoost = string.IsNullOrEmpty(issue.ImpactText) ? 1.0 : 1.15;
+        return SeverityWeight(issue) * confidenceFactor * impactBoost;
+    }
+
+    /// <summary>#934: collapses `sortedIssues` into one row per GroupKey - a standalone finding
+    /// with no GroupKey (or the only finding currently holding one) is its own singleton row, so
+    /// the card's DataTemplate can treat every row uniformly (HealthFindingGroup.IsSingle).
+    /// Preserves `sortedIssues`' own order (a group's position is wherever its first member fell
+    /// in the sort).</summary>
+    private void RebuildGroupedHealthIssues(List<HealthIssue> sortedIssues)
+    {
+        var groups = new List<HealthFindingGroup>();
+        var byKey = new Dictionary<string, HealthFindingGroup>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var issue in sortedIssues)
+        {
+            if (issue.GroupKey is { Length: > 0 } key)
+            {
+                if (byKey.TryGetValue(key, out var existing))
+                {
+                    existing.Findings.Add(issue);
+                    continue;
+                }
+                var group = new HealthFindingGroup { GroupKey = key, Findings = { issue } };
+                byKey[key] = group;
+                groups.Add(group);
+            }
+            else
+            {
+                groups.Add(new HealthFindingGroup { GroupKey = null, Findings = { issue } });
+            }
+        }
+
+        bool changed = groups.Count != GroupedHealthIssues.Count ||
+            groups.Zip(GroupedHealthIssues, (a, b) => a.Findings.Select(f => f.Message).SequenceEqual(b.Findings.Select(f => f.Message))).Any(same => !same);
+        if (changed)
+        {
+            GroupedHealthIssues.Clear();
+            foreach (var g in groups) GroupedHealthIssues.Add(g);
+        }
+    }
+
+    /// <summary>#936: diffs `issues`' RuleId-bearing findings against the previous pass's set,
+    /// appending an edge-triggered "first-seen"/"resolved" line to findings-history.jsonl for
+    /// each transition and updating RecentlyResolvedFindings live for the latter.</summary>
+    private void RecordFindingsHistory(List<HealthIssue> issues)
+    {
+        var currentFiredIds = new HashSet<string>(
+            issues.Where(i => i.RuleId is { Length: > 0 }).Select(i => i.RuleId!),
+            StringComparer.OrdinalIgnoreCase);
+
+        foreach (var id in currentFiredIds)
+        {
+            var issue = issues.First(i => string.Equals(i.RuleId, id, StringComparison.OrdinalIgnoreCase));
+            string title = issue.Title ?? issue.Message;
+            _lastKnownRuleTitles[id] = title;
+            if (!_previousFiredRuleIds.Contains(id))
+                FindingsHistoryService.Append(new FindingsHistoryEntry { RuleId = id, Title = title, Transition = "first-seen" });
+        }
+
+        foreach (var id in _previousFiredRuleIds)
+        {
+            if (currentFiredIds.Contains(id)) continue;
+
+            string title = _lastKnownRuleTitles.TryGetValue(id, out var t) ? t : id;
+            var resolvedAt = DateTime.UtcNow;
+            FindingsHistoryService.Append(new FindingsHistoryEntry { RuleId = id, Title = title, Transition = "resolved" });
+            RecentlyResolvedFindings.Insert(0, new ResolvedFinding { RuleId = id, Title = title, ResolvedAtUtc = resolvedAt });
+            while (RecentlyResolvedFindings.Count > 15) RecentlyResolvedFindings.RemoveAt(RecentlyResolvedFindings.Count - 1);
+        }
+
+        _previousFiredRuleIds.Clear();
+        foreach (var id in currentFiredIds) _previousFiredRuleIds.Add(id);
     }
 
     /// <summary>#67: flags `current` as an outlier vs. the mean/stddev of `history` (which already
@@ -826,6 +1016,12 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
             {
                 Message = $"{label} usage is unusually high vs. the last minute (now {current:0}%, typically {mean:0}%)",
                 IsCritical = false,
+                // #928: a real statistical deviation, but "unusual" isn't "a problem" - kept below
+                // the default 100 ("likely") so it renders honestly as "possible".
+                Confidence = 65,
+                // #932: an honest, already-computed impact figure - how far above the recent
+                // typical this reading is.
+                ImpactText = $"{current - mean:0}pt above typical {label} usage",
             });
         }
     }
@@ -839,6 +1035,35 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
     {
         if (parameter is not HealthIssue { RuleId: { Length: > 0 } ruleId }) return;
         _rulesEngine.Suppress(ruleId, reason, duration is null ? null : DateTime.UtcNow.Add(duration.Value));
+        RefreshHealthIssues();
+    }
+
+    /// <summary>#935: records a "not a problem" click to feedback.jsonl (purely local - see
+    /// FeedbackService's remarks) and offers a one-click "suppress this rule?" follow-up via
+    /// FeedbackStatusText/SuppressLastFeedbackRuleCommand. A no-op for the hand-rolled findings
+    /// that carry no RuleId, same as SuppressFinding above.</summary>
+    private void RecordNotAProblemFeedback(object? parameter)
+    {
+        if (parameter is not HealthIssue { RuleId: { Length: > 0 } ruleId } issue) return;
+
+        FeedbackService.Append(new FeedbackEntry
+        {
+            RuleId = ruleId,
+            MetricValuesAtTime = issue.Evidence.ToDictionary(e => e.Label, e => e.Value),
+        });
+
+        _lastFeedbackRuleId = ruleId;
+        FeedbackStatusText = $"Feedback recorded for \"{issue.Title ?? issue.Message}\" - stored locally, never sent anywhere.";
+        SuppressLastFeedbackRuleCommand.RaiseCanExecuteChanged();
+    }
+
+    private void SuppressLastFeedbackRule()
+    {
+        if (_lastFeedbackRuleId is not { Length: > 0 } ruleId) return;
+        _rulesEngine.Suppress(ruleId, "Marked \"not a problem\"", DateTime.UtcNow.AddDays(7));
+        _lastFeedbackRuleId = null;
+        FeedbackStatusText = "Rule suppressed for 7 days.";
+        SuppressLastFeedbackRuleCommand.RaiseCanExecuteChanged();
         RefreshHealthIssues();
     }
 

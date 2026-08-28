@@ -23,7 +23,7 @@ public sealed class Rule
     /// as-is rather than fabricating a value.</summary>
     public string Body { get; set; } = string.Empty;
 
-    public RuleSeverity Severity { get; set; } = RuleSeverity.Warning;
+    public RuleSeverity Severity { get; set; } = RuleSeverity.Medium;
 
     /// <summary>0-100, "quick flag, not a verdict" - how confident this heuristic is, not a
     /// probability of anything specific being wrong.</summary>
@@ -35,10 +35,26 @@ public sealed class Rule
 
     public RuleCondition Condition { get; set; } = new();
 
-    /// <summary>Reserved for a future chunk's dedup-by-group pass (e.g. collapsing several
-    /// per-drive findings into one card) - unused by this chunk's evaluation/display, but every
-    /// rule carries the field so a later chunk doesn't need a pack-format migration.</summary>
+    /// <summary>#934: findings from rules sharing a non-null GroupKey collapse into one expandable
+    /// parent row on the Health Check card (e.g. several storage rules all firing about the same
+    /// drive) instead of each rendering as its own top-level row.</summary>
     public string? GroupKey { get; set; }
+
+    /// <summary>#931: optional "what else could explain this" line - "this can also be caused
+    /// by...". Rendered directly under a fired finding's message wherever findings show, framed
+    /// so a fired rule doesn't read as a confirmed diagnosis (see this project's "quick flag, not
+    /// a verdict" convention). Set on a handful of the built-in pack's rules whose condition alone
+    /// can't rule out an innocent cause (see RulesEngineService.BuiltInPackJson) - most rules
+    /// simply leave this null.</summary>
+    public string? CounterEvidence { get; set; }
+
+    /// <summary>#932: optional Body-style template (same `{metric.key}` placeholder syntax as
+    /// Body) resolved into the fired finding's HealthIssue.ImpactText - but only when every
+    /// placeholder it references is actually present in the live metric bag
+    /// (RulesEngineService.TryResolveImpactText). A template with any unresolvable placeholder
+    /// just leaves ImpactText null rather than showing a fabricated or partially-filled-in figure.
+    /// Most rules have no honest impact figure to report and simply leave this null.</summary>
+    public string? ImpactTemplate { get; set; }
 
     /// <summary>#920: a rule with this set only fires once its condition has held true across
     /// enough recent samples (from PerformanceViewModel's existing rolling history buffers) to

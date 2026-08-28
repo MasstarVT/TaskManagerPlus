@@ -190,6 +190,128 @@
                 </StackPanel>
             </Border>
         </DataTemplate>
+        <!-- #928-935: one Health Check finding row - severity chip + confidence word (#928),
+             counter-evidence (#931) and impact (#932) sub-lines, a "Why am I seeing this?"
+             drill-down with captured condition readings + evidence (#929/#930), and
+             snooze/ignore/"not a problem" actions (#924/#935). Shared between a standalone
+             finding and a grouped finding's child rows (#934) so both render identically. -->
+        <DataTemplate x:Key="FindingRowTemplate">
+            <StackPanel Margin="0,0,0,10">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Top" Margin="0,2,8,0">
+                        <!-- #928: severity dot + word - RuleSeverityToBrushConverter (not a
+                             DataTrigger Value="Low" string match) since Severity is a real enum,
+                             the same pattern ServiceStatusToBrushConverter uses for
+                             ServiceControllerStatus elsewhere in this app. -->
+                        <Border Width="8" Height="8" CornerRadius="4" Margin="0,0,5,0" VerticalAlignment="Center"
+                                Background="{Binding Severity, Converter={StaticResource RuleSeverityToBrushConverter}}" />
+                        <TextBlock Text="{Binding Severity}" FontSize="9.5" FontWeight="Bold" VerticalAlignment="Center"
+                                   Foreground="{Binding Severity, Converter={StaticResource RuleSeverityToBrushConverter}}" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="1">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="{Binding Message}" FontSize="12.5" TextWrapping="Wrap" VerticalAlignment="Center" />
+                            <!-- #928: confidence word - "likely"/"possible"/"uncertain". -->
+                            <TextBlock Text="{Binding ConfidenceWord, StringFormat=({0})}" FontSize="10.5" FontStyle="Italic"
+                                       Foreground="{DynamicResource TextTertiaryBrush}" VerticalAlignment="Center" Margin="6,0,0,0" />
+                        </StackPanel>
+
+                        <!-- #931: counter-evidence - "what else could explain this". -->
+                        <TextBlock FontSize="11" FontStyle="Italic" Foreground="{DynamicResource TextTertiaryBrush}"
+                                   TextWrapping="Wrap" Margin="0,3,0,0"
+                                   Visibility="{Binding CounterEvidence, Converter={StaticResource NullToVisibilityConverter}}">
+                            <Run Text="Could also be: " /><Run Text="{Binding CounterEvidence, Mode=OneWay}" />
+                        </TextBlock>
+
+                        <!-- #932: honest impact figure, in units the user feels. -->
+                        <Border Background="{DynamicResource BgHoverBrush}" CornerRadius="3" Padding="6,2" Margin="0,4,0,0" HorizontalAlignment="Left"
+                                Visibility="{Binding ImpactText, Converter={StaticResource NullToVisibilityConverter}}">
+                            <TextBlock Text="{Binding ImpactText}" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource AccentBrush}" />
+                        </Border>
+
+                        <!-- #929/#930: "why am I seeing this?" drill-down - only a rule-engine
+                             finding (RuleId set) has a condition tree to show. -->
+                        <Expander Header="Why am I seeing this?" FontSize="11" Margin="0,6,0,0"
+                                  Visibility="{Binding RuleId, Converter={StaticResource NullToVisibilityConverter}}">
+                            <StackPanel Margin="14,4,0,4">
+                                <TextBlock FontSize="11" Margin="0,0,0,4">
+                                    <Run Text="Rule: " Foreground="{DynamicResource TextTertiaryBrush}" />
+                                    <Run Text="{Binding RuleId, Mode=OneWay}" FontFamily="Consolas" />
+                                </TextBlock>
+                                <ItemsControl ItemsSource="{Binding ConditionReadings}" Margin="0,0,0,4">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <TextBlock FontSize="10.5" FontFamily="Consolas" TextWrapping="Wrap" Margin="0,0,0,1">
+                                                <Run Text="{Binding Metric, Mode=OneWay}" />
+                                                <Run Text=" = " />
+                                                <Run Text="{Binding ActualValueText, Mode=OneWay}" FontWeight="SemiBold" />
+                                                <Run Text=" (threshold: " Foreground="{DynamicResource TextTertiaryBrush}" />
+                                                <Run Text="{Binding Op, Mode=OneWay}" Foreground="{DynamicResource TextTertiaryBrush}" />
+                                                <Run Text=" " Foreground="{DynamicResource TextTertiaryBrush}" />
+                                                <Run Text="{Binding ThresholdText, Mode=OneWay}" Foreground="{DynamicResource TextTertiaryBrush}" />
+                                                <Run Text=")" Foreground="{DynamicResource TextTertiaryBrush}" />
+                                            </TextBlock>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <!-- #930: evidence - for the built-in pack this is the same
+                                     metric readings above, restated as label/value pairs. -->
+                                <Expander FontSize="10.5">
+                                    <Expander.Header>
+                                        <TextBlock FontSize="10.5">
+                                            <Run Text="Evidence (" /><Run Text="{Binding Evidence.Count, Mode=OneWay}" /><Run Text=" items)" />
+                                        </TextBlock>
+                                    </Expander.Header>
+                                    <ItemsControl ItemsSource="{Binding Evidence}" Margin="14,4,0,0">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <TextBlock FontSize="10.5" FontFamily="Consolas" TextWrapping="Wrap" Margin="0,0,0,1">
+                                                    <Run Text="{Binding Label, Mode=OneWay}" /><Run Text=": " /><Run Text="{Binding Value, Mode=OneWay}" />
+                                                </TextBlock>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </Expander>
+                            </StackPanel>
+                        </Expander>
+
+                        <!-- #924/#935: snooze/ignore/feedback - only a rule-engine finding has a
+                             rule id to act on. -->
+                        <StackPanel Orientation="Horizontal" Margin="0,6,0,0"
+                                    Visibility="{Binding RuleId, Converter={StaticResource NullToVisibilityConverter}}">
+                            <Button Content="Snooze 7d" FontSize="10.5" Padding="6,1" Margin="0,0,4,0"
+                                    Command="{Binding DataContext.SnoozeFindingCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                    CommandParameter="{Binding}" />
+                            <Button Content="Ignore" FontSize="10.5" Padding="6,1" Margin="0,0,4,0"
+                                    Command="{Binding DataContext.IgnoreFindingCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                    CommandParameter="{Binding}" />
+                            <Button Content="Not a problem" FontSize="10.5" Padding="6,1"
+                                    ToolTip="Records your feedback locally on this machine - stored locally, never sent anywhere."
+                                    Command="{Binding DataContext.NotAProblemCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                    CommandParameter="{Binding}" />
+                        </StackPanel>
+                    </StackPanel>
+                </Grid>
+            </StackPanel>
+        </DataTemplate>
+
+        <!-- #934: one Health Check list row - a single finding (IsSingle) renders FindingRowTemplate
+             directly; a real group (IsGroup, Findings.Count > 1) renders as an expandable
+             "N findings about X" parent instead. -->
+        <DataTemplate x:Key="FindingGroupTemplate">
+            <StackPanel>
+                <Expander Header="{Binding HeaderText}" FontSize="12.5" IsExpanded="True" Margin="0,0,0,10"
+                          Visibility="{Binding IsGroup, Converter={StaticResource BoolToVisibilityConverter}}">
+                    <ItemsControl ItemsSource="{Binding Findings}" ItemTemplate="{StaticResource FindingRowTemplate}" Margin="10,8,0,0" />
+                </Expander>
+                <ContentControl Content="{Binding Representative}" ContentTemplate="{StaticResource FindingRowTemplate}"
+                                Visibility="{Binding IsSingle, Converter={StaticResource BoolToVisibilityConverter}}" />
+            </StackPanel>
+        </DataTemplate>
     </UserControl.Resources>
     <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16">
         <StackPanel>
@@ -259,40 +381,97 @@
                          always a "what did things look like right before I closed it" record
                          without remembering to click the button above first. -->
                     <CheckBox Content="Generate report automatically when the app closes" IsChecked="{Binding GenerateReportOnExit}" Margin="0,10,0,0" />
-                    <ItemsControl ItemsSource="{Binding HealthIssues}" Margin="0,8,0,0">
+
+                    <!-- #933: sort order for the finding list below. -->
+                    <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                        <StackPanel.Style>
+                            <Style TargetType="StackPanel">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding HealthIssues.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </StackPanel.Style>
+                        <TextBlock Text="Sort by" Style="{StaticResource SubStat}" VerticalAlignment="Center" Margin="0,0,6,0" />
+                        <ComboBox ItemsSource="{Binding FindingSortModes}" SelectedItem="{Binding FindingSortMode}" Width="110" FontSize="11" />
+                    </StackPanel>
+
+                    <!-- #934: one row per finding, or per group of findings sharing a GroupKey. -->
+                    <ItemsControl ItemsSource="{Binding GroupedHealthIssues}" ItemTemplate="{StaticResource FindingGroupTemplate}" Margin="0,8,0,0" />
+
+                    <!-- #937: rules the engine couldn't meaningfully evaluate this pass (a metric
+                         collector timed out/was access-denied/returned Unknown) - visibly distinct
+                         from both a fired finding and "checked, clean". -->
+                    <ItemsControl ItemsSource="{Binding CouldNotCheckFindings}" Margin="0,4,0,0">
+                        <ItemsControl.Style>
+                            <Style TargetType="ItemsControl">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding CouldNotCheckFindings.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </ItemsControl.Style>
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
-                                    <Border Width="8" Height="8" CornerRadius="4" Margin="0,0,8,0" VerticalAlignment="Center">
-                                        <Border.Style>
-                                            <Style TargetType="Border">
-                                                <Setter Property="Background" Value="{DynamicResource WarningBrush}" />
-                                                <Style.Triggers>
-                                                    <DataTrigger Binding="{Binding IsCritical}" Value="True">
-                                                        <Setter Property="Background" Value="{DynamicResource DangerBrush}" />
-                                                    </DataTrigger>
-                                                </Style.Triggers>
-                                            </Style>
-                                        </Border.Style>
-                                    </Border>
-                                    <TextBlock Text="{Binding Message}" FontSize="12.5" VerticalAlignment="Center" />
-                                    <!-- #924: snooze/ignore - only rule-engine findings (RuleId set) carry a
-                                         rule id to suppress by; the couple of remaining hand-rolled checks
-                                         (Defender scan heuristic, anomaly highlighting, reboot-vs-baseline
-                                         correlation) have nothing to suppress and hide these buttons. -->
-                                    <StackPanel Orientation="Horizontal" Margin="10,0,0,0"
-                                                Visibility="{Binding RuleId, Converter={StaticResource NullToVisibilityConverter}}">
-                                        <Button Content="Snooze 7d" FontSize="10.5" Padding="6,1"
-                                                Command="{Binding DataContext.SnoozeFindingCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                                                CommandParameter="{Binding}" Margin="0,0,4,0" />
-                                        <Button Content="Ignore" FontSize="10.5" Padding="6,1"
-                                                Command="{Binding DataContext.IgnoreFindingCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                                                CommandParameter="{Binding}" />
-                                    </StackPanel>
-                                </StackPanel>
+                                <TextBlock FontSize="11" Foreground="{DynamicResource TextTertiaryBrush}" TextWrapping="Wrap" Margin="0,0,0,2">
+                                    <Run Text="Could not check: " />
+                                    <Run Text="{Binding Title, Mode=OneWay}" />
+                                    <Run Text=" (" />
+                                    <Run Text="{Binding UnavailableMetrics, Converter={StaticResource StringListJoinConverter}}" />
+                                    <Run Text=" unavailable)" />
+                                </TextBlock>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
+
+                    <!-- #935: "not a problem" feedback status + one-click suppress follow-up -
+                         see FeedbackService's remarks: purely local, never uploaded anywhere. -->
+                    <StackPanel Margin="0,8,0,0">
+                        <StackPanel.Style>
+                            <Style TargetType="StackPanel">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding FeedbackStatusText}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </StackPanel.Style>
+                        <TextBlock Text="{Binding FeedbackStatusText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" />
+                        <Button Content="Suppress this rule for 7 days" FontSize="10.5" Padding="6,1" Margin="0,4,0,0" HorizontalAlignment="Left"
+                                Command="{Binding SuppressLastFeedbackRuleCommand}" />
+                    </StackPanel>
+
+                    <!-- #936: rules that were firing recently but have since cleared - so "it
+                         cleared up" is visible without checking findings-history.jsonl by hand. -->
+                    <Expander Header="{Binding RecentlyResolvedFindings.Count, StringFormat={}{0} recently resolved}"
+                              Margin="0,10,0,0" FontSize="12">
+                        <Expander.Style>
+                            <Style TargetType="Expander">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding RecentlyResolvedFindings.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Expander.Style>
+                        <ItemsControl ItemsSource="{Binding RecentlyResolvedFindings}" Margin="0,6,0,0">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock FontSize="11" Foreground="{DynamicResource SuccessBrush}" Margin="0,0,0,3" TextWrapping="Wrap">
+                                        <Run Text="{Binding Title, Mode=OneWay}" />
+                                        <Run Text=" cleared " />
+                                        <Run Text="{Binding ResolvedAtLocalText, Mode=OneWay}" />
+                                    </TextBlock>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </Expander>
 
                     <!-- #924: suppressed findings stay listable/reversible rather than just vanishing. -->
                     <Expander Header="{Binding SuppressedFindings.Count, StringFormat={}{0} finding(s) suppressed}"

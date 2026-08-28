@@ -1,12 +1,14 @@
 namespace TaskManagerPlus.Models;
 
-/// <summary>#919: severity a rule (or a per-rule override, #923) carries. Only Critical renders in
-/// the danger color on the Health Check card (HealthIssue.IsCritical) - Info and Warning both read
-/// as "something to look at", not "the app is broken", matching the pre-rules-engine IsCritical
-/// convention this enum now sits alongside.</summary>
+/// <summary>#919, extended #928: four-level severity a rule (or a per-rule override, #923)
+/// carries. Only High renders in the danger color on the Health Check card
+/// (HealthIssue.IsCritical mirrors Severity == High) - Info/Low/Medium all read as "something to
+/// look at", not "the app is broken", the same convention the pre-rules-engine IsCritical flag
+/// already used with its own two tiers before #916-919 introduced this enum.</summary>
 public enum RuleSeverity
 {
     Info,
-    Warning,
-    Critical,
+    Low,
+    Medium,
+    High,
 }

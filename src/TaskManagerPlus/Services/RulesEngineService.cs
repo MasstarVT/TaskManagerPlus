@@ -323,7 +323,24 @@ public sealed class RulesEngineService : IDisposable
         SystemSpecsViewModel systemSpecs,
         ServicesViewModel services,
         ProcessesViewModel processes)
+        => BuildMetricBag(performance, energyThermals, systemSpecs, services, processes, out _);
+
+    /// <summary>#937: same bag as the 5-argument overload, plus `unavailableMetrics` - metric keys
+    /// a collector genuinely tried and failed to populate this pass (sensor absent/access-denied/
+    /// timed out), as opposed to a key this system's metric bag simply never carries. Only
+    /// SummaryViewModel's live Health Check feed currently threads this through to
+    /// RulesEngineService.Evaluate (RulesEditorViewModel's live-preview/test-fixture flows use the
+    /// simpler overload above, since they don't render a "couldn't check" list).</summary>
+    public static Dictionary<string, object> BuildMetricBag(
+        PerformanceViewModel performance,
+        EnergyThermalsViewModel energyThermals,
+        SystemSpecsViewModel systemSpecs,
+        ServicesViewModel services,
+        ProcessesViewModel processes,
+        out HashSet<string> unavailableMetrics)
     {
+        unavailableMetrics = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
         var bag = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase)
         {
             ["cpu.percent"] = performance.CpuCurrentPercent,
@@ -345,8 +362,11 @@ public sealed class RulesEngineService : IDisposable
         };
 
         // A sensor-less machine simply omits this key - exists() reads false, everything else
-        // reads "absent" rather than a fabricated 0.
+        // reads "absent" rather than a fabricated 0. #937: also flagged unavailable so any rule
+        // referencing it gets a distinct "could not check" status instead of silently reading as
+        // a clean/false condition.
         if (energyThermals.CpuPackageTempC is { } cpuTemp) bag["thermal.cpuPackageC"] = cpuTemp;
+        else unavailableMetrics.Add("thermal.cpuPackageC");
 
         // Per-drive keys (spec's `disk.<drive>.percentUsed` shape) plus a couple of aggregate
         // "worst volume" keys so a single built-in rule can flag "some drive is full" without
@@ -417,6 +437,16 @@ public sealed class RulesEngineService : IDisposable
 
         bool exists = bag.TryGetValue(cond.Metric, out var raw) && raw is not null;
         string op = cond.Op.Trim().ToLowerInvariant();
+        return EvaluateLeafOp(op, exists, raw, cond.Value, out error);
+    }
+
+    /// <summary>Shared by EvaluateCondition (the hot evaluation path - PreviewAll runs this for
+    /// every loaded rule, every ~2s tick) and EvaluateConditionCapturing (#929 - only run once,
+    /// against an already-fired rule, to build its drill-down trail) so the actual comparison
+    /// logic lives in exactly one place.</summary>
+    private static bool EvaluateLeafOp(string op, bool exists, object? raw, object? value, out string? error)
+    {
+        error = null;
         if (op == "exists") return exists;
 
         // Degrade to Unknown/hidden, never fabricate: a metric genuinely absent from the bag (no
@@ -426,16 +456,65 @@ public sealed class RulesEngineService : IDisposable
 
         switch (op)
         {
-            case "eq": return CompareEquals(raw!, cond.Value);
-            case "ne": return !CompareEquals(raw!, cond.Value);
-            case "lt": return TryNum(raw, out var a1) && TryNum(cond.Value, out var b1) && a1 < b1;
-            case "lte": return TryNum(raw, out var a2) && TryNum(cond.Value, out var b2) && a2 <= b2;
-            case "gt": return TryNum(raw, out var a3) && TryNum(cond.Value, out var b3) && a3 > b3;
-            case "gte": return TryNum(raw, out var a4) && TryNum(cond.Value, out var b4) && a4 >= b4;
+            case "eq": return CompareEquals(raw!, value);
+            case "ne": return !CompareEquals(raw!, value);
+            case "lt": return TryNum(raw, out var a1) && TryNum(value, out var b1) && a1 < b1;
+            case "lte": return TryNum(raw, out var a2) && TryNum(value, out var b2) && a2 <= b2;
+            case "gt": return TryNum(raw, out var a3) && TryNum(value, out var b3) && a3 > b3;
+            case "gte": return TryNum(raw, out var a4) && TryNum(value, out var b4) && a4 >= b4;
             default:
-                error = $"unknown operator '{cond.Op}'";
+                error = $"unknown operator '{op}'";
                 return false;
         }
+    }
+
+    /// <summary>#929: identical evaluation semantics to EvaluateCondition, but additionally
+    /// appends a ConditionReading for every comparison leaf it visits (a bare `exists` check has
+    /// no threshold to show and is skipped) - only ever run once, against an already-fired rule's
+    /// condition, to build the Health Check card's "Why am I seeing this?" drill-down trail.</summary>
+    public static bool EvaluateConditionCapturing(RuleCondition cond, IReadOnlyDictionary<string, object> bag, List<ConditionReading> readings, out string? error)
+    {
+        error = null;
+
+        if (cond.All is { Count: > 0 } all)
+            return all.All(c => EvaluateConditionCapturing(c, bag, readings, out _));
+        if (cond.Any is { Count: > 0 } any)
+            return any.Any(c => EvaluateConditionCapturing(c, bag, readings, out _));
+        if (cond.Not is not null)
+            return !EvaluateConditionCapturing(cond.Not, bag, readings, out _);
+
+        if (string.IsNullOrWhiteSpace(cond.Metric) || string.IsNullOrWhiteSpace(cond.Op))
+        {
+            error = "leaf condition missing metric/op";
+            return false;
+        }
+
+        bool exists = bag.TryGetValue(cond.Metric, out var raw) && raw is not null;
+        string op = cond.Op.Trim().ToLowerInvariant();
+        bool result = EvaluateLeafOp(op, exists, raw, cond.Value, out error);
+
+        if (!string.Equals(op, "exists", StringComparison.OrdinalIgnoreCase))
+        {
+            readings.Add(new ConditionReading
+            {
+                Metric = cond.Metric,
+                Op = op,
+                ActualValueText = exists ? FormatValue(raw) : "(unavailable)",
+                ThresholdText = FormatValue(cond.Value),
+                WasUnavailable = !exists,
+            });
+        }
+        return result;
+    }
+
+    /// <summary>#937: every metric key a condition tree references, regardless of known/unknown -
+    /// used to check whether a rule touched a metric BuildMetricBag marked unavailable this pass.</summary>
+    private static IEnumerable<string> AllReferencedMetrics(RuleCondition cond)
+    {
+        if (cond.Metric is { Length: > 0 } m) yield return m;
+        if (cond.All is { } all) foreach (var c in all) foreach (var mm in AllReferencedMetrics(c)) yield return mm;
+        if (cond.Any is { } any) foreach (var c in any) foreach (var mm in AllReferencedMetrics(c)) yield return mm;
+        if (cond.Not is { } not) foreach (var mm in AllReferencedMetrics(not)) yield return mm;
     }
 
     private static bool TryNum(object? o, out double d)
@@ -599,7 +678,14 @@ public sealed class RulesEngineService : IDisposable
     /// fixed two-pass evaluation, not a full dependency graph - a composite rule that references
     /// another composite rule's outcome simply sees that key as absent (=> false) in this same
     /// pass, which also quietly breaks any cycle instead of recursing forever.</summary>
-    public List<RulePreviewResult> PreviewAll(IReadOnlyDictionary<string, object> baseBag)
+    public List<RulePreviewResult> PreviewAll(IReadOnlyDictionary<string, object> baseBag) => PreviewAllInternal(baseBag, out _);
+
+    /// <summary>Does the actual work for PreviewAll, additionally handing back the fully augmented
+    /// working bag (base bag + every non-composite rule's `finding.&lt;id&gt;.fired` key) so
+    /// Evaluate can capture #929's condition-reading trail (and resolve #932's ImpactTemplate)
+    /// against the same bag a composite rule actually fired against, not just the caller's base
+    /// bag.</summary>
+    private List<RulePreviewResult> PreviewAllInternal(IReadOnlyDictionary<string, object> baseBag, out Dictionary<string, object> augmentedBag)
     {
         List<LoadedRule> rules;
         lock (_lock) rules = _loadedRules.ToList();
@@ -626,6 +712,8 @@ public sealed class RulesEngineService : IDisposable
             bool fired = lr.Enabled && conditionTrue;
             results.Add(new RulePreviewResult { Rule = lr, WouldFire = fired, Error = err });
         }
+
+        augmentedBag = bag;
         return results;
     }
 
@@ -637,27 +725,64 @@ public sealed class RulesEngineService : IDisposable
         /// expired, or permanently ignored) - kept separate rather than dropped so the Health
         /// Check card's "N findings suppressed" panel can list/reveal them.</summary>
         public List<HealthIssue> Suppressed { get; } = new();
+
+        /// <summary>#937: enabled rules the engine could not meaningfully evaluate this pass
+        /// because their condition referenced a metric BuildMetricBag marked unavailable - kept
+        /// out of Findings/Suppressed entirely (a false WouldFire here would just be an artifact
+        /// of the missing metric, not a genuinely "checked and clean" result) and surfaced
+        /// separately so the Health Check card can show it as visibly distinct from either.</summary>
+        public List<CouldNotEvaluateInfo> CouldNotCheck { get; } = new();
     }
 
-    /// <summary>SummaryViewModel's entry point: PreviewAll, converted to HealthIssue and split into
-    /// visible vs. suppressed (#924).</summary>
-    public RuleEvaluationResult Evaluate(IReadOnlyDictionary<string, object> bag)
+    private static readonly HashSet<string> EmptyMetricSet = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Overload for callers with no #937 unavailable-metric tracking (e.g.
+    /// RulesEditorViewModel's test-pack-against-a-snapshot flow, where a "couldn't check" list
+    /// doesn't apply).</summary>
+    public RuleEvaluationResult Evaluate(IReadOnlyDictionary<string, object> bag) => Evaluate(bag, EmptyMetricSet);
+
+    /// <summary>SummaryViewModel's entry point: PreviewAllInternal, converted to HealthIssue and
+    /// split into visible vs. suppressed (#924), plus #937's "could not check" list for any
+    /// enabled rule whose condition touched a metric in `unavailableMetrics` this pass (see
+    /// BuildMetricBag's out-parameter overload).</summary>
+    public RuleEvaluationResult Evaluate(IReadOnlyDictionary<string, object> bag, IReadOnlySet<string> unavailableMetrics)
     {
-        var preview = PreviewAll(bag);
+        var preview = PreviewAllInternal(bag, out var augmentedBag);
 
         List<RuleSuppression> suppressions;
         lock (_lock) suppressions = _suppressions.ToList();
         DateTime now = DateTime.UtcNow;
 
         var result = new RuleEvaluationResult();
-        foreach (var p in preview.Where(p => p.WouldFire))
+        foreach (var p in preview)
         {
+            if (!p.Rule.Enabled) continue;
             var rule = p.Rule.Rule;
+
+            // #937: a rule whose condition touches a metric this pass couldn't populate gets a
+            // distinct "could not check" status - never silently folded into "evaluated, false".
+            var unavailableRefs = AllReferencedMetrics(rule.Condition)
+                .Where(unavailableMetrics.Contains)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (unavailableRefs.Count > 0)
+            {
+                result.CouldNotCheck.Add(new CouldNotEvaluateInfo { RuleId = rule.Id, Title = rule.Title, UnavailableMetrics = unavailableRefs });
+                continue;
+            }
+
+            if (!p.WouldFire) continue;
+
+            // #929: capture exactly what the condition read against the same augmented bag it
+            // actually fired against (so a composite rule's `finding.*.fired` reads show up too).
+            var readings = new List<ConditionReading>();
+            EvaluateConditionCapturing(rule.Condition, augmentedBag, readings, out _);
+
             var severity = p.Rule.EffectiveSeverity;
             var issue = new HealthIssue
             {
-                Message = ResolveBody(rule, bag),
-                IsCritical = severity == RuleSeverity.Critical,
+                Message = ResolveBody(rule, augmentedBag),
+                IsCritical = severity == RuleSeverity.High,
                 RuleId = rule.Id,
                 Title = rule.Title,
                 Severity = severity,
@@ -665,6 +790,16 @@ public sealed class RulesEngineService : IDisposable
                 Category = rule.Category,
                 DocsUrl = rule.DocsUrl,
                 GroupKey = rule.GroupKey,
+                CounterEvidence = rule.CounterEvidence,
+                ImpactText = TryResolveImpactText(rule.ImpactTemplate, augmentedBag),
+                ConditionReadings = readings,
+                // #930: for the built-in pack's simple metric-threshold rules, the evidence IS the
+                // metric bag key/value pairs the condition read - legitimate evidence in its own
+                // right, not a placeholder for a future richer source. DistinctBy(Label): a
+                // range-check rule (e.g. "gte 90 AND lt 97") reads the same metric via two leaves
+                // with different thresholds - ConditionReadings keeps both (the drill-down shows
+                // each threshold separately), but Evidence only needs the value once per metric.
+                Evidence = readings.Select(r => new EvidenceItem { Label = r.Metric, Value = r.ActualValueText }).DistinctBy(e => e.Label).ToList(),
             };
 
             bool suppressed = suppressions.Any(s => string.Equals(s.RuleId, rule.Id, StringComparison.OrdinalIgnoreCase)
@@ -679,6 +814,24 @@ public sealed class RulesEngineService : IDisposable
         string body = string.IsNullOrEmpty(rule.Body) ? rule.Title : rule.Body;
         return Regex.Replace(body, @"\{([a-zA-Z0-9_.]+)\}", m =>
             bag.TryGetValue(m.Groups[1].Value, out var v) ? FormatValue(v) : m.Value);
+    }
+
+    /// <summary>#932: same `{metric.key}` placeholder syntax as ResolveBody, but strict - a
+    /// template with any placeholder not present in the live bag resolves to null (no finding
+    /// shows a half-filled-in or fabricated impact figure) rather than left with a literal
+    /// `{...}` in it.</summary>
+    private static string? TryResolveImpactText(string? template, IReadOnlyDictionary<string, object> bag)
+    {
+        if (string.IsNullOrWhiteSpace(template)) return null;
+
+        bool allResolved = true;
+        string result = Regex.Replace(template, @"\{([a-zA-Z0-9_.]+)\}", m =>
+        {
+            if (bag.TryGetValue(m.Groups[1].Value, out var v)) return FormatValue(v);
+            allResolved = false;
+            return m.Value;
+        });
+        return allResolved ? result : null;
     }
 
     // ----- overrides (#923) ----------------------------------------------------------------
@@ -855,9 +1008,11 @@ public sealed class RulesEngineService : IDisposable
           "Id": "builtin.disk.volume-full-warning",
           "Title": "Disk nearly full",
           "Body": "{disk.maxPercentUsedLabel} is {disk.maxPercentUsed}% full",
-          "Severity": "Warning",
+          "Severity": "Medium",
           "Confidence": 90,
           "Category": "Storage",
+          "GroupKey": "disk",
+          "ImpactTemplate": "{disk.maxPercentUsed}% of {disk.maxPercentUsedLabel} used",
           "Condition": { "All": [
             { "Metric": "disk.maxPercentUsed", "Op": "gte", "Value": 90 },
             { "Metric": "disk.maxPercentUsed", "Op": "lt", "Value": 97 }
@@ -867,36 +1022,41 @@ public sealed class RulesEngineService : IDisposable
           "Id": "builtin.disk.volume-full-critical",
           "Title": "Disk critically full",
           "Body": "{disk.maxPercentUsedLabel} is {disk.maxPercentUsed}% full",
-          "Severity": "Critical",
+          "Severity": "High",
           "Confidence": 95,
           "Category": "Storage",
+          "GroupKey": "disk",
+          "ImpactTemplate": "{disk.maxPercentUsed}% of {disk.maxPercentUsedLabel} used",
           "Condition": { "Metric": "disk.maxPercentUsed", "Op": "gte", "Value": 97 }
         },
         {
           "Id": "builtin.disk.dirty-bit",
           "Title": "Volume needs a chkdsk pass",
           "Body": "{disk.dirtyLabel} needs a chkdsk pass (dirty bit set)",
-          "Severity": "Critical",
+          "Severity": "High",
           "Confidence": 95,
           "Category": "Storage",
+          "GroupKey": "disk",
           "Condition": { "Metric": "disk.anyDirty", "Op": "eq", "Value": true }
         },
         {
           "Id": "builtin.disk.health-warning",
           "Title": "Drive health warning",
           "Body": "Drive health warning: {disk.healthWarningLabel} ({disk.healthWarningText})",
-          "Severity": "Critical",
+          "Severity": "High",
           "Confidence": 85,
           "Category": "Storage",
+          "GroupKey": "disk",
           "Condition": { "Metric": "disk.anyHealthWarning", "Op": "eq", "Value": true }
         },
         {
           "Id": "builtin.cpu.hot-warning",
           "Title": "CPU running hot",
           "Body": "CPU running hot ({thermal.cpuPackageC}°C)",
-          "Severity": "Warning",
+          "Severity": "Medium",
           "Confidence": 80,
           "Category": "Thermals",
+          "CounterEvidence": "Ambient room temperature or a recent dust buildup can also cause this, not just a software issue.",
           "Condition": { "All": [
             { "Metric": "thermal.cpuPackageC", "Op": "gte", "Value": 90 },
             { "Metric": "thermal.cpuPackageC", "Op": "lt", "Value": 100 }
@@ -906,16 +1066,17 @@ public sealed class RulesEngineService : IDisposable
           "Id": "builtin.cpu.hot-critical",
           "Title": "CPU critically hot",
           "Body": "CPU running hot ({thermal.cpuPackageC}°C)",
-          "Severity": "Critical",
+          "Severity": "High",
           "Confidence": 90,
           "Category": "Thermals",
+          "CounterEvidence": "Ambient room temperature or a recent dust buildup can also cause this, not just a software issue.",
           "Condition": { "Metric": "thermal.cpuPackageC", "Op": "gte", "Value": 100 }
         },
         {
           "Id": "builtin.thermal.dead-fan",
           "Title": "Possible stopped fan",
           "Body": "Possible stopped fan detected",
-          "Severity": "Critical",
+          "Severity": "High",
           "Confidence": 70,
           "Category": "Thermals",
           "Condition": { "Metric": "thermal.deadFanDetected", "Op": "eq", "Value": true }
@@ -924,7 +1085,7 @@ public sealed class RulesEngineService : IDisposable
           "Id": "builtin.mem.pagefile-full",
           "Title": "Page file nearly full",
           "Body": "Page file is {mem.pageFilePercent}% full",
-          "Severity": "Warning",
+          "Severity": "Medium",
           "Confidence": 75,
           "Category": "Memory",
           "Condition": { "Metric": "mem.pageFilePercent", "Op": "gte", "Value": 90 }
@@ -933,9 +1094,11 @@ public sealed class RulesEngineService : IDisposable
           "Id": "builtin.mem.thrashing",
           "Title": "Possible memory thrashing",
           "Body": "Possible memory thrashing: {mem.hardFaultsPerSec} hard faults/sec with only {mem.availablePercent}% RAM available",
-          "Severity": "Critical",
+          "Severity": "High",
           "Confidence": 75,
           "Category": "Memory",
+          "CounterEvidence": "A lot of legitimately open browser tabs or a genuinely large workload can also drive this, not necessarily a leak.",
+          "ImpactTemplate": "{mem.availablePercent}% RAM available",
           "Condition": { "All": [
             { "Metric": "mem.hardFaultsPerSec", "Op": "gte", "Value": 500 },
             { "Metric": "mem.availablePercent", "Op": "lt", "Value": 10 }
@@ -945,35 +1108,38 @@ public sealed class RulesEngineService : IDisposable
           "Id": "builtin.cpu.sustained-high",
           "Title": "Sustained high CPU",
           "Body": "CPU has been above 90% for a while - check the Processes tab for what's using it",
-          "Severity": "Warning",
+          "Severity": "Medium",
           "Confidence": 60,
           "Category": "CPU",
           "SustainedForSeconds": 30,
+          "CounterEvidence": "A legitimate scheduled backup or antivirus scan can also cause sustained high CPU, not just a runaway process.",
           "Condition": { "Metric": "cpu.percent", "Op": "gt", "Value": 90 }
         },
         {
           "Id": "builtin.network.errors",
           "Title": "Network adapter errors",
           "Body": "Network adapter errors detected",
-          "Severity": "Warning",
+          "Severity": "Medium",
           "Confidence": 70,
           "Category": "Network",
+          "CounterEvidence": "A flaky cable or an adapter that was recently unplugged/replugged can also cause a transient error count, not necessarily a failing NIC.",
           "Condition": { "Metric": "network.hasErrors", "Op": "eq", "Value": true }
         },
         {
           "Id": "builtin.services.failed",
           "Title": "Services failed to start",
           "Body": "{services.failedCount} service(s) failed to start",
-          "Severity": "Warning",
+          "Severity": "Medium",
           "Confidence": 80,
           "Category": "Services",
+          "ImpactTemplate": "{services.failedCount} service(s) not running",
           "Condition": { "Metric": "services.failedCount", "Op": "gt", "Value": 0 }
         },
         {
           "Id": "builtin.system.outdated-drivers",
           "Title": "Drivers may need updating",
           "Body": "{system.outdatedDriverCount} driver(s) may need updating",
-          "Severity": "Warning",
+          "Severity": "Medium",
           "Confidence": 50,
           "Category": "System",
           "DocsUrl": null,
@@ -983,7 +1149,7 @@ public sealed class RulesEngineService : IDisposable
           "Id": "builtin.system.multiple-av",
           "Title": "Multiple antivirus products active",
           "Body": "Multiple antivirus products look active",
-          "Severity": "Warning",
+          "Severity": "Medium",
           "Confidence": 60,
           "Category": "System",
           "Condition": { "Metric": "system.multipleAvActive", "Op": "eq", "Value": true }
@@ -992,7 +1158,7 @@ public sealed class RulesEngineService : IDisposable
           "Id": "builtin.system.reboot-pending",
           "Title": "Restart pending",
           "Body": "A restart is pending to finish installing updates",
-          "Severity": "Warning",
+          "Severity": "Medium",
           "Confidence": 90,
           "Category": "System",
           "GroupKey": "reboot",
@@ -1002,7 +1168,7 @@ public sealed class RulesEngineService : IDisposable
           "Id": "builtin.system.multiple-issues",
           "Title": "Multiple health issues active at once",
           "Body": "Disk is critically full and a restart is pending - free up space before rebooting so a pending update doesn't fail to apply",
-          "Severity": "Critical",
+          "Severity": "High",
           "Confidence": 55,
           "Category": "System",
           "GroupKey": "composite",
