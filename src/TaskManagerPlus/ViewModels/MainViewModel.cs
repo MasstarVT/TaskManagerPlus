@@ -98,6 +98,20 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public bool IsElevated { get; } = new WindowsPrincipal(WindowsIdentity.GetCurrent())
         .IsInRole(WindowsBuiltInRole.Administrator);
 
+    /// <summary>#659: Fast Startup ("hybrid boot") detection - a trivial one-time registry read
+    /// (HibernationService.ReadFastStartupEnabled, HiberbootEnabled under
+    /// HKLM\SYSTEM\CurrentControlSet\Control\Power), so it's read once here at construction rather
+    /// than gated behind a button. When on, the footer's "Uptime" readout (see MainWindow.xaml)
+    /// gets an inline note next to it - Fast Startup means a short uptime after a "Shut down" can
+    /// still reflect a hybrid resume from a hibernated kernel session rather than a true cold boot,
+    /// which otherwise reads as "uptime says 3 minutes but the problem survives every restart."
+    /// Null (annotation hidden) when the registry value isn't present at all, not assumed off.</summary>
+    public bool? FastStartupEnabled { get; } = HibernationService.ReadFastStartupEnabled();
+
+    public string FastStartupNoteText => FastStartupEnabled == true
+        ? "Fast Startup is on - a short uptime after Shut Down can still be a hybrid resume, not a true cold boot."
+        : string.Empty;
+
     /// <summary>Round 12, #87: read-only "where is this app currently storing settings" status
     /// line for the Settings drawer - portable mode is a launch-time decision (AppPaths.Initialize,
     /// from App.xaml.cs), not something this drawer can toggle live.</summary>

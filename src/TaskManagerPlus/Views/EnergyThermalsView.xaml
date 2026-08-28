@@ -1390,6 +1390,286 @@
                 </StackPanel>
             </Border>
 
+            <!-- #649-#659: Sleep, Modern Standby and wake diagnostics panel. Every on-demand read
+                 here is a real subprocess/event-log call, gated behind its own button - never the
+                 tick timer (see EnergyThermalsViewModel's remarks). Not gated on HasBattery like
+                 the battery-report panel above - sleep/wake diagnostics matter on desktops too. -->
+            <TextBlock Text="Sleep, Modern Standby &amp; wake diagnostics" Style="{StaticResource CardTitle}"
+                       FontSize="15" Margin="0,20,0,8" />
+
+            <!-- #657: overnight standby-drain summary - shown at the top of the panel per the
+                 backlog item's own framing, since it's the headline "was my laptop dead this
+                 morning" answer. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Overnight standby drain" Style="{StaticResource CardTitle}" Margin="0,0,0,4" />
+                    <TextBlock Text="{Binding StandbyDrainSummaryText}" TextWrapping="Wrap" Style="{StaticResource SubStat}" />
+                    <ItemsControl ItemsSource="{Binding StandbyDrainSessions}" Margin="0,8,0,0">
+                        <ItemsControl.Style>
+                            <Style TargetType="ItemsControl">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding StandbyDrainSessions.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </ItemsControl.Style>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock FontSize="12" Margin="0,0,0,3">
+                                    <Run Text="{Binding SleepTime, StringFormat={}{0:g}, Mode=OneWay}" />
+                                    <Run Text=" → " />
+                                    <Run Text="{Binding WakeTime, StringFormat={}{0:t}, Mode=OneWay}" />
+                                    <Run Text=": " />
+                                    <Run Text="{Binding SleepBatteryPercent, StringFormat={}{0:0}%, Mode=OneWay}" />
+                                    <Run Text=" → " />
+                                    <Run Text="{Binding WakeBatteryPercent, StringFormat={}{0:0}%, Mode=OneWay}" />
+                                    <Run Text=" (" />
+                                    <Run Text="{Binding DrainPercentPerHour, StringFormat={}{0:0.#}%/hr, Mode=OneWay}" />
+                                    <Run Text=")" />
+                                </TextBlock>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #649/#650/#651: sleepstudy / system power report - session table + cross-session
+                 ranked offenders, routed by Modern-Standby-vs-legacy-S3 detection. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Sleep report (sleepstudy)" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Run sleep report" FontSize="11" Padding="8,3"
+                                Command="{Binding LoadSleepStudyCommand}" />
+                    </Grid>
+                    <TextBlock Text="{Binding SleepStudyStatusText}" TextWrapping="Wrap" Style="{StaticResource SubStat}" Margin="0,0,0,8" />
+
+                    <TextBlock Text="Sessions" Margin="0,0,0,4">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource CardTitle}">
+                                <Setter Property="FontSize" Value="12.5" />
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding SleepStudySessions.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <DataGrid ItemsSource="{Binding SleepStudySessions}" IsReadOnly="True" Height="180" Margin="0,0,0,10">
+                        <DataGrid.Style>
+                            <Style TargetType="DataGrid">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding SleepStudySessions.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </DataGrid.Style>
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Start" Binding="{Binding Start, StringFormat={}{0:g}, TargetNullValue=Unknown}" Width="1.4*" />
+                            <DataGridTextColumn Header="Duration" Binding="{Binding Duration, StringFormat={}{0:hh\:mm\:ss}, TargetNullValue=Unknown}" Width="*" />
+                            <DataGridTextColumn Header="Low-power %" Binding="{Binding LowPowerPercent, StringFormat={}{0:0.#}%, TargetNullValue=Unknown}" Width="*" />
+                            <DataGridTextColumn Header="Drain %" Binding="{Binding DrainPercent, StringFormat={}{0:0.#}%, TargetNullValue=Unknown}" Width="*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+
+                    <!-- #650: cross-session ranked offenders - the actionable answer a single
+                         session's own top-offender list buries. -->
+                    <StackPanel Margin="0,4,0,0">
+                        <StackPanel.Style>
+                            <Style TargetType="StackPanel">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding TopStandbyOffenders.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </StackPanel.Style>
+                        <TextBlock Text="Top standby offenders (across all parsed sessions)" Style="{StaticResource CardTitle}" FontSize="12.5" Margin="0,0,0,4" />
+                        <ItemsControl ItemsSource="{Binding TopStandbyOffenders}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock FontSize="12" Margin="0,0,0,3">
+                                        <Run Text="{Binding Name, Mode=OneWay}" FontWeight="SemiBold" />
+                                        <Run Text=" — " />
+                                        <Run Text="{Binding Category, Mode=OneWay}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        <Run Text=" (in " />
+                                        <Run Text="{Binding SessionCount, Mode=OneWay}" />
+                                        <Run Text=" session(s))" />
+                                    </TextBlock>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- #652: live power-request blocker list - the direct "why won't my PC sleep right
+                 now" answer, refreshed on demand only. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Outstanding power requests" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Refresh" FontSize="11" Padding="8,3"
+                                Command="{Binding LoadPowerRequestsCommand}" />
+                    </Grid>
+                    <TextBlock Text="{Binding PowerRequestsStatusText}" TextWrapping="Wrap" Style="{StaticResource SubStat}" Margin="0,0,0,8" />
+                    <DataGrid ItemsSource="{Binding PowerRequests}" IsReadOnly="True" Height="160">
+                        <DataGrid.Style>
+                            <Style TargetType="DataGrid">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding PowerRequests.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </DataGrid.Style>
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Category" Binding="{Binding Category}" Width="*" />
+                            <DataGridTextColumn Header="Type" Binding="{Binding SourceType}" Width="*" />
+                            <DataGridTextColumn Header="Source" Binding="{Binding SourceName}" Width="2*" />
+                            <DataGridTextColumn Header="Reason" Binding="{Binding Reason}" Width="2.5*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- #653: wake-armed device inventory (wake_armed ∩ wake_from_any) with a per-device
+                 disable action - the mouse/NIC/keyboard that wakes a PC at 3 a.m. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Wake-armed devices" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Load wake-armed devices" FontSize="11" Padding="8,3"
+                                Command="{Binding LoadWakeArmedDevicesCommand}" />
+                    </Grid>
+                    <TextBlock Text="{Binding WakeArmedDevicesStatusText}" TextWrapping="Wrap" Style="{StaticResource SubStat}" Margin="0,0,0,8" />
+                    <ItemsControl ItemsSource="{Binding WakeArmedDevices}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="{Binding Name, Mode=OneWay}" FontSize="12.5" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                    <Button Grid.Column="1" Content="Disable wake" FontSize="11" Padding="8,3"
+                                            Command="{Binding DataContext.DisableDeviceWakeCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                            CommandParameter="{Binding Name}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #654/#655/#656: wake history (event-log attribution), wake sources (wake timers +
+                 wake-enabled scheduled tasks), and failed-sleep/vetoed-transition detection - one
+                 combined on-demand action, since all three key off the same underlying scan. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Wake history &amp; software wake sources" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Load wake history" FontSize="11" Padding="8,3"
+                                Command="{Binding LoadWakeHistoryCommand}" />
+                    </Grid>
+                    <TextBlock Text="{Binding WakeHistoryStatusText}" TextWrapping="Wrap" Style="{StaticResource SubStat}" Margin="0,0,0,8" />
+
+                    <!-- #656: vetoed-transition warning banner - hidden until at least one is found. -->
+                    <StackPanel Margin="0,0,0,10">
+                        <StackPanel.Style>
+                            <Style TargetType="StackPanel">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding VetoedSleepTransitions.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </StackPanel.Style>
+                        <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Foreground="{DynamicResource WarningBrush}" Margin="0,0,0,4"
+                                   Text="Possible failed/vetoed sleep transitions (quick flag, not a verdict - a driver veto and a deliberate near-instant wake look identical from the event log alone):" />
+                        <ItemsControl ItemsSource="{Binding VetoedSleepTransitions}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock FontSize="12" Margin="0,0,0,3" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap">
+                                        <Run Text="{Binding SleepAttemptTime, StringFormat={}{0:g}, Mode=OneWay}" />
+                                        <Run Text=" — " />
+                                        <Run Text="{Binding DescriptionText, Mode=OneWay}" />
+                                        <Run Text=" Possible vetoing driver: " />
+                                        <Run Text="{Binding PossibleVetoingDriverHint, Mode=OneWay, TargetNullValue=Unknown}" />
+                                    </TextBlock>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+
+                    <TextBlock Text="Wake history" Style="{StaticResource CardTitle}" FontSize="12.5" Margin="0,0,0,4" />
+                    <DataGrid ItemsSource="{Binding WakeHistory}" IsReadOnly="True" Height="160" Margin="0,0,0,10">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Wake time" Binding="{Binding WakeTime, StringFormat={}{0:g}}" Width="1.3*" />
+                            <DataGridTextColumn Header="Sleep time" Binding="{Binding SleepTime, StringFormat={}{0:g}, TargetNullValue=Unknown}" Width="1.3*" />
+                            <DataGridTextColumn Header="Wake source" Binding="{Binding WakeSource, TargetNullValue=Unknown}" Width="1.5*" />
+                            <DataGridTextColumn Header="Record" Binding="{Binding RecordSource}" Width="*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+
+                    <TextBlock Text="Software wake sources (wake timers + wake-enabled scheduled tasks)" Style="{StaticResource CardTitle}" FontSize="12.5" Margin="0,0,0,4" />
+                    <DataGrid ItemsSource="{Binding WakeSources}" IsReadOnly="True" Height="160">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Kind" Binding="{Binding Kind}" Width="*" />
+                            <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="1.5*" />
+                            <DataGridTextColumn Header="Detail" Binding="{Binding Detail}" Width="2.5*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- #658/#659: hibernation configuration + enable/disable action. Fast Startup
+                 (HiberbootEnabled, #659) is annotated on the footer's uptime readout instead - see
+                 MainWindow.xaml - since it's about uptime attribution, not this panel's own state. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Hibernation" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Refresh" FontSize="11" Padding="8,3" Margin="0,0,6,0"
+                                Command="{Binding LoadHibernationStatusCommand}" />
+                        <Button Grid.Column="2" FontSize="11" Padding="8,3"
+                                Content="{Binding Hibernation.Enabled, Converter={StaticResource BoolToEnableDisableTextConverter}}"
+                                Command="{Binding ToggleHibernationCommand}" />
+                    </Grid>
+                    <TextBlock Text="{Binding Hibernation.StatusText}" TextWrapping="Wrap" Style="{StaticResource SubStat}" Margin="0,0,0,4" />
+                </StackPanel>
+            </Border>
+
         </StackPanel>
     </ScrollViewer>
 </UserControl>

@@ -364,6 +364,7 @@
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <StackPanel Grid.Column="0" Orientation="Horizontal">
                     <Border Width="7" Height="7" CornerRadius="3.5" Margin="0,0,7,0" VerticalAlignment="Center" Background="{DynamicResource SuccessBrush}" />
@@ -455,6 +456,25 @@
                 </Button>
 
                 <TextBlock Grid.Column="5" Text="{Binding Performance.Uptime, StringFormat=Uptime {0}}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5" VerticalAlignment="Center" />
+
+                <!-- #659: Fast Startup annotation - a short uptime after "Shut down" can still be
+                     a hybrid resume rather than a true cold boot when Fast Startup is on (see
+                     MainViewModel.FastStartupNoteText). Hidden entirely when Fast Startup is off or
+                     its registry flag couldn't be read at all. -->
+                <TextBlock Grid.Column="6" Text="{Binding FastStartupNoteText}" Foreground="{DynamicResource WarningBrush}" FontSize="11.5"
+                           VerticalAlignment="Center" Margin="10,0,0,0" ToolTip="{Binding FastStartupNoteText}"
+                           TextTrimming="CharacterEllipsis" MaxWidth="260">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Visibility" Value="Visible" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding FastStartupNoteText}" Value="">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
             </Grid>
         </Border>
     </Grid>

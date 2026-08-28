@@ -344,6 +344,127 @@ public sealed class EventLogService
         return result.OrderByDescending(e => e.TimeCreated).ToList();
     }
 
+    // #654: Kernel-Power event 107 (plain resume marker, no source attribution) and
+    // Microsoft-Windows-Power-Troubleshooter event 1 (richer - "Sleep Time:"/"Wake Time:"/"Wake
+    // Source:" insertion strings inside the formatted message) - confirmed live on a real dev
+    // machine that both log to the System log (not a separate Operational log for the
+    // Power-Troubleshooter provider), with event 1's message reading "The system has returned from
+    // a low power state." followed by those three labeled lines. See WakeHistoryService for how
+    // these are merged with `powercfg /lastwake` into one wake-history table.
+    private const string PowerTroubleshooterProvider = "Microsoft-Windows-Power-Troubleshooter";
+    private const int ResumeEventId107 = 107; // Kernel-Power
+    private const int WakeSourceEventId1 = 1; // Power-Troubleshooter
+
+    private static readonly Regex SleepTimeRegex = new(@"Sleep Time:\s*([^\r\n]+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex WakeTimeRegex = new(@"Wake Time:\s*([^\r\n]+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex WakeSourceRegex = new(@"Wake Source:\s*([^\r\n]+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    public List<WakeHistoryEntry> ReadWakeHistoryEvents()
+    {
+        var result = new List<WakeHistoryEntry>();
+        try
+        {
+            long maxAgeMs = LookbackDays * 24L * 60 * 60 * 1000;
+            var query = new EventLogQuery("System", PathType.LogName,
+                $"*[System[((Provider[@Name='{KernelPowerProvider}'] and EventID={ResumeEventId107}) or " +
+                $"(Provider[@Name='{PowerTroubleshooterProvider}'] and EventID={WakeSourceEventId1})) and " +
+                $"TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]")
+            {
+                ReverseDirection = true,
+            };
+
+            using var reader = new EventLogReader(query);
+            int count = 0;
+            const int maxEvents = 300;
+            while (count < maxEvents && reader.ReadEvent() is { } record)
+            {
+                using (record)
+                {
+                    count++;
+                    if (record.TimeCreated is not { } timeCreated) continue;
+
+                    if (record.Id == ResumeEventId107 && record.ProviderName == KernelPowerProvider)
+                    {
+                        result.Add(new WakeHistoryEntry
+                        {
+                            SleepTime = null,
+                            WakeTime = timeCreated,
+                            WakeSource = string.Empty,
+                            RecordSource = "Kernel-Power 107",
+                        });
+                        continue;
+                    }
+
+                    string message;
+                    try { message = record.FormatDescription() ?? string.Empty; }
+                    catch { message = string.Empty; } // provider's message file isn't registered - a known, common gap
+
+                    DateTime? sleepTime = SleepTimeRegex.Match(message) is { Success: true } sleepMatch &&
+                        BatteryReportService.TryParseFlexibleDate(sleepMatch.Groups[1].Value, out var st) ? st : null;
+                    string wakeSource = WakeSourceRegex.Match(message) is { Success: true } sourceMatch
+                        ? sourceMatch.Groups[1].Value.Trim() : string.Empty;
+
+                    // "Wake Time:" in the message is the authoritative wake timestamp when present
+                    // (it can differ slightly from the event's own TimeCreated); fall back to
+                    // TimeCreated when the message couldn't be formatted at all.
+                    DateTime wakeTime = WakeTimeRegex.Match(message) is { Success: true } wakeMatch &&
+                        BatteryReportService.TryParseFlexibleDate(wakeMatch.Groups[1].Value, out var wt) ? wt : timeCreated;
+
+                    result.Add(new WakeHistoryEntry
+                    {
+                        SleepTime = sleepTime,
+                        WakeTime = wakeTime,
+                        WakeSource = wakeSource,
+                        RecordSource = "Power-Troubleshooter",
+                    });
+                }
+            }
+        }
+        catch
+        {
+            // Provider/log unavailable - degrade to "none found", same as every other event-log
+            // read in this service.
+        }
+        return result.OrderByDescending(e => e.WakeTime).ToList();
+    }
+
+    // #656: Kernel-Power event 42 - "The system is entering sleep." A 42 with no matching resume
+    // (or one immediately followed by a Power-Troubleshooter event-1 resume within seconds) is the
+    // failed-sleep/vetoed-transition signal SleepVetoService.Correlate looks for.
+    private const int SleepEntryEventId42 = 42;
+
+    public List<DateTime> ReadSleepEntryEvents()
+    {
+        var result = new List<DateTime>();
+        try
+        {
+            long maxAgeMs = LookbackDays * 24L * 60 * 60 * 1000;
+            var query = new EventLogQuery("System", PathType.LogName,
+                $"*[System[Provider[@Name='{KernelPowerProvider}'] and (EventID={SleepEntryEventId42}) and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]")
+            {
+                ReverseDirection = true,
+            };
+
+            using var reader = new EventLogReader(query);
+            int count = 0;
+            const int maxEvents = 300;
+            while (count < maxEvents && reader.ReadEvent() is { } record)
+            {
+                using (record)
+                {
+                    count++;
+                    if (record.TimeCreated is { } t) result.Add(t);
+                }
+            }
+        }
+        catch
+        {
+            // Provider/log unavailable - degrade to "none found", same as every other event-log
+            // read in this service.
+        }
+        return result.OrderByDescending(t => t).ToList();
+    }
+
     // Round 8 #40: low-memory resource-exhaustion events are logged by a dedicated Windows
     // component at Warning level, not Critical/Error - outside the Level=1|2 filter the main scan
     // above uses - so this is a second, separately targeted query for just this one provider,

@@ -664,6 +664,77 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
     private string _hotChargeThrottleText = string.Empty;
     public string HotChargeThrottleText { get => _hotChargeThrottleText; private set => SetProperty(ref _hotChargeThrottleText, value); }
 
+    // ================================================================================
+    // #649-#657: Sleep panel - sleepstudy report + ranked offenders (#649/#650), Modern-Standby-
+    // vs-legacy-S3 routing (#651), live power-request blockers (#652), wake-armed device inventory
+    // + disable action (#653), wake-history attribution (#654), wake-timer inventory (#655),
+    // failed-sleep/vetoed-transition detection (#656), and the overnight standby-drain calculator
+    // (#657). #658's hibernation status/toggle has its own small properties block further below.
+    // All of the on-demand reads here are real subprocess/event-log calls, gated behind their own
+    // buttons only - never the tick timer (CLAUDE.md's on-demand-vs-polled convention; item 652
+    // calls this out explicitly for /requests specifically).
+    // ================================================================================
+
+    // ---- #649/#650: sleepstudy report + cross-session ranked offenders --------------------------
+    public ObservableCollection<SleepStudySession> SleepStudySessions { get; } = new();
+    public ObservableCollection<SleepStudyOffender> TopStandbyOffenders { get; } = new();
+
+    private string _sleepStudyStatusText = "Not checked yet.";
+    public string SleepStudyStatusText { get => _sleepStudyStatusText; private set => SetProperty(ref _sleepStudyStatusText, value); }
+
+    public AsyncRelayCommand LoadSleepStudyCommand { get; }
+
+    /// <summary>#656: the #650 top-ranked, *repeated* (appeared in 2+ sessions) offender name, kept
+    /// so a later vetoed-transition correlation can attach it as a general hint - null until a
+    /// sleepstudy report has been loaded at least once this session and found one.</summary>
+    private string? _topStandbyOffenderHint;
+
+    // ---- #652: live power-request blocker list ---------------------------------------------------
+    public ObservableCollection<PowerRequestEntry> PowerRequests { get; } = new();
+
+    private string _powerRequestsStatusText = "Not checked yet.";
+    public string PowerRequestsStatusText { get => _powerRequestsStatusText; private set => SetProperty(ref _powerRequestsStatusText, value); }
+
+    public AsyncRelayCommand LoadPowerRequestsCommand { get; }
+
+    // ---- #653: wake-armed device inventory + disable action ---------------------------------------
+    public ObservableCollection<WakeArmedDevice> WakeArmedDevices { get; } = new();
+
+    private string _wakeArmedDevicesStatusText = "Not checked yet.";
+    public string WakeArmedDevicesStatusText { get => _wakeArmedDevicesStatusText; private set => SetProperty(ref _wakeArmedDevicesStatusText, value); }
+
+    public AsyncRelayCommand LoadWakeArmedDevicesCommand { get; }
+    public AsyncRelayCommand DisableDeviceWakeCommand { get; }
+
+    // ---- #654/#655/#656: wake history, wake sources (timers + wake-enabled tasks), vetoed
+    // transitions - all populated together by one "Load wake history" action, since #656's
+    // correlation and #657's drain reconciliation both need the same wake-history read anyway. ----
+    public ObservableCollection<WakeHistoryEntry> WakeHistory { get; } = new();
+    public ObservableCollection<WakeSourceRow> WakeSources { get; } = new();
+    public ObservableCollection<SleepTransitionRecord> VetoedSleepTransitions { get; } = new();
+
+    private string _wakeHistoryStatusText = "Not checked yet.";
+    public string WakeHistoryStatusText { get => _wakeHistoryStatusText; private set => SetProperty(ref _wakeHistoryStatusText, value); }
+
+    public AsyncRelayCommand LoadWakeHistoryCommand { get; }
+
+    // ---- #657: overnight standby-drain calculator, persisted to standby-drain.json - loaded once
+    // at startup (cheap JSON read) so the summary is visible before the user ever clicks anything,
+    // then reconciled against fresh wake-history data each time LoadWakeHistoryCommand runs. -------
+    public ObservableCollection<StandbyDrainSession> StandbyDrainSessions { get; } = new();
+
+    private string _standbyDrainSummaryText = "Not enough data yet - load wake history at least once after an overnight sleep to start tracking standby drain.";
+    public string StandbyDrainSummaryText { get => _standbyDrainSummaryText; private set => SetProperty(ref _standbyDrainSummaryText, value); }
+
+    // ---- #658: hibernation configuration + enable/disable action, plus #659's Fast Startup note
+    // (read directly by MainViewModel via HibernationService.ReadFastStartupEnabled - not surfaced
+    // as a property here, since #659's footer annotation is independent of this Sleep panel). ------
+    private HibernationStatus? _hibernationStatus;
+    public HibernationStatus? Hibernation { get => _hibernationStatus; private set => SetProperty(ref _hibernationStatus, value); }
+
+    public AsyncRelayCommand LoadHibernationStatusCommand { get; }
+    public AsyncRelayCommand ToggleHibernationCommand { get; }
+
     public EnergyThermalsViewModel(PerformanceViewModel performance)
     {
         _performance = performance;
@@ -840,6 +911,31 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         // startup for a non-empty first paint - see CLAUDE.md's on-demand-vs-polled convention).
         LoadBatteryReportCommand = new AsyncRelayCommand(_ => LoadBatteryReportAsync());
         LoadBatteryDrainAttributionCommand = new AsyncRelayCommand(_ => LoadBatteryDrainAttributionAsync());
+
+        // #649-#658: Sleep panel commands - every one of these is a real subprocess/event-log
+        // call, gated behind its own button (see the properties block above).
+        LoadSleepStudyCommand = new AsyncRelayCommand(_ => LoadSleepStudyAsync());
+        LoadPowerRequestsCommand = new AsyncRelayCommand(_ => LoadPowerRequestsAsync());
+        LoadWakeArmedDevicesCommand = new AsyncRelayCommand(_ => LoadWakeArmedDevicesAsync());
+        DisableDeviceWakeCommand = new AsyncRelayCommand(DisableDeviceWakeAsync);
+        LoadWakeHistoryCommand = new AsyncRelayCommand(_ => LoadWakeHistoryAsync());
+        LoadHibernationStatusCommand = new AsyncRelayCommand(_ => LoadHibernationStatusAsync());
+        ToggleHibernationCommand = new AsyncRelayCommand(_ => ToggleHibernationAsync());
+
+        // #649/#651: sleep-state support (Modern Standby vs. legacy S3) fired once at startup too
+        // (not just behind LoadPowerInfoCommand) - it's a single cheap `powercfg /a` shell-out
+        // (same "cheap enough for a one-time startup read" tier as the firmware/PSU/power-source
+        // reads elsewhere in this constructor), and #651's sleepstudy-vs-systemsleepdiagnostics
+        // routing needs it available before the user ever opens this panel.
+        _ = LoadPowerInfoAsync();
+
+        // #657: persisted standby-drain trend loaded once at startup (a plain JSON read) so the
+        // summary at the top of the Sleep panel isn't empty until the user clicks anything.
+        RefreshStandbyDrainSummary(StandbyDrainService.Load());
+
+        // #658: hibernation status - cheap (one powercfg /a shell-out plus a couple of registry
+        // reads), same "fire once at startup too" tier as the sleep-state read just above.
+        _ = LoadHibernationStatusAsync();
 
         // #604: per-week episode-count sparkline - same glow+core LineOf pattern as every other
         // history chart on this tab.
@@ -1573,7 +1669,7 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         // #625/#638: coarse power-history log append, at most once a minute - see
         // PowerHistoryLogService's remarks for why this is a periodic append rather than a
         // per-tick write.
-        AppendPowerHistorySampleIfDue(CpuPackageTempC, TotalPackagePowerW, GpuPowerDrawW);
+        AppendPowerHistorySampleIfDue(CpuPackageTempC, TotalPackagePowerW, GpuPowerDrawW, BatteryChargePercent);
     }
 
     private static string DescribeReasonClass(ThrottleReasonClass c) => c switch
@@ -2610,14 +2706,17 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
 
     /// <summary>Appends one sample to power-history-log.json at most once a minute - see
     /// PowerHistoryLogService's remarks for why this needs to be a persisted (not in-memory) trail
-    /// at all, and why it's periodic rather than per-tick.</summary>
-    private void AppendPowerHistorySampleIfDue(double? tempC, double? packagePowerW, double? gpuPowerW)
+    /// at all, and why it's periodic rather than per-tick. #657: also carries the live battery
+    /// percent (when present) so StandbyDrainService can later look up "battery percent right
+    /// before/after" an overnight sleep from this same once-a-minute trail, without a second
+    /// persisted log just for that one figure.</summary>
+    private void AppendPowerHistorySampleIfDue(double? tempC, double? packagePowerW, double? gpuPowerW, double? batteryPercent)
     {
         var now = DateTime.Now;
         if (now - _lastPowerHistoryAppend < PowerHistoryAppendInterval) return;
         _lastPowerHistoryAppend = now;
 
-        if (tempC is null && packagePowerW is null && gpuPowerW is null) return; // nothing worth logging yet
+        if (tempC is null && packagePowerW is null && gpuPowerW is null && batteryPercent is null) return; // nothing worth logging yet
 
         PowerHistoryLogService.Append(new PowerTempSample
         {
@@ -2625,6 +2724,7 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
             TempC = tempC,
             PackagePowerW = packagePowerW,
             GpuPowerW = gpuPowerW,
+            BatteryPercent = batteryPercent,
         });
     }
 
@@ -2920,6 +3020,157 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
             if (match is not null) return match.Value;
         }
         return null;
+    }
+
+    // ================================================================================
+    // #649-#658: Sleep panel - see the properties block above for how each of these is exposed.
+    // ================================================================================
+
+    /// <summary>#649/#650/#651: runs the sleepstudy/system-power report and its cross-session
+    /// offender ranking, routed by SleepStateSupportText's Modern-Standby-vs-legacy-S3 detection -
+    /// see SleepStudyService.RunAsync's remarks for exactly how that routing plays out on current
+    /// Windows builds.</summary>
+    private async Task LoadSleepStudyAsync()
+    {
+        SleepStudyStatusText = "Running sleep report (a real subprocess call - this can take a moment)...";
+        bool isModernStandby = SleepStateSupportText.Contains("Modern Standby", StringComparison.OrdinalIgnoreCase);
+
+        var (sessions, ranked, status) = await SleepStudyService.RunAsync(isModernStandby);
+        SleepStudySessions.Clear();
+        foreach (var s in sessions) SleepStudySessions.Add(s);
+        TopStandbyOffenders.Clear();
+        foreach (var o in ranked.Take(10)) TopStandbyOffenders.Add(o);
+        SleepStudyStatusText = status;
+
+        // #656: a repeated (2+ session) top offender becomes a general hint for the next
+        // vetoed-transition correlation - see SleepTransitionRecord.PossibleVetoingDriverHint.
+        _topStandbyOffenderHint = ranked.FirstOrDefault(o => o.SessionCount >= 2)?.Name;
+    }
+
+    /// <summary>#652: live power-request blocker list - the direct "why won't my PC sleep right
+    /// now" answer.</summary>
+    private async Task LoadPowerRequestsAsync()
+    {
+        PowerRequestsStatusText = "Reading outstanding power requests...";
+        var (requests, status) = await PowerRequestService.ReadAsync();
+        PowerRequests.Clear();
+        foreach (var r in requests) PowerRequests.Add(r);
+        PowerRequestsStatusText = status;
+    }
+
+    /// <summary>#653: wake-armed device inventory (wake_armed ∩ wake_from_any).</summary>
+    private async Task LoadWakeArmedDevicesAsync()
+    {
+        WakeArmedDevicesStatusText = "Reading wake-armed devices...";
+        var (devices, status) = await WakeDeviceService.ReadWakeArmedDevicesAsync();
+        WakeArmedDevices.Clear();
+        foreach (var d in devices) WakeArmedDevices.Add(d);
+        WakeArmedDevicesStatusText = status;
+    }
+
+    /// <summary>#653: `powercfg /devicedisablewake &lt;name&gt;` for one row from the list above,
+    /// then reloads the list so a successfully-disabled device drops out of it immediately.</summary>
+    private async Task DisableDeviceWakeAsync(object? param)
+    {
+        if (param is not string name || string.IsNullOrWhiteSpace(name)) return;
+
+        var (success, error) = await WakeDeviceService.DisableWakeAsync(name);
+        WakeArmedDevicesStatusText = success
+            ? $"Disabled wake for \"{name}\"."
+            : $"Couldn't disable wake for \"{name}\": {error}";
+        if (success) await LoadWakeArmedDevicesAsync();
+    }
+
+    /// <summary>#654/#655/#656/#657: one combined "Load wake history" action - wake-history
+    /// attribution, wake-timer + wake-enabled-scheduled-task inventory, vetoed-transition
+    /// detection, and the standby-drain reconciliation all key off the same underlying wake-history
+    /// event-log read, so splitting them into separate buttons would just mean re-running that scan
+    /// several times over for no benefit.</summary>
+    private async Task LoadWakeHistoryAsync()
+    {
+        WakeHistoryStatusText = "Reading wake history (a real event-log scan and subprocess call)...";
+
+        // #654
+        var (entries, lastWakeSummary) = await WakeHistoryService.ReadAsync(_eventLog);
+        WakeHistory.Clear();
+        foreach (var e in entries.Take(30)) WakeHistory.Add(e);
+        WakeHistoryStatusText = entries.Count == 0
+            ? $"No wake-history events found in the last 30 days. {lastWakeSummary}"
+            : $"{entries.Count} wake event(s) in the last 30 days. {lastWakeSummary}";
+
+        // #655: wake timers + wake-enabled scheduled tasks, unified into one table.
+        var (timers, _) = await WakeTimerService.ReadAsync();
+        var wakeTasks = await ScheduledTaskService.ListWakeEnabledAsync();
+        WakeSources.Clear();
+        foreach (var t in timers) WakeSources.Add(t);
+        foreach (var task in wakeTasks)
+        {
+            WakeSources.Add(new WakeSourceRow
+            {
+                Kind = "Scheduled task",
+                Name = task.Name,
+                Detail = task.IsEnabled ? "Wake-enabled" : "Wake-enabled (task currently disabled)",
+            });
+        }
+
+        // #656: failed-sleep/vetoed-transition detection, reusing this same wake-history read.
+        var sleepEntryEvents = await Task.Run(() => _eventLog.ReadSleepEntryEvents());
+        var vetoed = SleepVetoService.Correlate(sleepEntryEvents, entries, _topStandbyOffenderHint);
+        VetoedSleepTransitions.Clear();
+        foreach (var v in vetoed.Take(20)) VetoedSleepTransitions.Add(v);
+
+        // #657: reconcile the overnight standby-drain trail against this same wake-history read.
+        var powerHistorySamples = PowerHistoryLogService.Load();
+        var drainSessions = StandbyDrainService.ReconcileAndSave(entries, powerHistorySamples);
+        RefreshStandbyDrainSummary(drainSessions);
+    }
+
+    /// <summary>#657: recomputes the drain-per-hour summary shown at the top of the Sleep panel
+    /// from whatever standby-drain.json currently holds - called both at startup (from the
+    /// persisted file alone) and after each LoadWakeHistoryAsync reconciliation.</summary>
+    private void RefreshStandbyDrainSummary(List<StandbyDrainSession> sessions)
+    {
+        StandbyDrainSessions.Clear();
+        foreach (var s in sessions.Take(20)) StandbyDrainSessions.Add(s);
+
+        if (sessions.Count == 0) return;
+
+        int sampleCount = Math.Min(7, sessions.Count);
+        double avg = sessions.Take(sampleCount).Average(s => s.DrainPercentPerHour);
+        string verdict = avg <= StandbyDrainSession.HealthyReferencePercentPerHour
+            ? "within the healthy Modern-Standby reference range"
+            : "above the healthy Modern-Standby reference range (roughly ≤1-2%/hr) - worth checking the standby-offender ranking and power-request panels above";
+        StandbyDrainSummaryText = $"Average standby drain over the last {sampleCount} recorded night(s): {avg:0.#}%/hr - {verdict}.";
+    }
+
+    /// <summary>#658: hibernation status - powercfg /a plus the HibernateEnabled/HiberFileSizePercent
+    /// registry values, and the on-disk hiberfil.sys size.</summary>
+    private async Task LoadHibernationStatusAsync()
+    {
+        Hibernation = await HibernationService.ReadStatusAsync();
+    }
+
+    /// <summary>#658: enable/disable action - `powercfg /hibernate on|off`, then reloads the status
+    /// above so the panel reflects the actual result rather than assuming success.</summary>
+    private async Task ToggleHibernationAsync()
+    {
+        bool targetEnabled = Hibernation?.Enabled != true;
+        var (success, error) = await HibernationService.SetHibernationEnabledAsync(targetEnabled);
+        if (success)
+        {
+            await LoadHibernationStatusAsync();
+        }
+        else
+        {
+            var prior = Hibernation;
+            Hibernation = new HibernationStatus
+            {
+                Enabled = prior?.Enabled,
+                HiberfilSizeBytes = prior?.HiberfilSizeBytes,
+                ConfiguredSizePercent = prior?.ConfiguredSizePercent,
+                StatusText = $"Couldn't change hibernation: {error}",
+            };
+        }
     }
 
     public void Dispose()
