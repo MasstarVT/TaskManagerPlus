@@ -14,12 +14,14 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
         <!-- Toolbar row 1: search/filters + destructive actions -->
         <Grid Grid.Row="0" Margin="0,0,0,8">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="260" />
+                <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
@@ -62,13 +64,19 @@
                       IsChecked="{Binding ShowTree}"
                       ToolTip="Show processes indented under their parent instead of a flat list" />
 
-            <TextBlock Grid.Column="3" VerticalAlignment="Center" Margin="16,0,0,0"
+            <!-- Item 67: opt-in (default off) response-time probe - off by default so an ordinary
+                 poll tick never pays for it, see ProcessMonitorService.Sample's own remarks. -->
+            <CheckBox Grid.Column="3" Content="Measure response time" VerticalAlignment="Center" Margin="16,0,0,0"
+                      IsChecked="{Binding MeasureResponseTime}"
+                      ToolTip="SendMessageTimeout probe (bounded, ~250ms) against every windowed process each tick - turns 'Not responding' into an actual millisecond figure, catching apps that are sluggish but not yet flagged hung." />
+
+            <TextBlock Grid.Column="4" VerticalAlignment="Center" Margin="16,0,0,0"
                        Foreground="{DynamicResource TextSecondaryBrush}">
                 <Run Text="{Binding ProcessCount, Mode=OneWay}" /><Run Text=" processes" />
             </TextBlock>
 
-            <Button Grid.Column="4" Content="End process tree" Margin="0,0,8,0" Command="{Binding EndProcessTreeCommand}" />
-            <Button Grid.Column="5" Content="End task" Command="{Binding EndTaskCommand}" Style="{StaticResource DangerButton}" />
+            <Button Grid.Column="5" Content="End process tree" Margin="0,0,8,0" Command="{Binding EndProcessTreeCommand}" />
+            <Button Grid.Column="6" Content="End task" Command="{Binding EndTaskCommand}" Style="{StaticResource DangerButton}" />
         </Grid>
 
         <!-- Toolbar row 2: on-demand inspectors + process-control actions for the selected process. -->
@@ -104,6 +112,14 @@
             <!-- Round 16, #856 -->
             <Button Content="Decode -enc argument" Margin="0,0,16,8" Command="{Binding DecodeEncodedCommandCommand}"
                     ToolTip="Decodes this process's PowerShell -EncodedCommand argument (UTF-16LE base64) into plain text - enabled only when one is detected" />
+            <!-- Item 64: Wait Chain Traversal - only meaningful (and only enabled) for a currently
+                 not-responding process. -->
+            <Button Content="Analyse wait chain" Margin="0,0,8,8" Command="{Binding AnalyzeWaitChainCommand}"
+                    ToolTip="Wait Chain Traversal (the same API Resource Monitor's own 'Analyze Wait Chain' uses): which thread is this not-responding process blocked on, and who's holding it - flags a cycle as a deadlock." />
+            <!-- Item 65: on-demand mini/full dump, same call Task Manager's own 'Create dump file' makes. -->
+            <Button Content="Create mini dump…" Margin="0,0,8,8" Command="{Binding CreateMiniDumpCommand}" />
+            <Button Content="Create full dump…" Margin="0,0,16,8" Command="{Binding CreateFullDumpCommand}"
+                    ToolTip="Includes the process' entire address space - large, but captures everything a debugger could need to inspect heap state at the moment of the freeze." />
 
             <!-- Round 7 #6: priority class picker. -->
             <TextBlock Text="Priority:" VerticalAlignment="Center" Margin="0,0,4,8" Foreground="{DynamicResource TextSecondaryBrush}" />
@@ -276,6 +292,13 @@
                         </DataTemplate>
                     </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>
+                <!-- Item 67: measured UI responsiveness - null (shown as "—", TargetNullValue,
+                     matching TdrSettings' own nullable-int-column convention elsewhere on this
+                     tab) whenever MeasureResponseTime is off, the row has no window, or the probe
+                     itself timed out (SMTO_ABORTIFHUNG aborted the call) - never a fabricated
+                     number. -->
+                <DataGridTextColumn Header="Response" Width="90" SortMemberPath="ResponseTimeMs"
+                                     Binding="{Binding ResponseTimeMs, TargetNullValue='—', StringFormat={}{0}ms}" />
                 <DataGridTemplateColumn Header="Status" Width="150" SortMemberPath="NotRespondingSeconds">
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate>
@@ -413,6 +436,30 @@
                     </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>
                 <DataGridTextColumn Header="Path" Binding="{Binding FilePath}" Width="3*" />
+                <!-- Round 17, item 60: crashes/hangs for this executable in the last 30 days -
+                     from CrashHistoryCacheService's own cheap cache, not a per-tick query. -->
+                <DataGridTemplateColumn Header="Crashes (30d)" Width="100" SortMemberPath="CrashCount30d">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding CrashCount30d}" VerticalAlignment="Center"
+                                       ToolTip="Application Error (1000) / Application Hang (1002) events logged for this executable in the last 30 days">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding CrashCount30d}" Value="0">
+                                                <Setter Property="Text" Value="—" />
+                                            </DataTrigger>
+                                            <Trigger Property="Text" Value="1">
+                                                <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                            </Trigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
             </DataGrid.Columns>
             <DataGrid.ContextMenu>
                 <ContextMenu>
@@ -437,6 +484,12 @@
                     <Separator />
                     <!-- Round 17, #864: shells to MpCmdRun.exe -Scan -ScanType 3 -File <image path>. -->
                     <MenuItem Header="Scan with Windows Defender" Command="{Binding ScanWithDefenderCommand}" />
+                    <Separator />
+                    <!-- Item 64: enabled only for a currently not-responding process. -->
+                    <MenuItem Header="Analyse wait chain" Command="{Binding AnalyzeWaitChainCommand}" />
+                    <!-- Item 65 -->
+                    <MenuItem Header="Create mini dump…" Command="{Binding CreateMiniDumpCommand}" />
+                    <MenuItem Header="Create full dump…" Command="{Binding CreateFullDumpCommand}" />
                 </ContextMenu>
             </DataGrid.ContextMenu>
         </DataGrid>
@@ -860,7 +913,7 @@
             </Border>
 
             <!-- Round 7 #17 -->
-            <Border Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
+            <Border Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Margin="0,0,0,6">
                 <Border.Style>
                     <Style TargetType="Border">
                         <Setter Property="Visibility" Value="Visible" />
@@ -880,6 +933,33 @@
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- Item 64: wait chain result - an indented list, matching Resource Monitor's own
+                 "Analyze Wait Chain" display. Collapsed when nothing's been analysed yet. -->
+            <Border Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Visibility" Value="Visible" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding WaitChainResults.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Wait chain" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                    <ScrollViewer MaxHeight="180" VerticalScrollBarVisibility="Auto">
+                        <ItemsControl ItemsSource="{Binding WaitChainResults}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding}" FontSize="11.5" FontFamily="Consolas" TextTrimming="CharacterEllipsis" Margin="0,0,0,2" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
                 </StackPanel>
             </Border>
         </StackPanel>
@@ -939,7 +1019,47 @@
             </Border>
         </Grid>
 
-        <TextBlock Grid.Row="5" Text="{Binding StatusMessage}" Margin="0,8,0,0"
+        <!-- Round 17, item 63: processes seen in a previous poll tick and gone in the current one -
+             "my app closed itself" turned into "exit code 0xC0000005" wherever a code was
+             actually captured. Collapsed entirely when nothing has exited yet this session. -->
+        <Border Grid.Row="5" Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Margin="0,10,0,0">
+            <Border.Style>
+                <Style TargetType="Border">
+                    <Setter Property="Visibility" Value="Visible" />
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding RecentlyExited.Count}" Value="0">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </Border.Style>
+            <StackPanel>
+                <TextBlock Text="Recently exited" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                <ScrollViewer MaxHeight="120" VerticalScrollBarVisibility="Auto">
+                    <ItemsControl ItemsSource="{Binding RecentlyExited}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,3">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" FontSize="11.5">
+                                        <Run Text="{Binding Name, Mode=OneWay}" FontWeight="SemiBold" />
+                                        <Run Text=" (PID " /><Run Text="{Binding Pid, Mode=OneWay}" /><Run Text=") — " />
+                                        <Run Text="{Binding ExitCodeText, Mode=OneWay}" />
+                                    </TextBlock>
+                                    <TextBlock Grid.Column="1" Text="{Binding ExitTime, StringFormat={}{0:T}}" FontSize="11"
+                                               Foreground="{DynamicResource TextSecondaryBrush}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </StackPanel>
+        </Border>
+
+        <TextBlock Grid.Row="6" Text="{Binding StatusMessage}" Margin="0,8,0,0"
                    Foreground="{DynamicResource TextSecondaryBrush}" />
     </Grid>
 </UserControl>

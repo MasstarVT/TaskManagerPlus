@@ -205,4 +205,24 @@ public sealed class ProcessRow : ObservableObject
     /// remarks.</summary>
     private string? _securityFlagReason;
     public string? SecurityFlagReason { get => _securityFlagReason; set => SetProperty(ref _securityFlagReason, value); }
+
+    /// <summary>Round 17, item 60: how many Application Error (1000) / Application Hang (1002)
+    /// events this executable has produced in the last 30 days, from CrashHistoryCacheService's
+    /// cheap in-memory cache (never a fresh event-log query on this tick - see that service's own
+    /// remarks). 0 both for "genuinely no crashes found" and for "the cache hasn't been built yet"
+    /// - CLAUDE.md's "degrade to 0, never fabricate" default, same as every other best-effort
+    /// count in this app.</summary>
+    private int _crashCount30d;
+    public int CrashCount30d { get => _crashCount30d; set => SetProperty(ref _crashCount30d, value); }
+
+    /// <summary>Item 67: measured UI responsiveness in milliseconds - SendMessageTimeout(WM_NULL,
+    /// SMTO_ABORTIFHUNG) against this process's main window, turning the binary "Not responding"
+    /// status into an actual number so a sluggish-but-not-yet-hung app shows up before Windows
+    /// itself would ever flag it. Null (not "0") whenever no measurement is available: the process
+    /// has no window, ProcessesViewModel.MeasureResponseTime is off (the default - see its own
+    /// remarks on why this is opt-in), or the probe itself timed out (SMTO_ABORTIFHUNG aborted -
+    /// effectively "at least this slow", not a real duration). See
+    /// ProcessControlService.MeasureUiResponseTimeMs.</summary>
+    private int? _responseTimeMs;
+    public int? ResponseTimeMs { get => _responseTimeMs; set => SetProperty(ref _responseTimeMs, value); }
 }

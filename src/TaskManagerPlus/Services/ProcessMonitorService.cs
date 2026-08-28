@@ -51,10 +51,22 @@ public sealed class ProcessMonitorService : IDisposable
     /// ordinary signed-in user account when auditing the process list for something unexpected.</summary>
     private static readonly string[] HighPrivilegeAccounts = { "SYSTEM", "LOCAL SERVICE", "NETWORK SERVICE" };
 
+    /// <summary>Item 67: how long a single SendMessageTimeout probe is allowed to take before it's
+    /// treated as "couldn't measure" - a few hundred ms per CLAUDE.md's own guidance for this
+    /// item, short enough that even a windowed process on every tick can't meaningfully stall the
+    /// poll.</summary>
+    private const int ResponseTimeProbeTimeoutMs = 250;
+
     /// <summary>
     /// Builds the current snapshot of processes. Safe to call from a background thread.
-    /// </summary>
-    public List<ProcessRow> Sample()
+    ///
+    /// measureResponseTime (item 67, off by default) opts into an extra SendMessageTimeout probe
+    /// per windowed process - ProcessesViewModel's own MeasureResponseTime toggle controls this,
+    /// defaulting to false so an ordinary poll tick never pays for it. Even when on, this only
+    /// probes processes that actually own a top-level window (Process.MainWindowHandle != 0) -
+    /// most processes on a typical machine have none, so the realistic worst case is a few dozen
+    /// windowed apps x ResponseTimeProbeTimeoutMs, not every process in the list.</summary>
+    public List<ProcessRow> Sample(bool measureResponseTime = false)
     {
         var now = DateTime.UtcNow;
         var processes = Process.GetProcesses();
@@ -170,6 +182,23 @@ public sealed class ProcessMonitorService : IDisposable
                 }
                 catch { /* ignore */ }
 
+                // Item 67: opt-in only (see this method's own remarks) and only for a process that
+                // actually owns a top-level window - a process with no window has nothing for
+                // SendMessageTimeout to probe, and this deliberately doesn't fall back to any
+                // other window belonging to the process (MainWindowHandle is the same handle the
+                // "Not responding" ghosting check itself effectively reflects).
+                int? responseTimeMs = null;
+                if (measureResponseTime)
+                {
+                    try
+                    {
+                        IntPtr hwnd = proc.MainWindowHandle;
+                        if (hwnd != IntPtr.Zero)
+                            responseTimeMs = ProcessControlService.MeasureUiResponseTimeMs(hwnd, ResponseTimeProbeTimeoutMs);
+                    }
+                    catch { /* ignore - degrades to null (not measured) */ }
+                }
+
                 string owner = GetOwnerCached(pid);
 
                 double cpuPercentClamped = Math.Round(Math.Min(cpuPercent, 100.0 * _logicalProcessors), 1);
@@ -220,6 +249,7 @@ public sealed class ProcessMonitorService : IDisposable
                     IntegrityLevel = integrityLevel,
                     IsAppContainer = isAppContainer,
                     ProtectionLevel = protectionLevel,
+                    ResponseTimeMs = responseTimeMs,
                 });
             }
             catch (Exception)

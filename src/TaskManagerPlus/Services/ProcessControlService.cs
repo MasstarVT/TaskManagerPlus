@@ -162,8 +162,39 @@ public static class ProcessControlService
         }
     }
 
+    /// <summary>Item 67: SendMessageTimeout(WM_NULL, SMTO_ABORTIFHUNG) against a window's message
+    /// queue - turns the binary "Not responding" status into an actual millisecond figure, so a
+    /// sluggish-but-not-yet-hung app shows up before Windows itself would ever flag it. Strictly
+    /// time-bounded by timeoutMs so a genuinely wedged window can never make this call itself hang
+    /// (SMTO_ABORTIFHUNG makes the call itself abort, not block, once Windows' own internal
+    /// hung-window heuristic trips - this timeout is an extra backstop on top of that). Returns
+    /// null - never a fabricated number - when the call fails or aborts because the window is
+    /// hung, so "couldn't measure" is never confused with "measured, and it's fast".</summary>
+    public static int? MeasureUiResponseTimeMs(IntPtr windowHandle, int timeoutMs)
+    {
+        try
+        {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            IntPtr replied = SendMessageTimeout(windowHandle, WmNull, IntPtr.Zero, IntPtr.Zero,
+                SmtoAbortIfHung | SmtoBlock, (uint)timeoutMs, out _);
+            sw.Stop();
+
+            // A zero return means the call itself failed, or SMTO_ABORTIFHUNG aborted it because
+            // the window is hung - either way, not a real measured duration.
+            return replied == IntPtr.Zero ? null : (int)sw.ElapsedMilliseconds;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     private const uint GrObjectsGdi = 0;
     private const uint GrObjectsUser = 1;
+
+    private const uint WmNull = 0x0000;
+    private const uint SmtoBlock = 0x0001;
+    private const uint SmtoAbortIfHung = 0x0002;
 
     [DllImport("psapi.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
@@ -177,4 +208,8 @@ public static class ProcessControlService
 
     [DllImport("ntdll.dll")]
     private static extern int NtResumeProcess(IntPtr processHandle);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam,
+        uint flags, uint timeoutMs, out IntPtr result);
 }

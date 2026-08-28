@@ -371,6 +371,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Gpu.Dispose();
         Logging.Dispose();
         Summary.Dispose();
+        Stability.Dispose();
         _miniDashboard?.Close();
         RemoteMonitor.Dispose();
         Hotkey.Dispose();

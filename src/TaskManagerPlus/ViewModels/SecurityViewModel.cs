@@ -1870,8 +1870,8 @@ public sealed class SecurityViewModel : ObservableObject
         IsCreatingRestorePoint = true;
         try
         {
-            var (success, error) = await RestorePointService.TryCreateRestorePointAsync(description);
-            RestorePointStatus = success ? $"Restore point created ({DateTime.Now:t})." : $"Couldn't create a restore point (continuing anyway): {error}";
+            var (ok, message) = await Task.Run(() => RestorePointService.TryCreate(description));
+            RestorePointStatus = ok ? $"Restore point created ({DateTime.Now:t})." : $"Couldn't create a restore point (continuing anyway): {message}";
         }
         finally
         {

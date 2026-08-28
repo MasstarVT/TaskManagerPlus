@@ -20,6 +20,28 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
     public ObservableCollection<ProcessRow> Processes { get; } = new();
     public ICollectionView ProcessesView { get; }
 
+    // Round 17, item 63: pids this view model has successfully hooked Process.Exited on, so a
+    // best-effort exit code can be captured at the moment .NET itself detects the exit rather than
+    // only ever learning "the pid is gone" a poll tick later - see TrackForExit/
+    // OnTrackedProcessExited. Every entry here is disposed and removed once its exit (or the
+    // process's removal from Processes for any other reason, e.g. the app closing) is handled.
+    private readonly Dictionary<int, Process> _trackedProcesses = new();
+
+    // Round 17, item 63: pids already recorded in RecentlyExited - guards against double-adding a
+    // pid whose Process.Exited fired right around the same poll tick that also noticed its
+    // removal via the plain merge below. Trimmed alongside RecentlyExited itself (see
+    // AddRecentlyExited) so this doesn't grow without bound over a long session; a reused pid
+    // landing here after aging out of the capped RecentlyExited list is a known, accepted
+    // limitation (Windows pid reuse), not something this best-effort feature tries to solve.
+    private readonly HashSet<int> _exitRecorded = new();
+
+    /// <summary>Round 17, item 63: processes seen in a previous poll tick and gone in the current
+    /// one - "my app closed itself" turned into "exit code 0xC0000005" wherever a code was
+    /// actually captured. Newest first, capped at MaxRecentlyExited so a churny machine (lots of
+    /// short-lived helper processes) doesn't grow this list forever.</summary>
+    public ObservableCollection<RecentlyExitedProcessInfo> RecentlyExited { get; } = new();
+    private const int MaxRecentlyExited = 25;
+
     /// <summary>Round 7 #1: process tree/hierarchy view, toggleable alongside the flat grid above -
     /// rebuilt from the same already-sampled Processes collection each tick (BuildProcessTree), no
     /// second sampling source.</summary>
@@ -58,6 +80,7 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
                 SelectedProcessMitigations.Clear();
                 SelectedProcessPrivileges.Clear();
                 DecodedCommandLineText = null;
+                WaitChainResults.Clear();
                 LoadAffinityForSelection();
             }
         }
@@ -197,6 +220,23 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
     public RelayCommand EndProcessTreeCommand { get; }
     public RelayCommand RefreshNowCommand { get; }
 
+    /// <summary>Item 64: indented-list-of-strings render of the last Analyse-wait-chain result for
+    /// SelectedProcess - plain strings (not a structured node type) since the whole chain is
+    /// always shown as-is, the same "flat display list, populated on demand" shape
+    /// SelectedProcessHandleTypes above already uses.</summary>
+    public ObservableCollection<string> WaitChainResults { get; } = new();
+    public AsyncRelayCommand AnalyzeWaitChainCommand { get; }
+
+    /// <summary>Item 65: on-demand mini/full dump of SelectedProcess - see ProcessDumpService.</summary>
+    public RelayCommand CreateMiniDumpCommand { get; }
+    public RelayCommand CreateFullDumpCommand { get; }
+
+    /// <summary>Item 67: opt-in (default off) SendMessageTimeout probe against every windowed
+    /// process's main window, once per poll tick - off by default so an ordinary tick never pays
+    /// for it; see ProcessMonitorService.Sample's own remarks on the exact gating/cost tradeoff.</summary>
+    private bool _measureResponseTime;
+    public bool MeasureResponseTime { get => _measureResponseTime; set => SetProperty(ref _measureResponseTime, value); }
+
     public ProcessesViewModel()
     {
         ProcessesView = CollectionViewSource.GetDefaultView(Processes);
@@ -222,6 +262,17 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
         ResumeCommand = new RelayCommand(_ => SetSuspended(false), _ => SelectedProcess is not null);
         ApplyAffinityCommand = new RelayCommand(_ => ApplyAffinity(), _ => SelectedProcess is not null && AffinityCores.Count > 0);
         SetPriorityCommand = new RelayCommand(_ => SetPriority(), _ => SelectedProcess is not null);
+
+        // Item 64: gated to a currently-not-responding process, matching this item's own "on any
+        // not-responding process" wording - a healthy process' wait chain isn't the point of this
+        // feature (and would just show it running, nothing to analyse).
+        AnalyzeWaitChainCommand = new AsyncRelayCommand(AnalyzeWaitChainAsync,
+            () => SelectedProcess is { Status: "Not responding" });
+
+        // Item 65: available for any selected process, hung or not - Task Manager's own "Create
+        // dump file" isn't limited to not-responding processes either.
+        CreateMiniDumpCommand = new RelayCommand(_ => CreateProcessDump(ProcessDumpService.DumpKind.Mini), _ => SelectedProcess is not null);
+        CreateFullDumpCommand = new RelayCommand(_ => CreateProcessDump(ProcessDumpService.DumpKind.Full), _ => SelectedProcess is not null);
 
         // Round 12, #100: configurable poll interval - see PollIntervalSettingsService's remarks.
         _timer = new DispatcherTimer(DispatcherPriority.Background)
@@ -278,7 +329,7 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
         _isRefreshing = true;
         try
         {
-            var latest = await Task.Run(() => _monitor.Sample());
+            var latest = await Task.Run(() => _monitor.Sample(MeasureResponseTime));
             MergeInto(latest);
             ProcessCount = Processes.Count;
 
@@ -320,7 +371,18 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
                 existing.PagedPoolBytes = fresh.PagedPoolBytes;
                 existing.DiskBytesPerSec = fresh.DiskBytesPerSec;
                 existing.Status = fresh.Status;
+
+                // Round 17 chunk 64-70, item 66: a hang episode just ended (this row was hung last
+                // tick and isn't now) - record its peak duration/count for this executable.
+                // NotRespondingSeconds is monotonic while hung and resets to 0 the instant Windows
+                // reports the process responsive again (see ProcessMonitorService.Sample), so the
+                // *previous* tick's value (still on `existing` here, not yet overwritten) is
+                // exactly that episode's peak.
+                if (existing.NotRespondingSeconds > 0 && fresh.NotRespondingSeconds == 0)
+                    HangHistoryService.RecordHang(existing.Name, existing.NotRespondingSeconds);
+
                 existing.NotRespondingSeconds = fresh.NotRespondingSeconds;
+                existing.ResponseTimeMs = fresh.ResponseTimeMs;
                 existing.ThreadCount = fresh.ThreadCount;
                 existing.HandleCount = fresh.HandleCount;
                 existing.SignatureStatus = fresh.SignatureStatus;
@@ -341,17 +403,128 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
                 // CommandLine/FilePath/StartTime/User/ParentPid/ParentName don't change for the
                 // lifetime of a pid - no need to reassign them every tick like the values above
                 // that actually vary.
+
+                // Round 17, item 60: cheap in-memory cache lookup, never a fresh event-log query
+                // on this tick - see CrashHistoryCacheService's own remarks.
+                existing.CrashCount30d = CrashHistoryCacheService.GetCrashCount(existing.Name);
+
                 latestByPid.Remove(existing.Pid);
             }
             else
             {
+                // Round 17, item 63: this pid was sampled last tick and is gone now - it exited
+                // sometime in between. If Process.Exited (hooked in TrackForExit below, when
+                // opening a handle to this pid succeeded before it exited) already fired, this
+                // pid is already in RecentlyExited with a real exit code and _exitRecorded
+                // already has it - this is only the fallback for a pid this app never managed to
+                // track (a protected process it couldn't open a handle to, or one that started
+                // and exited between two ticks before it was ever added to Processes at all).
+                if (_exitRecorded.Add(existing.Pid))
+                    AddRecentlyExited(existing.Pid, existing.Name, null);
+                UntrackProcess(existing.Pid);
+
+                // Item 66: the other half of "record a completed hang episode" - a process that
+                // exits while still flagged Not responding never gets the "recovered" transition
+                // above, so this is the only place that hang episode is ever seen ending.
+                if (existing.NotRespondingSeconds > 0)
+                    HangHistoryService.RecordHang(existing.Name, existing.NotRespondingSeconds);
+
                 Processes.RemoveAt(i);
             }
         }
 
         // Anything left in latestByPid is a newly-seen process.
         foreach (var row in latestByPid.Values)
+        {
+            row.CrashCount30d = CrashHistoryCacheService.GetCrashCount(row.Name);
             Processes.Add(row);
+            TrackForExit(row.Pid, row.Name);
+        }
+    }
+
+    /// <summary>Round 17, item 63: opens a handle to a newly-seen pid and hooks Process.Exited so
+    /// a best-effort exit code can be captured at the moment .NET itself detects the exit, rather
+    /// than only ever learning "the pid is gone" one poll tick later with no way to recover its
+    /// exit code at all. Best-effort by nature - a protected process, or a process that exits
+    /// before this ever runs for it, simply never gets tracked; the plain merge-detected removal
+    /// in MergeInto above is the fallback for those.</summary>
+    private void TrackForExit(int pid, string name)
+    {
+        if (_trackedProcesses.ContainsKey(pid)) return;
+        try
+        {
+            var proc = Process.GetProcessById(pid);
+            proc.EnableRaisingEvents = true;
+            proc.Exited += (_, _) => OnTrackedProcessExited(pid, name, proc);
+            _trackedProcesses[pid] = proc;
+        }
+        catch
+        {
+            // Access denied (a protected process) or it already exited before this ran - no
+            // Process.Exited notification is possible for this pid.
+        }
+    }
+
+    private void UntrackProcess(int pid)
+    {
+        if (_trackedProcesses.Remove(pid, out var proc))
+        {
+            try { proc.Dispose(); } catch { /* best-effort */ }
+        }
+    }
+
+    /// <summary>Round 17, item 63: fires on Process.Exited's own ThreadPool thread - hops to the
+    /// UI thread before touching RecentlyExited/Processes, the same boundary every other
+    /// background-sourced update in this app already respects (e.g. StabilityViewModel.
+    /// OnNewDumpDetected).</summary>
+    private void OnTrackedProcessExited(int pid, string name, Process proc)
+    {
+        int? exitCode = null;
+        try { exitCode = proc.ExitCode; }
+        catch { /* degrade to "unavailable" below */ }
+
+        var dispatcher = Application.Current?.Dispatcher;
+        if (dispatcher is null) return;
+
+        dispatcher.InvokeAsync(() =>
+        {
+            if (_exitRecorded.Add(pid))
+                AddRecentlyExited(pid, name, exitCode);
+            UntrackProcess(pid);
+        });
+    }
+
+    private void AddRecentlyExited(int pid, string name, int? exitCode)
+    {
+        RecentlyExited.Insert(0, new RecentlyExitedProcessInfo
+        {
+            Pid = pid,
+            Name = name,
+            ExitTime = DateTime.Now,
+            ExitCode = exitCode,
+            ExitCodeText = DescribeExitCode(exitCode),
+        });
+
+        while (RecentlyExited.Count > MaxRecentlyExited)
+        {
+            var removed = RecentlyExited[^1];
+            RecentlyExited.RemoveAt(RecentlyExited.Count - 1);
+            _exitRecorded.Remove(removed.Pid);
+        }
+    }
+
+    /// <summary>Round 17, item 63: decodes an NTSTATUS-shaped exit code (round 15, item 30's
+    /// table, reused per this item's own instruction) - a normal small exit code (0, 1, ...) is
+    /// shown as a plain number instead of a meaningless "0x00000000" hex dump; only a code whose
+    /// top bit is set (the 0x8xxxxxxx/0xC0000000+ ranges an actual crash/termination exit code
+    /// uses) gets the hex+name treatment.</summary>
+    private static string DescribeExitCode(int? exitCode)
+    {
+        if (exitCode is null) return "Exit code unavailable";
+        uint code = unchecked((uint)exitCode.Value);
+        return code >= 0x80000000
+            ? NtStatusLookup.Describe($"0x{code:X8}")
+            : code.ToString();
     }
 
     /// <summary>Round 7 #1: rebuilds the tree from the already-sampled flat Processes collection -
@@ -668,6 +841,76 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
         }
     }
 
+    /// <summary>Item 64: Wait Chain Traversal analysis for SelectedProcess - one indented section
+    /// per thread the API returned a chain for, prefixed with a loud "DEADLOCK CYCLE DETECTED"
+    /// marker when GetThreadWaitChain itself flagged that thread's chain as a cycle. See
+    /// WaitChainAnalysisService for the actual native call and its own timeout handling.</summary>
+    private async Task AnalyzeWaitChainAsync()
+    {
+        var target = SelectedProcess;
+        if (target is null) return;
+        int pid = target.Pid;
+
+        WaitChainResults.Clear();
+        WaitChainResults.Add("Analysing wait chain…");
+
+        var result = await Task.Run(() => WaitChainAnalysisService.Analyze(pid));
+
+        // The selection (or the whole app) may have moved on while this ran in the background.
+        if (SelectedProcess?.Pid != pid) return;
+
+        WaitChainResults.Clear();
+        if (result.ErrorMessage is not null)
+        {
+            WaitChainResults.Add(result.ErrorMessage);
+            return;
+        }
+
+        foreach (var chain in result.Chains)
+        {
+            WaitChainResults.Add(chain.IsDeadlockCycle
+                ? $"Thread {chain.ThreadId} — DEADLOCK CYCLE DETECTED:"
+                : $"Thread {chain.ThreadId}:");
+            for (int i = 0; i < chain.Nodes.Count; i++)
+                WaitChainResults.Add($"{new string(' ', (i + 1) * 2)}→ {chain.Nodes[i]}");
+        }
+    }
+
+    /// <summary>Item 65: writes a mini or full dump of SelectedProcess to a user-chosen file - see
+    /// ProcessDumpService for the actual MiniDumpWriteDump call. Runs via Task.Run (a Full dump of
+    /// a large process can take a while) and reports the outcome through StatusMessage, the same
+    /// convention every other process-control action on this view model already uses.</summary>
+    private void CreateProcessDump(ProcessDumpService.DumpKind kind)
+    {
+        var target = SelectedProcess;
+        if (target is null) return;
+
+        var dlg = new Microsoft.Win32.SaveFileDialog
+        {
+            FileName = $"{target.Name}_{target.Pid}_{kind}.dmp",
+            Filter = "Dump files (*.dmp)|*.dmp|All files (*.*)|*.*",
+        };
+        if (dlg.ShowDialog() != true) return;
+
+        string path = dlg.FileName;
+        int pid = target.Pid;
+        string name = target.Name;
+        string kindText = kind == ProcessDumpService.DumpKind.Full ? "full" : "mini";
+
+        StatusMessage = $"Writing {kindText} dump for {name} (PID {pid})…";
+
+        _ = Task.Run(() => ProcessDumpService.WriteDump(pid, path, kind)).ContinueWith(t =>
+        {
+            Application.Current?.Dispatcher.InvokeAsync(() =>
+            {
+                var (success, error) = t.Result;
+                StatusMessage = success
+                    ? $"Wrote {kindText} dump for {name} to {path}."
+                    : $"Couldn't write dump for {name}: {error}";
+            });
+        });
+    }
+
     /// <summary>Round 7 #17: true only for a process actually named svchost - the reverse-lookup
     /// button is only meaningful there, so it stays disabled for every other row rather than just
     /// silently returning an empty list.</summary>
@@ -803,5 +1046,12 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
     {
         _timer.Stop();
         _monitor.Dispose();
+
+        // Round 17, item 63: dispose every still-tracked Process handle (see TrackForExit).
+        foreach (var proc in _trackedProcesses.Values)
+        {
+            try { proc.Dispose(); } catch { /* best-effort */ }
+        }
+        _trackedProcesses.Clear();
     }
 }
