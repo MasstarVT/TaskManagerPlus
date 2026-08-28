@@ -55,6 +55,8 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
                 SelectedProcessHollowingCheck.Clear();
                 SelectedProcessForeignThreads.Clear();
                 SelectedProcessMitigations.Clear();
+                SelectedProcessPrivileges.Clear();
+                DecodedCommandLineText = null;
                 LoadAffinityForSelection();
             }
         }
@@ -92,6 +94,16 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
     /// <summary>Round 15, #851: mitigation-policy badge row for SelectedProcess - see
     /// ProcessMitigationService.</summary>
     public ObservableCollection<MitigationFlag> SelectedProcessMitigations { get; } = new();
+
+    /// <summary>Round 16, #853: token privilege audit results for SelectedProcess - see
+    /// TokenPrivilegeAuditService.</summary>
+    public ObservableCollection<TokenPrivilegeInfo> SelectedProcessPrivileges { get; } = new();
+
+    /// <summary>Round 16, #856: decoded text from SelectedProcess's -EncodedCommand PowerShell
+    /// argument (or an error message if decoding failed) - null until DecodeEncodedCommandCommand
+    /// has been run. See LivingOffTheLandService.DecodeEncodedCommand.</summary>
+    private string? _decodedCommandLineText;
+    public string? DecodedCommandLineText { get => _decodedCommandLineText; set => SetProperty(ref _decodedCommandLineText, value); }
 
     /// <summary>Round 7 #3: environment variables for SelectedProcess, populated on demand via
     /// ViewEnvironmentCommand - see ProcessEnvironmentService for why this needs a PEB memory walk
@@ -140,6 +152,10 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
     public RelayCommand ViewForeignThreadsCommand { get; }
     /// <summary>Round 15, #851.</summary>
     public RelayCommand ViewMitigationsCommand { get; }
+    /// <summary>Round 16, #853.</summary>
+    public RelayCommand ViewPrivilegesCommand { get; }
+    /// <summary>Round 16, #856.</summary>
+    public RelayCommand DecodeEncodedCommandCommand { get; }
     public RelayCommand TrimWorkingSetCommand { get; }
     public RelayCommand SuspendCommand { get; }
     public RelayCommand ResumeCommand { get; }
@@ -195,6 +211,8 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
         ViewHollowingCheckCommand = new RelayCommand(_ => _ = LoadSelectedProcessHollowingCheckAsync(), _ => SelectedProcess is not null);
         ViewForeignThreadsCommand = new RelayCommand(_ => _ = LoadSelectedProcessForeignThreadsAsync(), _ => SelectedProcess is not null);
         ViewMitigationsCommand = new RelayCommand(_ => _ = LoadSelectedProcessMitigationsAsync(), _ => SelectedProcess is not null);
+        ViewPrivilegesCommand = new RelayCommand(_ => _ = LoadSelectedProcessPrivilegesAsync(), _ => SelectedProcess is not null);
+        DecodeEncodedCommandCommand = new RelayCommand(_ => DecodeEncodedCommand(), _ => HasEncodedCommand());
         TrimWorkingSetCommand = new RelayCommand(_ => TrimWorkingSet(), _ => SelectedProcess is not null);
         SuspendCommand = new RelayCommand(_ => SetSuspended(true), _ => SelectedProcess is not null);
         ResumeCommand = new RelayCommand(_ => SetSuspended(false), _ => SelectedProcess is not null);
@@ -315,6 +333,7 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
                 existing.SpawnGroupSize = fresh.SpawnGroupSize;
                 existing.DuplicateInstanceCount = fresh.DuplicateInstanceCount;
                 existing.IsDuplicateInstanceOutlier = fresh.IsDuplicateInstanceOutlier;
+                existing.SecurityFlagReason = fresh.SecurityFlagReason;
                 // CommandLine/FilePath/StartTime/User/ParentPid/ParentName don't change for the
                 // lifetime of a pid - no need to reassign them every tick like the values above
                 // that actually vary.
@@ -552,6 +571,65 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
 
         foreach (var flag in flags)
             SelectedProcessMitigations.Add(flag);
+    }
+
+    /// <summary>Round 16, #853: on-demand token-privilege audit for SelectedProcess - see
+    /// TokenPrivilegeAuditService. "Non-Microsoft" is decided from SelectedProcess.Publisher, already
+    /// computed every tick by ProcessMonitorService/SignatureCheckService, so this needs no extra
+    /// signature check of its own.</summary>
+    private async Task LoadSelectedProcessPrivilegesAsync()
+    {
+        var target = SelectedProcess;
+        if (target is null) return;
+        int pid = target.Pid;
+        bool isMicrosoftSigned = target.Publisher.Contains("Microsoft", StringComparison.OrdinalIgnoreCase);
+
+        SelectedProcessPrivileges.Clear();
+
+        var (privileges, error) = await Task.Run(() => TokenPrivilegeAuditService.ReadPrivileges(pid, isMicrosoftSigned));
+
+        // The selection (or the whole app) may have moved on while this ran in the background.
+        if (SelectedProcess?.Pid != pid) return;
+
+        if (error is not null)
+        {
+            StatusMessage = error;
+            return;
+        }
+        foreach (var privilege in privileges)
+            SelectedProcessPrivileges.Add(privilege);
+    }
+
+    /// <summary>Round 16, #856: true only when SelectedProcess's command line matches a PowerShell
+    /// -EncodedCommand/-enc argument - see LivingOffTheLandService.TryExtractEncodedCommandArgument.</summary>
+    private bool HasEncodedCommand() =>
+        SelectedProcess is not null &&
+        LivingOffTheLandService.TryExtractEncodedCommandArgument(SelectedProcess.Name, SelectedProcess.CommandLine) is not null;
+
+    /// <summary>Round 16, #856: decodes SelectedProcess's -EncodedCommand argument (UTF-16LE base64,
+    /// PowerShell's documented encoding for this flag) into DecodedCommandLineText - a malformed/
+    /// truncated base64 string is reported as a decode failure rather than crashing, per this app's
+    /// "quick flag, not a verdict" framing (a failed decode isn't itself a finding).</summary>
+    private void DecodeEncodedCommand()
+    {
+        var target = SelectedProcess;
+        if (target is null) return;
+
+        var base64 = LivingOffTheLandService.TryExtractEncodedCommandArgument(target.Name, target.CommandLine);
+        if (base64 is null)
+        {
+            DecodedCommandLineText = null;
+            return;
+        }
+
+        try
+        {
+            DecodedCommandLineText = LivingOffTheLandService.DecodeEncodedCommand(base64);
+        }
+        catch (Exception ex)
+        {
+            DecodedCommandLineText = $"(couldn't decode - {ex.Message})";
+        }
     }
 
     /// <summary>Round 7 #17: true only for a process actually named svchost - the reverse-lookup

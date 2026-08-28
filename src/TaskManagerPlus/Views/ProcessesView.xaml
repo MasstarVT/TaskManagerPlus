@@ -96,8 +96,14 @@
                     ToolTip="Compare the process's reported main-module path against what's actually mapped in memory - a process-hollowing indicator" />
             <Button Content="Scan thread origins" Margin="0,0,8,8" Command="{Binding ViewForeignThreadsCommand}"
                     ToolTip="Look for threads whose start address falls outside every loaded module - a code-injection indicator" />
-            <Button Content="View mitigations" Margin="0,0,16,8" Command="{Binding ViewMitigationsCommand}"
+            <Button Content="View mitigations" Margin="0,0,8,8" Command="{Binding ViewMitigationsCommand}"
                     ToolTip="DEP/ASLR/CFG/ACG/CET and other exploit-mitigation policy flags for this process" />
+            <!-- Round 16, #853 -->
+            <Button Content="View privileges" Margin="0,0,8,8" Command="{Binding ViewPrivilegesCommand}"
+                    ToolTip="Lists this process's token privileges (SeDebugPrivilege, SeBackupPrivilege, ...) and flags the dangerous-if-unexpected ones when held by a non-Microsoft-signed process" />
+            <!-- Round 16, #856 -->
+            <Button Content="Decode -enc argument" Margin="0,0,16,8" Command="{Binding DecodeEncodedCommandCommand}"
+                    ToolTip="Decodes this process's PowerShell -EncodedCommand argument (UTF-16LE base64) into plain text - enabled only when one is detected" />
 
             <!-- Round 7 #6: priority class picker. -->
             <TextBlock Text="Priority:" VerticalAlignment="Center" Margin="0,0,4,8" Foreground="{DynamicResource TextSecondaryBrush}" />
@@ -364,6 +370,28 @@
                         </DataTemplate>
                     </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>
+                <!-- Round 16, #854/#855/#856: combined suspicious-location / parent-child-anomaly /
+                     living-off-the-land badge - same "collapsed unless set" pattern as the Trust
+                     column above, for visual consistency. -->
+                <DataGridTemplateColumn Header="Security" Width="90" SortMemberPath="SecurityFlagReason">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="Check this" Foreground="{DynamicResource DangerBrush}" FontSize="11" FontWeight="SemiBold"
+                                       VerticalAlignment="Center" ToolTip="{Binding SecurityFlagReason}">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding SecurityFlagReason}" Value="{x:Null}">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
                 <DataGridTextColumn Header="User" Binding="{Binding User}" Width="140" />
                 <!-- #52: parent process, so an orphaned/unexpectedly-spawned process (e.g. a
                      process masquerading as a child of explorer.exe) stands out. -->
@@ -404,6 +432,8 @@
                     <MenuItem Header="Check image integrity" Command="{Binding ViewHollowingCheckCommand}" />
                     <MenuItem Header="Scan thread origins" Command="{Binding ViewForeignThreadsCommand}" />
                     <MenuItem Header="View mitigations" Command="{Binding ViewMitigationsCommand}" />
+                    <MenuItem Header="View privileges" Command="{Binding ViewPrivilegesCommand}" />
+                    <MenuItem Header="Decode -enc argument" Command="{Binding DecodeEncodedCommandCommand}" />
                 </ContextMenu>
             </DataGrid.ContextMenu>
         </DataGrid>
@@ -700,6 +730,74 @@
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- Round 16, #853: token privilege audit results. -->
+            <Border Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Margin="0,0,0,6">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Visibility" Value="Visible" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding SelectedProcessPrivileges.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Token privileges" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                    <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,6"
+                               Text="Highlighted entries are on the dangerous-if-unexpected watch list, currently enabled, and held by a process that isn't Microsoft-signed. Quick flag, not a verdict - plenty of legitimate system processes hold these." />
+                    <ItemsControl ItemsSource="{Binding SelectedProcessPrivileges}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Background="{DynamicResource BgBrush}" CornerRadius="4" Padding="8,4" Margin="0,0,8,6">
+                                    <TextBlock FontSize="11.5">
+                                        <Run Text="{Binding Name, Mode=OneWay}" />
+                                        <Run Text=": " />
+                                        <Run Text="{Binding StateText, Mode=OneWay}" FontWeight="SemiBold">
+                                            <Run.Style>
+                                                <Style TargetType="Run">
+                                                    <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsFlagged}" Value="True">
+                                                            <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Run.Style>
+                                        </Run>
+                                    </TextBlock>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- Round 16, #856: decoded -EncodedCommand text. -->
+            <Border Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Margin="0,0,0,6">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Visibility" Value="Visible" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding DecodedCommandLineText}" Value="{x:Null}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Decoded -EncodedCommand" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                    <ScrollViewer MaxHeight="140" VerticalScrollBarVisibility="Auto">
+                        <TextBlock FontFamily="Consolas" FontSize="11.5" TextWrapping="Wrap" Text="{Binding DecodedCommandLineText}" />
+                    </ScrollViewer>
                 </StackPanel>
             </Border>
 

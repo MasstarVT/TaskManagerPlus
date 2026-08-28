@@ -127,7 +127,11 @@ public static class HandleInspectionService
         return "(unresolved - query timed out)";
     }
 
-    private static List<SYSTEM_HANDLE_TABLE_ENTRY_INFO> ReadSystemHandles()
+    /// <summary>Internal (not private) so LsassHandleWatchService (#857) can reuse this same
+    /// system-wide handle-table walk for its "who holds a handle to lsass.exe" scan, rather than
+    /// duplicating the NtQuerySystemInformation/SystemHandleInformation P/Invoke plumbing a second
+    /// time - see that class's remarks for how it uses these raw entries.</summary>
+    internal static List<SYSTEM_HANDLE_TABLE_ENTRY_INFO> ReadSystemHandles()
     {
         int size = 1 << 20; // 1 MB starting guess, grown below if needed
         for (int attempt = 0; attempt < 8; attempt++)
@@ -166,7 +170,7 @@ public static class HandleInspectionService
     private const uint DuplicateSameAccess = 2;
 
     [StructLayout(LayoutKind.Sequential)]
-    private struct SYSTEM_HANDLE_TABLE_ENTRY_INFO
+    internal struct SYSTEM_HANDLE_TABLE_ENTRY_INFO
     {
         public ushort UniqueProcessId;
         public ushort CreatorBackTraceIndex;

@@ -352,6 +352,128 @@
                 </StackPanel>
             </Border>
 
+            <!-- Round 16, #857/#858: "Process activity" - two short, on-demand, "eyeball this list"
+                 scans that are process-focused rather than persistence-focused, so they get their
+                 own section rather than folding into the Persistence grid above. -->
+            <Border BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,1,0,0" Padding="0,16,0,0" Margin="0,16,0,0">
+                <StackPanel>
+                    <TextBlock Text="Process activity" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,4" />
+                    <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,12"
+                               Text="Two short, on-demand scans - a list to eyeball, not an alert. Legitimate holders/activity (antivirus, EDR, Defender, other system processes, in-house or open-source tools) are common and expected." />
+
+                    <!-- #857: lsass.exe handle watch. -->
+                    <Grid Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" VerticalAlignment="Center" TextWrapping="Wrap"
+                                   Text="lsass.exe handle watch - which processes currently hold an open handle to lsass.exe, and what access they were granted."
+                                   Foreground="{DynamicResource TextSecondaryBrush}" />
+                        <Button Grid.Column="1" Margin="12,0,0,0" Command="{Binding ScanLsassHandlesCommand}">
+                            <TextBlock>
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="Scan" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsScanningLsassHandles}" Value="True">
+                                                <Setter Property="Text" Value="Scanning..." />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Button>
+                    </Grid>
+                    <TextBlock Text="{Binding LsassHandleScanStatus}" TextWrapping="Wrap"
+                               Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8" />
+                    <DataGrid IsReadOnly="True" MaxHeight="220" ItemsSource="{Binding LsassHandleFindings}" Margin="0,0,0,16">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Process" Binding="{Binding HolderProcessName}" Width="1.2*" />
+                            <DataGridTextColumn Header="PID" Binding="{Binding HolderPid}" Width="70" />
+                            <DataGridTemplateColumn Header="Signature" Width="90" SortMemberPath="HolderSignatureStatus">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding HolderSignatureStatus}" VerticalAlignment="Center">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding HolderSignatureStatus}" Value="Unsigned">
+                                                            <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTextColumn Header="Handles" Binding="{Binding HandleCount}" Width="70" />
+                            <DataGridTextColumn Header="Granted access" Binding="{Binding GrantedAccessText}" Width="2.4*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+
+                    <!-- #858: unsigned processes with network activity. -->
+                    <Grid Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" VerticalAlignment="Center" TextWrapping="Wrap"
+                                   Text="Unsigned processes with network activity - unsigned/non-Microsoft-signed processes that are listening on every interface or hold an established outbound connection (TCP only)."
+                                   Foreground="{DynamicResource TextSecondaryBrush}" />
+                        <Button Grid.Column="1" Margin="12,0,0,0" Command="{Binding ScanUnsignedNetworkActivityCommand}">
+                            <TextBlock>
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="Scan" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsScanningNetworkActivity}" Value="True">
+                                                <Setter Property="Text" Value="Scanning..." />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Button>
+                    </Grid>
+                    <TextBlock Text="{Binding NetworkActivityScanStatus}" TextWrapping="Wrap"
+                               Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8" />
+                    <DataGrid IsReadOnly="True" MaxHeight="220" ItemsSource="{Binding UnsignedNetworkFindings}">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Process" Binding="{Binding ProcessName}" Width="1*" />
+                            <DataGridTextColumn Header="PID" Binding="{Binding Pid}" Width="60" />
+                            <DataGridTextColumn Header="Direction" Binding="{Binding Direction}" Width="80" />
+                            <DataGridTextColumn Header="Local" Width="140">
+                                <DataGridTextColumn.Binding>
+                                    <MultiBinding StringFormat="{}{0}:{1}">
+                                        <Binding Path="LocalAddress" />
+                                        <Binding Path="LocalPort" />
+                                    </MultiBinding>
+                                </DataGridTextColumn.Binding>
+                            </DataGridTextColumn>
+                            <DataGridTextColumn Header="Remote" Width="160">
+                                <DataGridTextColumn.Binding>
+                                    <MultiBinding StringFormat="{}{0}:{1}">
+                                        <Binding Path="RemoteAddress" />
+                                        <Binding Path="RemotePort" />
+                                    </MultiBinding>
+                                </DataGridTextColumn.Binding>
+                            </DataGridTextColumn>
+                            <DataGridTextColumn Header="State" Binding="{Binding State}" Width="100" />
+                            <DataGridTemplateColumn Header="Signature" Width="90" SortMemberPath="SignatureStatus">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding SignatureStatus}" VerticalAlignment="Center" Foreground="{DynamicResource WarningBrush}" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
         </StackPanel>
     </ScrollViewer>
 </UserControl>

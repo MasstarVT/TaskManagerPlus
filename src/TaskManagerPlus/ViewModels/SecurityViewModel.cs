@@ -32,6 +32,14 @@ public sealed class SecurityViewModel : ObservableObject
     public ObservableCollection<AutorunEntry> AutorunEntries { get; } = new();
     public ObservableCollection<SecurityFinding> Findings { get; } = new();
 
+    /// <summary>Round 16, #857: results of the lsass.exe handle-watch scan - see
+    /// LsassHandleWatchService. "A short list to eyeball, not an alert."</summary>
+    public ObservableCollection<LsassHandleWatchService.Finding> LsassHandleFindings { get; } = new();
+
+    /// <summary>Round 16, #858: unsigned/non-Microsoft-signed processes with a wildcard-listening or
+    /// established-outbound TCP connection - see UnsignedNetworkActivityService.</summary>
+    public ObservableCollection<UnsignedNetworkActivityService.Finding> UnsignedNetworkFindings { get; } = new();
+
     // #803: populated by CompareToBaselineCommand - cleared whenever a fresh scan runs, since a
     // stale diff against entries that no longer match the grid would be misleading.
     public ObservableCollection<AutorunEntry> BaselineAdded { get; } = new();
@@ -94,6 +102,20 @@ public sealed class SecurityViewModel : ObservableObject
     private bool _isCheckingWritePermissions;
     public bool IsCheckingWritePermissions { get => _isCheckingWritePermissions; private set => SetProperty(ref _isCheckingWritePermissions, value); }
 
+    // #857: on-demand lsass.exe handle-watch scan.
+    private bool _isScanningLsassHandles;
+    public bool IsScanningLsassHandles { get => _isScanningLsassHandles; private set => SetProperty(ref _isScanningLsassHandles, value); }
+
+    private string? _lsassHandleScanStatus;
+    public string? LsassHandleScanStatus { get => _lsassHandleScanStatus; private set => SetProperty(ref _lsassHandleScanStatus, value); }
+
+    // #858: on-demand unsigned-process-with-network-activity scan.
+    private bool _isScanningNetworkActivity;
+    public bool IsScanningNetworkActivity { get => _isScanningNetworkActivity; private set => SetProperty(ref _isScanningNetworkActivity, value); }
+
+    private string? _networkActivityScanStatus;
+    public string? NetworkActivityScanStatus { get => _networkActivityScanStatus; private set => SetProperty(ref _networkActivityScanStatus, value); }
+
     public AsyncRelayCommand ScanAutorunsCommand { get; }
     public RelayCommand SaveBaselineCommand { get; }
     public RelayCommand CompareToBaselineCommand { get; }
@@ -109,6 +131,11 @@ public sealed class SecurityViewModel : ObservableObject
     public RelayCommand CheckMarkOfTheWebCommand { get; }
     public AsyncRelayCommand CheckRevocationCommand { get; }
     public AsyncRelayCommand CheckWritePermissionsCommand { get; }
+
+    /// <summary>Round 16, #857.</summary>
+    public AsyncRelayCommand ScanLsassHandlesCommand { get; }
+    /// <summary>Round 16, #858.</summary>
+    public AsyncRelayCommand ScanUnsignedNetworkActivityCommand { get; }
 
     public SecurityViewModel()
     {
@@ -127,6 +154,9 @@ public sealed class SecurityViewModel : ObservableObject
         CheckMarkOfTheWebCommand = new RelayCommand(param => CheckMarkOfTheWeb(param as AutorunEntry ?? SelectedAutorunEntry));
         CheckRevocationCommand = new AsyncRelayCommand(param => CheckRevocationAsync(param as AutorunEntry ?? SelectedAutorunEntry));
         CheckWritePermissionsCommand = new AsyncRelayCommand(CheckWritePermissionsAsync, () => AutorunEntries.Count > 0);
+
+        ScanLsassHandlesCommand = new AsyncRelayCommand(ScanLsassHandlesAsync);
+        ScanUnsignedNetworkActivityCommand = new AsyncRelayCommand(ScanUnsignedNetworkActivityAsync);
     }
 
     private async Task ScanAutorunsAsync()
@@ -467,6 +497,57 @@ public sealed class SecurityViewModel : ObservableObject
         finally
         {
             IsCheckingWritePermissions = false;
+        }
+    }
+
+    /// <summary>Round 16, #857: on-demand "who's holding a handle to lsass.exe" scan - see
+    /// LsassHandleWatchService. Framed as a short list to eyeball, not an alert - legitimate holders
+    /// (AV/EDR, Defender, other system processes) are common and expected.</summary>
+    private async Task ScanLsassHandlesAsync()
+    {
+        IsScanningLsassHandles = true;
+        LsassHandleScanStatus = null;
+        try
+        {
+            var (findings, error) = await Task.Run(() => LsassHandleWatchService.Scan());
+
+            LsassHandleFindings.Clear();
+            foreach (var finding in findings) LsassHandleFindings.Add(finding);
+
+            LsassHandleScanStatus = error ?? $"{findings.Count} process(es) hold a handle to lsass.exe - eyeball this list, it's not an alert.";
+        }
+        catch (Exception ex)
+        {
+            LsassHandleScanStatus = $"Scan failed: {ex.Message}";
+        }
+        finally
+        {
+            IsScanningLsassHandles = false;
+        }
+    }
+
+    /// <summary>Round 16, #858: on-demand unsigned/non-Microsoft-signed-process-with-network-activity
+    /// scan - see UnsignedNetworkActivityService. TCP-only (see that service's remarks).</summary>
+    private async Task ScanUnsignedNetworkActivityAsync()
+    {
+        IsScanningNetworkActivity = true;
+        NetworkActivityScanStatus = null;
+        try
+        {
+            var findings = await Task.Run(() => UnsignedNetworkActivityService.Scan());
+
+            UnsignedNetworkFindings.Clear();
+            foreach (var finding in findings) UnsignedNetworkFindings.Add(finding);
+
+            NetworkActivityScanStatus = $"{findings.Count} unsigned/non-Microsoft-signed process(es) with network activity (TCP only). Quick flag, not a verdict.";
+        }
+        catch (Exception ex)
+        {
+            NetworkActivityScanStatus = $"Scan failed: {ex.Message}";
+        }
+        finally
+        {
+            IsScanningNetworkActivity = false;
         }
     }
 }

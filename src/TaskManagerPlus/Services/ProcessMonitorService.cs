@@ -245,6 +245,7 @@ public sealed class ProcessMonitorService : IDisposable
 
         ComputeSpawnGroups(rows);
         ComputeDuplicateInstances(rows);
+        ComputeSecurityFlags(rows, seenPids);
 
         // Drop cached samples/owners/command lines for processes that no longer exist. The
         // signature cache is keyed by file path, not pid, so it isn't pruned here - it's small
@@ -323,6 +324,31 @@ public sealed class ProcessMonitorService : IDisposable
                 row.DuplicateInstanceCount = count;
                 row.IsDuplicateInstanceOutlier = outlier;
             }
+        }
+    }
+
+    /// <summary>Round 16, #854/#855/#856: combined suspicious-location / parent-child-anomaly /
+    /// living-off-the-land heuristics - all cheap string/path comparisons over data already
+    /// resolved above (FilePath/ParentName/ParentPid/IntegrityLevel/CommandLine), so this is safe
+    /// to run every tick per CLAUDE.md's "on-demand vs polled" rule. Runs after ParentName is
+    /// resolved (rows' second pass, above) since #855(a)/(b)/(c) key off it, and needs livePids
+    /// (this same snapshot's seenPids) for #855(d)'s "parent already exited" check.</summary>
+    private static void ComputeSecurityFlags(List<ProcessRow> rows, HashSet<int> livePids)
+    {
+        foreach (var row in rows)
+        {
+            var reasons = new List<string>(1);
+
+            var suspiciousLocation = SuspiciousLocationHeuristicService.Evaluate(row.FilePath);
+            if (suspiciousLocation is not null) reasons.Add(suspiciousLocation);
+
+            var parentChildAnomaly = ParentChildAnomalyService.Evaluate(row, livePids);
+            if (parentChildAnomaly is not null) reasons.Add(parentChildAnomaly);
+
+            var livingOffTheLand = LivingOffTheLandService.Evaluate(row.Name, row.CommandLine);
+            if (livingOffTheLand is not null) reasons.Add(livingOffTheLand);
+
+            row.SecurityFlagReason = reasons.Count > 0 ? string.Join("; ", reasons) : null;
         }
     }
 

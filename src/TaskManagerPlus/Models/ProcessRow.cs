@@ -194,4 +194,15 @@ public sealed class ProcessRow : ObservableObject
     /// over the access-denied-heuristic proxy #852 offers as a fallback.</summary>
     private string _protectionLevel = "Unknown";
     public string ProtectionLevel { get => _protectionLevel; set => SetProperty(ref _protectionLevel, value); }
+
+    /// <summary>Round 16, #854/#855/#856: combined "quick flag" reason text from three cheap
+    /// per-tick heuristics - suspicious image location (#854), parent-child anomaly rules (#855),
+    /// and living-off-the-land command-line patterns (#856) - all computed in
+    /// ProcessMonitorService.Sample from data it already collects (FilePath/ParentName/ParentPid/
+    /// IntegrityLevel/CommandLine), with no new syscalls. Null means nothing to flag; more than one
+    /// applying is joined with "; ". Rendered with the same "Check this" badge pattern TrustWarning
+    /// above already established. "Quick flag, not a verdict" - see each heuristic service's own
+    /// remarks.</summary>
+    private string? _securityFlagReason;
+    public string? SecurityFlagReason { get => _securityFlagReason; set => SetProperty(ref _securityFlagReason, value); }
 }
