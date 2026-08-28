@@ -285,8 +285,8 @@
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
-                    <TextBlock Margin="0,4,0,0" TextWrapping="Wrap">
-                        <Run Text="Sleep state: " Style="{StaticResource SubStat}" />
+                    <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" Style="{StaticResource SubStat}">
+                        <Run Text="Sleep state: " />
                         <Run Text="{Binding SleepStateSupportText, Mode=OneWay}" FontSize="12.5" />
                     </TextBlock>
                 </StackPanel>

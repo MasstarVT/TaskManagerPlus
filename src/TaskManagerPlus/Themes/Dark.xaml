@@ -101,6 +101,22 @@
         <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
     </Style>
 
+    <!-- Label/value pair for a spec-sheet-style row (name on top, value below). Originally
+         scoped to SystemSpecsView's own UserControl.Resources; hoisted here once CpuView (Round 8's
+         microcode/cache/mitigation rows) and NetworkView (Round 9's bandwidth-history rows) started
+         referencing it too - a StaticResource in one UserControl's local Resources isn't visible to
+         another UserControl, so this must live in the shared theme dictionary to be usable app-wide. -->
+    <Style x:Key="SpecLabel" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+        <Setter Property="Margin" Value="0,0,0,3" />
+    </Style>
+    <Style x:Key="SpecValue" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="14" />
+        <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+
     <!-- Shared by every card's title row (colored dot + label) - previously duplicated
          per-view (SummaryView, PerformanceView); hoisted here once Cpu/Memory/Storage/Network
          views multiplied the duplication further. -->
