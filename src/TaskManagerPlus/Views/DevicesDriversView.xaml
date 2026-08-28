@@ -1,0 +1,342 @@
+<UserControl x:Class="TaskManagerPlus.Views.DevicesDriversView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:TaskManagerPlus.ViewModels"
+             d:DataContext="{d:DesignInstance Type=vm:DevicesDriversViewModel}"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d">
+    <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16">
+        <StackPanel>
+
+            <!-- #453: header - refresh, last-loaded status, #461's third-party filter toggle. -->
+            <Grid Margin="0,0,0,12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0">
+                    <TextBlock Text="Driver inventory" Style="{StaticResource CardTitle}" Margin="0" FontSize="15" />
+                    <TextBlock Text="{Binding LastRefreshedText}" Style="{StaticResource SubStat}" Margin="0,2,0,0" />
+                </StackPanel>
+                <!-- #461: hides everything whose file-version company name is Microsoft, leaving
+                     only third-party kernel code - ON by default. -->
+                <CheckBox Grid.Column="1" Content="Third-party drivers only" VerticalAlignment="Center"
+                          Margin="0,0,16,0" Foreground="{DynamicResource TextSecondaryBrush}"
+                          IsChecked="{Binding ThirdPartyOnly}" />
+                <Button Grid.Column="2" Style="{StaticResource PrimaryButton}" Command="{Binding RefreshCommand}">
+                    <TextBlock>
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Text" Value="Refresh" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsLoading}" Value="True">
+                                        <Setter Property="Text" Value="Loading..." />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </Button>
+            </Grid>
+
+            <TextBlock Text="{Binding RefreshErrorText}" Foreground="{DynamicResource DangerBrush}"
+                       TextWrapping="Wrap" Margin="0,0,0,10">
+                <TextBlock.Style>
+                    <Style TargetType="TextBlock">
+                        <Setter Property="Visibility" Value="Visible" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding RefreshErrorText}" Value="{x:Null}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </TextBlock.Style>
+            </TextBlock>
+
+            <!-- #456: code-integrity bypass detection - security posture row, only visually
+                 flagged when something's actually worth a look. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsSecurityPostureConcerning}" Value="True">
+                                <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
+                                <Setter Property="BorderBrush" Value="{DynamicResource DangerBrush}" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Code-integrity / driver-signing posture" Style="{StaticResource CardTitle}" />
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap"
+                               Text="bcdedit boot-configuration flags that relax Driver Signature Enforcement, cross-checked against Microsoft-Windows-CodeIntegrity's own blocked/unverified-image log. A flag here is worth understanding, not necessarily a problem - test signing is sometimes on deliberately during driver development." />
+                    <UniformGrid Columns="4" Margin="0,0,0,4">
+                        <StackPanel Margin="0,0,10,0">
+                            <TextBlock Text="Test signing" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
+                            <TextBlock FontSize="13.5" FontWeight="SemiBold">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="Off" />
+                                        <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding TestSigningEnabled}" Value="True">
+                                                <Setter Property="Text" Value="On" />
+                                                <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </StackPanel>
+                        <StackPanel Margin="0,0,10,0">
+                            <TextBlock Text="Integrity checks disabled" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
+                            <TextBlock FontSize="13.5" FontWeight="SemiBold">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="No" />
+                                        <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding NoIntegrityChecksEnabled}" Value="True">
+                                                <Setter Property="Text" Value="Yes" />
+                                                <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </StackPanel>
+                        <StackPanel Margin="0,0,10,0">
+                            <TextBlock Text="Signature enforcement disabled" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
+                            <TextBlock FontSize="13.5" FontWeight="SemiBold">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="No" />
+                                        <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding DriverSignatureEnforcementDisabled}" Value="True">
+                                                <Setter Property="Text" Value="Yes" />
+                                                <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </StackPanel>
+                        <StackPanel>
+                            <TextBlock Text="Blocked/unverified images (30d)" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
+                            <TextBlock Text="{Binding CodeIntegrityBlockedEventCount}" FontSize="13.5" FontWeight="SemiBold">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding CodeIntegrityBlockedEventCount, Converter={StaticResource IntEqualsConverter}, ConverterParameter=0}" Value="False">
+                                                <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                            <TextBlock Text="{Binding LastCodeIntegrityBlockedEventText}" FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        </StackPanel>
+                    </UniformGrid>
+
+                    <ItemsControl ItemsSource="{Binding CodeIntegrityRecentMessages}" Margin="0,8,0,0">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding}" FontSize="10.5" TextWrapping="Wrap" Margin="0,0,0,4"
+                                           Foreground="{DynamicResource TextSecondaryBrush}" />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #454: bulk catalog-aware signature verification - opt-in, gated behind a button
+                 since checking every driver's signature can take a while. -->
+            <Grid Margin="0,0,0,10">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="{Binding VerifyAllProgressText}" VerticalAlignment="Center"
+                           Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5" />
+                <Button Grid.Column="1" Command="{Binding VerifyAllCommand}" Padding="10,4">
+                    <TextBlock>
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Text" Value="Verify all signatures" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsVerifyingAll}" Value="True">
+                                        <Setter Property="Text" Value="Verifying..." />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </Button>
+            </Grid>
+
+            <!-- #453/#458/#460/#461: main inventory grid. -->
+            <DataGrid Height="360" ItemsSource="{Binding DriversView}" SelectedItem="{Binding SelectedDriver}" IsReadOnly="True">
+                <DataGrid.RowStyle>
+                    <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsUnsignedOrTestSigned}" Value="True">
+                                <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </DataGrid.RowStyle>
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="Device name" Binding="{Binding DisplayName}" Width="2*" />
+                    <DataGridTextColumn Header="Provider" Binding="{Binding Provider}" Width="1.3*" />
+                    <DataGridTextColumn Header="INF" Binding="{Binding InfName}" Width="1.1*" />
+                    <DataGridTextColumn Header="Version" Binding="{Binding DriverVersion}" Width="90" />
+                    <DataGridTextColumn Header="Date" Binding="{Binding DriverDate, StringFormat={}{0:d}, TargetNullValue=Unknown}" Width="80" />
+                    <DataGridTextColumn Header="Class" Binding="{Binding DeviceClass}" Width="90" />
+                    <!-- #460: kernel start type + load-order group/tag. -->
+                    <DataGridTextColumn Header="Start type" Binding="{Binding StartTypeText}" Width="1.4*" />
+                    <DataGridTemplateColumn Header="State" Width="80" SortMemberPath="State">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding State}" VerticalAlignment="Center">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding State}" Value="Running">
+                                                    <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <!-- #458: Exact / Compatible / Generic hardware-ID match quality. -->
+                    <DataGridTemplateColumn Header="Match" Width="90" SortMemberPath="MatchQuality">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding MatchQuality}" VerticalAlignment="Center" ToolTip="#458: Exact = real vendor driver. Compatible/Generic = running on a fallback compatible-ID match, e.g. Microsoft Basic Display/Storage/Audio.">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding MatchQuality}" Value="Generic">
+                                                    <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <!-- #454/#455: catalog-aware signature status - "Not checked" until Verify/
+                         Verify all runs; unsigned/test-signed highlighted red (the row itself is
+                         also tinted, see DataGrid.RowStyle above). -->
+                    <DataGridTemplateColumn Header="Signature" Width="1.3*" SortMemberPath="SignatureStatus">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding SignatureStatus}" VerticalAlignment="Center">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding SignatureStatus}" Value="Signed">
+                                                    <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding IsUnsignedOrTestSigned}" Value="True">
+                                                    <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                    <Setter Property="FontWeight" Value="SemiBold" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <!-- #457: signer common name + WHQL vs. vendor-signed. -->
+                    <DataGridTemplateColumn Header="Signer" Width="1.5*" SortMemberPath="SignerName">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                    <TextBlock Text="{Binding SignerName}" FontSize="11.5" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                    <TextBlock Text=" (WHQL)" FontSize="10.5" FontWeight="SemiBold" VerticalAlignment="Center"
+                                               Foreground="{DynamicResource SuccessBrush}"
+                                               Visibility="{Binding IsWhql, Converter={StaticResource BoolToVisibilityConverter}}" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTextColumn Header="Path" Binding="{Binding FilePath}" Width="2.5*" />
+                    <DataGridTemplateColumn Header="" Width="70">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <Button Content="Verify" Padding="6,2" FontSize="10.5"
+                                        Command="{Binding DataContext.VerifyCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                        CommandParameter="{Binding}" />
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                </DataGrid.Columns>
+            </DataGrid>
+
+            <!-- #459: per-device installed-file detail pane, populated when a row above is selected. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="{Binding SelectedDriver.DisplayName, StringFormat=Installed files - {0}, TargetNullValue='Installed files'}"
+                                   Style="{StaticResource CardTitle}" Margin="0" />
+                    </Grid>
+                    <TextBlock Text="{Binding SelectedDriverFilesStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" />
+                    <ItemsControl ItemsSource="{Binding SelectedDriverFiles}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="2*" />
+                                        <ColumnDefinition Width="70" />
+                                        <ColumnDefinition Width="80" />
+                                        <ColumnDefinition Width="110" />
+                                        <ColumnDefinition Width="60" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="{Binding FilePath}" FontSize="11.5" TextTrimming="CharacterEllipsis" ToolTip="{Binding FilePath}" VerticalAlignment="Center" />
+                                    <TextBlock Grid.Column="1" Text="{Binding Version, TargetNullValue=Unknown}" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" />
+                                    <TextBlock Grid.Column="2" Text="{Binding SizeBytes, Converter={StaticResource BytesToReadableConverter}, TargetNullValue=Unknown}" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" />
+                                    <TextBlock Grid.Column="3" Text="{Binding SignatureStatus}" FontSize="11" VerticalAlignment="Center">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding SignatureStatus}" Value="Signed">
+                                                        <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding SignatureStatus}" Value="Unsigned">
+                                                        <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                    <Button Grid.Column="4" Content="Verify" Padding="6,2" FontSize="10.5"
+                                            Command="{Binding DataContext.VerifyFileCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                            CommandParameter="{Binding}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

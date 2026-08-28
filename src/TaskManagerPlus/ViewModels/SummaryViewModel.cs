@@ -949,6 +949,20 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         if (defender is not null && defender.CpuPercent >= 20)
             issues.Add(new HealthIssue { Message = $"Windows Defender may be actively scanning (MsMpEng at {defender.CpuPercent:0}% CPU)", IsCritical = false });
 
+        // #455: "N unsigned/test-signed drivers found" - reads the Devices & Drivers tab's own
+        // session-lifetime cache (DriverSignatureSummaryState) rather than triggering a scan of its
+        // own; that tab is on-demand (CLAUDE.md), so this rule stays silent until the user has
+        // actually opened it and run a signature check at least once this session.
+        if (DriverSignatureSummaryState.HasScanned && DriverSignatureSummaryState.UnsignedOrTestSignedCount > 0)
+        {
+            int n = DriverSignatureSummaryState.UnsignedOrTestSignedCount;
+            issues.Add(new HealthIssue
+            {
+                Message = $"{n} unsigned/test-signed driver{(n == 1 ? "" : "s")} found - see the Devices & Drivers tab",
+                IsCritical = false,
+            });
+        }
+
         // #67: anomaly highlighting - flags CPU/RAM/Disk usage that's a statistical outlier vs.
         // its own last-minute history, even without a fixed threshold. Requires both a meaningful
         // raw jump (>=20 points) AND a real statistical deviation (>=3 std dev past a small floor)

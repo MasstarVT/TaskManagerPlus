@@ -23,6 +23,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public StartupViewModel Startup { get; } = new();
     public SystemSpecsViewModel SystemSpecs { get; } = new();
     public StabilityViewModel Stability { get; } = new();
+
+    // #453: Devices & Drivers - on-demand like Stability/SystemSpecs above (driverquery + a full
+    // Win32_PnPSignedDriver sweep + per-row registry reads aren't cheap enough to repeat on a tick).
+    public DevicesDriversViewModel DevicesDrivers { get; } = new();
+
     public SummaryViewModel Summary { get; }
 
     // Thin wrappers over the shared Performance sampler (see CpuViewModel's remarks) - the
