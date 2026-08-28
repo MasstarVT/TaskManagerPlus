@@ -127,6 +127,46 @@
                 </StackPanel>
             </Border>
 
+            <!-- #464: boot-start/system-start driver load failures (SCM 7000/7001/7026, kernel PnP
+                 event 219) - this tab had no pre-existing distinct "boot section" to fold this
+                 into, so it's its own small card. Collapsed entirely when none are found, same
+                 pattern as the WHEA card above. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding BootDriverLoadFailures.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Boot-time driver load failures" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Boot-start/system-start drivers the Service Control Manager or kernel PnP manager reported as failed to load, last 30 days."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+                    <ItemsControl ItemsSource="{Binding BootDriverLoadFailures}" MaxHeight="220">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" FontSize="11.5" TextTrimming="CharacterEllipsis">
+                                        <Run Text="{Binding DriverName, TargetNullValue=Unknown}" FontWeight="SemiBold" />
+                                        <Run Text=" · event " /><Run Text="{Binding EventId, Mode=OneWay}" />
+                                        <Run Text=" · " /><Run Text="{Binding ProviderName}" />
+                                    </TextBlock>
+                                    <TextBlock Grid.Column="1" Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}"
+                                               FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
             <!-- #3: minidump files, timestamp + best-effort bugcheck code correlated from a
                  nearby Kernel-Power 41 event - see EventLogService.ReadMinidumps. -->
             <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">

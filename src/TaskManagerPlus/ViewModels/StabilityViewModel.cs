@@ -41,6 +41,12 @@ public sealed class StabilityViewModel : ObservableObject
     // stability signal as a hardware-inventory fact.
     public ObservableCollection<CorrectedMemoryErrorEvent> CorrectedMemoryErrors { get; } = new();
 
+    // #464: boot-start/system-start driver load failures (SCM 7000/7001/7026, kernel PnP event
+    // 219) - the same figure the Devices & Drivers tab shows (EventLogService.
+    // ReadBootDriverLoadFailures is read independently by each tab, no ViewModel coupling). This
+    // tab had no distinct pre-existing "boot section" to fold this into, so it's its own small card.
+    public ObservableCollection<BootDriverLoadFailure> BootDriverLoadFailures { get; } = new();
+
     private int _correctedMemoryErrorCount;
     public int CorrectedMemoryErrorCount { get => _correctedMemoryErrorCount; private set => SetProperty(ref _correctedMemoryErrorCount, value); }
 
@@ -223,6 +229,10 @@ public sealed class StabilityViewModel : ObservableObject
         CorrectedMemoryErrorCount = snapshot.CorrectedMemoryErrorCount;
         LastCorrectedMemoryErrorText = snapshot.LastCorrectedMemoryError is { } last
             ? $"Last: {last:g}" : "None in the last 30 days";
+
+        // #464
+        BootDriverLoadFailures.Clear();
+        foreach (var f in snapshot.BootDriverLoadFailures) BootDriverLoadFailures.Add(f);
 
         StabilityIndex = ComputeStabilityIndex(snapshot);
     }

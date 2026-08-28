@@ -6,7 +6,53 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              mc:Ignorable="d">
-    <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- #468: sub-tab strip - this tab's second top-level view (the device tree) is distinct
+             from the driver-inventory grid below, so a simple two-button strip switches between
+             them rather than restructuring either view. -->
+        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="16,12,16,0">
+            <Button Content="Driver inventory" Padding="10,5" Command="{Binding ShowDriverInventoryViewCommand}">
+                <Button.Style>
+                    <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsDeviceTreeViewActive}" Value="False">
+                                <Setter Property="Background" Value="{DynamicResource AccentBrush}" />
+                                <Setter Property="Foreground" Value="White" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Button.Style>
+            </Button>
+            <Button Content="Device tree" Padding="10,5" Margin="8,0,0,0" Command="{Binding ShowDeviceTreeViewCommand}">
+                <Button.Style>
+                    <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsDeviceTreeViewActive}" Value="True">
+                                <Setter Property="Background" Value="{DynamicResource AccentBrush}" />
+                                <Setter Property="Foreground" Value="White" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Button.Style>
+            </Button>
+        </StackPanel>
+
+    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="16">
+        <ScrollViewer.Style>
+            <Style TargetType="ScrollViewer">
+                <Setter Property="Visibility" Value="Visible" />
+                <Style.Triggers>
+                    <DataTrigger Binding="{Binding IsDeviceTreeViewActive}" Value="True">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                    </DataTrigger>
+                </Style.Triggers>
+            </Style>
+        </ScrollViewer.Style>
         <StackPanel>
 
             <!-- #453: header - refresh, last-loaded status, #461's third-party filter toggle. -->
@@ -337,6 +383,554 @@
                 </StackPanel>
             </Border>
 
+            <!-- #466: driver version consistency across identical devices - collapsed entirely
+                 when no inconsistent groups were found (the common, healthy case). -->
+            <Border Margin="0,16,0,0">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Setter Property="BorderBrush" Value="{DynamicResource WarningBrush}" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding VersionConsistencyIssues.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Driver version inconsistency" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Two or more devices sharing the same hardware ID are bound to different driver versions - e.g. one of a matched pair of NICs still running an older driver."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+                    <ItemsControl ItemsSource="{Binding VersionConsistencyIssues}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Padding="10,8" Margin="0,0,0,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
+                                    <StackPanel>
+                                        <TextBlock FontSize="11.5" FontWeight="SemiBold" Text="{Binding HardwareId}" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock FontSize="11" Foreground="{DynamicResource WarningBrush}" Margin="0,2,0,4">
+                                            <Run Text="Versions: " /><Run Text="{Binding DistinctVersionsText}" />
+                                        </TextBlock>
+                                        <ItemsControl ItemsSource="{Binding Devices}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Grid Margin="0,0,0,2">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <TextBlock Grid.Column="0" Text="{Binding DeviceName}" FontSize="11" TextTrimming="CharacterEllipsis" />
+                                                        <TextBlock Grid.Column="1" Text="{Binding DriverVersion, TargetNullValue=Unknown}" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                                    </Grid>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #462/#463 (setupapi half): driver install timeline, parsed from setupapi.dev.log -
+                 gated behind Load since that file can be tens of MB. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Driver install timeline" Style="{StaticResource CardTitle}" Margin="0" />
+                        <CheckBox Grid.Column="1" Content="Last 30 days" VerticalAlignment="Center" Margin="0,0,12,0"
+                                  Foreground="{DynamicResource TextSecondaryBrush}" IsChecked="{Binding TimelineLast30DaysOnly}" />
+                        <Button Grid.Column="2" Padding="10,4" Command="{Binding LoadTimelineCommand}">
+                            <TextBlock>
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="Load" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsLoadingTimeline}" Value="True">
+                                                <Setter Property="Text" Value="Loading..." />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Button>
+                    </Grid>
+                    <TextBlock Text="{Binding TimelineStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" />
+                    <DataGrid Height="200" ItemsSource="{Binding InstallTimeline}" IsReadOnly="True">
+                        <DataGrid.RowStyle>
+                            <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsFailure}" Value="True">
+                                        <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </DataGrid.RowStyle>
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Time" Binding="{Binding Timestamp, StringFormat={}{0:g}}" Width="140" />
+                            <DataGridTextColumn Header="Category" Binding="{Binding Category}" Width="2*" />
+                            <DataGridTextColumn Header="Target" Binding="{Binding Target}" Width="3*" />
+                            <DataGridTextColumn Header="Exit status" Binding="{Binding ExitStatus}" Width="1.3*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- #463: install problems - setupapi.dev.log failures (from the Load above) plus
+                 Kernel-PnP/Configuration events (a cheap targeted query already run as part of
+                 this tab's own Refresh). -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <TextBlock Text="Install problems" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Driver install/configure failures - setupapi.dev.log errors (click Load above) and Microsoft-Windows-Kernel-PnP/Configuration events (411/442/400-series; this channel is disabled by default on many systems)."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+
+                    <TextBlock Text="setupapi.dev.log failures" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,4" />
+                    <ItemsControl ItemsSource="{Binding InstallFailures}" MaxHeight="180" Margin="0,0,0,10">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Padding="8,6" Margin="0,0,0,6" Background="{DynamicResource DangerMutedBrush}" CornerRadius="6">
+                                    <StackPanel>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" FontSize="11.5" FontWeight="SemiBold" Foreground="{DynamicResource DangerBrush}"
+                                                       Text="{Binding Category}" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Grid.Column="1" Text="{Binding Timestamp, StringFormat={}{0:g}, Mode=OneWay}"
+                                                       FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        </Grid>
+                                        <TextBlock Text="{Binding Target}" FontSize="10.5" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        <TextBlock FontSize="11" TextWrapping="Wrap" Margin="0,3,0,0">
+                                            <Run Text="{Binding ErrorCode, TargetNullValue='Unknown code'}" FontWeight="SemiBold" />
+                                            <Run Text=" - " /><Run Text="{Binding ErrorText}" />
+                                        </TextBlock>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="No setupapi.dev.log failures found - click Load above to parse the log." Margin="0,0,0,10">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding InstallFailures.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
+                    <TextBlock Text="Kernel-PnP/Configuration events" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,4" />
+                    <ItemsControl ItemsSource="{Binding PnpConfigurationFailures}" MaxHeight="180">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" FontSize="11.5" TextWrapping="Wrap" ToolTip="{Binding Message}">
+                                        <Run Text="Event " /><Run Text="{Binding EventId, Mode=OneWay}" />
+                                        <Run Text=" (" /><Run Text="{Binding Level}" /><Run Text=") - " />
+                                        <Run Text="{Binding Message}" />
+                                    </TextBlock>
+                                    <TextBlock Grid.Column="1" Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}"
+                                               FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="No Kernel-PnP/Configuration events found (or the channel is disabled on this system).">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding PnpConfigurationFailures.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- #465: best-effort logman NT Kernel Logger driver-load capture. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <TextBlock Text="Watch driver loads" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="{Binding DriverLoadTraceStatusText}" Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+                    <StackPanel Orientation="Horizontal">
+                        <Button Content="Start capture" Padding="10,4" Command="{Binding StartDriverLoadTraceCommand}">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsDriverLoadTraceRunning}" Value="True">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                        <Button Content="Stop capture" Padding="10,4" Command="{Binding StopDriverLoadTraceCommand}">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsDriverLoadTraceRunning}" Value="True">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                    </StackPanel>
+                    <TextBlock Margin="0,8,0,0" FontSize="11" TextWrapping="Wrap"
+                               Visibility="{Binding DriverLoadTraceFilePath, Converter={StaticResource NullToVisibilityConverter}}">
+                        <Run Text="Trace saved: " /><Run Text="{Binding DriverLoadTraceFilePath}" />
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- #467 (class-wide half): UpperFilters/LowerFilters for every device setup class -
+                 gated behind Load (a full Control\Class sweep). -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Class filter drivers" Style="{StaticResource CardTitle}" Margin="0" />
+                        <Button Grid.Column="1" Padding="10,4" Command="{Binding LoadClassFiltersCommand}">
+                            <TextBlock>
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="Load" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsLoadingClassFilters}" Value="True">
+                                                <Setter Property="Text" Value="Scanning..." />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Button>
+                    </Grid>
+                    <TextBlock Text="{Binding ClassFiltersStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" />
+                    <DataGrid Height="200" ItemsSource="{Binding ClassFilters}" IsReadOnly="True">
+                        <DataGrid.RowStyle>
+                            <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding ServiceExists}" Value="False">
+                                        <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </DataGrid.RowStyle>
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Class" Binding="{Binding ClassName}" Width="1.6*" />
+                            <DataGridTextColumn Header="Filter driver" Binding="{Binding FilterName}" Width="1.6*" />
+                            <DataGridTextColumn Header="Position" Binding="{Binding FilterKindText}" Width="80" />
+                            <DataGridTemplateColumn Header="Service" Width="140" SortMemberPath="ServiceExists">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock VerticalAlignment="Center" FontWeight="SemiBold">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Text" Value="OK" />
+                                                    <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding ServiceExists}" Value="False">
+                                                            <Setter Property="Text" Value="Missing service" />
+                                                            <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
         </StackPanel>
     </ScrollViewer>
+
+    <!-- #468/#469/#471: the device-tree view - this tab's second top-level view, device-centric
+         and grouped by setup class, distinct from the driver-file-centric inventory grid above. -->
+    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="16">
+        <ScrollViewer.Style>
+            <Style TargetType="ScrollViewer">
+                <Setter Property="Visibility" Value="Collapsed" />
+                <Style.Triggers>
+                    <DataTrigger Binding="{Binding IsDeviceTreeViewActive}" Value="True">
+                        <Setter Property="Visibility" Value="Visible" />
+                    </DataTrigger>
+                </Style.Triggers>
+            </Style>
+        </ScrollViewer.Style>
+        <StackPanel>
+
+            <!-- #468: header - Load, status, #471's non-present toggle. -->
+            <Grid Margin="0,0,0,12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0">
+                    <TextBlock Text="Device tree by class" Style="{StaticResource CardTitle}" Margin="0" FontSize="15" />
+                    <TextBlock Text="{Binding DeviceTreeStatusText}" Style="{StaticResource SubStat}" Margin="0,2,0,0" />
+                </StackPanel>
+                <!-- #471: SetupDiGetClassDevs(DIGCF_ALLCLASSES) without DIGCF_PRESENT - the one gap
+                     Win32_PnPEntity alone can't fill (it only ever lists present devices). -->
+                <CheckBox Grid.Column="1" Content="Show non-present devices" VerticalAlignment="Center"
+                          Margin="0,0,16,0" Foreground="{DynamicResource TextSecondaryBrush}"
+                          IsChecked="{Binding ShowNonPresentDevices}" />
+                <Button Grid.Column="2" Style="{StaticResource PrimaryButton}" Command="{Binding LoadDeviceTreeCommand}">
+                    <TextBlock>
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Text" Value="Load" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsLoadingDeviceTree}" Value="True">
+                                        <Setter Property="Text" Value="Loading..." />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </Button>
+            </Grid>
+
+            <!-- #468/#469: grouped-by-class device list - click a row to select it below. -->
+            <ListBox ItemsSource="{Binding DeviceTreeView}" SelectedItem="{Binding SelectedDeviceNode}"
+                     Height="360" Background="Transparent" BorderThickness="0"
+                     ScrollViewer.VerticalScrollBarVisibility="Auto" Margin="0,0,0,16">
+                <ListBox.GroupStyle>
+                    <GroupStyle>
+                        <GroupStyle.ContainerStyle>
+                            <Style TargetType="{x:Type GroupItem}">
+                                <Setter Property="Template">
+                                    <Setter.Value>
+                                        <ControlTemplate TargetType="{x:Type GroupItem}">
+                                            <Expander IsExpanded="True" Margin="0,0,0,4"
+                                                      Background="{DynamicResource BgElevatedBrush}"
+                                                      Foreground="{DynamicResource TextPrimaryBrush}" BorderThickness="0">
+                                                <Expander.Header>
+                                                    <TextBlock FontSize="12.5" FontWeight="SemiBold" Margin="4,2">
+                                                        <Run Text="{Binding Name}" /><Run Text=" (" /><Run Text="{Binding ItemCount}" /><Run Text=")" />
+                                                    </TextBlock>
+                                                </Expander.Header>
+                                                <ItemsPresenter Margin="8,2,0,6" />
+                                            </Expander>
+                                        </ControlTemplate>
+                                    </Setter.Value>
+                                </Setter>
+                            </Style>
+                        </GroupStyle.ContainerStyle>
+                    </GroupStyle>
+                </ListBox.GroupStyle>
+                <ListBox.ItemContainerStyle>
+                    <Style TargetType="ListBoxItem">
+                        <Setter Property="Padding" Value="6,4" />
+                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                        <Setter Property="Template">
+                            <Setter.Value>
+                                <ControlTemplate TargetType="ListBoxItem">
+                                    <Border x:Name="Bd" Padding="{TemplateBinding Padding}" Background="Transparent" CornerRadius="4">
+                                        <ContentPresenter />
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsSelected" Value="True">
+                                            <Setter TargetName="Bd" Property="Background" Value="{DynamicResource AccentMutedBrush}" />
+                                        </Trigger>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter TargetName="Bd" Property="Background" Value="{DynamicResource BgElevatedBrush}" />
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </Setter.Value>
+                        </Setter>
+                    </Style>
+                </ListBox.ItemContainerStyle>
+                <ListBox.ItemTemplate>
+                    <DataTemplate>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0">
+                                <TextBlock FontSize="12" TextTrimming="CharacterEllipsis">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Text" Value="{Binding Name}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsPresent}" Value="False">
+                                                    <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                                    <Setter Property="FontStyle" Value="Italic" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                                <TextBlock FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" TextTrimming="CharacterEllipsis">
+                                    <Run Text="{Binding Manufacturer}" /><Run Text=" · " /><Run Text="{Binding Service, TargetNullValue='no driver'}" />
+                                </TextBlock>
+                            </StackPanel>
+                            <Border Grid.Column="1" CornerRadius="10" Padding="7,2" VerticalAlignment="Center" Margin="6,0,0,0">
+                                <Border.Style>
+                                    <Style TargetType="Border">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding HasProblem}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                                <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding IsPresent}" Value="False">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                                <Setter Property="Background" Value="{DynamicResource BgElevatedBrush}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Border.Style>
+                                <TextBlock FontSize="10" FontWeight="SemiBold">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Text" Value="{Binding ConfigManagerErrorCode, Converter={StaticResource ProblemCodeToDescriptionConverter}}" />
+                                            <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding HasProblem}" Value="False">
+                                                    <Setter Property="Text" Value="Not present" />
+                                                    <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </Border>
+                        </Grid>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+
+            <!-- #469: decoded problem-code detail + #467 per-device filters, for whichever device
+                 is selected above. -->
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel>
+                    <TextBlock Text="{Binding SelectedDeviceNode.Name, TargetNullValue='Select a device above for details'}"
+                               Style="{StaticResource CardTitle}" TextWrapping="Wrap" />
+                    <StackPanel Visibility="{Binding SelectedDeviceNode, Converter={StaticResource NullToVisibilityConverter}}">
+                        <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,2,0,10" TextWrapping="Wrap"
+                                   Text="{Binding SelectedDeviceNode.DeviceId}" />
+                        <UniformGrid Columns="2" Margin="0,0,0,10">
+                            <StackPanel Margin="0,0,8,6">
+                                <TextBlock Text="Class" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                <TextBlock Text="{Binding SelectedDeviceNode.ClassName}" FontSize="12.5" />
+                            </StackPanel>
+                            <StackPanel Margin="0,0,0,6">
+                                <TextBlock Text="Manufacturer" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                <TextBlock Text="{Binding SelectedDeviceNode.Manufacturer}" FontSize="12.5" />
+                            </StackPanel>
+                            <StackPanel Margin="0,0,8,6">
+                                <TextBlock Text="Bound driver (service)" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                <TextBlock Text="{Binding SelectedDeviceNode.Service, TargetNullValue=None}" FontSize="12.5" />
+                            </StackPanel>
+                            <StackPanel Margin="0,0,0,6">
+                                <TextBlock Text="Status" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                <TextBlock Text="{Binding SelectedDeviceNode.Status}" FontSize="12.5" />
+                            </StackPanel>
+                        </UniformGrid>
+                        <TextBlock Text="Hardware IDs" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        <TextBlock Text="{Binding SelectedDeviceNode.HardwareIdsText}" FontSize="11.5" TextWrapping="Wrap" Margin="0,0,0,10" />
+
+                        <!-- #469: decoded problem code + next step - only shown for a device that
+                             actually has one. -->
+                        <Border Padding="10,8" CornerRadius="6" Background="{DynamicResource DangerMutedBrush}" Margin="0,0,0,10">
+                            <Border.Style>
+                                <Style TargetType="Border">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding SelectedDeviceNode.HasProblem}" Value="True">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Border.Style>
+                            <StackPanel>
+                                <TextBlock FontSize="12.5" FontWeight="SemiBold" Foreground="{DynamicResource DangerBrush}"
+                                           Text="{Binding SelectedDeviceNode.ConfigManagerErrorCode, Converter={StaticResource ProblemCodeToDescriptionConverter}}" />
+                                <TextBlock FontSize="11.5" TextWrapping="Wrap" Margin="0,4,0,0"
+                                           Text="{Binding SelectedDeviceNode.ConfigManagerErrorCode, Converter={StaticResource ProblemCodeToDescriptionConverter}, ConverterParameter=Cause}" />
+                                <TextBlock FontSize="11.5" TextWrapping="Wrap" Margin="0,4,0,0" FontStyle="Italic">
+                                    <Run Text="Next step: " />
+                                    <Run Text="{Binding SelectedDeviceNode.ConfigManagerErrorCode, Converter={StaticResource ProblemCodeToDescriptionConverter}, ConverterParameter=NextStep}" />
+                                </TextBlock>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- #467 (per-device half): UpperFilters/LowerFilters under this device's
+                             own Enum key. -->
+                        <TextBlock Text="Per-device filter drivers" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,4" />
+                        <ItemsControl ItemsSource="{Binding SelectedDeviceFilters}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Margin="0,0,0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" FontSize="11.5">
+                                            <Run Text="{Binding FilterName}" /><Run Text=" (" /><Run Text="{Binding FilterKindText}" /><Run Text=")" />
+                                        </TextBlock>
+                                        <TextBlock Grid.Column="1" FontSize="11" FontWeight="SemiBold">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Text" Value="OK" />
+                                                    <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding ServiceExists}" Value="False">
+                                                            <Setter Property="Text" Value="Missing service" />
+                                                            <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <TextBlock Text="No filter drivers on this device.">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding SelectedDeviceFilters.Count}" Value="0">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+        </StackPanel>
+    </ScrollViewer>
+    </Grid>
 </UserControl>

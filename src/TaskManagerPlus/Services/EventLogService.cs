@@ -79,6 +79,9 @@ public sealed class EventLogService
             // #451: memory-related bugcheck count, for the Stability tab's own display and for
             // SystemSpecsViewModel's RAM health rollup (read independently there too, same reasoning).
             MemoryRelatedBugcheckCount = CountMemoryRelatedBugchecks(events),
+            // #464: boot-start/system-start driver load failures - also read independently by the
+            // Devices & Drivers tab (ReadBootDriverLoadFailures is public for that reason).
+            BootDriverLoadFailures = ReadBootDriverLoadFailures(),
         };
     }
 
@@ -656,5 +659,141 @@ public sealed class EventLogService
             });
         }
         return result;
+    }
+
+    // #463 (event-log half): Microsoft-Windows-Kernel-PnP/Configuration is a separate, analytic-
+    // style channel (not the plain System log) that logs the kernel PnP manager's own device
+    // configuration attempts - 411/442 (explicitly called out by the suggestion) fall inside the
+    // broader 400-series range this queries. This channel is disabled by default on a number of
+    // Windows editions/builds (it needs `wevtutil sl ... /e:true` to turn on) - EventLogQuery/
+    // EventLogReader throw when a channel is disabled or doesn't exist, so this degrades to "none
+    // found" exactly like every other targeted query in this service rather than surfacing that as
+    // an error.
+    private const string PnpConfigurationLog = "Microsoft-Windows-Kernel-PnP/Configuration";
+
+    public List<PnpConfigurationFailure> ReadPnpConfigurationFailures()
+    {
+        var results = new List<PnpConfigurationFailure>();
+        try
+        {
+            long maxAgeMs = LookbackDays * 24L * 60 * 60 * 1000;
+            var query = new EventLogQuery(PnpConfigurationLog, PathType.LogName,
+                $"*[System[(EventID >= 400 and EventID <= 499) and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]")
+            {
+                ReverseDirection = true,
+            };
+
+            using var reader = new EventLogReader(query);
+            int count = 0;
+            const int maxEvents = 200;
+            while (count < maxEvents && reader.ReadEvent() is { } record)
+            {
+                using (record)
+                {
+                    count++;
+                    if (record.TimeCreated is null) continue;
+
+                    string message;
+                    try { message = record.FormatDescription() ?? $"Event {record.Id}"; }
+                    catch { message = $"Event {record.Id}"; }
+
+                    results.Add(new PnpConfigurationFailure
+                    {
+                        TimeCreated = record.TimeCreated.Value,
+                        EventId = record.Id,
+                        Level = record.LevelDisplayName ?? string.Empty,
+                        Message = Truncate(message, 400),
+                    });
+                }
+            }
+        }
+        catch
+        {
+            // Channel disabled/unavailable, or nothing logged - "none found", not an error.
+        }
+        return results;
+    }
+
+    // #464: boot-start/system-start driver load failures. Two independent sources, both queried
+    // together since they cover different failure shapes: the Service Control Manager's own
+    // 7000/7001 ("the X service failed to start"/"...depends on a service that failed") and 7026
+    // ("the following boot-start or system-start driver(s) failed to load: ...", which can name
+    // several drivers in one event), plus the kernel PnP manager's event 219 ("the driver
+    // \Driver\X failed to load for the device Y").
+    private const int ServiceFailedToStartEventId = 7000;
+    private const int ServiceDependencyFailedEventId = 7001;
+    private const int BootStartDriversFailedEventId = 7026;
+    private const int PnpDriverFailedToLoadEventId = 219;
+
+    private static readonly Regex ServiceFailedNameRegex = new(
+        @"^The\s+(.+?)\s+service failed to start", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex BootStartDriversNameRegex = new(
+        @"failed to load:\s*(.+)$", RegexOptions.IgnoreCase | RegexOptions.Compiled | RegexOptions.Multiline);
+    private static readonly Regex PnpDriverNameRegex = new(
+        @"\\Driver\\([^\s""]+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    /// <summary>Public - read independently by both StabilityViewModel (via Query(), for the
+    /// Stability tab's own small boot-driver card) and DevicesDriversViewModel (directly, for the
+    /// Devices &amp; Drivers tab), the same dual-read shape ReadCorrectedMemoryErrors already uses
+    /// rather than one tab depending on the other's ViewModel.</summary>
+    public List<BootDriverLoadFailure> ReadBootDriverLoadFailures()
+    {
+        var results = new List<BootDriverLoadFailure>();
+        try
+        {
+            long maxAgeMs = LookbackDays * 24L * 60 * 60 * 1000;
+            var query = new EventLogQuery("System", PathType.LogName,
+                $"*[System[((Provider[@Name='Service Control Manager'] and " +
+                $"(EventID={ServiceFailedToStartEventId} or EventID={ServiceDependencyFailedEventId} or EventID={BootStartDriversFailedEventId})) " +
+                $"or (EventID={PnpDriverFailedToLoadEventId})) and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]")
+            {
+                ReverseDirection = true,
+            };
+
+            using var reader = new EventLogReader(query);
+            int count = 0;
+            const int maxEvents = 200;
+            while (count < maxEvents && reader.ReadEvent() is { } record)
+            {
+                using (record)
+                {
+                    count++;
+                    if (record.TimeCreated is null) continue;
+
+                    string message;
+                    try { message = record.FormatDescription() ?? $"Event {record.Id}"; }
+                    catch { message = $"Event {record.Id}"; }
+
+                    results.Add(new BootDriverLoadFailure
+                    {
+                        TimeCreated = record.TimeCreated.Value,
+                        EventId = record.Id,
+                        ProviderName = record.ProviderName ?? string.Empty,
+                        DriverName = ExtractBootDriverName(record.Id, message),
+                        Message = Truncate(message, 400),
+                    });
+                }
+            }
+        }
+        catch
+        {
+            // Log unavailable/access denied, or none found - degrade to "nothing found".
+        }
+        return results;
+    }
+
+    /// <summary>Best-effort driver/service name extraction from the event's own formatted message -
+    /// not a documented, versioned contract for any of these three event IDs, so an unmatched
+    /// message just leaves DriverName null (shown as "Unknown") rather than a guess.</summary>
+    private static string? ExtractBootDriverName(int eventId, string message)
+    {
+        Match match = eventId switch
+        {
+            ServiceFailedToStartEventId or ServiceDependencyFailedEventId => ServiceFailedNameRegex.Match(message),
+            BootStartDriversFailedEventId => BootStartDriversNameRegex.Match(message),
+            PnpDriverFailedToLoadEventId => PnpDriverNameRegex.Match(message),
+            _ => Match.Empty,
+        };
+        return match.Success ? match.Groups[1].Value.Trim() : null;
     }
 }

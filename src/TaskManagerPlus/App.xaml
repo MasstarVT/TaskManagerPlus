@@ -25,6 +25,7 @@
             <conv:PercentToWidthConverter x:Key="PercentToWidthConverter" />
             <conv:PercentToStarWidthConverter x:Key="PercentToStarWidthConverter" />
             <conv:BugcheckCodeToDescriptionConverter x:Key="BugcheckCodeToDescriptionConverter" />
+            <conv:ProblemCodeToDescriptionConverter x:Key="ProblemCodeToDescriptionConverter" />
             <conv:StabilityIndexToBrushConverter x:Key="StabilityIndexToBrushConverter" />
             <conv:IntEqualsConverter x:Key="IntEqualsConverter" />
             <conv:BoolToVisibilityConverter x:Key="BoolToVisibilityConverter" />

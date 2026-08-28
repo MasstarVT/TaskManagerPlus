@@ -101,6 +101,12 @@ public sealed class StabilitySnapshot
     /// <summary>#451: how many of RecentEvents' Kernel-Power 41 bugcheck codes match the small
     /// memory-related STOP code set - see EventLogService.MemoryRelatedBugcheckCodes.</summary>
     public int MemoryRelatedBugcheckCount { get; init; }
+
+    /// <summary>#464: boot-start/system-start driver load failures (SCM 7000/7001/7026, kernel PnP
+    /// event 219) within the lookback window - see EventLogService.ReadBootDriverLoadFailures. Also
+    /// read independently by the Devices &amp; Drivers tab, the same dual-read pattern
+    /// CorrectedMemoryErrors above already uses.</summary>
+    public List<BootDriverLoadFailure> BootDriverLoadFailures { get; init; } = new();
 }
 
 /// <summary>#439: one process from event 2004's ranked "consumed the most virtual memory" list.</summary>

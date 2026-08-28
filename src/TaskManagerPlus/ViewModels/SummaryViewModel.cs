@@ -963,6 +963,22 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
             });
         }
 
+        // #470: "N devices showing a problem code" - reads the Devices & Drivers tab's own
+        // session-lifetime cache (DeviceProblemSummaryState) rather than triggering a device-tree
+        // scan of its own, the same "stay silent until the on-demand tab has actually been used
+        // this session" shape #455's driver-signature rule above already uses. No tray-alert push
+        // here either - #455 is the precedent for this exact category of Health Check entry, and
+        // it doesn't push to tray, so this doesn't invent new tray plumbing either.
+        if (DeviceProblemSummaryState.HasScanned && DeviceProblemSummaryState.ProblemDeviceCount > 0)
+        {
+            int n = DeviceProblemSummaryState.ProblemDeviceCount;
+            issues.Add(new HealthIssue
+            {
+                Message = $"{n} device{(n == 1 ? "" : "s")} showing a problem code - see the Devices & Drivers tab's device tree",
+                IsCritical = false,
+            });
+        }
+
         // #67: anomaly highlighting - flags CPU/RAM/Disk usage that's a statistical outlier vs.
         // its own last-minute history, even without a fixed threshold. Requires both a meaningful
         // raw jump (>=20 points) AND a real statistical deviation (>=3 std dev past a small floor)

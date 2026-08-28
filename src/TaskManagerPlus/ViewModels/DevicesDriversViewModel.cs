@@ -116,15 +116,150 @@ public sealed class DevicesDriversViewModel : ObservableObject
     public bool IsSecurityPostureConcerning =>
         TestSigningEnabled || NoIntegrityChecksEnabled || DriverSignatureEnforcementDisabled || CodeIntegrityBlockedEventCount > 0;
 
+    // --- sub-tab strip: this tab's second top-level view (#468's device tree) is distinct from
+    // the driver-inventory grid above - toggled by two buttons rather than a WPF TabControl, kept
+    // simple since it's just one bool driving two panels' visibility. ---
+    private bool _isDeviceTreeViewActive;
+    public bool IsDeviceTreeViewActive { get => _isDeviceTreeViewActive; set => SetProperty(ref _isDeviceTreeViewActive, value); }
+    public RelayCommand ShowDriverInventoryViewCommand { get; }
+    public RelayCommand ShowDeviceTreeViewCommand { get; }
+
+    // --- #463 (event-log half)/#464/#466: cheap targeted event-log queries and a bounded WMI+
+    // registry sweep, all folded into this tab's existing on-demand Refresh (RefreshAsync below)
+    // rather than needing their own separate buttons - none of these are expensive enough on their
+    // own to warrant it (unlike #462's setupapi.dev.log parse, which genuinely is). ---
+    private readonly EventLogService _eventLog = new();
+
+    public ObservableCollection<PnpConfigurationFailure> PnpConfigurationFailures { get; } = new();
+    public ObservableCollection<BootDriverLoadFailure> BootDriverLoadFailures { get; } = new();
+    public ObservableCollection<DriverVersionConsistencyGroup> VersionConsistencyIssues { get; } = new();
+
+    // --- #462/#463 (setupapi half): driver install timeline + failures, parsed from
+    // setupapi.dev.log - gated behind its own Load button since that file can be tens of MB. ---
+    public ObservableCollection<DriverInstallEvent> InstallTimeline { get; } = new();
+    public ObservableCollection<DriverInstallFailure> InstallFailures { get; } = new();
+
+    private bool _isLoadingTimeline;
+    public bool IsLoadingTimeline { get => _isLoadingTimeline; private set => SetProperty(ref _isLoadingTimeline, value); }
+
+    private bool _hasLoadedTimelineOnce;
+
+    private bool _timelineLast30DaysOnly = true;
+    public bool TimelineLast30DaysOnly
+    {
+        get => _timelineLast30DaysOnly;
+        set
+        {
+            if (!SetProperty(ref _timelineLast30DaysOnly, value)) return;
+            if (_hasLoadedTimelineOnce) _ = LoadTimelineAsync(); // re-filter against the already-loaded log
+        }
+    }
+
+    private string _timelineStatusText = "Not loaded - setupapi.dev.log can be tens of MB, so it's only parsed when you click Load.";
+    public string TimelineStatusText { get => _timelineStatusText; private set => SetProperty(ref _timelineStatusText, value); }
+
+    public AsyncRelayCommand LoadTimelineCommand { get; }
+
+    // --- #465: best-effort logman NT Kernel Logger driver-load capture - see
+    // DriverLoadTraceService's remarks for why the .etl isn't parsed in-app. ---
+    private bool _isDriverLoadTraceRunning;
+    public bool IsDriverLoadTraceRunning { get => _isDriverLoadTraceRunning; private set => SetProperty(ref _isDriverLoadTraceRunning, value); }
+
+    private string _driverLoadTraceStatusText =
+        "Not running. Starts a best-effort NT Kernel Logger capture (logman) of driver/module load and unload events to a .etl file - open it in Windows Performance Analyzer, since this app doesn't parse ETW events in-app.";
+    public string DriverLoadTraceStatusText { get => _driverLoadTraceStatusText; private set => SetProperty(ref _driverLoadTraceStatusText, value); }
+
+    private string? _driverLoadTraceFilePath;
+    public string? DriverLoadTraceFilePath { get => _driverLoadTraceFilePath; private set => SetProperty(ref _driverLoadTraceFilePath, value); }
+
+    private string? _driverLoadTraceFilePathPending;
+
+    public AsyncRelayCommand StartDriverLoadTraceCommand { get; }
+    public AsyncRelayCommand StopDriverLoadTraceCommand { get; }
+
+    // --- #467: class-wide filter driver inspection, gated behind its own Load button (a full
+    // Control\Class sweep). Per-device filters (also #467) are read cheaply and lazily below,
+    // whenever a #468 device-tree row is selected - see SelectedDeviceNode. ---
+    public ObservableCollection<ClassFilterEntry> ClassFilters { get; } = new();
+
+    private bool _isLoadingClassFilters;
+    public bool IsLoadingClassFilters { get => _isLoadingClassFilters; private set => SetProperty(ref _isLoadingClassFilters, value); }
+
+    private string _classFiltersStatusText = "Not loaded - click Load to scan every device setup class's registered filter drivers.";
+    public string ClassFiltersStatusText { get => _classFiltersStatusText; private set => SetProperty(ref _classFiltersStatusText, value); }
+
+    public AsyncRelayCommand LoadClassFiltersCommand { get; }
+
+    // --- #468/#469/#471: device tree, this tab's second top-level view - device-centric, grouped
+    // by setup class, distinct from the driver-file-centric inventory grid above. ---
+    public ObservableCollection<PnpDeviceNode> DeviceTree { get; } = new();
+    public ICollectionView DeviceTreeView { get; }
+
+    private List<PnpDeviceNode> _presentDeviceNodes = new();
+    private List<PnpDeviceNode>? _nonPresentDeviceNodes; // null until #471's toggle is switched on at least once
+
+    private bool _isLoadingDeviceTree;
+    public bool IsLoadingDeviceTree { get => _isLoadingDeviceTree; private set => SetProperty(ref _isLoadingDeviceTree, value); }
+
+    private string _deviceTreeStatusText = "Not yet loaded.";
+    public string DeviceTreeStatusText { get => _deviceTreeStatusText; private set => SetProperty(ref _deviceTreeStatusText, value); }
+
+    /// <summary>#471: lazily triggers the one-time SetupDiGetClassDevs(DIGCF_ALLCLASSES) sweep the
+    /// first time it's switched on - not re-run automatically after that (matches Load's own
+    /// "explicit action" gating) until the next full Load.</summary>
+    private bool _showNonPresentDevices;
+    public bool ShowNonPresentDevices
+    {
+        get => _showNonPresentDevices;
+        set
+        {
+            if (!SetProperty(ref _showNonPresentDevices, value)) return;
+            if (value && _nonPresentDeviceNodes is null) _ = LoadNonPresentDevicesAsync();
+            else RebuildDeviceTree();
+        }
+    }
+
+    public AsyncRelayCommand LoadDeviceTreeCommand { get; }
+
+    private PnpDeviceNode? _selectedDeviceNode;
+    public PnpDeviceNode? SelectedDeviceNode
+    {
+        get => _selectedDeviceNode;
+        set
+        {
+            if (!SetProperty(ref _selectedDeviceNode, value)) return;
+            // #467 (per-device half): a single cheap registry-key read, not a tree walk, so this
+            // runs directly on selection rather than needing its own button.
+            SelectedDeviceFilters.Clear();
+            foreach (var f in ClassFilterDriverService.ReadDeviceFilters(value?.DeviceId)) SelectedDeviceFilters.Add(f);
+        }
+    }
+
+    public ObservableCollection<ClassFilterEntry> SelectedDeviceFilters { get; } = new();
+
     public DevicesDriversViewModel()
     {
         DriversView = CollectionViewSource.GetDefaultView(Drivers);
         DriversView.Filter = FilterDriver;
 
+        DeviceTreeView = CollectionViewSource.GetDefaultView(DeviceTree);
+        DeviceTreeView.GroupDescriptions.Add(new PropertyGroupDescription(nameof(PnpDeviceNode.ClassName)));
+        DeviceTreeView.SortDescriptions.Add(new SortDescription(nameof(PnpDeviceNode.ClassName), ListSortDirection.Ascending));
+        DeviceTreeView.SortDescriptions.Add(new SortDescription(nameof(PnpDeviceNode.Name), ListSortDirection.Ascending));
+
         RefreshCommand = new AsyncRelayCommand(RefreshAsync);
         VerifyCommand = new RelayCommand(param => _ = VerifyRowAsync(param as DriverInventoryRow));
         VerifyFileCommand = new RelayCommand(param => _ = VerifyFileAsync(param as DriverFileInfo));
         VerifyAllCommand = new AsyncRelayCommand(VerifyAllAsync);
+
+        ShowDriverInventoryViewCommand = new RelayCommand(_ => IsDeviceTreeViewActive = false);
+        ShowDeviceTreeViewCommand = new RelayCommand(_ => IsDeviceTreeViewActive = true);
+
+        LoadTimelineCommand = new AsyncRelayCommand(LoadTimelineAsync);
+        StartDriverLoadTraceCommand = new AsyncRelayCommand(StartDriverLoadTraceAsync);
+        StopDriverLoadTraceCommand = new AsyncRelayCommand(StopDriverLoadTraceAsync);
+        LoadClassFiltersCommand = new AsyncRelayCommand(LoadClassFiltersAsync);
+        LoadDeviceTreeCommand = new AsyncRelayCommand(LoadDeviceTreeAsync);
 
         _ = RefreshAsync();
     }
@@ -140,6 +275,22 @@ public sealed class DevicesDriversViewModel : ObservableObject
 
             var posture = await CodeIntegrityPostureService.ReadAsync();
             ApplyPosture(posture);
+
+            // #463 (event-log half) / #464: cheap targeted event-log queries - safe to fold into
+            // this tab's existing on-demand Refresh rather than needing their own separate buttons.
+            var pnpConfigFailures = await Task.Run(() => _eventLog.ReadPnpConfigurationFailures());
+            PnpConfigurationFailures.Clear();
+            foreach (var f in pnpConfigFailures) PnpConfigurationFailures.Add(f);
+
+            var bootFailures = await Task.Run(() => _eventLog.ReadBootDriverLoadFailures());
+            BootDriverLoadFailures.Clear();
+            foreach (var f in bootFailures) BootDriverLoadFailures.Add(f);
+
+            // #466: driver version consistency across identical devices - a bounded WMI + registry
+            // sweep, likewise cheap enough to fold into this tab's existing Refresh.
+            var versionIssues = await DriverVersionConsistencyService.ScanAsync();
+            VersionConsistencyIssues.Clear();
+            foreach (var g in versionIssues) VersionConsistencyIssues.Add(g);
 
             _lastRefreshedUtc = DateTime.UtcNow;
             OnPropertyChanged(nameof(LastRefreshedText));
@@ -283,5 +434,156 @@ public sealed class DevicesDriversViewModel : ObservableObject
     {
         int count = Drivers.Count(d => d.IsUnsignedOrTestSigned);
         DriverSignatureSummaryState.Report(count);
+    }
+
+    /// <summary>#462/#463 (setupapi half): parses setupapi.dev.log into a timeline plus the
+    /// subset that failed - the button-gated action itself (never run automatically), since this
+    /// file can be tens of MB.</summary>
+    private async Task LoadTimelineAsync()
+    {
+        IsLoadingTimeline = true;
+        _hasLoadedTimelineOnce = true;
+        TimelineStatusText = "Parsing setupapi.dev.log...";
+        try
+        {
+            DateTime? since = TimelineLast30DaysOnly ? DateTime.Now.AddDays(-30) : null;
+            var result = await DriverInstallLogService.ParseAsync(since);
+
+            InstallTimeline.Clear();
+            foreach (var e in result.Timeline) InstallTimeline.Add(e);
+
+            InstallFailures.Clear();
+            foreach (var f in result.Failures) InstallFailures.Add(f);
+
+            TimelineStatusText = result.ErrorMessage ??
+                $"{result.Timeline.Count} install/update event(s) found ({result.Failures.Count} failed)" +
+                (TimelineLast30DaysOnly ? ", last 30 days." : ", entire log.");
+        }
+        catch (Exception ex)
+        {
+            TimelineStatusText = $"Couldn't parse setupapi.dev.log: {ex.Message}";
+        }
+        finally
+        {
+            IsLoadingTimeline = false;
+        }
+    }
+
+    /// <summary>#465: starts the best-effort logman driver-load capture - no canExecute gating on
+    /// the command itself (matching this app's existing AsyncRelayCommand convention, e.g.
+    /// VerifyAllCommand above), just an early-out here plus the view swapping which of the Start/
+    /// Stop buttons is visible via IsDriverLoadTraceRunning.</summary>
+    private async Task StartDriverLoadTraceAsync()
+    {
+        if (IsDriverLoadTraceRunning) return;
+
+        DriverLoadTraceStatusText = "Starting capture...";
+        var result = await DriverLoadTraceService.StartAsync();
+        if (result.Success)
+        {
+            IsDriverLoadTraceRunning = true;
+            _driverLoadTraceFilePathPending = result.FilePath;
+            DriverLoadTraceFilePath = null;
+        }
+        DriverLoadTraceStatusText = result.Message;
+    }
+
+    private async Task StopDriverLoadTraceAsync()
+    {
+        if (!IsDriverLoadTraceRunning) return;
+
+        DriverLoadTraceStatusText = "Stopping capture...";
+        var result = await DriverLoadTraceService.StopAsync();
+        IsDriverLoadTraceRunning = false;
+        DriverLoadTraceFilePath = result.Success ? _driverLoadTraceFilePathPending : null;
+        DriverLoadTraceStatusText = result.Message;
+    }
+
+    /// <summary>#467 (class-wide half): the button-gated full Control\Class sweep.</summary>
+    private async Task LoadClassFiltersAsync()
+    {
+        IsLoadingClassFilters = true;
+        ClassFiltersStatusText = "Scanning device setup classes for filter drivers...";
+        try
+        {
+            var filters = await ClassFilterDriverService.ScanClassWideAsync();
+            ClassFilters.Clear();
+            foreach (var f in filters) ClassFilters.Add(f);
+
+            int missing = filters.Count(f => !f.ServiceExists);
+            ClassFiltersStatusText = filters.Count == 0
+                ? "No class-wide filter drivers found."
+                : $"{filters.Count} filter driver entr{(filters.Count == 1 ? "y" : "ies")} found across every device class" +
+                  (missing > 0 ? $" - {missing} reference a service that no longer exists." : ".");
+        }
+        catch (Exception ex)
+        {
+            ClassFiltersStatusText = $"Couldn't scan class filters: {ex.Message}";
+        }
+        finally
+        {
+            IsLoadingClassFilters = false;
+        }
+    }
+
+    /// <summary>#468/#469: loads the present-device tree from Win32_PnPEntity, then reports the
+    /// problem-device count to #470's Health Check bridge. Re-fetches #471's non-present list too
+    /// when that toggle is already on, since a fresh Load should reflect the current present-device
+    /// set either way.</summary>
+    private async Task LoadDeviceTreeAsync()
+    {
+        IsLoadingDeviceTree = true;
+        DeviceTreeStatusText = "Loading device tree...";
+        try
+        {
+            _presentDeviceNodes = await PnpDeviceTreeService.ListPresentAsync();
+            _nonPresentDeviceNodes = null;
+            RebuildDeviceTree();
+
+            if (ShowNonPresentDevices) await LoadNonPresentDevicesAsync();
+
+            int problemCount = _presentDeviceNodes.Count(d => d.HasProblem);
+            DeviceTreeStatusText = $"{_presentDeviceNodes.Count} present device(s) loaded - {problemCount} showing a problem code.";
+
+            // #470: feed the problem-device count into the Summary tab's Health Check card - see
+            // DeviceProblemSummaryState's remarks for why this is a static bridge, not a
+            // ViewModel-to-ViewModel reference.
+            DeviceProblemSummaryState.Report(problemCount);
+        }
+        catch (Exception ex)
+        {
+            DeviceTreeStatusText = $"Couldn't load the device tree: {ex.Message}";
+        }
+        finally
+        {
+            IsLoadingDeviceTree = false;
+        }
+    }
+
+    /// <summary>#471: the one-time (per Load) SetupDiGetClassDevs sweep for non-present devices.</summary>
+    private async Task LoadNonPresentDevicesAsync()
+    {
+        IsLoadingDeviceTree = true;
+        try
+        {
+            _nonPresentDeviceNodes = await PnpDeviceTreeService.ListNonPresentAsync(_presentDeviceNodes.Select(n => n.DeviceId));
+            RebuildDeviceTree();
+        }
+        catch (Exception ex)
+        {
+            DeviceTreeStatusText = $"Couldn't load non-present devices: {ex.Message}";
+        }
+        finally
+        {
+            IsLoadingDeviceTree = false;
+        }
+    }
+
+    private void RebuildDeviceTree()
+    {
+        DeviceTree.Clear();
+        foreach (var n in _presentDeviceNodes) DeviceTree.Add(n);
+        if (ShowNonPresentDevices && _nonPresentDeviceNodes is not null)
+            foreach (var n in _nonPresentDeviceNodes) DeviceTree.Add(n);
     }
 }
