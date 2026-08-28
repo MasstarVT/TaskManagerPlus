@@ -5,9 +5,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 Task Manager Plus — a Windows Task Manager replacement written in C# / WPF
-(.NET 8). Twelve top-level tabs (Summary, CPU, Memory, Storage, Network, GPU,
-Energy & Thermals, Processes, Services, Startup, System Specs, Stability),
-live color-theming (six palette families + saturation + high-contrast +
+(.NET 8). Thirteen top-level tabs (Summary, CPU, Memory, Storage, Network, GPU,
+Energy & Thermals, Processes, Services, Startup, System Specs, Stability,
+Devices & Drivers), live color-theming (six palette families + saturation + high-contrast +
 color-blind-safe alerts), a CSV/HTML/Markdown logging & reporting system, a
 system tray icon with a global hotkey, and an optional LAN-visible remote
 monitor endpoint. Navigation is a TMOG-style top horizontal tab strip
@@ -75,10 +75,18 @@ container — everything is `new`'d directly). Layers:
   — `EnergyThermalsViewModel` and `GpuViewModel` don't fit the shared-sampler
   pattern because sensor/GPU-engine enumeration is a genuinely separate,
   heavier data source than the fixed `HardwareMonitorService` counter array.
-  `StartupViewModel`, `SystemSpecsViewModel`, and `StabilityViewModel` are
-  on-demand instead (an initial load plus a manual Refresh command, no
-  timer) since their underlying queries (registry/WMI inventory sweeps,
-  event-log scans) aren't cheap enough to repeat on a tick.
+  `StartupViewModel`, `SystemSpecsViewModel`, `StabilityViewModel`, and
+  `DevicesDriversViewModel` are on-demand instead (an initial load plus a
+  manual Refresh command, no timer) since their underlying queries
+  (registry/WMI inventory sweeps, event-log scans) aren't cheap enough to
+  repeat on a tick. `DevicesDriversViewModel` is the largest on-demand
+  ViewModel by far — it composes several independently-loaded sections
+  (driver inventory, device tree, resources/power, driver store, filter
+  drivers, Driver Verifier) behind a handful of `Is*ViewActive` bool
+  properties that switch which section's XAML is visible, rather than a
+  real `TabControl`/enum — a pragmatic pattern that has scaled to four
+  sections but would be worth promoting to an enum or nested TabControl if
+  a fifth is added.
   `LoggingViewModel` owns a timer but samples nothing itself — it just reads
   already-polled state off `PerformanceViewModel`/`EnergyThermalsViewModel`.
   `MainViewModel` composes all of them plus settings-drawer state, tray/
@@ -219,6 +227,15 @@ per file:
   `Services/AppPaths.cs`, initialized once from `App.xaml.cs` before any
   other service runs). Each settings file fails silently to its type's
   defaults on a missing/corrupt file, same as `ThemeService`/`theme.json`.
+- **Maintained reference lists (embedded seed → editable settings-dir
+  copy)**: a curated, updatable-without-a-rebuild reference list (the pool
+  tag dictionary, the known-problem-driver list) ships as an embedded
+  resource under `Resources/` and is copied to a same-named file under
+  `AppPaths.SettingsDirectory` the first time it's needed if no copy exists
+  there yet; the service then always reads from the settings-dir copy, so a
+  user (or a future update mechanism) can replace it without a rebuild.
+  Both existing lists are explicitly labelled in-code and in the UI as a
+  curated/partial subset, never a complete authority.
 - **On-demand vs. polled**: anything that takes more than a trivial
   registry/perf-counter read (event-log scans, recursive file-system
   walks, registry-tree sweeps, network calls) is gated behind an explicit

@@ -1,3 +1,4 @@
+using System.IO;
 using Microsoft.Win32;
 using TaskManagerPlus.Models;
 
@@ -92,6 +93,7 @@ public static class ClassFilterDriverService
             string filter = raw.Trim();
             if (filter.Length == 0) continue;
 
+            var (serviceExists, imagePath, fileExists) = ReadServiceFileState(filter);
             results.Add(new ClassFilterEntry
             {
                 ClassGuid = classGuid,
@@ -99,23 +101,58 @@ public static class ClassFilterDriverService
                 DeviceId = deviceId,
                 FilterName = filter,
                 IsUpperFilter = isUpper,
-                ServiceExists = ServiceExists(filter),
+                ServiceExists = serviceExists,
+                ImagePath = imagePath,
+                FileExists = fileExists,
             });
         }
     }
 
-    private static bool ServiceExists(string serviceName)
+    /// <summary>#495 (disk/volume-class-orphan half): extends the plain "does the service key
+    /// exist" check (#467) with a second, stronger check - does the .sys the service key itself
+    /// points at still exist on disk. A service key can outlive an uninstaller that only deleted
+    /// the driver binary, leaving a filter entry that still references a real service registration
+    /// but points at nothing runnable.</summary>
+    private static (bool ServiceExists, string? ImagePath, bool? FileExists) ReadServiceFileState(string serviceName)
     {
         try
         {
             using var key = Registry.LocalMachine.OpenSubKey($@"SYSTEM\CurrentControlSet\Services\{serviceName}");
-            return key is not null;
+            if (key is null) return (false, null, null);
+
+            string? imagePath = key.GetValue("ImagePath") as string;
+            if (string.IsNullOrWhiteSpace(imagePath)) return (true, null, null);
+
+            string resolved = ResolveDriverPath(imagePath);
+            bool? exists;
+            try { exists = File.Exists(resolved); }
+            catch { exists = null; } // can't tell - not the same as "missing"
+
+            return (true, resolved, exists);
         }
         catch
         {
             // Access-denied reads as "can't tell" rather than "missing" - false here would flag a
             // perfectly normal filter as broken just because this process couldn't read that one key.
-            return true;
+            return (true, null, null);
         }
+    }
+
+    /// <summary>Driver ImagePath values are commonly `\SystemRoot\system32\drivers\x.sys` or a bare
+    /// file name resolved relative to system32\drivers - neither is directly usable with
+    /// File.Exists, unlike a full `C:\Windows\...` path some services do store.</summary>
+    internal static string ResolveDriverPath(string imagePath)
+    {
+        string expanded = Environment.ExpandEnvironmentVariables(imagePath.Trim('"'));
+        string windowsDir = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+
+        if (expanded.StartsWith(@"\SystemRoot\", StringComparison.OrdinalIgnoreCase))
+            return Path.Combine(windowsDir, expanded[@"\SystemRoot\".Length..]);
+        if (expanded.StartsWith(@"system32\", StringComparison.OrdinalIgnoreCase))
+            return Path.Combine(windowsDir, expanded);
+        if (Path.IsPathRooted(expanded))
+            return expanded;
+        // Bare file name (e.g. "mydriver.sys") - services with no explicit path load from drivers\.
+        return Path.Combine(windowsDir, "system32", "drivers", expanded);
     }
 }

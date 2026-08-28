@@ -1,0 +1,134 @@
+{
+  "_comment": "Task Manager Plus - #500 known-problem-driver list. Seeded into AppPaths.SettingsDirectory on first run; edit the copy there (not this embedded file) to add/update entries without a rebuild - KnownProblemDriverService only re-seeds when that file is missing. Each entry is a quick flag, not a verdict: a file-name (optionally version-ranged) match is circumstantial evidence worth a manual check, not proof this machine is hitting the referenced issue. MinVersion/MaxVersion are inclusive dotted-version bounds; leave both null to flag the file name at any version.",
+  "schemaVersion": 1,
+  "drivers": [
+    {
+      "fileName": "sptd.sys",
+      "minVersion": null,
+      "maxVersion": null,
+      "category": "Legacy virtual-drive filter",
+      "description": "SCSI Pass Through Direct (DAEMON Tools/Alcohol 120% virtual CD/DVD filter). Long discontinued by its own vendor after a well-documented history of boot failures and crashes when mixed with other storage filters or after an incomplete uninstall; modern virtual-drive software has moved to other drivers (e.g. dtsoftbus01.sys) specifically to avoid it.",
+      "evidenceUrl": null
+    },
+    {
+      "fileName": "dbutil_2_3.sys",
+      "minVersion": null,
+      "maxVersion": null,
+      "category": "Vulnerable vendor utility driver",
+      "description": "Dell firmware-update utility driver with a publicly disclosed local privilege-escalation vulnerability (CVE-2021-21551); Dell shipped an updated driver and recommends removing this one. Presence alone is a leftover-install signal, not evidence of active exploitation.",
+      "evidenceUrl": "https://www.cve.org/CVERecord?id=CVE-2021-21551"
+    },
+    {
+      "fileName": "gdrv.sys",
+      "minVersion": null,
+      "maxVersion": null,
+      "category": "Vulnerable vendor utility driver",
+      "description": "Gigabyte platform-tuning utility driver with a publicly disclosed arbitrary read/write vulnerability (CVE-2018-19320) later addressed by Gigabyte in newer tooling. Frequently flagged by Microsoft's own vulnerable-driver blocklist guidance.",
+      "evidenceUrl": "https://www.cve.org/CVERecord?id=CVE-2018-19320"
+    },
+    {
+      "fileName": "rtcore64.sys",
+      "minVersion": null,
+      "maxVersion": null,
+      "category": "Vulnerable vendor utility driver",
+      "description": "MSI Afterburner / RivaTuner Statistics Server kernel I/O driver with a publicly disclosed privilege-escalation vulnerability (CVE-2019-16098); commonly cited in Microsoft's recommended vulnerable-driver blocklist. Widely installed and usually harmless in normal use - worth a manual check for an up-to-date version, not a sign of active compromise.",
+      "evidenceUrl": "https://www.cve.org/CVERecord?id=CVE-2019-16098"
+    },
+    {
+      "fileName": "iqvw64e.sys",
+      "minVersion": null,
+      "maxVersion": null,
+      "category": "Vulnerable vendor utility driver",
+      "description": "Intel Network Adapter Diagnostic Driver, part of several publicly reported \"bring your own vulnerable driver\" advisories used to gain kernel read/write access; also called out in Microsoft's recommended vulnerable-driver blocklist. Present on some systems from Intel diagnostic tooling that installed it but no longer needs it running.",
+      "evidenceUrl": null
+    },
+    {
+      "fileName": "atikmpag.sys",
+      "minVersion": null,
+      "maxVersion": null,
+      "category": "Legacy display driver (TDR history)",
+      "description": "Older AMD/ATI display kernel-mode driver, historically one of the most commonly reported faulting modules in Timeout Detection and Recovery (TDR)/display-driver-crash bugchecks on older AMD GPU generations. Modern AMD drivers use different module names (amdkmdag.sys) - seeing this loaded suggests an old driver package worth updating.",
+      "evidenceUrl": null
+    },
+    {
+      "fileName": "speedfan.sys",
+      "minVersion": null,
+      "maxVersion": null,
+      "category": "Legacy sensor-access driver",
+      "description": "SpeedFan's kernel-mode hardware-access driver. Grants broad direct I/O port access and has a long history of forum-reported crashes/instability on newer chipsets it was never updated to fully support; largely superseded by other sensor-monitoring approaches (including this app's own LibreHardwareMonitor-based sensor reading).",
+      "evidenceUrl": null
+    },
+    {
+      "fileName": "netwtw04.sys",
+      "minVersion": null,
+      "maxVersion": "20.70.0.0",
+      "category": "Legacy network driver (BSOD history)",
+      "description": "Older Intel Wi-Fi adapter driver generation widely reported in community/forum bugcheck threads (STOP codes such as 0x9F and 0x133) on several Windows 10/11 feature updates before Intel shipped fixed builds. Worth checking Windows Update / Intel's driver page for a newer version if this is currently loaded.",
+      "evidenceUrl": null
+    },
+    {
+      "fileName": "netwtw06.sys",
+      "minVersion": null,
+      "maxVersion": "22.70.0.0",
+      "category": "Legacy network driver (BSOD history)",
+      "description": "Same family and history as netwtw04.sys above, for a later Intel Wi-Fi chipset generation - worth checking for a newer driver build if loaded.",
+      "evidenceUrl": null
+    },
+    {
+      "fileName": "vgk.sys",
+      "minVersion": null,
+      "maxVersion": null,
+      "category": "Anti-cheat kernel shim",
+      "description": "Riot Vanguard anti-cheat kernel driver. Has a documented history of refusing to coexist with certain other kernel-mode drivers and virtualization-based security configurations, occasionally producing boot failures until the conflicting software or setting is changed. Expected to be present only while a Vanguard-protected game is installed.",
+      "evidenceUrl": null
+    },
+    {
+      "fileName": "BEDaisy.sys",
+      "minVersion": null,
+      "maxVersion": null,
+      "category": "Anti-cheat kernel shim",
+      "description": "BattlEye anti-cheat kernel driver. Occasionally implicated in compatibility reports with other security/virtualization drivers loaded on the same system; expected only while a BattlEye-protected game is installed - if no such game remains installed, this is a leftover worth investigating.",
+      "evidenceUrl": null
+    },
+    {
+      "fileName": "vboxdrv.sys",
+      "minVersion": null,
+      "maxVersion": null,
+      "category": "Virtualization shim (hypervisor conflict history)",
+      "description": "Older Oracle VirtualBox core driver generations had well-documented conflicts with Hyper-V-based Windows features (Device Guard, Core Isolation/Memory Integrity, WSL2) enabled on the same machine, sometimes preventing VirtualBox VMs from starting or triggering host instability. Recent VirtualBox versions use a Hyper-V-aware backend and don't have this issue - worth checking the installed version if conflicts are suspected.",
+      "evidenceUrl": null
+    },
+    {
+      "fileName": "SRTSP.sys",
+      "minVersion": null,
+      "maxVersion": null,
+      "category": "Legacy anti-virus filter (uninstall leftover history)",
+      "description": "Older Symantec/Norton real-time-protection minifilter. Legacy Symantec/Norton uninstalls have a long-reported history of leaving filter-driver registrations and services behind; if the corresponding product is no longer installed, this is worth checking for cleanup with the vendor's dedicated removal tool.",
+      "evidenceUrl": null
+    },
+    {
+      "fileName": "avgtpx64.sys",
+      "minVersion": null,
+      "maxVersion": null,
+      "category": "Legacy anti-virus filter (uninstall leftover history)",
+      "description": "AVG self-protection minifilter. Community-reported cases of this remaining registered (and occasionally still attached to a volume) after AVG was uninstalled through means other than the vendor's own removal tool.",
+      "evidenceUrl": null
+    },
+    {
+      "fileName": "amifldrv64.sys",
+      "minVersion": null,
+      "maxVersion": null,
+      "category": "Vulnerable vendor utility driver",
+      "description": "AMI firmware-flashing utility driver bundled with several motherboard vendors' BIOS-update tools, called out in multiple published vulnerable-driver advisories for granting broad low-level hardware access. Normally only needed transiently during a BIOS update - worth a manual check if seen loaded at other times.",
+      "evidenceUrl": null
+    },
+    {
+      "fileName": "cpuz141.sys",
+      "minVersion": null,
+      "maxVersion": null,
+      "category": "Vulnerable vendor utility driver",
+      "description": "An older CPU-Z kernel driver build reported in third-party vulnerable-driver roundups for insufficiently restricted I/O access; CPUID has shipped newer driver versions since. Widely installed and normally benign - worth checking for an updated CPU-Z version if flagged.",
+      "evidenceUrl": null
+    }
+  ]
+}

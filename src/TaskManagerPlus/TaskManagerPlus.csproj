@@ -49,4 +49,14 @@
     </EmbeddedResource>
   </ItemGroup>
 
+  <!-- #500: curated known-problem-driver seed list, embedded the same way #418's pooltag.txt is -
+       KnownProblemDriverService copies it into AppPaths.SettingsDirectory on first run (only when
+       no file exists there yet) so the maintained list can be edited/replaced afterward without a
+       rebuild. -->
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\known-problem-drivers.json">
+      <LogicalName>known-problem-drivers.json</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+
 </Project>

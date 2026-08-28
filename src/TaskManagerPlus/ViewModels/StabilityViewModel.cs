@@ -268,6 +268,13 @@ public sealed class StabilityViewModel : ObservableObject
             CrashesByModule.Add(g);
         }
 
+        // #500: feed the faulting-module names seen this refresh into the session-lifetime bridge
+        // the Devices & Drivers tab's known-problem-driver matcher (and, transitively, the Summary
+        // Health Check card) reads - see StabilityCrashSummaryState's remarks.
+        StabilityCrashSummaryState.Report(snapshot.RecentEvents
+            .Where(e => !string.IsNullOrWhiteSpace(e.FaultingModule))
+            .Select(e => e.FaultingModule!));
+
         // #427
         PoolExhaustionEvents.Clear();
         foreach (var e in snapshot.PoolExhaustionEvents) PoolExhaustionEvents.Add(e);

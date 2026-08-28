@@ -29,4 +29,20 @@ public sealed class ClassFilterEntry
     /// a filter driver entry pointing at nothing, still inserted into (and potentially breaking)
     /// this class/device's driver stack.</summary>
     public bool ServiceExists { get; init; }
+
+    /// <summary>#495: the service's own ImagePath value (expanded), when ServiceExists and the
+    /// value could be read - null otherwise. Not itself proof of anything; FileExists below is what
+    /// drives IsOrphaned.</summary>
+    public string? ImagePath { get; init; }
+
+    /// <summary>#495: null when ImagePath couldn't be resolved/read (unknown, not "missing" - same
+    /// access-denied-reads-as-can't-tell convention ServiceExists already uses); true/false once a
+    /// real check ran.</summary>
+    public bool? FileExists { get; init; }
+
+    /// <summary>#495: true when the filter's service key is gone (ServiceExists false) or the
+    /// service key survives but its .sys no longer exists on disk (FileExists false) - a leftover
+    /// registration from an uninstalled driver still wired into this class/device's filter stack.
+    /// False (never guessed true) when FileExists is unknown.</summary>
+    public bool IsOrphaned => !ServiceExists || FileExists == false;
 }

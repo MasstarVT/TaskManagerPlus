@@ -1004,6 +1004,21 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
             });
         }
 
+        // #500: "N known-problem driver(s) found" - reads the Devices & Drivers tab's own
+        // session-lifetime cache (KnownProblemDriverSummaryState) rather than triggering a scan of
+        // its own, the same "stay silent until the on-demand tab has actually been used this
+        // session" shape #455/#470's rules above already use. A quick flag, not a verdict - see
+        // KnownProblemDriverMatch's remarks.
+        if (KnownProblemDriverSummaryState.HasScanned && KnownProblemDriverSummaryState.MatchCount > 0)
+        {
+            int n = KnownProblemDriverSummaryState.MatchCount;
+            issues.Add(new HealthIssue
+            {
+                Message = $"{n} known-problem driver match{(n == 1 ? "" : "es")} found - see the Devices & Drivers tab (quick flag, not a verdict)",
+                IsCritical = false,
+            });
+        }
+
         // #67: anomaly highlighting - flags CPU/RAM/Disk usage that's a statistical outlier vs.
         // its own last-minute history, even without a fixed threshold. Requires both a meaningful
         // raw jump (>=20 points) AND a real statistical deviation (>=3 std dev past a small floor)

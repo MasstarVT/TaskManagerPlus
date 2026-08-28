@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
 using System.Threading;
 using System.Windows;
@@ -148,6 +149,139 @@ public sealed class DevicesDriversViewModel : ObservableObject
     // into this tab's existing on-demand Refresh (same reasoning as the reads above). ---
     private WheaPolicyInfo? _wheaPolicy;
     public WheaPolicyInfo? WheaPolicy { get => _wheaPolicy; private set => SetProperty(ref _wheaPolicy, value); }
+
+    // --- #497/#498/#499: Driver Verifier status, standard-settings setup wizard, and the two
+    // recovery actions (reset + safe-boot toggle) - all part of the main driver-inventory view
+    // (not the #493-496 "Filter drivers" sub-view below), gated behind their own Load button since
+    // `verifier /query` and `bcdedit /enum` are both real process launches, not a plain registry
+    // read like WheaPolicy above. ---
+    private DriverVerifierStatus? _verifierStatus;
+    public DriverVerifierStatus? VerifierStatus { get => _verifierStatus; private set => SetProperty(ref _verifierStatus, value); }
+
+    private bool _isLoadingVerifierStatus;
+    public bool IsLoadingVerifierStatus { get => _isLoadingVerifierStatus; private set => SetProperty(ref _isLoadingVerifierStatus, value); }
+
+    private string _verifierStatusText = "Not loaded - click Load to read Driver Verifier's current configuration.";
+    public string VerifierStatusText { get => _verifierStatusText; private set => SetProperty(ref _verifierStatusText, value); }
+
+    private bool? _isSafeBootConfigured;
+    public bool? IsSafeBootConfigured { get => _isSafeBootConfigured; private set => SetProperty(ref _isSafeBootConfigured, value); }
+
+    private string? _safeBootModeText;
+    public string? SafeBootModeText { get => _safeBootModeText; private set => SetProperty(ref _safeBootModeText, value); }
+
+    private bool _isPerformingVerifierAction;
+    public bool IsPerformingVerifierAction { get => _isPerformingVerifierAction; private set => SetProperty(ref _isPerformingVerifierAction, value); }
+
+    private string _verifierActionStatusText = string.Empty;
+    public string VerifierActionStatusText { get => _verifierActionStatusText; private set => SetProperty(ref _verifierActionStatusText, value); }
+
+    public AsyncRelayCommand LoadVerifierStatusCommand { get; }
+
+    /// <summary>#498: opens the mandatory warning/typed-confirmation modal window - see
+    /// DriverVerifierSetupWindow. Synchronous RelayCommand (like OpenSnapshotUiCommand above)
+    /// because ShowDialog() itself is synchronous; the resulting enable action is kicked off as a
+    /// fire-and-forget Task afterward, same as every other action command in this ViewModel.</summary>
+    public RelayCommand OpenVerifierSetupWizardCommand { get; }
+
+    public AsyncRelayCommand ResetVerifierCommand { get; }
+    public AsyncRelayCommand EnableSafeBootCommand { get; }
+    public AsyncRelayCommand DisableSafeBootCommand { get; }
+
+    // --- #500: known-problem driver matching - loaded kernel modules + (if the Stability tab has
+    // been used this session) its faulting-module data, against the maintained JSON list. Its own
+    // Load button, not folded into Refresh - KernelModuleService's raw NtQuerySystemInformation
+    // read is cheap, but its driverquery fallback for friendly names is a real process launch. ---
+    public ObservableCollection<KnownProblemDriverMatch> KnownProblemMatches { get; } = new();
+
+    private bool _isScanningKnownProblemDrivers;
+    public bool IsScanningKnownProblemDrivers { get => _isScanningKnownProblemDrivers; private set => SetProperty(ref _isScanningKnownProblemDrivers, value); }
+
+    private string _knownProblemDriversStatusText = "Not scanned - click Scan to match loaded drivers against the known-problem-driver list.";
+    public string KnownProblemDriversStatusText { get => _knownProblemDriversStatusText; private set => SetProperty(ref _knownProblemDriversStatusText, value); }
+
+    public AsyncRelayCommand ScanKnownProblemDriversCommand { get; }
+
+    /// <summary>Opens a KnownProblemDriverMatch's EvidenceUrl in the default browser - same
+    /// shell-out-via-UseShellExecute convention MainViewModel.OpenUpdateUrlCommand already uses for
+    /// its own "open this URL" button, reused here rather than inventing a Hyperlink/RequestNavigate
+    /// code-behind path for a single button.</summary>
+    public RelayCommand OpenEvidenceLinkCommand { get; }
+
+    // ------------------------------------------------------------------------------------------
+    // #493/#494/#495/#496: "Filter drivers" - this tab's FOURTH top-level view, alongside driver
+    // inventory/device tree/driver store. Same two-bool-toggle shape IsDeviceTreeViewActive/
+    // IsDriverStoreViewActive already use, just one more flag.
+    // ------------------------------------------------------------------------------------------
+
+    private bool _isFilterDriversViewActive;
+    public bool IsFilterDriversViewActive { get => _isFilterDriversViewActive; set => SetProperty(ref _isFilterDriversViewActive, value); }
+    public RelayCommand ShowFilterDriversViewCommand { get; }
+
+    private bool _hasLoadedFilterDriversViewOnce;
+
+    // --- #493/#494: minifilter stack (fltmc filters/instances) + the AV-altitude-range flag. ---
+    public ObservableCollection<MinifilterEntry> Minifilters { get; } = new();
+
+    private bool _isLoadingMinifilters;
+    public bool IsLoadingMinifilters { get => _isLoadingMinifilters; private set => SetProperty(ref _isLoadingMinifilters, value); }
+
+    private string _minifiltersStatusText = "Not loaded - click Load to read the minifilter stack (fltmc filters/instances).";
+    public string MinifiltersStatusText { get => _minifiltersStatusText; private set => SetProperty(ref _minifiltersStatusText, value); }
+
+    public AsyncRelayCommand LoadMinifiltersCommand { get; }
+
+    private int _avMinifilterBootVolumeCount;
+    public int AvMinifilterBootVolumeCount { get => _avMinifilterBootVolumeCount; private set => SetProperty(ref _avMinifilterBootVolumeCount, value); }
+
+    private string _avMinifilterFlagText = string.Empty;
+    /// <summary>#494: "N AV-class minifilters attached to C:" - a likely (not certain) cause of
+    /// slow file operations when several are stacked. Quick flag, not a verdict.</summary>
+    public string AvMinifilterFlagText { get => _avMinifilterFlagText; private set => SetProperty(ref _avMinifilterFlagText, value); }
+
+    private bool _isAvMinifilterFlagConcerning;
+    public bool IsAvMinifilterFlagConcerning { get => _isAvMinifilterFlagConcerning; private set => SetProperty(ref _isAvMinifilterFlagConcerning, value); }
+
+    // --- #495: legacy (non-minifilter) file-system filters, fresh; disk/volume-class orphans is a
+    // filtered view over the #467 ClassFilters collection above (extended, not duplicated). ---
+    public ObservableCollection<LegacyFilterDriverEntry> LegacyFilters { get; } = new();
+
+    private bool _isLoadingLegacyFilters;
+    public bool IsLoadingLegacyFilters { get => _isLoadingLegacyFilters; private set => SetProperty(ref _isLoadingLegacyFilters, value); }
+
+    private string _legacyFiltersStatusText = "Not loaded - click Load to scan for legacy (pre-minifilter) file-system filter drivers.";
+    public string LegacyFiltersStatusText { get => _legacyFiltersStatusText; private set => SetProperty(ref _legacyFiltersStatusText, value); }
+
+    public AsyncRelayCommand LoadLegacyFiltersCommand { get; }
+
+    /// <summary>#495 (disk/volume-class-orphan half): a ListCollectionView over the SAME ClassFilters
+    /// collection #467's class-wide scan already populates (extended with ImagePath/FileExists/
+    /// IsOrphaned - see ClassFilterEntry), filtered down to just the DiskDrive and Volume device
+    /// setup classes. A second ListCollectionView rather than CollectionViewSource.GetDefaultView
+    /// (which would return DriversView/DeviceTreeView's already-cached default view for a
+    /// DIFFERENT collection, or - if somehow pointed at ClassFilters - the same single shared view
+    /// every other consumer of that collection would then also see filtered).</summary>
+    public ICollectionView DiskVolumeClassFiltersView { get; }
+
+    private static readonly HashSet<string> DiskVolumeClassGuids = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "{4d36e967-e325-11ce-bfc1-08002be10318}", // DiskDrive
+        "{71a27cdd-812a-11d0-bec7-08002be2092f}", // Volume
+    };
+
+    private static bool FilterDiskVolumeClass(object obj) => obj is ClassFilterEntry e && DiskVolumeClassGuids.Contains(e.ClassGuid);
+
+    // --- #496: NDIS lightweight filter bindings + the Winsock LSP catalog. ---
+    public ObservableCollection<NdisFilterBinding> NetworkFilters { get; } = new();
+    public ObservableCollection<WinsockCatalogEntry> WinsockCatalog { get; } = new();
+
+    private bool _isLoadingNetworkFilters;
+    public bool IsLoadingNetworkFilters { get => _isLoadingNetworkFilters; private set => SetProperty(ref _isLoadingNetworkFilters, value); }
+
+    private string _networkFiltersStatusText = "Not loaded - click Load to read NDIS filter bindings and the Winsock catalog.";
+    public string NetworkFiltersStatusText { get => _networkFiltersStatusText; private set => SetProperty(ref _networkFiltersStatusText, value); }
+
+    public AsyncRelayCommand LoadNetworkFiltersCommand { get; }
 
     // --- #462/#463 (setupapi half): driver install timeline + failures, parsed from
     // setupapi.dev.log - gated behind its own Load button since that file can be tens of MB. ---
@@ -411,19 +545,46 @@ public sealed class DevicesDriversViewModel : ObservableObject
         DeviceTreeView.SortDescriptions.Add(new SortDescription(nameof(PnpDeviceNode.Name), ListSortDirection.Ascending));
         DeviceTreeView.Filter = FilterDeviceTree;
 
+        DiskVolumeClassFiltersView = new ListCollectionView(ClassFilters) { Filter = FilterDiskVolumeClass };
+
         RefreshCommand = new AsyncRelayCommand(RefreshAsync);
         VerifyCommand = new RelayCommand(param => _ = VerifyRowAsync(param as DriverInventoryRow));
         VerifyFileCommand = new RelayCommand(param => _ = VerifyFileAsync(param as DriverFileInfo));
         VerifyAllCommand = new AsyncRelayCommand(VerifyAllAsync);
 
-        ShowDriverInventoryViewCommand = new RelayCommand(_ => { IsDeviceTreeViewActive = false; IsDriverStoreViewActive = false; });
-        ShowDeviceTreeViewCommand = new RelayCommand(_ => { IsDeviceTreeViewActive = true; IsDriverStoreViewActive = false; });
+        ShowDriverInventoryViewCommand = new RelayCommand(_ => { IsDeviceTreeViewActive = false; IsDriverStoreViewActive = false; IsFilterDriversViewActive = false; });
+        ShowDeviceTreeViewCommand = new RelayCommand(_ => { IsDeviceTreeViewActive = true; IsDriverStoreViewActive = false; IsFilterDriversViewActive = false; });
         ShowDriverStoreViewCommand = new RelayCommand(_ =>
         {
             IsDeviceTreeViewActive = false;
             IsDriverStoreViewActive = true;
+            IsFilterDriversViewActive = false;
             _ = EnsureDriverStoreLoadedAsync();
         });
+        ShowFilterDriversViewCommand = new RelayCommand(_ =>
+        {
+            IsDeviceTreeViewActive = false;
+            IsDriverStoreViewActive = false;
+            IsFilterDriversViewActive = true;
+            _ = EnsureFilterDriversViewLoadedAsync();
+        });
+
+        LoadVerifierStatusCommand = new AsyncRelayCommand(LoadVerifierStatusAsync);
+        OpenVerifierSetupWizardCommand = new RelayCommand(_ => OpenVerifierSetupWizard());
+        ResetVerifierCommand = new AsyncRelayCommand(ResetVerifierAsync);
+        EnableSafeBootCommand = new AsyncRelayCommand(() => ToggleSafeBootAsync(true));
+        DisableSafeBootCommand = new AsyncRelayCommand(() => ToggleSafeBootAsync(false));
+        ScanKnownProblemDriversCommand = new AsyncRelayCommand(ScanKnownProblemDriversAsync);
+        OpenEvidenceLinkCommand = new RelayCommand(param =>
+        {
+            if (param is not string url || string.IsNullOrWhiteSpace(url)) return;
+            try { Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); }
+            catch { /* best-effort - the row still shows the plain URL text either way */ }
+        });
+
+        LoadMinifiltersCommand = new AsyncRelayCommand(LoadMinifiltersAsync);
+        LoadLegacyFiltersCommand = new AsyncRelayCommand(LoadLegacyFiltersAsync);
+        LoadNetworkFiltersCommand = new AsyncRelayCommand(LoadNetworkFiltersAsync);
 
         LoadTimelineCommand = new AsyncRelayCommand(LoadTimelineAsync);
         StartDriverLoadTraceCommand = new AsyncRelayCommand(StartDriverLoadTraceAsync);
@@ -718,6 +879,333 @@ public sealed class DevicesDriversViewModel : ObservableObject
         {
             IsLoadingClassFilters = false;
         }
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // #497: Driver Verifier status - combines the registry-configured state with `verifier
+    // /query`'s active-this-boot state, plus the safe-boot BCD toggle's current state (#499).
+    // ------------------------------------------------------------------------------------------
+
+    private async Task LoadVerifierStatusAsync()
+    {
+        IsLoadingVerifierStatus = true;
+        VerifierStatusText = "Querying Driver Verifier status...";
+        try
+        {
+            VerifierStatus = await DriverVerifierService.QueryStatusAsync();
+            VerifierStatusText = VerifierStatus.QueryError is { } err
+                ? $"Configuration read from the registry below; `verifier /query` itself failed: {err}"
+                : string.Empty;
+
+            var (safeBootConfigured, safeBootMode) = await DriverVerifierService.QuerySafeBootAsync();
+            IsSafeBootConfigured = safeBootConfigured;
+            SafeBootModeText = safeBootMode;
+        }
+        catch (Exception ex)
+        {
+            VerifierStatusText = $"Couldn't read Driver Verifier status: {ex.Message}";
+        }
+        finally
+        {
+            IsLoadingVerifierStatus = false;
+        }
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // #498: setup wizard - builds the third-party candidate list from the already-loaded driver
+    // inventory grid, then hands off to the mandatory warning/typed-confirmation modal window.
+    // Microsoft drivers are excluded from the candidate list entirely (the stronger of the
+    // suggestion text's "excluded/discouraged" options), not merely discouraged in the UI.
+    // ------------------------------------------------------------------------------------------
+
+    private List<VerifierCandidateDriver> BuildVerifierCandidates() =>
+        Drivers
+            .Where(d => d.IsThirdParty && !string.IsNullOrWhiteSpace(d.FilePath) &&
+                        Path.GetExtension(d.FilePath).Equals(".sys", StringComparison.OrdinalIgnoreCase))
+            .GroupBy(d => Path.GetFileName(d.FilePath), StringComparer.OrdinalIgnoreCase)
+            .Select(g => new VerifierCandidateDriver
+            {
+                FileName = g.Key,
+                DisplayName = g.First().DisplayName,
+                CompanyName = g.First().CompanyName,
+            })
+            .OrderBy(c => c.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+    private void OpenVerifierSetupWizard()
+    {
+        var candidates = BuildVerifierCandidates();
+        if (candidates.Count == 0)
+        {
+            MessageBox.Show(
+                "No third-party drivers found in the driver inventory above to offer for Driver Verifier. " +
+                "Click Refresh at the top of this tab first if the inventory hasn't been loaded yet.",
+                "No candidate drivers",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+            return;
+        }
+
+        var window = new Views.DriverVerifierSetupWindow(Application.Current?.MainWindow, candidates);
+        if (window.ShowDialog() != true) return;
+
+        _ = EnableVerifierAsync(window.SelectedDriverFileNames);
+    }
+
+    private async Task EnableVerifierAsync(List<string> fileNames)
+    {
+        IsPerformingVerifierAction = true;
+        VerifierActionStatusText = $"Enabling Driver Verifier for {fileNames.Count} driver(s)...";
+        try
+        {
+            var (success, message) = await DriverVerifierService.EnableStandardAsync(fileNames);
+            VerifierActionStatusText = success
+                ? $"Driver Verifier enabled (standard checks) for {fileNames.Count} driver(s): {string.Join(", ", fileNames)}. " +
+                  "This takes effect after the next restart - if the machine bugchecks on boot afterward, see the recovery " +
+                  "section below (boot into Safe Mode, then reset Driver Verifier from there)."
+                : $"Couldn't enable Driver Verifier: {message}";
+            await LoadVerifierStatusAsync();
+        }
+        finally
+        {
+            IsPerformingVerifierAction = false;
+        }
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // #499: recovery - verifier /reset (needs a reboot) and the guarded safe-boot toggle, for when
+    // the machine is already bugchecking on every normal boot because of Driver Verifier.
+    // ------------------------------------------------------------------------------------------
+
+    private async Task ResetVerifierAsync()
+    {
+        var confirm = MessageBox.Show(
+            "Reset Driver Verifier to its default (nothing verified) state?\n\n" +
+            "This runs \"verifier /reset\". The change only takes effect after the next restart - if the machine is " +
+            "currently bugchecking on every normal boot because of Driver Verifier, boot into Safe Mode first (see the " +
+            "\"Force Safe Mode boot\" toggle below, or hold Shift while restarting / interrupt boot 3 times), run this " +
+            "reset from there, then restart normally.",
+            "Reset Driver Verifier",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        IsPerformingVerifierAction = true;
+        VerifierActionStatusText = "Resetting Driver Verifier...";
+        try
+        {
+            var (success, message) = await DriverVerifierService.ResetAsync();
+            VerifierActionStatusText = success
+                ? "Driver Verifier reset. Restart the machine for this to take effect."
+                : $"Couldn't reset Driver Verifier: {message}";
+            await LoadVerifierStatusAsync();
+        }
+        finally
+        {
+            IsPerformingVerifierAction = false;
+        }
+    }
+
+    private async Task ToggleSafeBootAsync(bool enable)
+    {
+        var confirm = MessageBox.Show(
+            enable
+                ? "Force the machine to boot into Safe Mode (minimal) starting with the NEXT restart, and every restart " +
+                  "after that until this is undone?\n\nThis runs \"bcdedit /set {current} safeboot minimal\". Use the " +
+                  "toggle here to undo it once you're done - if this app can't be reached (e.g. Driver Verifier is " +
+                  "bugchecking the machine before it can start), undo it from an elevated Safe Mode command prompt with " +
+                  "\"bcdedit /deletevalue {current} safeboot\" instead."
+                : "Clear the forced Safe Mode boot setting so the NEXT restart boots normally?\n\n" +
+                  "This runs \"bcdedit /deletevalue {current} safeboot\".",
+            enable ? "Force Safe Mode boot" : "Clear forced Safe Mode boot",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        IsPerformingVerifierAction = true;
+        VerifierActionStatusText = enable ? "Setting the safe-boot flag..." : "Clearing the safe-boot flag...";
+        try
+        {
+            var (success, message) = await DriverVerifierService.SetSafeBootAsync(enable);
+            VerifierActionStatusText = success
+                ? (enable
+                    ? "Safe Mode boot forced - takes effect starting with the next restart."
+                    : "Forced Safe Mode boot cleared - the next restart will boot normally.")
+                : $"Couldn't change the safe-boot setting: {message}";
+
+            var (safeBootConfigured, safeBootMode) = await DriverVerifierService.QuerySafeBootAsync();
+            IsSafeBootConfigured = safeBootConfigured;
+            SafeBootModeText = safeBootMode;
+        }
+        finally
+        {
+            IsPerformingVerifierAction = false;
+        }
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // #500: known-problem driver matching - its own Load button (KernelModuleService's
+    // driverquery-fallback friendly-name lookup is a real process launch, not a plain registry
+    // read), cross-referenced against the Stability tab's own data when available.
+    // ------------------------------------------------------------------------------------------
+
+    private async Task ScanKnownProblemDriversAsync()
+    {
+        IsScanningKnownProblemDrivers = true;
+        KnownProblemDriversStatusText = "Matching loaded drivers against the known-problem-driver list...";
+        try
+        {
+            var matches = await KnownProblemDriverService.ScanAsync();
+            KnownProblemMatches.Clear();
+            foreach (var m in matches) KnownProblemMatches.Add(m);
+
+            KnownProblemDriversStatusText = matches.Count == 0
+                ? "No matches found against the known-problem-driver list - see the Devices & Drivers tab's settings folder to review/extend that list."
+                : $"{matches.Count} match{(matches.Count == 1 ? "" : "es")} found - each is a quick flag worth a manual check, not a confirmed diagnosis.";
+
+            // #500: feed the match count into the Summary tab's Health Check card - see
+            // KnownProblemDriverSummaryState's remarks for why this is a static bridge.
+            KnownProblemDriverSummaryState.Report(matches.Count);
+        }
+        catch (Exception ex)
+        {
+            KnownProblemDriversStatusText = $"Couldn't run the known-problem-driver scan: {ex.Message}";
+        }
+        finally
+        {
+            IsScanningKnownProblemDrivers = false;
+        }
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // #493/#494: minifilter stack (fltmc filters/instances) + the AV-altitude-range flag.
+    // ------------------------------------------------------------------------------------------
+
+    private async Task LoadMinifiltersAsync()
+    {
+        IsLoadingMinifilters = true;
+        MinifiltersStatusText = "Reading the minifilter stack (fltmc filters/instances)...";
+        try
+        {
+            var filters = await MinifilterService.ScanAsync();
+            Minifilters.Clear();
+            foreach (var f in filters) Minifilters.Add(f);
+
+            string bootVolume = GetBootVolumeLabel();
+            int avCount = filters.Count(f => f.Category == MinifilterCategory.AntiVirus &&
+                f.AttachedVolumes.Any(v => v.TrimEnd('\\').Equals(bootVolume, StringComparison.OrdinalIgnoreCase)));
+            AvMinifilterBootVolumeCount = avCount;
+
+            AvMinifilterFlagText = avCount switch
+            {
+                0 => $"No anti-virus-range minifilters attached to {bootVolume} were found.",
+                1 => $"1 AV-class minifilter attached to {bootVolume} - normal for a single active anti-virus product.",
+                _ => $"{avCount} AV-class minifilters attached to {bootVolume} - a likely (not certain) cause of slow file " +
+                     "operations if several security products are stacked on the boot volume. Quick flag, not a verdict.",
+            };
+            IsAvMinifilterFlagConcerning = avCount >= 2;
+
+            MinifiltersStatusText = filters.Count == 0 ? "No minifilters reported by fltmc." : $"{filters.Count} minifilter(s) registered.";
+        }
+        catch (Exception ex)
+        {
+            MinifiltersStatusText = $"Couldn't read the minifilter stack: {ex.Message}";
+        }
+        finally
+        {
+            IsLoadingMinifilters = false;
+        }
+    }
+
+    private static string GetBootVolumeLabel()
+    {
+        try
+        {
+            string? root = Path.GetPathRoot(Environment.GetFolderPath(Environment.SpecialFolder.Windows));
+            return root is { Length: > 0 } ? root.TrimEnd('\\') : "C:";
+        }
+        catch
+        {
+            return "C:";
+        }
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // #495: legacy (non-minifilter) file-system filter drivers, fresh - the disk/volume-class-
+    // orphan half is DiskVolumeClassFiltersView above, a filtered view over #467's own ClassFilters.
+    // ------------------------------------------------------------------------------------------
+
+    private async Task LoadLegacyFiltersAsync()
+    {
+        IsLoadingLegacyFilters = true;
+        LegacyFiltersStatusText = "Scanning for legacy (non-minifilter) file-system filter drivers...";
+        try
+        {
+            var minifilterNames = Minifilters.Select(m => m.Name).ToList();
+            var legacy = await LegacyFilterDriverService.ScanAsync(minifilterNames);
+            LegacyFilters.Clear();
+            foreach (var f in legacy) LegacyFilters.Add(f);
+
+            int orphaned = legacy.Count(f => f.IsOrphaned);
+            LegacyFiltersStatusText = legacy.Count == 0
+                ? "No legacy (non-minifilter) file-system filter drivers found."
+                : $"{legacy.Count} legacy filter driver(s) found" +
+                  (orphaned > 0 ? $" - {orphaned} orphaned (backing .sys file missing)." : ".");
+        }
+        catch (Exception ex)
+        {
+            LegacyFiltersStatusText = $"Couldn't scan legacy filter drivers: {ex.Message}";
+        }
+        finally
+        {
+            IsLoadingLegacyFilters = false;
+        }
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // #496: NDIS lightweight filter bindings + the Winsock LSP catalog.
+    // ------------------------------------------------------------------------------------------
+
+    private async Task LoadNetworkFiltersAsync()
+    {
+        IsLoadingNetworkFilters = true;
+        NetworkFiltersStatusText = "Reading NDIS filter bindings and the Winsock catalog...";
+        try
+        {
+            var (filters, winsock) = await NetworkFilterService.ScanAsync();
+            NetworkFilters.Clear();
+            foreach (var f in filters) NetworkFilters.Add(f);
+            WinsockCatalog.Clear();
+            foreach (var w in winsock) WinsockCatalog.Add(w);
+
+            int thirdPartyLwf = filters.Count(f => f.IsThirdParty == true);
+            int thirdPartyLsp = winsock.Count(w => w.IsThirdParty);
+            NetworkFiltersStatusText = $"{filters.Count} non-base network component(s) bound to adapters ({thirdPartyLwf} third-party), " +
+                $"{winsock.Count} Winsock catalog entr{(winsock.Count == 1 ? "y" : "ies")} ({thirdPartyLsp} third-party).";
+        }
+        catch (Exception ex)
+        {
+            NetworkFiltersStatusText = $"Couldn't read network filters: {ex.Message}";
+        }
+        finally
+        {
+            IsLoadingNetworkFilters = false;
+        }
+    }
+
+    /// <summary>Lazily loads every "Filter drivers" sub-view section the first time the user
+    /// switches to it - not re-run automatically after that, matching #479's
+    /// EnsureDriverStoreLoadedAsync "load once per tab switch" gating. Each section keeps its own
+    /// manual Load button for an explicit re-scan afterward.</summary>
+    private async Task EnsureFilterDriversViewLoadedAsync()
+    {
+        if (_hasLoadedFilterDriversViewOnce) return;
+        _hasLoadedFilterDriversViewOnce = true;
+
+        await LoadMinifiltersAsync();
+        await LoadLegacyFiltersAsync();
+        if (ClassFilters.Count == 0 && !IsLoadingClassFilters) await LoadClassFiltersAsync();
+        await LoadNetworkFiltersAsync();
     }
 
     /// <summary>#468/#469: loads the present-device tree from Win32_PnPEntity, then reports the
