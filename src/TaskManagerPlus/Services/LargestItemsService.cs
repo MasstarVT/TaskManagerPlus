@@ -1,9 +1,22 @@
 using System.IO;
+using System.Runtime.InteropServices;
 
 namespace TaskManagerPlus.Services;
 
-/// <summary>One file or top-level folder found by <see cref="LargestItemsService.Scan"/>.</summary>
-public sealed record LargestItemInfo(string Path, long SizeBytes, bool IsDirectory);
+/// <summary>One file or top-level folder found by <see cref="LargestItemsService.Scan"/>. Round
+/// 17, #361 adds "size on disk" (SizeOnDiskBytes, via GetCompressedFileSizeW - null when it
+/// couldn't be read) alongside the logical SizeBytes, plus whether this item is (or, for a folder,
+/// contains) a reparse point or cloud-storage placeholder - a sparse/compressed file or an
+/// OneDrive "files on demand" placeholder can report a large logical size while occupying a small
+/// fraction of that on disk, which otherwise makes it look like the wrong culprit in this scan.
+/// </summary>
+public sealed record LargestItemInfo(
+    string Path,
+    long SizeBytes,
+    bool IsDirectory,
+    long? SizeOnDiskBytes = null,
+    bool IsReparsePoint = false,
+    bool IsCloudPlaceholder = false);
 
 /// <summary>
 /// Largest files/folders scanner (round 9, #39) - finds what's eating a nearly-full volume.
@@ -38,11 +51,14 @@ public static class LargestItemsService
             // file listing below, so a pathologically deep subtree can't turn one folder's total
             // into an unbounded walk (its reported size may then be a lower bound rather than
             // exact, a deliberate safety/speed tradeoff for an on-demand, user-triggered scan).
+            // #361: the same walk also sums each file's on-disk size and notes whether any file
+            // under the folder is a reparse point/cloud placeholder, so a folder that's mostly
+            // OneDrive placeholders doesn't read as "the" large item on disk.
             foreach (var dir in SafeEnumerateDirectories(rootDir))
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                long size = SumDirectorySize(dir, 0, maxDepth + 3, cancellationToken);
-                if (size > 0) items.Add(new LargestItemInfo(dir.FullName, size, true));
+                var (size, sizeOnDisk, hasPlaceholder) = SumDirectorySize(dir, 0, maxDepth + 3, cancellationToken);
+                if (size > 0) items.Add(new LargestItemInfo(dir.FullName, size, true, sizeOnDisk, false, hasPlaceholder));
             }
 
             // Individual files, depth-capped.
@@ -67,7 +83,11 @@ public static class LargestItemsService
 
         foreach (var file in SafeEnumerateFiles(dir))
         {
-            try { items.Add(new LargestItemInfo(file.FullName, file.Length, false)); }
+            try
+            {
+                var (isReparse, isCloud) = ClassifyAttributes(file.Attributes);
+                items.Add(new LargestItemInfo(file.FullName, file.Length, false, GetSizeOnDiskBytes(file.FullName), isReparse, isCloud));
+            }
             catch { /* file vanished mid-enumeration - skip it */ }
         }
 
@@ -75,22 +95,80 @@ public static class LargestItemsService
             ScanFiles(sub, depth + 1, maxDepth, items, cancellationToken);
     }
 
-    private static long SumDirectorySize(DirectoryInfo dir, int depth, int maxDepth, CancellationToken cancellationToken)
+    /// <summary>#361: same recursive walk as before, now also summing each file's on-disk size
+    /// (GetCompressedFileSizeW) and tracking whether any reparse point/cloud placeholder was seen
+    /// under this folder.</summary>
+    private static (long SizeBytes, long SizeOnDiskBytes, bool HasPlaceholder) SumDirectorySize(DirectoryInfo dir, int depth, int maxDepth, CancellationToken cancellationToken)
     {
         long total = 0;
+        long totalOnDisk = 0;
+        bool hasPlaceholder = false;
         cancellationToken.ThrowIfCancellationRequested();
 
         foreach (var file in SafeEnumerateFiles(dir))
         {
-            try { total += file.Length; } catch { /* skip */ }
+            try
+            {
+                total += file.Length;
+                totalOnDisk += GetSizeOnDiskBytes(file.FullName) ?? file.Length;
+                var (isReparse, isCloud) = ClassifyAttributes(file.Attributes);
+                if (isReparse || isCloud) hasPlaceholder = true;
+            }
+            catch { /* skip */ }
         }
         if (depth < maxDepth)
         {
             foreach (var sub in SafeEnumerateDirectories(dir))
-                total += SumDirectorySize(sub, depth + 1, maxDepth, cancellationToken);
+            {
+                var (subSize, subOnDisk, subPlaceholder) = SumDirectorySize(sub, depth + 1, maxDepth, cancellationToken);
+                total += subSize;
+                totalOnDisk += subOnDisk;
+                hasPlaceholder |= subPlaceholder;
+            }
         }
 
-        return total;
+        return (total, totalOnDisk, hasPlaceholder);
+    }
+
+    // FILE_ATTRIBUTE_RECALL_ON_OPEN / FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS aren't named in
+    // System.IO.FileAttributes, but that enum's underlying values are the raw Win32
+    // FILE_ATTRIBUTE_* bits, so they can still be tested for with a plain bitmask.
+    private const int FileAttributeRecallOnOpen = 0x40000;
+    private const int FileAttributeRecallOnDataAccess = 0x400000;
+
+    private static (bool IsReparsePoint, bool IsCloudPlaceholder) ClassifyAttributes(FileAttributes attrs)
+    {
+        bool isReparse = attrs.HasFlag(FileAttributes.ReparsePoint);
+        bool isCloud = ((int)attrs & (FileAttributeRecallOnOpen | FileAttributeRecallOnDataAccess)) != 0;
+        return (isReparse, isCloud);
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode, EntryPoint = "GetCompressedFileSizeW")]
+    private static extern uint GetCompressedFileSizeNative(string lpFileName, out uint lpFileSizeHigh);
+
+    /// <summary>#361: actual on-disk allocation for one file, via the documented
+    /// GetCompressedFileSizeW Win32 API (no higher-level .NET wrapper exists for this - the same
+    /// "P/Invoke a documented API with no managed equivalent" tradeoff this app already takes for
+    /// a handful of other facts). Differs from FileInfo.Length for sparse files, NTFS-compressed
+    /// files, and cloud-storage placeholders (a placeholder's logical size is the full remote file
+    /// size; its on-disk size is only whatever's actually been downloaded locally). Null on any
+    /// failure - never fabricated as equal to the logical size.</summary>
+    private static long? GetSizeOnDiskBytes(string path)
+    {
+        try
+        {
+            uint low = GetCompressedFileSizeNative(path, out uint high);
+            if (low == 0xFFFFFFFF)
+            {
+                int error = Marshal.GetLastWin32Error();
+                if (error != 0) return null; // genuine failure, not just a low-dword value that happens to equal 0xFFFFFFFF
+            }
+            return ((long)high << 32) | low;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     /// <summary>#333: unbounded-depth, cancellable recursive file enumeration reusing the same

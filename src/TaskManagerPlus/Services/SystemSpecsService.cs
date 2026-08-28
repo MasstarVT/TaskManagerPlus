@@ -930,6 +930,65 @@ public sealed class SystemSpecsService
         return null;
     }
 
+    /// <summary>
+    /// #359: every configured page file's volume, initial/maximum size, and peak usage, via
+    /// Win32_PageFileSetting (sizes; 0/0 means system-managed) joined to Win32_PageFileUsage.Name
+    /// (which page files are actually active + their PeakUsage) - extends the single-page-file #70
+    /// read above (ReadPageFileLocation, which only ever looked at whichever page file
+    /// Win32_PageFileUsage happened to list first) into the full list. The HDD-vs-faster-SSD-
+    /// elsewhere and same-disk-as-a-failing-drive flags are left false here and filled in by the
+    /// caller (StorageViewModel), which is the layer that already has both the full fixed-drive
+    /// list and the #328 health-verdict list on hand - this method only reads what WMI reports for
+    /// the page files themselves.
+    /// </summary>
+    public static List<PageFileDetailInfo> ReadPageFileDetails()
+    {
+        var results = new List<PageFileDetailInfo>();
+        try
+        {
+            var sizesByPath = new Dictionary<string, (long InitialMb, long MaximumMb)>(StringComparer.OrdinalIgnoreCase);
+            using (var settingsSearcher = new ManagementObjectSearcher("SELECT Name, InitialSize, MaximumSize FROM Win32_PageFileSetting"))
+            {
+                foreach (ManagementObject mo in settingsSearcher.Get())
+                {
+                    string name = (mo["Name"] as string ?? string.Empty).Trim();
+                    if (name.Length == 0) continue;
+                    long initial = mo["InitialSize"] is null ? 0 : Convert.ToInt64(mo["InitialSize"]);
+                    long maximum = mo["MaximumSize"] is null ? 0 : Convert.ToInt64(mo["MaximumSize"]);
+                    sizesByPath[name] = (initial, maximum);
+                }
+            }
+
+            using var usageSearcher = new ManagementObjectSearcher("SELECT Name, PeakUsage FROM Win32_PageFileUsage");
+            foreach (ManagementObject mo in usageSearcher.Get())
+            {
+                string name = (mo["Name"] as string ?? string.Empty).Trim();
+                if (name.Length < 2) continue;
+                long peakMb = mo["PeakUsage"] is null ? 0 : Convert.ToInt64(mo["PeakUsage"]);
+
+                string driveLetter = name.Substring(0, 2); // e.g. "C:"
+                string mediaType = DiskFragmentationService.GetMediaType(driveLetter.TrimEnd(':'));
+                sizesByPath.TryGetValue(name, out var sizes);
+
+                results.Add(new PageFileDetailInfo
+                {
+                    Path = name,
+                    DriveLetter = driveLetter,
+                    MediaType = mediaType,
+                    IsSystemManaged = sizes.InitialMb == 0 && sizes.MaximumMb == 0,
+                    InitialSizeMb = sizes.InitialMb,
+                    MaximumSizeMb = sizes.MaximumMb,
+                    PeakUsageMb = peakMb,
+                });
+            }
+        }
+        catch
+        {
+            // Win32_PageFileUsage/Setting unavailable - empty list, the card hides.
+        }
+        return results;
+    }
+
     // MSFT_Disk itself doesn't expose a plain SSD/HDD media-type string reliably across drivers -
     // MSFT_PhysicalDisk.MediaType (via the disk's associated physical disk) is the actual documented
     // source for that, so this reads it as a second associator hop rather than guessing from the model name.

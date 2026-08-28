@@ -153,6 +153,36 @@ public sealed class PageFileLocationInfo
     public bool IsSameAsBootDrive { get; init; }
 }
 
+/// <summary>
+/// #359: one page file's volume/size/peak-usage facts, via Win32_PageFileSetting +
+/// Win32_PageFileUsage.PeakUsage - extends the single-page-file #70 read above (which only ever
+/// looked at whichever page file Win32_PageFileUsage happened to return first) into a full list,
+/// since a system can have more than one page file configured across different drives.
+/// </summary>
+public sealed class PageFileDetailInfo
+{
+    public string Path { get; init; } = string.Empty;
+    public string DriveLetter { get; init; } = string.Empty;
+    public string MediaType { get; init; } = "Unknown";
+    public bool IsSystemManaged { get; init; }
+    public long InitialSizeMb { get; init; }
+    public long MaximumSizeMb { get; init; }
+    public long PeakUsageMb { get; init; }
+
+    /// <summary>True when a faster (SSD) fixed drive exists elsewhere on this system while this
+    /// page file sits on an HDD - "quick flag, not a verdict" (a deliberately placed page file on
+    /// a large-capacity HDD for a rarely-used secondary paging file is a legitimate setup). Settable
+    /// (not init-only) because StorageViewModel fills this in after the base WMI read, once it also
+    /// has the full fixed-drive media-type list on hand.</summary>
+    public bool FasterDriveElsewhereFlag { get; set; }
+
+    /// <summary>True when this page file's physical disk also hosts a drive this app's own #328
+    /// health verdict flagged Replace. Left false (not attempted) rather than guessed when the
+    /// disk-index cross-reference can't be resolved. Settable for the same reason as the flag
+    /// above.</summary>
+    public bool SameDiskAsFailingDriveFlag { get; set; }
+}
+
 /// <summary>One installed Windows update/hotfix, as reported by Win32_QuickFixEngineering.</summary>
 public sealed class UpdateInfo
 {

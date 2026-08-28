@@ -100,7 +100,23 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
     public bool TempAlertEnabled { get => _alertThresholds.TempEnabled; set { _alertThresholds.TempEnabled = value; OnPropertyChanged(); PersistAlertThresholds(); } }
     public double TempAlertThreshold { get => _alertThresholds.TempC; set { _alertThresholds.TempC = value; OnPropertyChanged(); PersistAlertThresholds(); } }
 
-    private void PersistAlertThresholds() => AlertThresholdsService.Save(_alertThresholds);
+    /// <summary>Round 17, #355: re-reads alerts.json and writes only this VM's own Cpu/Memory/Temp
+    /// fields back onto it, rather than blindly overwriting the whole file with this VM's
+    /// (possibly stale) in-memory copy - StorageViewModel now also persists to the same file (its
+    /// own FreeSpace* fields), so a naive whole-object save here could otherwise clobber a
+    /// concurrent edit made through the Storage tab's own threshold controls. See
+    /// StorageViewModel.PersistAlertThresholds for its half of this same merge-on-save fix.</summary>
+    private void PersistAlertThresholds()
+    {
+        var onDisk = AlertThresholdsService.Load();
+        onDisk.CpuEnabled = _alertThresholds.CpuEnabled;
+        onDisk.CpuPercent = _alertThresholds.CpuPercent;
+        onDisk.MemoryEnabled = _alertThresholds.MemoryEnabled;
+        onDisk.MemoryPercent = _alertThresholds.MemoryPercent;
+        onDisk.TempEnabled = _alertThresholds.TempEnabled;
+        onDisk.TempC = _alertThresholds.TempC;
+        AlertThresholdsService.Save(onDisk);
+    }
 
     // #73: one-click diagnostic report bundling specs, recent stability events, a sensor
     // snapshot, and top resource consumers into a single shareable markdown file.

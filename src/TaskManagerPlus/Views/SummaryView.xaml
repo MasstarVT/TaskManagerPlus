@@ -334,6 +334,23 @@
                             <TextBox Text="{Binding TempAlertThreshold, UpdateSourceTrigger=LostFocus}" IsEnabled="{Binding TempAlertEnabled}" Width="70" HorizontalAlignment="Left" />
                         </StackPanel>
                     </UniformGrid>
+
+                    <!-- Round 17, #355: low-free-space alerts, evaluated per fixed volume on the
+                         Storage tab's own sampler tick - owned by StorageViewModel (not this VM),
+                         reached the same "cross-VM setting control" way the settings drawer already
+                         reaches sibling ViewModels, per CLAUDE.md. -->
+                    <UniformGrid Columns="2" Margin="0,10,0,0">
+                        <StackPanel Margin="0,0,8,0">
+                            <CheckBox Content="Free space %" IsChecked="{Binding DataContext.Storage.FreeSpacePercentAlertEnabled, RelativeSource={RelativeSource AncestorType=Window}}" Margin="0,0,0,6" />
+                            <TextBox Text="{Binding DataContext.Storage.FreeSpacePercentAlertThreshold, RelativeSource={RelativeSource AncestorType=Window}, UpdateSourceTrigger=LostFocus}"
+                                     IsEnabled="{Binding DataContext.Storage.FreeSpacePercentAlertEnabled, RelativeSource={RelativeSource AncestorType=Window}}" Width="70" HorizontalAlignment="Left" />
+                        </StackPanel>
+                        <StackPanel Margin="8,0,0,0">
+                            <CheckBox Content="Free space GB" IsChecked="{Binding DataContext.Storage.FreeSpaceAbsoluteAlertEnabled, RelativeSource={RelativeSource AncestorType=Window}}" Margin="0,0,0,6" />
+                            <TextBox Text="{Binding DataContext.Storage.FreeSpaceAbsoluteAlertThresholdGb, RelativeSource={RelativeSource AncestorType=Window}, UpdateSourceTrigger=LostFocus}"
+                                     IsEnabled="{Binding DataContext.Storage.FreeSpaceAbsoluteAlertEnabled, RelativeSource={RelativeSource AncestorType=Window}}" Width="70" HorizontalAlignment="Left" />
+                        </StackPanel>
+                    </UniformGrid>
                 </StackPanel>
             </Border>
 

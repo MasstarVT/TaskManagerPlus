@@ -15,11 +15,15 @@ using TaskManagerPlus.Services;
 
 namespace TaskManagerPlus.ViewModels;
 
-/// <summary>One fixed volume's on-demand HDD fragmentation check (#86) - a row per fixed drive
-/// that reports as an HDD (SSDs are hidden entirely, since fragmentation isn't meaningful there).</summary>
+/// <summary>One fixed volume's on-demand fragmentation/MFT-health check (#86, extended by round 17
+/// #353/#354). Every fixed volume gets a row (not just HDDs, since #353's brief this round: "MFT
+/// fragmentation costs metadata I/O on any medium") - IsHdd gates only the file-fragmentation-
+/// percent line/warning color, which genuinely isn't meaningful on an SSD; the MFT-health and
+/// free-space-fragmentation lines below it show for every row.</summary>
 public sealed class FragmentationRow : ObservableObject
 {
     public string DriveLetter { get; init; } = string.Empty;
+    public bool IsHdd { get; init; }
 
     private string _statusText = "Not checked";
     public string StatusText { get => _statusText; set => SetProperty(ref _statusText, value); }
@@ -29,6 +33,92 @@ public sealed class FragmentationRow : ObservableObject
 
     private bool _isWarning;
     public bool IsWarning { get => _isWarning; set => SetProperty(ref _isWarning, value); }
+
+    // #353: MFT size/record/fragment counts from the same defrag /A /V report, plus the #350
+    // geometry facts' MFT-zone bounds cross-referenced in from the matching VolumeFilesystemRow.
+    private string _mftHealthText = string.Empty;
+    public string MftHealthText { get => _mftHealthText; set => SetProperty(ref _mftHealthText, value); }
+
+    private bool _mftHealthWarning;
+    public bool MftHealthWarning { get => _mftHealthWarning; set => SetProperty(ref _mftHealthWarning, value); }
+
+    // #354: free-space percentage (from DriveInfo, not parsed) + largest contiguous free extent
+    // (from the same defrag report).
+    private string _freeSpaceFragmentationText = string.Empty;
+    public string FreeSpaceFragmentationText { get => _freeSpaceFragmentationText; set => SetProperty(ref _freeSpaceFragmentationText, value); }
+}
+
+/// <summary>#352: one fixed volume's persisted daily free-space low-water-mark history, chart
+/// series, and linear run-out projection - see StorageViewModel.OnPerformanceSampledForFreeSpace.
+/// Hidden (ShowChart/ShowProjection false) until enough daily history exists, and the projection
+/// specifically stays hidden whenever the trend is flat or rising, per this round's brief ("never
+/// showing an absurd date").</summary>
+public sealed class FreeSpaceVolumeRow : ObservableObject
+{
+    public string DriveLetter { get; init; } = string.Empty;
+
+    private readonly ObservableCollection<double> _freeBytesHistory = new();
+
+    public ISeries[] Series { get; private set; } = Array.Empty<ISeries>();
+
+    private bool _showChart;
+    public bool ShowChart { get => _showChart; private set => SetProperty(ref _showChart, value); }
+
+    private string _summaryText = "Not sampled yet";
+    public string SummaryText { get => _summaryText; private set => SetProperty(ref _summaryText, value); }
+
+    private string _projectionText = string.Empty;
+    public string ProjectionText { get => _projectionText; private set => SetProperty(ref _projectionText, value); }
+
+    private bool _showProjection;
+    public bool ShowProjection { get => _showProjection; private set => SetProperty(ref _showProjection, value); }
+
+    internal void Apply(List<FreeSpaceDailyPoint> history, long currentFreeBytes, long currentTotalBytes, SKColor chartColor)
+    {
+        SummaryText = currentTotalBytes > 0
+            ? $"{Formatting.FormatBytes(currentFreeBytes)} free of {Formatting.FormatBytes(currentTotalBytes)} ({(currentFreeBytes / (double)currentTotalBytes * 100):0.#}%)"
+            : Formatting.FormatBytes(currentFreeBytes);
+
+        _freeBytesHistory.Clear();
+        foreach (var p in history) _freeBytesHistory.Add(p.FreeBytes);
+
+        if (history.Count >= 3)
+        {
+            var (glow, core) = StorageViewModel.TrendLineOf(_freeBytesHistory, chartColor, "Free space");
+            Series = new ISeries[] { glow, core };
+            ShowChart = true;
+        }
+        else
+        {
+            Series = Array.Empty<ISeries>();
+            ShowChart = false;
+        }
+        OnPropertyChanged(nameof(Series));
+
+        ProjectionText = ComputeProjection(history);
+        ShowProjection = ProjectionText.Length > 0;
+    }
+
+    /// <summary>Two-point (first vs. last recorded day) linear extrapolation, same shape
+    /// StorageViewModel.ComputeWearProjection already uses for the SMART wear-rate projection -
+    /// hidden (empty string) whenever free space is flat or growing, so a volume that's gaining
+    /// space never gets shown an "out of space by ..." date.</summary>
+    private static string ComputeProjection(List<FreeSpaceDailyPoint> history)
+    {
+        if (history.Count < 3) return string.Empty;
+
+        var first = history[0];
+        var last = history[^1];
+        double days = (last.Date - first.Date).TotalDays;
+        if (days < 1) return string.Empty;
+
+        double bytesPerDay = (first.FreeBytes - last.FreeBytes) / days; // positive = shrinking
+        if (bytesPerDay <= 0) return string.Empty;
+
+        double daysRemaining = last.FreeBytes / bytesPerDay;
+        var projected = DateTime.Today.AddDays(daysRemaining);
+        return $"At the recent rate of {Formatting.FormatBytes(bytesPerDay)}/day, this volume is projected to run out of free space around {projected:d} (in ~{daysRemaining:0} days) - extrapolation from recent history, not a guarantee.";
+    }
 }
 
 /// <summary>One disk selectable in the round 9 (#38) on-demand SMART-details picker.</summary>
@@ -52,12 +142,16 @@ public sealed class SmartTriageTile
     public bool IsCritical { get; init; }
 }
 
-/// <summary>One row in the round 9 (#39) largest-files/folders scan result.</summary>
+/// <summary>One row in the round 9 (#39) largest-files/folders scan result. Round 17, #361 adds the
+/// on-disk size (distinct from the logical size for sparse/compressed files and cloud-storage
+/// placeholders) and a flags column.</summary>
 public sealed class LargestItemRow
 {
     public string Path { get; init; } = string.Empty;
     public string SizeText { get; init; } = string.Empty;
     public string Kind { get; init; } = string.Empty;
+    public string SizeOnDiskText { get; init; } = string.Empty;
+    public string FlagsText { get; init; } = string.Empty;
 }
 
 /// <summary>Round 13, #314: one decoded bit of the NVMe Health Log's Critical Warning byte - a
@@ -281,9 +375,10 @@ public sealed class StorageViewModel : ObservableObject
     // don't use Storage Spaces at all.
     public ObservableCollection<StorageSpaceInfo> StoragePools { get; } = new();
 
-    // #86: fixed HDD volumes eligible for an on-demand fragmentation check - SSDs never appear
-    // here at all (fragmentation isn't a meaningful concept for them).
-    public ObservableCollection<FragmentationRow> HddVolumes { get; } = new();
+    // #86, widened by round 17 #353/#354: every fixed volume gets a row now (FragmentationRow.IsHdd
+    // gates just the file-fragmentation-percent line - MFT health and free-space fragmentation are
+    // shown for SSDs too).
+    public ObservableCollection<FragmentationRow> FragmentationRows { get; } = new();
     public AsyncRelayCommand CheckFragmentationCommand { get; }
 
     // Round 9, #38: on-demand full SMART attribute table, per disk.
@@ -764,6 +859,118 @@ public sealed class StorageViewModel : ObservableObject
     public AsyncRelayCommand EnableNtfsBehaviorSettingCommand { get; }
     public AsyncRelayCommand DisableNtfsBehaviorSettingCommand { get; }
 
+    // ================================================================================
+    // Round 17, #352/#355: free-space history + days-until-full projection, and per-volume
+    // low-free-space alert thresholds - both sampled on the same Performance.Sampled tick (see
+    // OnPerformanceSampledForFreeSpace), the same "piggyback rather than a new timer" shape #324/
+    // #349 already use.
+    // ================================================================================
+    public Axis[] FreeSpaceHiddenXAxes { get; }
+    public ObservableCollection<FreeSpaceVolumeRow> FreeSpaceVolumes { get; } = new();
+
+    private readonly AlertThresholds _alertThresholds = AlertThresholdsService.Load();
+    private readonly Dictionary<string, bool> _freeSpacePercentAlerted = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, bool> _freeSpaceAbsoluteAlerted = new(StringComparer.OrdinalIgnoreCase);
+    private bool _freeSpaceSampling;
+
+    public bool FreeSpacePercentAlertEnabled
+    {
+        get => _alertThresholds.FreeSpacePercentEnabled;
+        set { _alertThresholds.FreeSpacePercentEnabled = value; OnPropertyChanged(); PersistAlertThresholds(); }
+    }
+    public double FreeSpacePercentAlertThreshold
+    {
+        get => _alertThresholds.FreeSpacePercentThreshold;
+        set { _alertThresholds.FreeSpacePercentThreshold = value; OnPropertyChanged(); PersistAlertThresholds(); }
+    }
+    public bool FreeSpaceAbsoluteAlertEnabled
+    {
+        get => _alertThresholds.FreeSpaceAbsoluteEnabled;
+        set { _alertThresholds.FreeSpaceAbsoluteEnabled = value; OnPropertyChanged(); PersistAlertThresholds(); }
+    }
+    public double FreeSpaceAbsoluteAlertThresholdGb
+    {
+        get => _alertThresholds.FreeSpaceAbsoluteGbThreshold;
+        set { _alertThresholds.FreeSpaceAbsoluteGbThreshold = value; OnPropertyChanged(); PersistAlertThresholds(); }
+    }
+
+    /// <summary>Re-reads alerts.json and writes only this VM's own fields back onto it, rather than
+    /// blindly overwriting the whole file with this VM's (possibly stale) in-memory copy - avoids
+    /// clobbering a concurrent edit to the Cpu/Memory/Temp fields SummaryViewModel's own threshold
+    /// card owns (see SummaryViewModel.PersistAlertThresholds for its half of this same
+    /// merge-on-save fix).</summary>
+    private void PersistAlertThresholds()
+    {
+        var onDisk = AlertThresholdsService.Load();
+        onDisk.FreeSpacePercentEnabled = _alertThresholds.FreeSpacePercentEnabled;
+        onDisk.FreeSpacePercentThreshold = _alertThresholds.FreeSpacePercentThreshold;
+        onDisk.FreeSpaceAbsoluteEnabled = _alertThresholds.FreeSpaceAbsoluteEnabled;
+        onDisk.FreeSpaceAbsoluteGbThreshold = _alertThresholds.FreeSpaceAbsoluteGbThreshold;
+        AlertThresholdsService.Save(onDisk);
+    }
+
+    // ================================================================================
+    // Round 17, #356/#357/#358/#360: "reclaimable space" card - component store analysis/cleanup,
+    // a reclaimable-space inventory + Storage Sense policy, hibernation file sizing, and the search
+    // indexer's footprint.
+    // ================================================================================
+
+    // #356
+    private ComponentStoreAnalysis? _componentStoreAnalysis;
+    public ComponentStoreAnalysis? ComponentStoreAnalysis { get => _componentStoreAnalysis; private set => SetProperty(ref _componentStoreAnalysis, value); }
+
+    private bool _isAnalyzingComponentStore;
+    public bool IsAnalyzingComponentStore { get => _isAnalyzingComponentStore; private set => SetProperty(ref _isAnalyzingComponentStore, value); }
+
+    private string _componentStoreActionStatusText = string.Empty;
+    public string ComponentStoreActionStatusText { get => _componentStoreActionStatusText; private set => SetProperty(ref _componentStoreActionStatusText, value); }
+
+    private bool _isCleaningComponentStore;
+    public bool IsCleaningComponentStore { get => _isCleaningComponentStore; private set => SetProperty(ref _isCleaningComponentStore, value); }
+
+    public AsyncRelayCommand AnalyzeComponentStoreCommand { get; }
+    public AsyncRelayCommand StartComponentCleanupCommand { get; }
+
+    // #357
+    public ObservableCollection<ReclaimableSpaceItem> ReclaimableItems { get; } = new();
+
+    private string _reclaimableItemsStatusText = "Loading...";
+    public string ReclaimableItemsStatusText { get => _reclaimableItemsStatusText; private set => SetProperty(ref _reclaimableItemsStatusText, value); }
+
+    private StorageSensePolicyInfo? _storageSensePolicy;
+    public StorageSensePolicyInfo? StorageSensePolicy { get => _storageSensePolicy; private set => SetProperty(ref _storageSensePolicy, value); }
+
+    // #358
+    private HibernationInfo? _hibernationInfo;
+    public HibernationInfo? HibernationInfo { get => _hibernationInfo; private set => SetProperty(ref _hibernationInfo, value); }
+
+    private string _hibernationActionStatusText = string.Empty;
+    public string HibernationActionStatusText { get => _hibernationActionStatusText; private set => SetProperty(ref _hibernationActionStatusText, value); }
+
+    private bool _isHibernationActionRunning;
+    public bool IsHibernationActionRunning { get => _isHibernationActionRunning; private set => SetProperty(ref _isHibernationActionRunning, value); }
+
+    private string _hibernateSizePercentInput = "75";
+    public string HibernateSizePercentInput { get => _hibernateSizePercentInput; set => SetProperty(ref _hibernateSizePercentInput, value); }
+
+    public AsyncRelayCommand DisableHibernationCommand { get; }
+    public AsyncRelayCommand EnableHibernationCommand { get; }
+    public AsyncRelayCommand SetHibernateSizeCommand { get; }
+
+    // #360
+    private IndexerFootprintInfo? _indexerFootprint;
+    public IndexerFootprintInfo? IndexerFootprint { get => _indexerFootprint; private set => SetProperty(ref _indexerFootprint, value); }
+
+    public AsyncRelayCommand RefreshReclaimableSpaceCommand { get; }
+
+    // ================================================================================
+    // Round 17, #359: page file placement, sizing, and peak usage.
+    // ================================================================================
+    public ObservableCollection<PageFileDetailInfo> PageFiles { get; } = new();
+
+    private string _pageFileStatusText = "Loading...";
+    public string PageFileStatusText { get => _pageFileStatusText; private set => SetProperty(ref _pageFileStatusText, value); }
+
     public StorageViewModel(PerformanceViewModel performance, EnergyThermalsViewModel energyThermals)
     {
         Performance = performance;
@@ -774,6 +981,12 @@ public sealed class StorageViewModel : ObservableObject
             Filter = o => o is SensorReading r && r.HardwareType == HardwareType.Storage,
         };
         DriveTemperatures = view;
+
+        // #352: hidden X axis for the free-space history chart - a separate instance from
+        // Performance.HiddenXAxes (used elsewhere in this file for the fixed-length CPU/RAM/Disk
+        // history buffers) since this chart's series length is however many daily points are on
+        // disk, not a fixed HistoryLength.
+        FreeSpaceHiddenXAxes = new[] { new Axis { IsVisible = false, ShowSeparatorLines = false } };
 
         CheckFragmentationCommand = new AsyncRelayCommand(param => CheckFragmentationAsync(param as FragmentationRow));
         ReadSmartDetailsCommand = new AsyncRelayCommand(ReadSmartDetailsAsync, () => SelectedSmartDisk is not null);
@@ -843,6 +1056,18 @@ public sealed class StorageViewModel : ObservableObject
         EnableNtfsBehaviorSettingCommand = new AsyncRelayCommand(param => SetNtfsBehaviorSettingAsync(param as NtfsBehaviorSettingRow, 0));
         DisableNtfsBehaviorSettingCommand = new AsyncRelayCommand(param => SetNtfsBehaviorSettingAsync(param as NtfsBehaviorSettingRow, 1));
 
+        // Round 17, #356
+        AnalyzeComponentStoreCommand = new AsyncRelayCommand(AnalyzeComponentStoreAsync, () => !IsAnalyzingComponentStore);
+        StartComponentCleanupCommand = new AsyncRelayCommand(StartComponentCleanupAsync, () => !IsCleaningComponentStore && ComponentStoreAnalysis is { Available: true });
+
+        // #358
+        DisableHibernationCommand = new AsyncRelayCommand(DisableHibernationAsync, () => !IsHibernationActionRunning);
+        EnableHibernationCommand = new AsyncRelayCommand(EnableHibernationAsync, () => !IsHibernationActionRunning);
+        SetHibernateSizeCommand = new AsyncRelayCommand(SetHibernateSizeAsync, () => !IsHibernationActionRunning);
+
+        // #356/#357/#358/#360: one shared refresh for the whole "reclaimable space" card.
+        RefreshReclaimableSpaceCommand = new AsyncRelayCommand(RefreshReclaimableSpaceAsync);
+
         // #324: subscribe to the shared sampler's tick rather than owning a new heavy timer -
         // see PerformanceViewModel.Sampled's remarks.
         Performance.Sampled += OnPerformanceSampled;
@@ -851,14 +1076,16 @@ public sealed class StorageViewModel : ObservableObject
         // this round's brief.
         Performance.Sampled += OnPerformanceSampledForNtfsActivity;
 
+        // #352/#355: third independent handler on the same shared tick - free-space history
+        // sampling and low-free-space alert evaluation are cheap (DriveInfo reads, no shell-out),
+        // so this runs unthrottled too, same as #349's handler above.
+        Performance.Sampled += OnPerformanceSampledForFreeSpace;
+
         _ = Task.Run(() =>
         {
             var pools = StorageSpacesService.List();
             var fixedDrives = DriveInfo.GetDrives().Where(d => d.DriveType == DriveType.Fixed && d.IsReady).ToList();
-            var hddDrives = fixedDrives
-                .Select(d => d.Name.TrimEnd('\\'))
-                .Where(letter => DiskFragmentationService.GetMediaType(letter) == "HDD")
-                .ToList();
+            var fixedDriveLetters = fixedDrives.Select(d => d.Name.TrimEnd('\\')).ToList(); // "C:" - colon kept, see FragmentationRow's remarks
             var disks = SystemSpecsService.ListDisksForSmart();
 
             // #328: cheap base facts (predicted failure, driver health) for every disk, computed
@@ -870,7 +1097,13 @@ public sealed class StorageViewModel : ObservableObject
             System.Windows.Application.Current?.Dispatcher.Invoke(() =>
             {
                 foreach (var p in pools) StoragePools.Add(p);
-                foreach (var letter in hddDrives) HddVolumes.Add(new FragmentationRow { DriveLetter = letter });
+                // #86, widened by #353/#354: a row per fixed volume, not just HDDs - see
+                // FragmentationRow's remarks.
+                foreach (var letter in fixedDriveLetters)
+                {
+                    bool isHdd = DiskFragmentationService.GetMediaType(letter.TrimEnd(':')) == "HDD";
+                    FragmentationRows.Add(new FragmentationRow { DriveLetter = letter, IsHdd = isHdd });
+                }
                 foreach (var (index, model) in disks) SmartDiskOptions.Add(new SmartDiskOption { Index = index, Model = model });
                 foreach (var d in fixedDrives) ThroughputDriveOptions.Add(d.Name.TrimEnd('\\'));
                 SelectedThroughputDrive = ThroughputDriveOptions.FirstOrDefault();
@@ -905,6 +1138,17 @@ public sealed class StorageViewModel : ObservableObject
 
         // #351: system-wide, independent of any per-volume row above.
         _ = RefreshNtfsBehaviorSettingsAsync();
+
+        // #359: page file placement/sizing/peak-usage - a one-time-at-tab-load read, its own pass
+        // since it cross-references the #328 DriveHealthVerdicts list populated by the Task.Run
+        // above (best-effort - that list may still be filling in on a slow WMI query, in which
+        // case the same-disk-as-failing-drive flag just comes back false for this load).
+        _ = LoadPageFilesAsync();
+
+        // #356/#357/#358/#360: "reclaimable space" card - everything here except the component-
+        // store analysis (explicitly on-demand only, see AnalyzeComponentStoreAsync) is a one-time
+        // read at tab load, same tier as the page-file load above.
+        _ = RefreshReclaimableSpaceAsync();
     }
 
     /// <summary>#324: fired once per PerformanceViewModel sample tick. Throttled to roughly once
@@ -969,11 +1213,23 @@ public sealed class StorageViewModel : ObservableObject
         if (row is null || row.IsChecking) return;
         row.IsChecking = true;
         row.StatusText = "Analyzing (this can take a while on a large drive)...";
+        row.MftHealthText = string.Empty;
+        row.FreeSpaceFragmentationText = string.Empty;
         try
         {
-            var (success, percent, message) = await DiskFragmentationService.Analyze(row.DriveLetter);
-            row.StatusText = message;
-            row.IsWarning = success && percent is { } p && p >= 10;
+            var result = await DiskFragmentationService.Analyze(row.DriveLetter);
+            row.StatusText = row.IsHdd
+                ? result.Message
+                : "Not applicable to SSD media (see MFT health / free-space fragmentation below).";
+            row.IsWarning = row.IsHdd && result.Success && result.FragmentedPercent is { } p && p >= 10;
+
+            // #353: MFT health - shown for HDD and SSD alike, since MFT fragmentation costs
+            // metadata I/O on any medium.
+            ApplyMftHealth(row, result);
+
+            // #354: free-space fragmentation - largest contiguous extent from the same defrag
+            // report; free-space percentage computed directly from DriveInfo rather than parsed.
+            ApplyFreeSpaceFragmentation(row, result);
         }
         catch (Exception ex)
         {
@@ -984,6 +1240,65 @@ public sealed class StorageViewModel : ObservableObject
         {
             row.IsChecking = false;
         }
+    }
+
+    /// <summary>#353: MFT size/record/fragment counts from the defrag report, plus whether the MFT
+    /// has outgrown its reserved zone - cross-referenced from the #350 geometry facts already
+    /// loaded onto the matching VolumeFilesystemRow (same drive letter, bare vs. colon-suffixed
+    /// conventions reconciled here). "Quick flag, not a verdict" - both signals are pattern-matches
+    /// on otherwise-ambiguous figures, not a confirmed problem.</summary>
+    private void ApplyMftHealth(FragmentationRow row, FragmentationAnalysis result)
+    {
+        if (!result.Success)
+        {
+            row.MftHealthText = "Unknown (analysis failed).";
+            row.MftHealthWarning = false;
+            return;
+        }
+
+        var parts = new List<string>();
+        if (result.MftSizeBytes is { } size) parts.Add($"size {Formatting.FormatBytes(size)}");
+        if (result.MftRecordCount is { } records) parts.Add($"{records:N0} record(s)");
+        if (result.MftFragmentCount is { } frags) parts.Add($"{frags:N0} fragment(s)");
+
+        bool highFragmentCount = result.MftFragmentCount is { } f && f >= 100;
+
+        bool? outgrownZone = null;
+        string bareLetter = row.DriveLetter.TrimEnd(':');
+        var geoRow = VolumeFilesystemRows.FirstOrDefault(r => string.Equals(r.DriveLetter, bareLetter, StringComparison.OrdinalIgnoreCase));
+        if (geoRow?.GeometryFacts is { Available: true } geo &&
+            geo.MftZoneStart.HasValue && geo.MftZoneEnd.HasValue && geo.BytesPerCluster.HasValue && geo.MftValidDataLengthBytes.HasValue &&
+            geo.MftZoneEnd.Value > geo.MftZoneStart.Value)
+        {
+            ulong zoneBytes = (geo.MftZoneEnd.Value - geo.MftZoneStart.Value) * geo.BytesPerCluster.Value;
+            outgrownZone = zoneBytes > 0 && geo.MftValidDataLengthBytes.Value > zoneBytes;
+            if (outgrownZone == true) parts.Add("has outgrown its reserved MFT zone");
+        }
+
+        row.MftHealthWarning = highFragmentCount || outgrownZone == true;
+        row.MftHealthText = parts.Count == 0
+            ? "Not reported by this Windows build's defrag output."
+            : string.Join(" · ", parts) + (row.MftHealthWarning ? " - quick flag, not a verdict." : ".");
+    }
+
+    /// <summary>#354: free-space percentage straight from DriveInfo (reliable, no parsing needed)
+    /// paired with the largest contiguous free extent parsed from the same defrag report (no other
+    /// source for that figure) - together these flag a volume that looks roomy overall but can't
+    /// actually place a large file contiguously.</summary>
+    private void ApplyFreeSpaceFragmentation(FragmentationRow row, FragmentationAnalysis result)
+    {
+        var drive = DriveInfo.GetDrives().FirstOrDefault(d =>
+            d.Name.TrimEnd('\\').Equals(row.DriveLetter, StringComparison.OrdinalIgnoreCase) && d.IsReady);
+
+        string freePercentText = drive is not null && drive.TotalSize > 0
+            ? $"{(drive.AvailableFreeSpace / (double)drive.TotalSize * 100):0.#}% free"
+            : "Unknown free %";
+
+        string extentText = result.Success && result.LargestFreeExtentBytes is { } extent
+            ? $"largest contiguous extent {Formatting.FormatBytes(extent)}"
+            : "largest contiguous extent not reported by this Windows build's defrag output";
+
+        row.FreeSpaceFragmentationText = $"{freePercentText}, {extentText}.";
     }
 
     private async Task ReadSmartDetailsAsync()
@@ -1517,11 +1832,20 @@ public sealed class StorageViewModel : ObservableObject
             var results = await Task.Run(() => LargestItemsService.Scan(root, maxDepth: 6, topN: 30));
             foreach (var item in results)
             {
+                // #361: size-on-disk vs. logical size, plus reparse-point/cloud-placeholder flags -
+                // a folder/file that's mostly on-demand cloud content stops looking like the "real"
+                // culprit once its on-disk figure is shown next to its logical size.
+                var flags = new List<string>();
+                if (item.IsCloudPlaceholder) flags.Add("cloud placeholder");
+                if (item.IsReparsePoint) flags.Add("reparse point");
+
                 LargestItems.Add(new LargestItemRow
                 {
                     Path = item.Path,
                     SizeText = Formatting.FormatBytes(item.SizeBytes),
                     Kind = item.IsDirectory ? "Folder" : "File",
+                    SizeOnDiskText = item.SizeOnDiskBytes is { } onDisk ? Formatting.FormatBytes(onDisk) : "Unknown",
+                    FlagsText = string.Join(", ", flags),
                 });
             }
             LargestItemsStatusText = results.Count == 0
@@ -1656,8 +1980,9 @@ public sealed class StorageViewModel : ObservableObject
     /// thick, translucent glow stroke drawn first, then a crisp 2px core stroke with a top-to-bottom
     /// gradient fill on top) - duplicated here rather than shared, since PerformanceViewModel's
     /// helper is private and this chart's data source (a persisted snapshot history, not a live
-    /// poll) doesn't belong on that class.</summary>
-    private static (LineSeries<double> Glow, LineSeries<double> Core) TrendLineOf(ObservableCollection<double> values, SKColor color, string name)
+    /// poll) doesn't belong on that class. Internal (not private) so FreeSpaceVolumeRow's own
+    /// #352 chart can reuse it too, rather than a third copy of the same styling.</summary>
+    internal static (LineSeries<double> Glow, LineSeries<double> Core) TrendLineOf(ObservableCollection<double> values, SKColor color, string name)
     {
         var glow = new LineSeries<double>
         {
@@ -2664,6 +2989,292 @@ public sealed class StorageViewModel : ObservableObject
         finally
         {
             row.IsActionRunning = false;
+        }
+    }
+
+    // ================================================================================
+    // Round 17, #352/#355: free-space history + days-until-full projection, and low-free-space
+    // alert thresholds - both evaluated here, on the same tick.
+    // ================================================================================
+
+    private static readonly SKColor FreeSpaceChartColor = new(0x4F, 0x9C, 0xE0);
+
+    private void OnPerformanceSampledForFreeSpace()
+    {
+        if (_freeSpaceSampling) return;
+        _freeSpaceSampling = true;
+
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                var samples = new List<(string Letter, long Free, long Total)>();
+                foreach (var d in DriveInfo.GetDrives().Where(d => d.DriveType == DriveType.Fixed && d.IsReady))
+                {
+                    try { samples.Add((d.Name.TrimEnd('\\'), d.AvailableFreeSpace, d.TotalSize)); }
+                    catch { /* transient read failure - skip this drive for this tick */ }
+                }
+                System.Windows.Application.Current?.Dispatcher.Invoke(() => ApplyFreeSpaceSample(samples));
+            }
+            finally
+            {
+                _freeSpaceSampling = false;
+            }
+        });
+    }
+
+    private void ApplyFreeSpaceSample(List<(string Letter, long Free, long Total)> samples)
+    {
+        foreach (var (letter, free, total) in samples)
+        {
+            var row = FreeSpaceVolumes.FirstOrDefault(r => r.DriveLetter == letter);
+            if (row is null)
+            {
+                row = new FreeSpaceVolumeRow { DriveLetter = letter };
+                FreeSpaceVolumes.Add(row);
+            }
+
+            var history = FreeSpaceHistoryService.RecordSample(letter, free, total);
+            row.Apply(history, free, total, FreeSpaceChartColor);
+
+            // #355: edge-triggered per volume, same "one toast per crossing, not one per tick"
+            // shape SummaryViewModel.CheckThresholdAlerts already uses for Cpu/Memory/Temp.
+            double percentFree = total > 0 ? free / (double)total * 100.0 : 100.0;
+            double freeGb = free / 1_000_000_000.0;
+
+            CheckFreeSpaceAlert(_freeSpacePercentAlerted, letter, FreeSpacePercentAlertEnabled, percentFree <= FreeSpacePercentAlertThreshold,
+                $"{letter} free space is {percentFree:0.#}% (threshold {FreeSpacePercentAlertThreshold:0}%)");
+            CheckFreeSpaceAlert(_freeSpaceAbsoluteAlerted, letter, FreeSpaceAbsoluteAlertEnabled, freeGb <= FreeSpaceAbsoluteAlertThresholdGb,
+                $"{letter} free space is {Formatting.FormatBytes(free)} (threshold {FreeSpaceAbsoluteAlertThresholdGb:0} GB)");
+        }
+    }
+
+    private static void CheckFreeSpaceAlert(Dictionary<string, bool> alerted, string letter, bool enabled, bool breached, string message)
+    {
+        if (!enabled) { alerted[letter] = false; return; }
+
+        bool wasAlerted = alerted.TryGetValue(letter, out var a) && a;
+        if (breached && !wasAlerted)
+        {
+            alerted[letter] = true;
+            ToastService.Show("Low free space", message, isCritical: true);
+        }
+        else if (!breached)
+        {
+            alerted[letter] = false;
+        }
+    }
+
+    // ================================================================================
+    // Round 17, #356: component store (WinSxS) analysis + cleanup - on-demand only, the analyze
+    // pass itself walks the whole store and can take a while.
+    // ================================================================================
+
+    private async Task AnalyzeComponentStoreAsync()
+    {
+        IsAnalyzingComponentStore = true;
+        ComponentStoreActionStatusText = "Analyzing the component store (this walks the whole WinSxS folder and can take a minute or two)...";
+        try
+        {
+            var result = await ReclaimableSpaceService.AnalyzeComponentStoreAsync();
+            ComponentStoreAnalysis = result;
+            ComponentStoreActionStatusText = result.Available ? string.Empty : $"Failed: {result.UnavailableReason}";
+        }
+        catch (Exception ex)
+        {
+            ComponentStoreActionStatusText = $"Failed: {ex.Message}";
+        }
+        finally
+        {
+            IsAnalyzingComponentStore = false;
+        }
+    }
+
+    private async Task StartComponentCleanupAsync()
+    {
+        if (ComponentStoreAnalysis is not { Available: true }) return;
+
+        var confirm = System.Windows.MessageBox.Show(
+            "Run /StartComponentCleanup on the Windows component store?\n\n" +
+            "This permanently removes superseded component versions dism has already determined are safe to drop (older servicing generations, disabled-feature payloads past their uninstall window). It can take several minutes.",
+            "Clean up component store",
+            System.Windows.MessageBoxButton.YesNo,
+            System.Windows.MessageBoxImage.Warning);
+        if (confirm != System.Windows.MessageBoxResult.Yes) return;
+
+        IsCleaningComponentStore = true;
+        ComponentStoreActionStatusText = "Cleaning up (this can take several minutes)...";
+        try
+        {
+            var (_, message) = await ReclaimableSpaceService.StartComponentCleanupAsync();
+            ComponentStoreActionStatusText = message;
+        }
+        catch (Exception ex)
+        {
+            ComponentStoreActionStatusText = $"Failed: {ex.Message}";
+        }
+        finally
+        {
+            IsCleaningComponentStore = false;
+        }
+    }
+
+    // ================================================================================
+    // Round 17, #357/#358/#360: reclaimable-space inventory + Storage Sense policy, hibernation
+    // sizing, and the search indexer's footprint - all refreshed together, since they're all
+    // one-time-at-tab-load reads shown in the same card.
+    // ================================================================================
+
+    private async Task RefreshReclaimableSpaceAsync()
+    {
+        ReclaimableItemsStatusText = "Scanning reclaimable-space locations (this walks each folder's full contents)...";
+        try
+        {
+            var items = await Task.Run(() => ReclaimableSpaceService.InventoryReclaimableSpace());
+            ReclaimableItems.Clear();
+            foreach (var i in items) ReclaimableItems.Add(i);
+            long knownTotal = items.Where(i => i.SizeBytes.HasValue).Sum(i => i.SizeBytes!.Value);
+            ReclaimableItemsStatusText = $"{Formatting.FormatBytes(knownTotal)} across {items.Count(i => i.SizeBytes is > 0)} location(s) with something to reclaim.";
+        }
+        catch (Exception ex)
+        {
+            ReclaimableItemsStatusText = $"Failed: {ex.Message}";
+        }
+
+        try { StorageSensePolicy = await Task.Run(() => ReclaimableSpaceService.ReadStorageSensePolicy()); }
+        catch { StorageSensePolicy = new StorageSensePolicyInfo { Available = false }; }
+
+        try { HibernationInfo = await ReclaimableSpaceService.ReadHibernationInfoAsync(); }
+        catch (Exception ex) { HibernationInfo = new HibernationInfo { Available = false, UnavailableReason = ex.Message }; }
+
+        try { IndexerFootprint = await Task.Run(() => ReclaimableSpaceService.ReadIndexerFootprint()); }
+        catch { IndexerFootprint = new IndexerFootprintInfo(); }
+    }
+
+    // ---- #358: hibernation actions -----------------------------------------------------------
+
+    private async Task DisableHibernationAsync()
+    {
+        var confirm = System.Windows.MessageBox.Show(
+            "Disable hibernation?\n\n" +
+            "This also disables Fast Startup, since Fast Startup is implemented on top of hibernation - shutdown/boot will take the normal (non-hybrid-resume) path afterwards.",
+            "Disable hibernation",
+            System.Windows.MessageBoxButton.YesNo,
+            System.Windows.MessageBoxImage.Warning);
+        if (confirm != System.Windows.MessageBoxResult.Yes) return;
+
+        IsHibernationActionRunning = true;
+        HibernationActionStatusText = "Working...";
+        try
+        {
+            var (_, message) = await ReclaimableSpaceService.DisableHibernationAsync();
+            HibernationActionStatusText = message;
+            HibernationInfo = await ReclaimableSpaceService.ReadHibernationInfoAsync();
+        }
+        catch (Exception ex)
+        {
+            HibernationActionStatusText = $"Failed: {ex.Message}";
+        }
+        finally
+        {
+            IsHibernationActionRunning = false;
+        }
+    }
+
+    private async Task EnableHibernationAsync()
+    {
+        IsHibernationActionRunning = true;
+        HibernationActionStatusText = "Working...";
+        try
+        {
+            var (_, message) = await ReclaimableSpaceService.EnableHibernationAsync();
+            HibernationActionStatusText = message;
+            HibernationInfo = await ReclaimableSpaceService.ReadHibernationInfoAsync();
+        }
+        catch (Exception ex)
+        {
+            HibernationActionStatusText = $"Failed: {ex.Message}";
+        }
+        finally
+        {
+            IsHibernationActionRunning = false;
+        }
+    }
+
+    private async Task SetHibernateSizeAsync()
+    {
+        if (!int.TryParse(HibernateSizePercentInput.Trim(), out int percent) || percent <= 0)
+        {
+            HibernationActionStatusText = "Enter a whole-number percentage of installed RAM (e.g. 75).";
+            return;
+        }
+
+        IsHibernationActionRunning = true;
+        HibernationActionStatusText = "Working (this also turns hibernation on if it was off)...";
+        try
+        {
+            var (_, message) = await ReclaimableSpaceService.SetHibernateFileSizeAsync(percent);
+            HibernationActionStatusText = message;
+            HibernationInfo = await ReclaimableSpaceService.ReadHibernationInfoAsync();
+        }
+        catch (Exception ex)
+        {
+            HibernationActionStatusText = $"Failed: {ex.Message}";
+        }
+        finally
+        {
+            IsHibernationActionRunning = false;
+        }
+    }
+
+    // ================================================================================
+    // Round 17, #359: page file placement, sizing, and peak usage.
+    // ================================================================================
+
+    private async Task LoadPageFilesAsync()
+    {
+        PageFileStatusText = "Loading...";
+        try
+        {
+            var details = await Task.Run(() => SystemSpecsService.ReadPageFileDetails());
+
+            // Cross-reference #1: an SSD exists elsewhere on this system while this page file
+            // sits on an HDD.
+            bool fasterSsdExists = false;
+            try
+            {
+                fasterSsdExists = DriveInfo.GetDrives()
+                    .Where(d => d.DriveType == DriveType.Fixed && d.IsReady)
+                    .Select(d => d.Name.TrimEnd('\\', ':'))
+                    .Any(letter => DiskFragmentationService.GetMediaType(letter) == "SSD");
+            }
+            catch { /* leave false - flag just won't fire */ }
+
+            foreach (var detail in details)
+            {
+                detail.FasterDriveElsewhereFlag = detail.MediaType == "HDD" && fasterSsdExists;
+
+                // Cross-reference #2: this page file's physical disk also hosts a drive this app's
+                // own #328 verdict flagged Replace. Best-effort - if the disk-index resolution
+                // fails, the flag just stays false rather than guessed.
+                try
+                {
+                    int? diskIndex = ClusterMappingService.ResolveDiskIndexForVolume(detail.DriveLetter);
+                    if (diskIndex is { } idx)
+                        detail.SameDiskAsFailingDriveFlag = DriveHealthVerdicts.Any(v => v.Index == idx && v.Level == DriveHealthLevel.Replace);
+                }
+                catch { /* leave false */ }
+            }
+
+            PageFiles.Clear();
+            foreach (var d in details) PageFiles.Add(d);
+            PageFileStatusText = details.Count == 0
+                ? "No page files configured, or Win32_PageFileUsage is unavailable on this system."
+                : $"{details.Count} page file(s).";
+        }
+        catch (Exception ex)
+        {
+            PageFileStatusText = $"Failed: {ex.Message}";
         }
     }
 }

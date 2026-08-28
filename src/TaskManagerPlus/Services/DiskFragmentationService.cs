@@ -20,6 +20,20 @@ public static class DiskFragmentationService
     private static readonly Regex FragmentationPercentRegex = new(
         @"(?:total|file)\s+fragmentation\s*:\s*(\d+)\s*%", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
+    // #353/#354: best-effort patterns for the MFT-fragmentation and free-space-fragmentation
+    // sections of the same /A /V report - field wording has drifted across Windows versions (the
+    // fragmentation-percent regex above already only matches some builds' phrasing, per its own
+    // "no fragmentation figure was reported" fallback), so every one of these degrades to
+    // "not reported" rather than guessed when it doesn't match this build's exact text.
+    private static readonly Regex MftSizeRegex = new(
+        @"(?:total\s+)?mft\s+size\s*[:=]\s*([\d.,]+)\s*(B|KB|MB|GB|TB)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex MftRecordCountRegex = new(
+        @"mft\s+record\s+count\s*[:=]\s*([\d,]+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex MftFragmentsRegex = new(
+        @"(?:total\s+)?mft\s+fragment(?:ation|s)?(?:\s+count)?\s*[:=]\s*([\d,]+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex LargestFreeExtentRegex = new(
+        @"largest\s+free\s+space\s+(?:size|extent)\s*[:=]\s*([\d.,]+)\s*(B|KB|MB|GB|TB)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
     /// <summary>Media type for one drive letter ("C", no colon) - "HDD"/"SSD"/"SCM"/"Unknown".
     /// Same associator chain as SystemSpecsService.ReadPageFileLocation, generalized to any
     /// drive letter rather than just the page file's.</summary>
@@ -89,15 +103,21 @@ public static class DiskFragmentationService
 
     private static string EscapeWmiPath(string objectId) => objectId.Replace(@"\", @"\\").Replace("\"", "\\\"");
 
-    /// <summary>Runs an analyze-only defrag pass and extracts the "Total fragmentation" percentage
-    /// from its verbose report. Returns a human-readable status either way - never a raw exception
-    /// message, since defrag's own text already explains common cases (SSD, not enough free space
-    /// to analyze, ...) better than this app reformatting them would.</summary>
-    public static async Task<(bool Success, int? FragmentedPercent, string Message)> Analyze(string driveLetter)
+    /// <summary>Runs an analyze-only defrag pass and extracts the "Total fragmentation" percentage,
+    /// the MFT size/record/fragment counts (#353), and the largest free-space extent (#354) from
+    /// its verbose report - one shell-out serves all three features rather than running defrag
+    /// three times for the same volume. Returns a human-readable status either way - never a raw
+    /// exception message, since defrag's own text already explains common cases (SSD, not enough
+    /// free space to analyze, ...) better than this app reformatting them would.</summary>
+    public static async Task<FragmentationAnalysis> Analyze(string driveLetter)
     {
         try
         {
-            var psi = new ProcessStartInfo("defrag.exe", $"{driveLetter}: /A /V")
+            // Accepts either "C" or "C:" - HddVolumes/FragmentationRows populate DriveLetter with
+            // a trailing colon already (see StorageViewModel), so this strips one off before
+            // re-appending it rather than risking a "C::" argument if a caller passes it either way.
+            string letter = driveLetter.TrimEnd(':');
+            var psi = new ProcessStartInfo("defrag.exe", $"{letter}: /A /V")
             {
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
@@ -105,7 +125,7 @@ public static class DiskFragmentationService
                 CreateNoWindow = true,
             };
             using var proc = Process.Start(psi);
-            if (proc is null) return (false, null, "Couldn't start defrag.exe.");
+            if (proc is null) return new FragmentationAnalysis(false, "Couldn't start defrag.exe.", null, null, null, null, null);
 
             // Concurrent async reads + a bounded WaitForExitAsync + Kill()-on-timeout - the same
             // pattern TracerouteService.RunAsync uses. The previous version already checked
@@ -125,23 +145,81 @@ public static class DiskFragmentationService
             catch (OperationCanceledException)
             {
                 try { proc.Kill(); } catch { /* best-effort */ }
-                return (false, null, "Analysis timed out.");
+                return new FragmentationAnalysis(false, "Analysis timed out.", null, null, null, null, null);
             }
 
             string output = (await outputTask) + (await errorTask);
 
+            int? percent = null;
+            string message;
             var match = FragmentationPercentRegex.Match(output);
-            if (match.Success && int.TryParse(match.Groups[1].Value, out int percent))
-                return (true, percent, $"{percent}% fragmented");
+            if (match.Success && int.TryParse(match.Groups[1].Value, out int p))
+            {
+                percent = p;
+                message = $"{p}% fragmented";
+            }
+            else if (output.Contains("do not need to defragment", StringComparison.OrdinalIgnoreCase))
+            {
+                percent = 0;
+                message = "No significant fragmentation";
+            }
+            else
+            {
+                message = "Analysis completed, but no fragmentation figure was reported.";
+            }
 
-            if (output.Contains("do not need to defragment", StringComparison.OrdinalIgnoreCase))
-                return (true, 0, "No significant fragmentation");
+            long? mftSize = ParseSizeMatch(MftSizeRegex, output);
+            long? mftRecords = ParseCountMatch(MftRecordCountRegex, output);
+            long? mftFragmentsRaw = ParseCountMatch(MftFragmentsRegex, output);
+            int? mftFragments = mftFragmentsRaw is { } mf ? (int)Math.Min(mf, int.MaxValue) : null;
+            long? largestFreeExtent = ParseSizeMatch(LargestFreeExtentRegex, output);
 
-            return (true, null, "Analysis completed, but no fragmentation figure was reported.");
+            return new FragmentationAnalysis(true, message, percent, mftSize, mftRecords, mftFragments, largestFreeExtent);
         }
         catch (Exception ex)
         {
-            return (false, null, $"Analysis failed: {ex.Message}");
+            return new FragmentationAnalysis(false, $"Analysis failed: {ex.Message}", null, null, null, null, null);
         }
     }
+
+    private static long? ParseSizeMatch(Regex regex, string text)
+    {
+        var m = regex.Match(text);
+        if (!m.Success) return null;
+        if (!double.TryParse(m.Groups[1].Value, System.Globalization.NumberStyles.Number,
+                System.Globalization.CultureInfo.InvariantCulture, out double amount))
+            return null;
+        return (long)(amount * UnitMultiplier(m.Groups[2].Value));
+    }
+
+    private static long? ParseCountMatch(Regex regex, string text)
+    {
+        var m = regex.Match(text);
+        if (!m.Success) return null;
+        string digits = m.Groups[1].Value.Replace(",", string.Empty);
+        return long.TryParse(digits, out long count) ? count : null;
+    }
+
+    private static double UnitMultiplier(string unit) => unit.ToUpperInvariant() switch
+    {
+        "B" => 1,
+        "KB" => 1024,
+        "MB" => 1024d * 1024,
+        "GB" => 1024d * 1024 * 1024,
+        "TB" => 1024d * 1024 * 1024 * 1024,
+        _ => 1,
+    };
 }
+
+/// <summary>#353/#354: everything DiskFragmentationService.Analyze can pull out of one
+/// `defrag &lt;vol&gt; /A /V` report - fields are null (shown as "not reported") rather than 0
+/// when this Windows build's report doesn't include or phrase that particular line the way the
+/// regex expects, per this app's "degrade, never fabricate" convention.</summary>
+public sealed record FragmentationAnalysis(
+    bool Success,
+    string Message,
+    int? FragmentedPercent,
+    long? MftSizeBytes,
+    long? MftRecordCount,
+    int? MftFragmentCount,
+    long? LargestFreeExtentBytes);

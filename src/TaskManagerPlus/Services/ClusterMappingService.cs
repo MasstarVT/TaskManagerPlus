@@ -57,6 +57,35 @@ public static class ClusterMappingService
         return null;
     }
 
+    /// <summary>#359: the reverse of ResolveVolumeForDisk above - the Win32_DiskDrive.Index of the
+    /// physical disk hosting drive letter <paramref name="driveLetter"/> (e.g. "C" or "C:"), via
+    /// the same classic Win32_LogicalDiskToPartition / Win32_DiskDriveToDiskPartition associator
+    /// chain, just walked from the volume side instead of the disk side. Used to cross-reference a
+    /// page file's volume against this app's own #328 per-disk health verdict list. Null on any
+    /// failure or when the volume has no backing physical disk (e.g. a network drive letter, which
+    /// shouldn't reach here since callers only pass fixed-volume page file locations anyway).
+    /// </summary>
+    public static int? ResolveDiskIndexForVolume(string driveLetter)
+    {
+        try
+        {
+            string letter = driveLetter.TrimEnd(':', '\\');
+            using var partitions = new ManagementObjectSearcher(
+                $"ASSOCIATORS OF {{Win32_LogicalDisk.DeviceID='{letter}:'}} WHERE AssocClass=Win32_LogicalDiskToPartition");
+            foreach (ManagementObject partition in partitions.Get())
+            {
+                using var disks = new ManagementObjectSearcher(
+                    $"ASSOCIATORS OF {{Win32_DiskPartition.DeviceID='{partition["DeviceID"]}'}} WHERE AssocClass=Win32_DiskDriveToDiskPartition");
+                foreach (ManagementObject disk in disks.Get())
+                {
+                    if (disk["Index"] is not null) return Convert.ToInt32(disk["Index"]);
+                }
+            }
+        }
+        catch { /* fall through to null */ }
+        return null;
+    }
+
     private static readonly Regex ClusterFileRegex = new(@"File Name\s*:\s*(.+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     /// <summary>Resolves one disk-relative LBA to an owning file name (or a metadata-stream name

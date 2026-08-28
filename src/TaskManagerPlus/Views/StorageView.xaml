@@ -602,51 +602,338 @@
                 </StackPanel>
             </Border>
 
-            <!-- #86: on-demand HDD fragmentation check - hidden entirely when there's no fixed
-                 spinning-disk volume at all (an all-SSD system, the increasingly common case). -->
+            <!-- #86, widened by round 17 #353/#354: fragmentation / MFT health / free-space
+                 fragmentation - a row per fixed volume. Only hidden entirely when there are no
+                 fixed volumes at all; the file-fragmentation-percent line itself stays HDD-only
+                 (not meaningful on an SSD), but MFT health and free-space fragmentation show for
+                 every row. -->
             <Border Margin="0,0,0,16">
                 <Border.Style>
                     <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
                         <Style.Triggers>
-                            <DataTrigger Binding="{Binding HddVolumes.Count}" Value="0">
+                            <DataTrigger Binding="{Binding FragmentationRows.Count}" Value="0">
                                 <Setter Property="Visibility" Value="Collapsed" />
                             </DataTrigger>
                         </Style.Triggers>
                     </Style>
                 </Border.Style>
                 <StackPanel>
-                    <TextBlock Text="HDD fragmentation" Style="{StaticResource CardTitle}" />
-                    <TextBlock Text="Analyze-only pass (defrag /A) - never moves data. Not shown for SSDs, where fragmentation isn't meaningful."
+                    <TextBlock Text="Fragmentation &amp; MFT health" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Analyze-only pass (defrag /A) - never moves data. File-fragmentation % is HDD-only; MFT health and free-space fragmentation apply to any medium."
                                Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
-                    <ItemsControl ItemsSource="{Binding HddVolumes}">
+                    <ItemsControl ItemsSource="{Binding FragmentationRows}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <Grid Margin="0,0,0,8">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0" Text="{Binding DriveLetter, StringFormat={}{0}:}" FontWeight="SemiBold" Margin="0,0,10,0" VerticalAlignment="Center" />
-                                    <TextBlock Grid.Column="1" Text="{Binding StatusText}" VerticalAlignment="Center" FontSize="12.5">
+                                <StackPanel Margin="0,0,0,12">
+                                    <Grid Margin="0,0,0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="{Binding DriveLetter}" FontWeight="SemiBold" Margin="0,0,10,0" VerticalAlignment="Center" />
+                                        <TextBlock Grid.Column="1" VerticalAlignment="Center" FontSize="12.5">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Text" Value="{Binding StatusText}" />
+                                                    <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsWarning}" Value="True">
+                                                            <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                        <Button Grid.Column="2" Content="Analyze" Padding="10,4"
+                                                Command="{Binding DataContext.CheckFragmentationCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                CommandParameter="{Binding}" />
+                                    </Grid>
+                                    <TextBlock Text="{Binding MftHealthText}" FontSize="12" Margin="0,0,0,2" TextWrapping="Wrap">
                                         <TextBlock.Style>
-                                            <Style TargetType="TextBlock">
-                                                <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
                                                 <Style.Triggers>
-                                                    <DataTrigger Binding="{Binding IsWarning}" Value="True">
+                                                    <DataTrigger Binding="{Binding MftHealthWarning}" Value="True">
                                                         <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
                                                     </DataTrigger>
                                                 </Style.Triggers>
                                             </Style>
                                         </TextBlock.Style>
                                     </TextBlock>
-                                    <Button Grid.Column="2" Content="Analyze" Padding="10,4"
-                                            Command="{Binding DataContext.CheckFragmentationCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                                            CommandParameter="{Binding}" />
+                                    <TextBlock Text="{Binding FreeSpaceFragmentationText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- Round 17, #352/#355: free-space history + days-until-full projection, sampled per
+                 fixed volume on the Storage tab's shared sampler tick. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Free space history" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Daily low-water mark per fixed volume, persisted across restarts. The run-out projection is a linear extrapolation from recent history, hidden whenever the trend is flat or rising."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+                    <ItemsControl ItemsSource="{Binding FreeSpaceVolumes}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Margin="0,0,0,14">
+                                    <Grid Margin="0,0,0,2">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="{Binding DriveLetter}" FontWeight="SemiBold" Margin="0,0,10,0" />
+                                        <TextBlock Grid.Column="1" Text="{Binding SummaryText}" Style="{StaticResource SubStat}" />
+                                    </Grid>
+                                    <lvc:CartesianChart Series="{Binding Series}" XAxes="{Binding DataContext.FreeSpaceHiddenXAxes, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                         Height="100" TooltipPosition="Top" LegendPosition="Hidden" Background="Transparent" Margin="0,4,0,4">
+                                        <lvc:CartesianChart.Style>
+                                            <Style TargetType="lvc:CartesianChart">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding ShowChart}" Value="True">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </lvc:CartesianChart.Style>
+                                    </lvc:CartesianChart>
+                                    <TextBlock Text="{Binding ProjectionText}" TextWrapping="Wrap">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding ShowProjection}" Value="True">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="No fixed volumes sampled yet.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding FreeSpaceVolumes.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- Round 17, #359: page file placement, sizing, and peak usage. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding PageFiles.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Page files" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="{Binding PageFileStatusText}" Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+                    <ItemsControl ItemsSource="{Binding PageFiles}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Margin="0,0,0,10">
+                                    <TextBlock FontSize="12.5">
+                                        <Run Text="{Binding Path}" FontWeight="SemiBold" />
+                                        <Run Text=" · " /><Run Text="{Binding MediaType}" />
+                                    </TextBlock>
+                                    <TextBlock Style="{StaticResource SubStat}" Margin="0,2,0,0" TextWrapping="Wrap">
+                                        <Run Text="Initial " /><Run Text="{Binding InitialSizeMb, StringFormat={}{0:N0} MB}" />
+                                        <Run Text=" · Maximum " /><Run Text="{Binding MaximumSizeMb, StringFormat={}{0:N0} MB}" />
+                                        <Run Text=" · Peak usage " /><Run Text="{Binding PeakUsageMb, StringFormat={}{0:N0} MB}" />
+                                    </TextBlock>
+                                    <TextBlock Text="System-managed size." Margin="0,2,0,0">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsSystemManaged}" Value="True">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                    <TextBlock Text="This page file is on an HDD while a faster SSD exists elsewhere on this system - quick flag, not a verdict." Foreground="{DynamicResource WarningBrush}" Margin="0,2,0,0" TextWrapping="Wrap" FontSize="12">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding FasterDriveElsewhereFlag}" Value="True">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                    <TextBlock Text="This page file's physical disk also hosts a drive this app's own health verdict has flagged Replace." Foreground="{DynamicResource DangerBrush}" Margin="0,2,0,0" TextWrapping="Wrap" FontSize="12">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding SameDiskAsFailingDriveFlag}" Value="True">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- Round 17, #356/#357/#358/#360: "reclaimable space" - component store analysis/
+                 cleanup, a reclaimable-space inventory + Storage Sense policy, hibernation file
+                 sizing, and the search indexer's footprint. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Reclaimable space" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Refresh" Padding="10,4" Command="{Binding RefreshReclaimableSpaceCommand}" />
+                    </Grid>
+
+                    <!-- #357: inventory -->
+                    <TextBlock Text="{Binding ReclaimableItemsStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" />
+                    <ItemsControl ItemsSource="{Binding ReclaimableItems}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="12.5" />
+                                        <TextBlock Text="{Binding Note}" Style="{StaticResource SubStat}" Margin="0,2,0,0" TextWrapping="Wrap" />
+                                    </StackPanel>
+                                    <TextBlock Grid.Column="1" VerticalAlignment="Top" FontWeight="SemiBold" Margin="10,0,0,0"
+                                               Text="{Binding SizeBytes, Converter={StaticResource BytesToReadableConverter}, TargetNullValue='Not present'}" />
                                 </Grid>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
+
+                    <!-- #357: Storage Sense policy -->
+                    <TextBlock Text="Storage Sense" FontWeight="SemiBold" FontSize="13" Margin="0,10,0,4" />
+                    <TextBlock Margin="0,0,0,2" Style="{StaticResource SubStat}">
+                        <Run Text="Enabled: " /><Run Text="{Binding StorageSensePolicy.Enabled}" />
+                    </TextBlock>
+                    <ItemsControl ItemsSource="{Binding StorageSensePolicy.RawPolicyValues}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding}" Style="{StaticResource SubStat}" FontFamily="Consolas" />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <!-- #358: hibernation -->
+                    <TextBlock Text="Hibernation" FontWeight="SemiBold" FontSize="13" Margin="0,16,0,4" />
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,4" TextWrapping="Wrap">
+                        <Run Text="Enabled: " /><Run Text="{Binding HibernationInfo.Enabled}" />
+                        <Run Text=" · hiberfil.sys: " /><Run Text="{Binding HibernationInfo.HiberFileSizeBytes, Converter={StaticResource BytesToReadableConverter}, TargetNullValue=Unknown}" />
+                        <Run Text=" · Size policy: " /><Run Text="{Binding HibernationInfo.HiberFileSizePercent, TargetNullValue='Windows default (not customized)', StringFormat={}{0}% of RAM}" />
+                    </TextBlock>
+                    <TextBlock Text="Disabling hibernation also disables Fast Startup, since Fast Startup depends on it - stated here before you click Disable."
+                               Style="{StaticResource SubStat}" Margin="0,0,0,6" TextWrapping="Wrap" />
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <Button Grid.Column="0" Content="Disable hibernation" Padding="10,4" Margin="0,0,8,0" Command="{Binding DisableHibernationCommand}" />
+                        <Button Grid.Column="1" Content="Enable hibernation" Padding="10,4" Margin="0,0,16,0" Command="{Binding EnableHibernationCommand}" />
+                        <TextBox Grid.Column="2" Width="50" Margin="0,0,8,0" VerticalContentAlignment="Center" Text="{Binding HibernateSizePercentInput, UpdateSourceTrigger=PropertyChanged}" />
+                        <Button Grid.Column="3" Content="Set size % of RAM" Padding="10,4" Command="{Binding SetHibernateSizeCommand}" />
+                    </Grid>
+                    <TextBlock Text="{Binding HibernationActionStatusText}" Style="{StaticResource SubStat}" Margin="0,4,0,0" TextWrapping="Wrap" />
+
+                    <!-- #360: search indexer footprint -->
+                    <TextBlock Text="Search indexer" FontWeight="SemiBold" FontSize="13" Margin="0,16,0,4" />
+                    <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap">
+                        <Run Text="Windows.edb: " /><Run Text="{Binding IndexerFootprint.EdbSizeBytes, Converter={StaticResource BytesToReadableConverter}, TargetNullValue=Unknown}" />
+                        <Run Text=" · WSearch service: " /><Run Text="{Binding IndexerFootprint.ServiceStatus}" />
+                        <Run Text=" (" /><Run Text="{Binding IndexerFootprint.ServiceStartType}" /><Run Text=" startup)" />
+                    </TextBlock>
+                    <TextBlock Margin="0,2,0,0" TextWrapping="Wrap">
+                        <Run Text="Backlog: " /><Run Text="{Binding IndexerFootprint.BacklogItemCount, StringFormat={}{0:N0} item(s)}" />
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IndexerFootprint.BacklogAvailable}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <TextBlock Text="Windows doesn't expose a reliable indexing-backlog counter here on every build - check Indexing Options &gt; Advanced, or the Services tab's WSearch controls, for live status. A runaway index rebuild is a common cause of &quot;my disk is at 100% and nothing is running&quot;."
+                               Style="{StaticResource SubStat}" Margin="0,2,0,0" TextWrapping="Wrap" />
+
+                    <!-- #356: component store -->
+                    <TextBlock Text="Component store (WinSxS)" FontWeight="SemiBold" FontSize="13" Margin="0,16,0,4" />
+                    <TextBlock Text="Slow to analyze (walks the whole store) - on-demand only, never run automatically." Style="{StaticResource SubStat}" Margin="0,0,0,6" TextWrapping="Wrap" />
+                    <Grid Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <Button Grid.Column="0" Content="Analyze" Padding="10,4" Margin="0,0,8,0" Command="{Binding AnalyzeComponentStoreCommand}" />
+                        <Button Grid.Column="1" Content="Start component cleanup" Padding="10,4" Command="{Binding StartComponentCleanupCommand}" />
+                    </Grid>
+                    <TextBlock Text="{Binding ComponentStoreActionStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,6" TextWrapping="Wrap" />
+                    <StackPanel>
+                        <StackPanel.Style>
+                            <Style TargetType="StackPanel">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding ComponentStoreAnalysis.Available}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </StackPanel.Style>
+                        <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap">
+                            <Run Text="Actual size: " /><Run Text="{Binding ComponentStoreAnalysis.ActualStoreSizeBytes, Converter={StaticResource BytesToReadableConverter}, TargetNullValue=Unknown}" />
+                            <Run Text=" · Shared with Windows: " /><Run Text="{Binding ComponentStoreAnalysis.SharedWithWindowsBytes, Converter={StaticResource BytesToReadableConverter}, TargetNullValue=Unknown}" />
+                        </TextBlock>
+                        <TextBlock Style="{StaticResource SubStat}" Margin="0,2,0,0" TextWrapping="Wrap">
+                            <Run Text="Backups/disabled features: " /><Run Text="{Binding ComponentStoreAnalysis.BackupsAndDisabledFeaturesBytes, Converter={StaticResource BytesToReadableConverter}, TargetNullValue=Unknown}" />
+                            <Run Text=" · Cache/temp: " /><Run Text="{Binding ComponentStoreAnalysis.CacheAndTempDataBytes, Converter={StaticResource BytesToReadableConverter}, TargetNullValue=Unknown}" />
+                        </TextBlock>
+                        <TextBlock Margin="0,2,0,0" FontWeight="SemiBold">
+                            <Run Text="Cleanup recommended: " /><Run Text="{Binding ComponentStoreAnalysis.CleanupRecommended}" />
+                        </TextBlock>
+                        <TextBlock Text="{Binding ComponentStoreAnalysis.DateBasedCleanupNote}" Style="{StaticResource SubStat}" Margin="0,2,0,0" TextWrapping="Wrap" />
+                        <TextBlock Text="Raw dism report" FontWeight="SemiBold" FontSize="12" Margin="0,8,0,4" />
+                        <TextBox Text="{Binding ComponentStoreAnalysis.RawText, Mode=OneWay}" IsReadOnly="True" TextWrapping="NoWrap" AcceptsReturn="True"
+                                 FontFamily="Consolas" FontSize="11" Height="160" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" />
+                    </StackPanel>
                 </StackPanel>
             </Border>
 
@@ -1244,8 +1531,14 @@
                     <DataGrid ItemsSource="{Binding LargestItems}" IsReadOnly="True" MaxHeight="280" AutoGenerateColumns="False">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="Kind" Binding="{Binding Kind}" Width="70" />
-                            <DataGridTextColumn Header="Path" Binding="{Binding Path}" Width="2.2*" />
+                            <DataGridTextColumn Header="Path" Binding="{Binding Path}" Width="2*" />
                             <DataGridTextColumn Header="Size" Binding="{Binding SizeText}" Width="*" />
+                            <!-- #361: size on disk vs. logical size - a large logical size with a
+                                 much smaller on-disk size (a cloud placeholder, a sparse/compressed
+                                 file) is called out via the Flags column instead of looking like the
+                                 actual culprit. -->
+                            <DataGridTextColumn Header="Size on disk" Binding="{Binding SizeOnDiskText}" Width="*" />
+                            <DataGridTextColumn Header="Flags" Binding="{Binding FlagsText}" Width="*" />
                         </DataGrid.Columns>
                     </DataGrid>
 
