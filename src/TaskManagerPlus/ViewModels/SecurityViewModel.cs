@@ -254,6 +254,23 @@ public sealed class SecurityViewModel : ObservableObject
         RunFolderScanCommand = new RelayCommand(_ => RunFolderScan(), _ => !IsScanRunning);
         RunOfflineScanCommand = new RelayCommand(_ => RunOfflineScan(), _ => !IsScanRunning);
         CancelScanCommand = new RelayCommand(_ => CancelScan(), _ => IsScanRunning);
+
+        // Round 19, #881-890: "Network exposure" section.
+        RefreshFirewallPostureCommand = new AsyncRelayCommand(RefreshFirewallPostureAsync);
+        ScanFirewallRulesCommand = new AsyncRelayCommand(ScanFirewallRulesAsync);
+        DisableFirewallRuleCommand = new AsyncRelayCommand(param => DisableFirewallRuleAsync(param as FirewallService.FirewallRuleInfo));
+        UndoDisableFirewallRuleCommand = new AsyncRelayCommand(param => UndoDisableFirewallRuleAsync(param as string));
+        ScanExposedListenersCommand = new AsyncRelayCommand(ScanExposedListenersAsync);
+        RefreshSmbPostureCommand = new AsyncRelayCommand(RefreshSmbPostureAsync);
+        ScanSharesCommand = new AsyncRelayCommand(ScanSharesAsync);
+        ScanRemoteManagementCommand = new AsyncRelayCommand(ScanRemoteManagementAsync);
+        ScanHostsFileCommand = new AsyncRelayCommand(ScanHostsFileAsync);
+        OpenHostsFileInNotepadCommand = new RelayCommand(_ => OpenHostsFileInNotepad());
+        CheckDnsPostureForFindingsCommand = new AsyncRelayCommand(CheckDnsPostureForFindingsAsync);
+        RefreshProxyPostureCommand = new AsyncRelayCommand(RefreshProxyPostureAsync);
+        ResetProxyAndWinsockCommand = new AsyncRelayCommand(ResetProxyAndWinsockAsync);
+        ScanCertificateStoreCommand = new AsyncRelayCommand(ScanCertificateStoreAsync);
+        OpenCertificateManagerCommand = new RelayCommand(_ => OpenCertificateManager());
     }
 
     /// <summary>#859/#860/#865/#866/#868/#869/#870: everything cheap enough to read on one click -
@@ -1002,6 +1019,469 @@ public sealed class SecurityViewModel : ObservableObject
         finally
         {
             IsScanningNetworkActivity = false;
+        }
+    }
+
+    // ==================================================================================
+    // Round 19, #881-890: "Network exposure" section - firewall profile posture + rule audit,
+    // exposed-listener map, SMB/legacy-protocol posture, share audit, remote-management exposure,
+    // hosts-file audit, a DNS-posture finding mirror (the DNS posture card itself lives on the
+    // Network tab - see NetworkViewModel/DnsPostureService's remarks), a proxy hijack check +
+    // reset action, and certificate store anomalies. Same "quick flag, not a verdict" / on-demand-
+    // behind-its-own-button framing as every other section on this tab.
+    // ==================================================================================
+
+    // #881: firewall profile posture.
+    public ObservableCollection<FirewallService.FirewallProfileInfo> FirewallProfiles { get; } = new();
+    public ObservableCollection<FirewallService.AdapterFirewallProfileInfo> AdapterFirewallProfiles { get; } = new();
+    private bool _isLoadingFirewallPosture;
+    public bool IsLoadingFirewallPosture { get => _isLoadingFirewallPosture; private set => SetProperty(ref _isLoadingFirewallPosture, value); }
+    private string? _firewallPostureStatus;
+    public string? FirewallPostureStatus { get => _firewallPostureStatus; private set => SetProperty(ref _firewallPostureStatus, value); }
+    public AsyncRelayCommand RefreshFirewallPostureCommand { get; }
+
+    // #882: firewall rule audit - per-rule Disable (never delete) + a same-session Undo list. A
+    // full persistent action journal is #899's job, not this one.
+    public ObservableCollection<FirewallService.FirewallRuleInfo> FirewallRules { get; } = new();
+    public ObservableCollection<string> DisabledFirewallRuleNames { get; } = new();
+    private bool _isScanningFirewallRules;
+    public bool IsScanningFirewallRules { get => _isScanningFirewallRules; private set => SetProperty(ref _isScanningFirewallRules, value); }
+    private string? _firewallRuleScanStatus;
+    public string? FirewallRuleScanStatus { get => _firewallRuleScanStatus; private set => SetProperty(ref _firewallRuleScanStatus, value); }
+    public AsyncRelayCommand ScanFirewallRulesCommand { get; }
+    public AsyncRelayCommand DisableFirewallRuleCommand { get; }
+    public AsyncRelayCommand UndoDisableFirewallRuleCommand { get; }
+
+    // #883: exposed-listener map - "interesting" (bound to all interfaces) vs. every other
+    // listener (loopback-only or a specific bound address - common/expected, shown collapsed).
+    public ObservableCollection<ExposedListenerInfo> ExposedListeners { get; } = new();
+    public ObservableCollection<ExposedListenerInfo> OtherListeners { get; } = new();
+    private bool _isScanningExposedListeners;
+    public bool IsScanningExposedListeners { get => _isScanningExposedListeners; private set => SetProperty(ref _isScanningExposedListeners, value); }
+    private string? _exposedListenerScanStatus;
+    public string? ExposedListenerScanStatus { get => _exposedListenerScanStatus; private set => SetProperty(ref _exposedListenerScanStatus, value); }
+    public AsyncRelayCommand ScanExposedListenersCommand { get; }
+
+    // #884: SMB/legacy protocol posture - display-only rows, each carrying its own "why this
+    // matters" + exact change instructions (see SmbLegacyProtocolService.Row).
+    public ObservableCollection<SmbLegacyProtocolService.Row> SmbLegacyRows { get; } = new();
+    private bool _isLoadingSmbPosture;
+    public bool IsLoadingSmbPosture { get => _isLoadingSmbPosture; private set => SetProperty(ref _isLoadingSmbPosture, value); }
+    private string? _smbPostureStatus;
+    public string? SmbPostureStatus { get => _smbPostureStatus; private set => SetProperty(ref _smbPostureStatus, value); }
+    public AsyncRelayCommand RefreshSmbPostureCommand { get; }
+
+    // #885: share audit.
+    public ObservableCollection<ShareAuditService.ShareInfo> Shares { get; } = new();
+    private bool _isScanningShares;
+    public bool IsScanningShares { get => _isScanningShares; private set => SetProperty(ref _isScanningShares, value); }
+    private string? _shareScanStatus;
+    public string? ShareScanStatus { get => _shareScanStatus; private set => SetProperty(ref _shareScanStatus, value); }
+    public AsyncRelayCommand ScanSharesCommand { get; }
+
+    // #886: remote management exposure - report only, act via the existing Services tab.
+    public ObservableCollection<RemoteManagementExposureService.RemoteManagementItem> RemoteManagementItems { get; } = new();
+    private bool _isScanningRemoteManagement;
+    public bool IsScanningRemoteManagement { get => _isScanningRemoteManagement; private set => SetProperty(ref _isScanningRemoteManagement, value); }
+    private string? _remoteManagementScanStatus;
+    public string? RemoteManagementScanStatus { get => _remoteManagementScanStatus; private set => SetProperty(ref _remoteManagementScanStatus, value); }
+    public AsyncRelayCommand ScanRemoteManagementCommand { get; }
+
+    // #887: hosts file audit - inspection + "Open in Notepad" only, no in-app editing.
+    private HostsFileAuditService.HostsFileAuditInfo? _hostsFileAudit;
+    public HostsFileAuditService.HostsFileAuditInfo? HostsFileAudit { get => _hostsFileAudit; private set => SetProperty(ref _hostsFileAudit, value); }
+    private bool _isScanningHostsFile;
+    public bool IsScanningHostsFile { get => _isScanningHostsFile; private set => SetProperty(ref _isScanningHostsFile, value); }
+    private string? _hostsFileScanStatus;
+    public string? HostsFileScanStatus { get => _hostsFileScanStatus; private set => SetProperty(ref _hostsFileScanStatus, value); }
+    public AsyncRelayCommand ScanHostsFileCommand { get; }
+    public RelayCommand OpenHostsFileInNotepadCommand { get; }
+
+    // #888: DNS posture - the full card (per-adapter servers, DoH, NRPT) lives on the Network tab;
+    // this is just the mirrored finding, computed by independently calling the same static
+    // DnsPostureService methods - see DnsPostureService's own remarks on this "shared static
+    // service method called from two ViewModels" pattern.
+    private bool _isCheckingDnsPostureForFindings;
+    public bool IsCheckingDnsPostureForFindings { get => _isCheckingDnsPostureForFindings; private set => SetProperty(ref _isCheckingDnsPostureForFindings, value); }
+    private string? _dnsPostureFindingStatus;
+    public string? DnsPostureFindingStatus { get => _dnsPostureFindingStatus; private set => SetProperty(ref _dnsPostureFindingStatus, value); }
+    public AsyncRelayCommand CheckDnsPostureForFindingsCommand { get; }
+
+    // #889: proxy hijack check + reset.
+    private ProxyConfigInfo? _proxyConfig;
+    public ProxyConfigInfo? ProxyConfig { get => _proxyConfig; private set => SetProperty(ref _proxyConfig, value); }
+    private WinHttpProxyInfo? _machineProxyConfig;
+    public WinHttpProxyInfo? MachineProxyConfig { get => _machineProxyConfig; private set => SetProperty(ref _machineProxyConfig, value); }
+    private bool _isLoadingProxyPosture;
+    public bool IsLoadingProxyPosture { get => _isLoadingProxyPosture; private set => SetProperty(ref _isLoadingProxyPosture, value); }
+    private string? _proxyPostureStatus;
+    public string? ProxyPostureStatus { get => _proxyPostureStatus; private set => SetProperty(ref _proxyPostureStatus, value); }
+    public AsyncRelayCommand RefreshProxyPostureCommand { get; }
+    private bool _isResettingProxy;
+    public bool IsResettingProxy { get => _isResettingProxy; private set => SetProperty(ref _isResettingProxy, value); }
+    private string? _proxyResetOutput;
+    public string? ProxyResetOutput { get => _proxyResetOutput; private set => SetProperty(ref _proxyResetOutput, value); }
+    public AsyncRelayCommand ResetProxyAndWinsockCommand { get; }
+
+    // #890: certificate store anomalies - inspection only, no removal action from this app.
+    public ObservableCollection<CertificateStoreAuditService.CertificateReviewRow> CertificateAnomalies { get; } = new();
+    private int _disallowedCertificateCount;
+    public int DisallowedCertificateCount { get => _disallowedCertificateCount; private set => SetProperty(ref _disallowedCertificateCount, value); }
+    private bool _isScanningCertificates;
+    public bool IsScanningCertificates { get => _isScanningCertificates; private set => SetProperty(ref _isScanningCertificates, value); }
+    private string? _certificateScanStatus;
+    public string? CertificateScanStatus { get => _certificateScanStatus; private set => SetProperty(ref _certificateScanStatus, value); }
+    public AsyncRelayCommand ScanCertificateStoreCommand { get; }
+    public RelayCommand OpenCertificateManagerCommand { get; }
+
+    /// <summary>#881.</summary>
+    private async Task RefreshFirewallPostureAsync()
+    {
+        IsLoadingFirewallPosture = true;
+        FirewallPostureStatus = null;
+        try
+        {
+            var (profiles, adapterProfiles) = await Task.Run(FirewallService.ReadPosture);
+
+            FirewallProfiles.Clear();
+            foreach (var p in profiles) FirewallProfiles.Add(p);
+            AdapterFirewallProfiles.Clear();
+            foreach (var a in adapterProfiles) AdapterFirewallProfiles.Add(a);
+
+            var findings = FirewallService.BuildProfileFindings(profiles);
+            foreach (var f in findings) Findings.Add(f);
+
+            FirewallPostureStatus = profiles.Count == 0
+                ? "Couldn't read firewall profile posture (WMI unavailable/denied)."
+                : $"{profiles.Count} profile(s) read, {adapterProfiles.Count} adapter(s) mapped - {findings.Count} new finding(s).";
+        }
+        catch (Exception ex)
+        {
+            FirewallPostureStatus = $"Refresh failed: {ex.Message}";
+        }
+        finally
+        {
+            IsLoadingFirewallPosture = false;
+        }
+    }
+
+    /// <summary>#882: enumerates ENABLED inbound ALLOW rules and flags risky shapes - "created
+    /// recently" is not computed (netsh's output carries no rule-creation timestamp).</summary>
+    private async Task ScanFirewallRulesAsync()
+    {
+        IsScanningFirewallRules = true;
+        FirewallRuleScanStatus = null;
+        try
+        {
+            var rules = await Task.Run(FirewallService.ScanEnabledInboundAllowRules);
+            FirewallRules.Clear();
+            foreach (var r in rules) FirewallRules.Add(r);
+
+            int riskyCount = rules.Count(r => r.IsRisky);
+            FirewallRuleScanStatus = $"{rules.Count} enabled inbound Allow rule(s) - {riskyCount} flagged as a possibly-risky shape. \"Created recently\" isn't available from netsh's output (not implemented - infeasible via this data source). Rule names aren't guaranteed unique - Disable/Undo apply to every rule sharing that exact name.";
+        }
+        catch (Exception ex)
+        {
+            FirewallRuleScanStatus = $"Scan failed: {ex.Message}";
+        }
+        finally
+        {
+            IsScanningFirewallRules = false;
+        }
+    }
+
+    private async Task DisableFirewallRuleAsync(FirewallService.FirewallRuleInfo? rule)
+    {
+        if (rule is null) return;
+        var (success, output) = await Task.Run(() => FirewallService.DisableRule(rule.Name));
+        if (success && !DisabledFirewallRuleNames.Contains(rule.Name)) DisabledFirewallRuleNames.Add(rule.Name);
+        FirewallRuleScanStatus = success ? $"Disabled \"{rule.Name}\"." : $"Couldn't disable \"{rule.Name}\": {output}";
+    }
+
+    /// <summary>#882: same-session "Undo" - re-enables a rule this app disabled.</summary>
+    private async Task UndoDisableFirewallRuleAsync(string? ruleName)
+    {
+        if (string.IsNullOrEmpty(ruleName)) return;
+        var (success, output) = await Task.Run(() => FirewallService.EnableRule(ruleName));
+        if (success) DisabledFirewallRuleNames.Remove(ruleName);
+        FirewallRuleScanStatus = success ? $"Re-enabled \"{ruleName}\"." : $"Couldn't re-enable \"{ruleName}\": {output}";
+    }
+
+    /// <summary>#883: cross-references live LISTENING sockets against a fresh enabled-inbound-
+    /// allow-rule scan and the current firewall profile posture, entirely within this one on-
+    /// demand pass.</summary>
+    private async Task ScanExposedListenersAsync()
+    {
+        IsScanningExposedListeners = true;
+        ExposedListenerScanStatus = null;
+        try
+        {
+            var listeners = await Task.Run(() =>
+            {
+                var connections = NetworkConnectionsService.Sample();
+                var rules = FirewallService.ScanEnabledInboundAllowRules();
+                var (profiles, adapterProfiles) = FirewallService.ReadPosture();
+
+                var activeProfileNames = adapterProfiles.Select(a => a.ProfileName).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+                bool everyActiveDefaultsToBlock = activeProfileNames.Count > 0 && activeProfileNames.All(name =>
+                    profiles.Any(p => p.Name.Equals(name, StringComparison.OrdinalIgnoreCase) &&
+                                       p.DefaultInboundAction.Equals("Block", StringComparison.OrdinalIgnoreCase)));
+
+                return NetworkConnectionsService.BuildExposedListenerMap(connections, rules, everyActiveDefaultsToBlock);
+            });
+
+            ExposedListeners.Clear();
+            OtherListeners.Clear();
+            foreach (var l in listeners)
+            {
+                if (l.IsInteresting) ExposedListeners.Add(l);
+                else OtherListeners.Add(l);
+            }
+
+            bool selfShown = listeners.Any(l => l.IsSelf);
+            ExposedListenerScanStatus = $"{listeners.Count} listening socket(s) - {ExposedListeners.Count} bound to all interfaces (the interesting ones), {OtherListeners.Count} loopback-only/specific-address (common, shown collapsed below). This is a heuristic cross-reference, not a definitive reachability test."
+                + (selfShown ? " Includes Task Manager Plus's own remote-monitor endpoint (shown honestly, not filtered out) since it's currently running." : string.Empty);
+        }
+        catch (Exception ex)
+        {
+            ExposedListenerScanStatus = $"Scan failed: {ex.Message}";
+        }
+        finally
+        {
+            IsScanningExposedListeners = false;
+        }
+    }
+
+    /// <summary>#884.</summary>
+    private async Task RefreshSmbPostureAsync()
+    {
+        IsLoadingSmbPosture = true;
+        SmbPostureStatus = null;
+        try
+        {
+            var rows = await Task.Run(SmbLegacyProtocolService.ReadRows);
+            SmbLegacyRows.Clear();
+            foreach (var r in rows) SmbLegacyRows.Add(r);
+            SmbPostureStatus = $"{rows.Count} row(s) read - display-only, each lists the exact registry path/command to change it.";
+        }
+        catch (Exception ex)
+        {
+            SmbPostureStatus = $"Refresh failed: {ex.Message}";
+        }
+        finally
+        {
+            IsLoadingSmbPosture = false;
+        }
+    }
+
+    /// <summary>#885.</summary>
+    private async Task ScanSharesAsync()
+    {
+        IsScanningShares = true;
+        ShareScanStatus = null;
+        try
+        {
+            var (shares, findings) = await Task.Run(ShareAuditService.Scan);
+            Shares.Clear();
+            foreach (var s in shares) Shares.Add(s);
+            foreach (var f in findings) Findings.Add(f);
+
+            int userShares = shares.Count(s => !s.IsAdministrative);
+            ShareScanStatus = $"{shares.Count} share(s) found ({userShares} user-created, {shares.Count - userShares} administrative) - {findings.Count} new finding(s).";
+        }
+        catch (Exception ex)
+        {
+            ShareScanStatus = $"Scan failed: {ex.Message}";
+        }
+        finally
+        {
+            IsScanningShares = false;
+        }
+    }
+
+    /// <summary>#886: report only - act via the existing Services tab.</summary>
+    private async Task ScanRemoteManagementAsync()
+    {
+        IsScanningRemoteManagement = true;
+        RemoteManagementScanStatus = null;
+        try
+        {
+            var items = await Task.Run(RemoteManagementExposureService.Scan);
+            RemoteManagementItems.Clear();
+            foreach (var i in items) RemoteManagementItems.Add(i);
+            RemoteManagementScanStatus = $"{items.Count} remote-management surface(s) checked - turn any of these off from the existing Services tab (or System Properties > Remote for Remote Assistance).";
+        }
+        catch (Exception ex)
+        {
+            RemoteManagementScanStatus = $"Scan failed: {ex.Message}";
+        }
+        finally
+        {
+            IsScanningRemoteManagement = false;
+        }
+    }
+
+    /// <summary>#887.</summary>
+    private async Task ScanHostsFileAsync()
+    {
+        IsScanningHostsFile = true;
+        HostsFileScanStatus = null;
+        try
+        {
+            var info = await Task.Run(HostsFileAuditService.Scan);
+            HostsFileAudit = info;
+            HostsFileScanStatus = info.FileFound
+                ? $"{info.TotalEntries} entries - {info.UpdateOrAvBlocks.Count} possible Windows Update/AV block(s), {info.NonLoopbackEntries.Count} non-loopback entry(ies)."
+                  + (info.IsLarge ? " Large ad-block-style hosts file - can slow name resolution (informational, not a problem)." : string.Empty)
+                  + (info.Zone.Found ? " The hosts file itself carries a Mark of the Web - worth a look at how it got there." : string.Empty)
+                : "hosts file not found or couldn't be read.";
+        }
+        catch (Exception ex)
+        {
+            HostsFileScanStatus = $"Scan failed: {ex.Message}";
+        }
+        finally
+        {
+            IsScanningHostsFile = false;
+        }
+    }
+
+    /// <summary>#887: "Open in Notepad" - no direct in-app editing, per this section's own text.</summary>
+    private void OpenHostsFileInNotepad()
+    {
+        try
+        {
+            string path = HostsFileAudit?.HostsPath ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), @"drivers\etc\hosts");
+            Process.Start(new ProcessStartInfo("notepad.exe", $"\"{path}\"") { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            HostsFileScanStatus = $"Couldn't open Notepad: {ex.Message}";
+        }
+    }
+
+    /// <summary>#888: the mirrored finding only - see DnsPostureService's remarks.</summary>
+    private async Task CheckDnsPostureForFindingsAsync()
+    {
+        IsCheckingDnsPostureForFindings = true;
+        DnsPostureFindingStatus = null;
+        try
+        {
+            var (findings, adapterCount) = await Task.Run(() =>
+            {
+                var posture = DnsPostureService.ReadPosture();
+                return (DnsPostureService.BuildFindings(posture), posture.Adapters.Count);
+            });
+            foreach (var f in findings) Findings.Add(f);
+            DnsPostureFindingStatus = $"{adapterCount} adapter(s) checked - {findings.Count} new finding(s). Full DNS posture detail (per-adapter servers, DoH, NRPT) is on the Network tab.";
+        }
+        catch (Exception ex)
+        {
+            DnsPostureFindingStatus = $"Check failed: {ex.Message}";
+        }
+        finally
+        {
+            IsCheckingDnsPostureForFindings = false;
+        }
+    }
+
+    /// <summary>#889.</summary>
+    private async Task RefreshProxyPostureAsync()
+    {
+        IsLoadingProxyPosture = true;
+        ProxyPostureStatus = null;
+        try
+        {
+            var (perUser, machine, findings) = await Task.Run(() =>
+            {
+                var u = NetworkDiagnosticsService.ReadProxyConfig();
+                var m = NetworkDiagnosticsService.ReadWinHttpProxy();
+                var f = NetworkDiagnosticsService.BuildProxyFindings(u);
+                return (u, m, f);
+            });
+
+            ProxyConfig = perUser;
+            MachineProxyConfig = machine;
+            foreach (var f in findings) Findings.Add(f);
+
+            ProxyPostureStatus = $"Per-user proxy: {(perUser.Enabled ? "Enabled" : "Disabled")}. Machine WinHTTP proxy: {(machine.DirectAccess ? "Direct (no proxy)" : machine.ProxyServer)}. {findings.Count} new finding(s).";
+        }
+        catch (Exception ex)
+        {
+            ProxyPostureStatus = $"Refresh failed: {ex.Message}";
+        }
+        finally
+        {
+            IsLoadingProxyPosture = false;
+        }
+    }
+
+    /// <summary>#889: "Reset proxy and Winsock" - genuinely disruptive (winsock reset needs a
+    /// reboot to fully take effect), so this is gated behind an explicit confirmation naming that
+    /// consequence, matching this app's existing MessageBox.Show(YesNo, Warning) confirm-dialog
+    /// convention (see RestoreQuarantineItem/RunOfflineScan above).</summary>
+    private async Task ResetProxyAndWinsockAsync()
+    {
+        if (IsResettingProxy) return;
+
+        var confirm = MessageBox.Show(
+            "This runs, in sequence: netsh winhttp reset proxy, netsh winsock reset, and ipconfig /flushdns.\n\nWinsock reset REQUIRES A REBOOT to fully take effect - network connectivity can behave oddly until you restart. Save any open work before continuing.\n\nContinue?",
+            "Reset proxy and Winsock - this requires a reboot", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        IsResettingProxy = true;
+        ProxyResetOutput = null;
+        try
+        {
+            ProxyResetOutput = await NetworkDiagnosticsService.ResetProxyAndWinsockAsync();
+            ProxyPostureStatus = "Reset complete - REBOOT to finish applying the Winsock reset.";
+        }
+        catch (Exception ex)
+        {
+            ProxyPostureStatus = $"Reset failed: {ex.Message}";
+        }
+        finally
+        {
+            IsResettingProxy = false;
+        }
+    }
+
+    /// <summary>#890: inspection only - no removal action from this app.</summary>
+    private async Task ScanCertificateStoreAsync()
+    {
+        IsScanningCertificates = true;
+        CertificateScanStatus = null;
+        try
+        {
+            var (rows, disallowedCount, findings) = await Task.Run(CertificateStoreAuditService.Scan);
+            CertificateAnomalies.Clear();
+            foreach (var r in rows) CertificateAnomalies.Add(r);
+            DisallowedCertificateCount = disallowedCount;
+            foreach (var f in findings) Findings.Add(f);
+
+            CertificateScanStatus = $"{rows.Count} certificate(s) flagged for review across LocalMachine/CurrentUser Root+CA stores ({disallowedCount} already in the Disallowed store, reported as a count only - Windows itself already flagged those). \"Installed recently\" isn't determinable via X509Certificate2 (not implemented - see class remarks).";
+        }
+        catch (Exception ex)
+        {
+            CertificateScanStatus = $"Scan failed: {ex.Message}";
+        }
+        finally
+        {
+            IsScanningCertificates = false;
+        }
+    }
+
+    /// <summary>#890: launches certlm.msc for the user to act themselves - this app makes no
+    /// certificate-store changes.</summary>
+    private void OpenCertificateManager()
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo("certlm.msc") { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            CertificateScanStatus = $"Couldn't open Certificate Manager: {ex.Message}";
         }
     }
 }

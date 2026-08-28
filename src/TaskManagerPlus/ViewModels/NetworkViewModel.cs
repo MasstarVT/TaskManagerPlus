@@ -133,6 +133,21 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
     // Round 9, #46: hosts-file quick-open shortcut for DNS override troubleshooting.
     public RelayCommand OpenHostsFileCommand { get; }
 
+    // Round 19, #888: DNS posture - per-adapter configured DNS servers cross-referenced against
+    // DHCP status, DoH template state, and NRPT policy rules. Deliberately its OWN on-demand
+    // button, NOT folded into the 15s CheckConnectivityAsync timer above - the DoH/NRPT reads shell
+    // out to PowerShell cmdlets, too heavy to repeat on a tick (see DnsPostureService's remarks).
+    private DnsPostureService.DnsPostureResult? _dnsPosture;
+    public DnsPostureService.DnsPostureResult? DnsPosture { get => _dnsPosture; private set => SetProperty(ref _dnsPosture, value); }
+
+    private bool _isCheckingDnsPosture;
+    public bool IsCheckingDnsPosture { get => _isCheckingDnsPosture; private set => SetProperty(ref _isCheckingDnsPosture, value); }
+
+    private string? _dnsPostureStatusText;
+    public string? DnsPostureStatusText { get => _dnsPostureStatusText; private set => SetProperty(ref _dnsPostureStatusText, value); }
+
+    public AsyncRelayCommand CheckDnsPostureCommand { get; }
+
     public NetworkViewModel(PerformanceViewModel performance)
     {
         Performance = performance;
@@ -142,6 +157,7 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         OpenHostsFileCommand = new RelayCommand(_ => OpenHostsFile());
         RunTracerouteCommand = new AsyncRelayCommand(RunTracerouteAsync, () => !IsTracerouting && !string.IsNullOrWhiteSpace(TracerouteHost));
         RunJitterTestCommand = new AsyncRelayCommand(RunJitterTestAsync, () => !IsJitterTesting && !string.IsNullOrWhiteSpace(JitterTestHost));
+        CheckDnsPostureCommand = new AsyncRelayCommand(CheckDnsPostureAsync);
 
         _timer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(15) };
         _timer.Tick += async (_, _) => await CheckConnectivityAsync();
@@ -318,6 +334,32 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         catch (Exception ex)
         {
             PublicIpStatusText = $"Lookup failed: {ex.Message}";
+        }
+    }
+
+    /// <summary>#888: on-demand DNS posture check - see this VM's own DnsPosture remarks for why
+    /// this doesn't ride the 15s connectivity timer.</summary>
+    private async Task CheckDnsPostureAsync()
+    {
+        IsCheckingDnsPosture = true;
+        DnsPostureStatusText = "Checking...";
+        try
+        {
+            var result = await Task.Run(DnsPostureService.ReadPosture);
+            DnsPosture = result;
+            int staticOnDhcp = result.Adapters.Count(a => a.StaticDnsOnDhcpAdapter);
+            DnsPostureStatusText = $"{result.Adapters.Count} adapter(s) checked" +
+                (staticOnDhcp > 0 ? $" - {staticOnDhcp} has static DNS set on an otherwise-DHCP adapter (see Security tab for the mirrored finding)." : ".") +
+                (result.DohCmdletAvailable ? $" DoH servers configured: {result.DohServers.Count}." : " DoH state: cmdlet not available on this Windows build.") +
+                (result.NrptCmdletAvailable ? $" NRPT rules: {result.NrptRules.Count}." : " NRPT state: cmdlet not available.");
+        }
+        catch (Exception ex)
+        {
+            DnsPostureStatusText = $"Check failed: {ex.Message}";
+        }
+        finally
+        {
+            IsCheckingDnsPosture = false;
         }
     }
 
