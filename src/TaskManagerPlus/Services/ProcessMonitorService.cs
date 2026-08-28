@@ -56,6 +56,23 @@ public sealed class ProcessMonitorService : IDisposable
     /// failing outright, not so early that ordinary GUI-heavy apps trip it under normal use.</summary>
     private const double GdiUserQuotaWarningFraction = 0.8;
 
+    /// <summary>#410: per-process Process\Page Faults/sec - identifies which process is actually
+    /// causing paging pressure, rather than only the system-wide Memory\Page Faults/sec figure
+    /// the Memory tab already shows. #412: per-process Process V2\Working Set - Private, so a
+    /// shared-DLL-heavy process isn't misread as a memory hog by working-set alone. Both piggyback
+    /// on the same per-tick pass as everything else here rather than a second sampling loop - see
+    /// ProcessPerfCounterService for why these need their own counter class (the per-pid mapping
+    /// these two categories need is a different shape than the fixed per-core counters
+    /// HardwareMonitorService tracks).</summary>
+    private readonly ProcessPerfCounterService _pageFaultCounters = new("Process", "Page Faults/sec", isRate: true);
+    private readonly ProcessPerfCounterService _privateWorkingSetCounters = new("Process V2", "Working Set - Private", isRate: false);
+
+    /// <summary>#409: below this gap, a process's committed-but-not-resident memory is just
+    /// ordinary paging noise, not worth flagging - a real "meaningfully paged/trimmed out" gap is
+    /// well past this. Mirrors LeakGrowthThresholdBytes' role for #14 - a floor that separates
+    /// "measurement noise" from "worth a second look".</summary>
+    private const long WorkingSetDivergenceThresholdBytes = 200L * 1024 * 1024;
+
     /// <summary>
     /// Builds the current snapshot of processes. Safe to call from a background thread.
     /// </summary>
@@ -66,6 +83,9 @@ public sealed class ProcessMonitorService : IDisposable
         var rows = new List<ProcessRow>(processes.Length);
         var seenPids = new HashSet<int>(processes.Length);
         var gpuUsageByPid = ReadGpuUsageByPid();
+        // #410/#412: read once per tick for the whole batch, same "one pass, not one PerformanceCounter per process" shape as gpuUsageByPid above.
+        var pageFaultsByPid = _pageFaultCounters.ReadByPid();
+        var privateWorkingSetByPid = _privateWorkingSetCounters.ReadByPid();
 
         foreach (var proc in processes)
         {
@@ -172,6 +192,16 @@ public sealed class ProcessMonitorService : IDisposable
 
                 double cpuPercentClamped = Math.Round(Math.Min(cpuPercent, 100.0 * _logicalProcessors), 1);
 
+                // #409: private bytes ahead of working set by a wide margin means a meaningful
+                // chunk of this process's committed memory has been paged/trimmed out of physical
+                // RAM - "owned" but not currently resident, not a sign the process is smaller than
+                // it looks. See WorkingSetDivergenceThresholdBytes' remarks for the floor.
+                long workingSetPrivateGap = privateBytes - memoryBytes;
+                bool isWorkingSetDivergent = workingSetPrivateGap >= WorkingSetDivergenceThresholdBytes;
+
+                double pageFaultsPerSec = pageFaultsByPid.TryGetValue(pid, out var pf) ? Math.Round(Math.Max(0, pf), 1) : 0;
+                long privateWorkingSetBytes = privateWorkingSetByPid.TryGetValue(pid, out var pws) ? (long)Math.Max(0, pws) : 0;
+
                 rows.Add(new ProcessRow
                 {
                     Pid = pid,
@@ -203,6 +233,10 @@ public sealed class ProcessMonitorService : IDisposable
                     IsSuspended = isSuspended,
                     IsGdiQuotaWarning = isGdiQuotaWarning,
                     IsUserQuotaWarning = isUserQuotaWarning,
+                    PageFaultsPerSec = pageFaultsPerSec,
+                    PrivateWorkingSetBytes = privateWorkingSetBytes,
+                    WorkingSetPrivateGapBytes = workingSetPrivateGap,
+                    IsWorkingSetDivergent = isWorkingSetDivergent,
                 });
             }
             catch (Exception)
@@ -586,5 +620,7 @@ public sealed class ProcessMonitorService : IDisposable
     {
         foreach (var counter in _gpuEngineCounters.Values) counter.Dispose();
         _gpuEngineCounters.Clear();
+        _pageFaultCounters.Dispose();
+        _privateWorkingSetCounters.Dispose();
     }
 }

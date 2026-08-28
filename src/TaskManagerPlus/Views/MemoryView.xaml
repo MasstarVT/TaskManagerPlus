@@ -153,10 +153,14 @@
             </Border>
 
             <!-- Top memory consumers: re-presents the already-polling Processes tab's collection,
-                 live-sorted by memory instead of CPU - see MemoryViewModel. -->
+                 live-sorted by memory instead of CPU - see MemoryViewModel. #412: the checkbox
+                 below swaps the sort key to private working set (resident, non-shared memory
+                 only), so a shared-DLL-heavy process isn't misread as a memory hog. -->
             <Border Style="{StaticResource CardStyle}">
                 <StackPanel>
                     <TextBlock Text="Top memory consumers" Style="{StaticResource CardTitle}" />
+                    <CheckBox Content="Rank by private working set (excludes memory shared with other processes)"
+                              IsChecked="{Binding SortTopMemoryByPrivateWorkingSet}" Margin="0,4,0,10" FontSize="11.5" />
                     <ItemsControl ItemsSource="{Binding TopMemoryProcesses}" MaxHeight="240">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
@@ -172,7 +176,44 @@
                                             <Run Text=" · " /><Run Text="{Binding CpuPercent, StringFormat={}{0:0.0}% CPU, Mode=OneWay}" />
                                         </TextBlock>
                                     </StackPanel>
-                                    <TextBlock Grid.Column="1" Text="{Binding MemoryMb, StringFormat={}{0:0} MB}"
+                                    <StackPanel Grid.Column="1" HorizontalAlignment="Right">
+                                        <TextBlock Text="{Binding MemoryMb, StringFormat={}{0:0} MB}"
+                                                   FontSize="12.5" FontWeight="SemiBold" HorizontalAlignment="Right" />
+                                        <TextBlock Style="{StaticResource SubStat}" FontSize="10" HorizontalAlignment="Right">
+                                            <Run Text="{Binding PrivateWorkingSetBytes, Converter={StaticResource BytesToReadableConverter}, Mode=OneWay}" />
+                                            <Run Text=" private" />
+                                        </TextBlock>
+                                    </StackPanel>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #413: commit-charge ranking (private bytes) - a separate failure mode from the
+                 working-set ranking above; a process high here but not above is reserving/
+                 committing address space without necessarily keeping it resident. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <TextBlock Text="Top commit consumers" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Ranked by private bytes - each process's contribution to the system commit charge. Commit exhaustion and physical-RAM exhaustion are different failures, so this can disagree with the working-set ranking above."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+                    <ItemsControl ItemsSource="{Binding TopCommitProcesses}" MaxHeight="240">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                                        <TextBlock Text="{Binding Name}" FontSize="12.5" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Style="{StaticResource SubStat}" FontSize="10.5">
+                                            <Run Text="PID " /><Run Text="{Binding Pid, Mode=OneWay}" />
+                                        </TextBlock>
+                                    </StackPanel>
+                                    <TextBlock Grid.Column="1" Text="{Binding PrivateBytes, Converter={StaticResource BytesToReadableConverter}}"
                                                FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center" />
                                 </Grid>
                             </DataTemplate>
@@ -296,6 +337,177 @@
                                         <Run Text="{Binding UserHandleCount, Mode=OneWay, StringFormat={}USER {0:N0}}" />
                                     </TextBlock>
                                 </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #409: working set vs private bytes divergence - a large gap means a meaningful
+                 chunk of the process's committed memory has been paged/trimmed out of physical
+                 RAM, not that the process is genuinely small. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <TextBlock Text="Working set vs. private bytes divergence" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Private bytes running well ahead of working set means Windows has paged or trimmed that memory out of physical RAM - it's still owned by the process, just not currently resident. See the Processes tab's &quot;WS/Priv gap&quot; column for every process's figure."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+                    <TextBlock Text="No processes currently show a large working-set/private-bytes gap." Opacity="0.7">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding WorkingSetDivergenceWatch.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <ItemsControl ItemsSource="{Binding WorkingSetDivergenceWatch}" MaxHeight="200">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                                        <TextBlock Text="{Binding Name}" FontSize="12.5" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Style="{StaticResource SubStat}" FontSize="10.5">
+                                            <Run Text="PID " /><Run Text="{Binding Pid, Mode=OneWay}" />
+                                        </TextBlock>
+                                    </StackPanel>
+                                    <TextBlock Grid.Column="1" Text="{Binding WorkingSetPrivateGapBytes, Converter={StaticResource BytesToReadableConverter}, StringFormat={}{0} paged out}"
+                                               FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="{DynamicResource WarningBrush}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #415: uptime-normalized leak growth summary - MB/day per flagged image name, next
+                 to system uptime for context, plus a projected time-to-commit-exhaustion at the
+                 current rate. Built from ProcessHistoryService.GetTopGrowthSummaries - see
+                 MemoryViewModel.RefreshLeakGrowthProjections. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Leak growth summary" Style="{StaticResource CardTitle}" Margin="0" />
+                        <TextBlock Grid.Column="1" Text="{Binding SystemUptimeText, StringFormat=System up {0}}"
+                                   Style="{StaticResource SubStat}" VerticalAlignment="Center" />
+                    </Grid>
+                    <TextBlock Text="A projection, not a prediction - each figure is a straight-line extrapolation of the recent trend (#402), assuming nothing changes. Only shown for image names with enough history for a confident fit."
+                               Style="{StaticResource SubStat}" Margin="0,0,0,10" TextWrapping="Wrap" />
+                    <TextBlock Text="Not enough history yet to project a growth trend." Opacity="0.7">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding LeakGrowthProjections.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <ItemsControl ItemsSource="{Binding LeakGrowthProjections}" MaxHeight="220">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                                        <TextBlock Text="{Binding ImageName}" FontSize="12.5" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Style="{StaticResource SubStat}" FontSize="10.5" Text="{Binding RSquared, StringFormat=fit R² {0:0.00}}" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" HorizontalAlignment="Right">
+                                        <TextBlock Text="{Binding GrowthMbPerDay, StringFormat={}{0:0.0} MB/day}"
+                                                   FontSize="12.5" FontWeight="SemiBold" HorizontalAlignment="Right" Foreground="{DynamicResource WarningBrush}" />
+                                        <TextBlock FontSize="10.5" HorizontalAlignment="Right" Foreground="{DynamicResource TextSecondaryBrush}">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Text" Value="{Binding HoursToCommitExhaustion, StringFormat=~{0:0} hrs to commit exhaustion (projected)}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding HoursToCommitExhaustion}" Value="{x:Null}">
+                                                            <Setter Property="Text" Value="No commit exhaustion projected at this rate" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </StackPanel>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #411: system-wide named-section (pagefile- or file-backed shared memory)
+                 attribution - explicit "Scan shared memory" button, see
+                 SharedMemoryInspectionService's remarks for why this is never on a tick. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Shared memory &amp; mapped files" Style="{StaticResource CardTitle}" Margin="0" />
+                        <Button Grid.Column="1" Content="Scan shared memory" Command="{Binding ScanSharedMemoryCommand}" />
+                    </Grid>
+                    <TextBlock Text="Groups named, pagefile- or file-backed Section handles by name across every process - which sections are large, and who's sharing them. A heavier, on-demand scan of the whole system's handle table; can take several seconds."
+                               Style="{StaticResource SubStat}" Margin="0,0,0,10" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding SharedMemoryStatusText}" Margin="0,0,0,10" TextWrapping="Wrap">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding SharedMemoryStatusText}" Value="{x:Null}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <ItemsControl ItemsSource="{Binding SharedMemorySections}" MaxHeight="260">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Padding="10,8" Margin="0,0,0,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
+                                    <StackPanel>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" Text="{Binding Name}" FontSize="11.5" FontFamily="Consolas" TextTrimming="CharacterEllipsis" Margin="0,0,8,0" />
+                                            <TextBlock Grid.Column="1" FontSize="12.5" FontWeight="SemiBold">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Text" Value="{Binding SizeBytes, Converter={StaticResource BytesToReadableConverter}}" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding SizeBytes}" Value="{x:Null}">
+                                                                <Setter Property="Text" Value="(size unknown)" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                        </Grid>
+                                        <TextBlock FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,0" TextWrapping="Wrap">
+                                            <Run Text="{Binding HandleCount, StringFormat={}{0} handle(s)}" />
+                                            <Run Text=" across: " />
+                                            <Run Text="{Binding ProcessNames, Converter={StaticResource StringListJoinConverter}}" />
+                                        </TextBlock>
+                                    </StackPanel>
+                                </Border>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>

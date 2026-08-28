@@ -189,4 +189,27 @@ public sealed class ProcessRow : ObservableObject
 
     private bool _isUserQuotaWarning;
     public bool IsUserQuotaWarning { get => _isUserQuotaWarning; set => SetProperty(ref _isUserQuotaWarning, value); }
+
+    /// <summary>#410: Process\Page Faults/sec for this specific instance (not the system-wide
+    /// Memory\Page Faults/sec figure the Memory tab already shows) - identifies which process is
+    /// actually causing paging pressure. See ProcessPerfCounterService.</summary>
+    private double _pageFaultsPerSec;
+    public double PageFaultsPerSec { get => _pageFaultsPerSec; set => SetProperty(ref _pageFaultsPerSec, value); }
+
+    /// <summary>#412: Process V2\Working Set - Private - the resident portion of memory this
+    /// process doesn't share with any other process, as opposed to MemoryBytes (total working
+    /// set, which includes shared DLL pages) - so a shared-DLL-heavy process isn't misread as a
+    /// memory hog. See ProcessPerfCounterService.</summary>
+    private long _privateWorkingSetBytes;
+    public long PrivateWorkingSetBytes { get => _privateWorkingSetBytes; set => SetProperty(ref _privateWorkingSetBytes, value); }
+
+    /// <summary>#409: PrivateBytes minus MemoryBytes (working set) - a large positive gap means a
+    /// meaningful chunk of this process's committed memory has been paged/trimmed out of physical
+    /// RAM (it's still "owned" but not currently resident), rather than genuinely small. See
+    /// ProcessMonitorService's remarks for the threshold this flag uses.</summary>
+    private long _workingSetPrivateGapBytes;
+    public long WorkingSetPrivateGapBytes { get => _workingSetPrivateGapBytes; set => SetProperty(ref _workingSetPrivateGapBytes, value); }
+
+    private bool _isWorkingSetDivergent;
+    public bool IsWorkingSetDivergent { get => _isWorkingSetDivergent; set => SetProperty(ref _isWorkingSetDivergent, value); }
 }

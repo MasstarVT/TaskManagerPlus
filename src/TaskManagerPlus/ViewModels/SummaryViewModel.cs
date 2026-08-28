@@ -86,6 +86,19 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
     public bool TempAlertEnabled { get => _alertThresholds.TempEnabled; set { _alertThresholds.TempEnabled = value; OnPropertyChanged(); PersistAlertThresholds(); } }
     public double TempAlertThreshold { get => _alertThresholds.TempC; set { _alertThresholds.TempC = value; OnPropertyChanged(); PersistAlertThresholds(); } }
 
+    // #414: leak-specific threshold alerts, configured in the Settings drawer alongside the
+    // CPU/Memory/temp thresholds above - same AlertThresholds.json file, same edge-triggered
+    // toast pattern (CheckLeakGrowthAlerts/CheckLeakHandleCountAlerts below), just keyed by image
+    // name (growth) or pid (handle count) instead of a single system-wide value.
+    private readonly HashSet<string> _leakGrowthAlertedNames = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<int> _leakHandleAlertedPids = new();
+
+    public bool LeakGrowthAlertEnabled { get => _alertThresholds.LeakGrowthEnabled; set { _alertThresholds.LeakGrowthEnabled = value; OnPropertyChanged(); PersistAlertThresholds(); } }
+    public double LeakGrowthAlertMb { get => _alertThresholds.LeakGrowthMb; set { _alertThresholds.LeakGrowthMb = value; OnPropertyChanged(); PersistAlertThresholds(); } }
+    public double LeakGrowthAlertMinutes { get => _alertThresholds.LeakGrowthMinutes; set { _alertThresholds.LeakGrowthMinutes = value; OnPropertyChanged(); PersistAlertThresholds(); } }
+    public bool LeakHandleCountAlertEnabled { get => _alertThresholds.LeakHandleCountEnabled; set { _alertThresholds.LeakHandleCountEnabled = value; OnPropertyChanged(); PersistAlertThresholds(); } }
+    public double LeakHandleCountAlertThreshold { get => _alertThresholds.LeakHandleCountThreshold; set { _alertThresholds.LeakHandleCountThreshold = value; OnPropertyChanged(); PersistAlertThresholds(); } }
+
     private void PersistAlertThresholds() => AlertThresholdsService.Save(_alertThresholds);
 
     // #73: one-click diagnostic report bundling specs, recent stability events, a sensor
@@ -232,6 +245,73 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
             CheckOne(TempAlertEnabled, temp, TempAlertThreshold, ref _tempAlerted,
                 "CPU temperature threshold", v => $"CPU temperature is {v:0}°C (threshold {TempAlertThreshold:0}°C)");
         }
+
+        CheckLeakGrowthAlerts();
+        CheckLeakHandleCountAlerts();
+    }
+
+    /// <summary>#414: "any process grows more than X MB over Y minutes" - projects the #402
+    /// per-image-name private-bytes slope (already computed by ProcessHistoryService on every
+    /// Processes-tab tick) over the configured window, the same straight-line extrapolation #415's
+    /// growth summary uses. Edge-triggered per image name (not per pid, matching the leak-watch/
+    /// leak-slope columns, which are also tracked by name) - a fit-confidence floor keeps a noisy,
+    /// barely-positive slope from tripping the alert just because it happens to cross the raw MB
+    /// figure.</summary>
+    private const double LeakGrowthMinRSquaredToAlert = 0.5;
+
+    private void CheckLeakGrowthAlerts()
+    {
+        if (!LeakGrowthAlertEnabled) { _leakGrowthAlertedNames.Clear(); return; }
+
+        var liveNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var row in Processes.Processes)
+        {
+            if (string.IsNullOrEmpty(row.Name)) continue;
+            liveNames.Add(row.Name);
+
+            double projectedGrowthMb = row.LeakSlopeMbPerHour * (LeakGrowthAlertMinutes / 60.0);
+            bool exceeds = row.LeakRSquared >= LeakGrowthMinRSquaredToAlert && projectedGrowthMb >= LeakGrowthAlertMb;
+
+            if (exceeds)
+            {
+                if (_leakGrowthAlertedNames.Add(row.Name))
+                    ToastService.Show("Leak growth threshold",
+                        $"{row.Name} has grown roughly {projectedGrowthMb:0} MB over the last {LeakGrowthAlertMinutes:0} minutes (threshold {LeakGrowthAlertMb:0} MB) - a projection from its current growth rate, not a confirmed leak.",
+                        isCritical: true);
+            }
+            else
+            {
+                _leakGrowthAlertedNames.Remove(row.Name);
+            }
+        }
+        _leakGrowthAlertedNames.RemoveWhere(n => !liveNames.Contains(n));
+    }
+
+    /// <summary>#414: "any process exceeds N handles" - a flat ceiling independent of the
+    /// slope-based #403 handle-leak heuristic, so a process that jumps straight to a huge handle
+    /// count (rather than climbing steadily enough to fit a regression) still gets caught.
+    /// Edge-triggered per pid, matching CheckGdiUserQuotaAlerts' shape in ProcessesViewModel.</summary>
+    private void CheckLeakHandleCountAlerts()
+    {
+        if (!LeakHandleCountAlertEnabled) { _leakHandleAlertedPids.Clear(); return; }
+
+        var livePids = new HashSet<int>();
+        foreach (var row in Processes.Processes)
+        {
+            livePids.Add(row.Pid);
+            if (row.HandleCount >= LeakHandleCountAlertThreshold)
+            {
+                if (_leakHandleAlertedPids.Add(row.Pid))
+                    ToastService.Show("Handle count threshold",
+                        $"{row.Name} (PID {row.Pid}) has {row.HandleCount:N0} open handles (threshold {LeakHandleCountAlertThreshold:0}).",
+                        isCritical: true);
+            }
+            else
+            {
+                _leakHandleAlertedPids.Remove(row.Pid);
+            }
+        }
+        _leakHandleAlertedPids.RemoveWhere(pid => !livePids.Contains(pid));
     }
 
     private static void CheckOne(bool enabled, double value, double threshold, ref bool alerted, string title, Func<double, string> message)

@@ -206,7 +206,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         // see each view-model's remarks) and before Summary as before (#64's Health Check card).
         EnergyThermals = new EnergyThermalsViewModel(Performance);
         Cpu = new CpuViewModel(Performance, EnergyThermals, Processes);
-        Memory = new MemoryViewModel(Performance, Processes, LeakWatch);
+        Memory = new MemoryViewModel(Performance, Processes, LeakWatch, ProcessHistory);
         Storage = new StorageViewModel(Performance, EnergyThermals);
         Network = new NetworkViewModel(Performance);
         Gpu = new GpuViewModel(Processes);
@@ -370,6 +370,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Theme.ThemeModeChanged -= ApplyAxisThemeToStartup;
         Theme.ThemeModeChanged -= ApplyAxisThemeToLogging;
         Processes.Dispose();
+        Memory.Dispose();
         Performance.Dispose();
         Services.Dispose();
         EnergyThermals.Dispose();

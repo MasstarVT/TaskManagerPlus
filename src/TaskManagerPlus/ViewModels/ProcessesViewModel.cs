@@ -56,6 +56,7 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
                 SelectedProcessHandleTypes.Clear();
                 SelectedProcessHostedServices.Clear();
                 FileLockResults.Clear();
+                SelectedProcessAddressSpace = null;
                 LoadAffinityForSelection();
             }
         }
@@ -83,6 +84,13 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
     /// FileLockLookupService.</summary>
     public ObservableCollection<string> FileLockResults { get; } = new();
 
+    /// <summary>#408: SelectedProcess's address-space breakdown from the most recent on-demand
+    /// walk - null until ViewAddressSpaceCommand runs (or after the selection changes, so a stale
+    /// walk from a previous process is never shown as if it were current). See
+    /// AddressSpaceInspectionService.</summary>
+    private AddressSpaceSummary? _selectedProcessAddressSpace;
+    public AddressSpaceSummary? SelectedProcessAddressSpace { get => _selectedProcessAddressSpace; private set => SetProperty(ref _selectedProcessAddressSpace, value); }
+
     private string _fileLockPath = string.Empty;
     public string FileLockPath { get => _fileLockPath; set => SetProperty(ref _fileLockPath, value); }
 
@@ -105,6 +113,10 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
     public RelayCommand ViewHandleTypesCommand { get; }
     public RelayCommand ViewHostedServicesCommand { get; }
     public RelayCommand LookupFileLockCommand { get; }
+
+    /// <summary>#408: single-process, on-demand VirtualQueryEx address-space walk - never on a
+    /// tick, see AddressSpaceInspectionService's remarks.</summary>
+    public RelayCommand ViewAddressSpaceCommand { get; }
     public RelayCommand TrimWorkingSetCommand { get; }
     public RelayCommand SuspendCommand { get; }
     public RelayCommand ResumeCommand { get; }
@@ -164,6 +176,7 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
         ViewHandleTypesCommand = new RelayCommand(_ => _ = LoadSelectedProcessHandleTypesAsync(), _ => SelectedProcess is not null);
         ViewHostedServicesCommand = new RelayCommand(_ => LoadSelectedProcessHostedServices(), _ => IsSvchostSelected());
         LookupFileLockCommand = new RelayCommand(_ => _ = LookupFileLockAsync(), _ => !string.IsNullOrWhiteSpace(FileLockPath));
+        ViewAddressSpaceCommand = new RelayCommand(_ => _ = LoadSelectedProcessAddressSpaceAsync(), _ => SelectedProcess is not null);
         TrimWorkingSetCommand = new RelayCommand(_ => TrimWorkingSet(), _ => SelectedProcess is not null);
         SuspendCommand = new RelayCommand(_ => SetSuspended(true), _ => SelectedProcess is not null);
         ResumeCommand = new RelayCommand(_ => SetSuspended(false), _ => SelectedProcess is not null);
@@ -296,6 +309,11 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
                 existing.IsDuplicateInstanceOutlier = fresh.IsDuplicateInstanceOutlier;
                 existing.IsGdiQuotaWarning = fresh.IsGdiQuotaWarning;
                 existing.IsUserQuotaWarning = fresh.IsUserQuotaWarning;
+                // #409/#410/#412
+                existing.PageFaultsPerSec = fresh.PageFaultsPerSec;
+                existing.PrivateWorkingSetBytes = fresh.PrivateWorkingSetBytes;
+                existing.WorkingSetPrivateGapBytes = fresh.WorkingSetPrivateGapBytes;
+                existing.IsWorkingSetDivergent = fresh.IsWorkingSetDivergent;
                 // #401/#402/#403/#405: regression-derived fields computed by
                 // ProcessHistoryService.RecordSample just before this merge ran.
                 existing.MemorySparkline = fresh.MemorySparkline;
@@ -470,6 +488,29 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
         }
         foreach (var owner in owners)
             FileLockResults.Add($"{owner.AppName} (PID {owner.Pid}){(owner.Restartable ? "" : " - not restartable")}");
+    }
+
+    /// <summary>#408: on-demand single-process address-space walk - see
+    /// AddressSpaceInspectionService's remarks for why this is strictly button-triggered.</summary>
+    private async Task LoadSelectedProcessAddressSpaceAsync()
+    {
+        var target = SelectedProcess;
+        if (target is null) return;
+        int pid = target.Pid;
+
+        SelectedProcessAddressSpace = null;
+        StatusMessage = $"Scanning address space for {target.Name} (PID {pid})...";
+
+        var summary = await Task.Run(() => AddressSpaceInspectionService.Walk(pid));
+
+        // The selection (or the whole app) may have moved on while this ran in the background.
+        if (SelectedProcess?.Pid != pid) return;
+
+        SelectedProcessAddressSpace = summary;
+        StatusMessage = summary.Error is not null
+            ? $"Couldn't read address space for {target.Name}: {summary.Error}"
+            : $"Address space for {summary.ProcessName} (PID {summary.Pid}): {summary.TotalRegionsScanned:N0} regions scanned" +
+              (summary.WasCapped ? " (stopped early - the walk hit its scan cap)." : ".");
     }
 
     /// <summary>Round 7 #4: trims the selected process's working set - see

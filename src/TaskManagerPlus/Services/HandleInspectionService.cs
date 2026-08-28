@@ -68,8 +68,11 @@ public static class HandleInspectionService
     }
 
     /// <summary>Duplicates one handle and asks its type name, off the calling thread with a strict
-    /// timeout - see the class remarks for why NtQueryObject can't be trusted to always return.</summary>
-    private static string ResolveHandleType(IntPtr sourceProcess, ushort handleValue)
+    /// timeout - see the class remarks for why NtQueryObject can't be trusted to always return.
+    /// Internal (not private) so #411's SharedMemoryInspectionService can reuse the exact same
+    /// duplicate-then-query-with-timeout pattern to find "Section" handles specifically, rather
+    /// than re-deriving it.</summary>
+    internal static string ResolveHandleType(IntPtr sourceProcess, ushort handleValue)
     {
         IntPtr dup = IntPtr.Zero;
         try
@@ -127,6 +130,127 @@ public static class HandleInspectionService
         return "(unresolved - query timed out)";
     }
 
+    /// <summary>#411: same duplicate-then-query-with-timeout shape as ResolveHandleType above, but
+    /// asks for the object's *name* (OBJECT_NAME_INFORMATION, also a leading UNICODE_STRING -
+    /// identical layout trick) instead of its type - used to identify which named Section a
+    /// handle refers to, once ResolveHandleType has already confirmed it's a Section. Most
+    /// handles (anonymous sections, most other object types) have no name at all, which
+    /// NtQueryObject reports as a zero-length string, not an error - returned here as null rather
+    /// than "(unresolved)" so callers can tell "no name" apart from "the query failed/timed out".</summary>
+    internal static string? ResolveHandleName(IntPtr sourceProcess, ushort handleValue)
+    {
+        IntPtr dup = IntPtr.Zero;
+        try
+        {
+            int dupStatus = NtDuplicateObject(sourceProcess, (IntPtr)handleValue, GetCurrentProcess(),
+                out dup, 0, 0, DuplicateSameAccess);
+            if (dupStatus != 0 || dup == IntPtr.Zero) return null;
+        }
+        catch
+        {
+            return null;
+        }
+
+        string? result = null;
+        var worker = new Thread(() =>
+        {
+            try
+            {
+                int size = 0x1000;
+                IntPtr buffer = Marshal.AllocHGlobal(size);
+                try
+                {
+                    int status = NtQueryObject(dup, ObjectNameInformation, buffer, size, out _);
+                    if (status == 0)
+                    {
+                        ushort length = (ushort)Marshal.ReadInt16(buffer, 0);
+                        IntPtr strPtr = Marshal.ReadIntPtr(buffer, 8);
+                        result = length > 0 && strPtr != IntPtr.Zero
+                            ? Marshal.PtrToStringUni(strPtr, length / 2)
+                            : null;
+                    }
+                }
+                finally
+                {
+                    Marshal.FreeHGlobal(buffer);
+                }
+            }
+            catch { /* leave result null */ }
+        })
+        { IsBackground = true };
+
+        worker.Start();
+        bool finished = worker.Join(PerHandleTimeout);
+
+        if (finished)
+        {
+            try { CloseHandle(dup); } catch { /* ignore */ }
+            return string.IsNullOrWhiteSpace(result) ? null : result;
+        }
+        return null; // timed out - treat the same as "no name available", not worth surfacing as an error.
+    }
+
+    /// <summary>#411: the section's maximum size in bytes (SECTION_BASIC_INFORMATION.MaximumSize),
+    /// once ResolveHandleType has already confirmed a handle is a Section - null on any failure
+    /// (access denied, already closed, or the query itself fails). Unlike ResolveHandleType/
+    /// ResolveHandleName above, NtQuerySection isn't documented to ever block indefinitely the way
+    /// NtQueryObject can on certain handle types (a named pipe with no listener), so this runs
+    /// inline rather than on its own abandoned thread - it's still wrapped in try/catch so a
+    /// surprise failure degrades to "size unknown" rather than throwing.</summary>
+    internal static long? ResolveSectionSizeBytes(IntPtr sourceProcess, ushort handleValue)
+    {
+        IntPtr dup = IntPtr.Zero;
+        try
+        {
+            int dupStatus = NtDuplicateObject(sourceProcess, (IntPtr)handleValue, GetCurrentProcess(),
+                out dup, 0, 0, DuplicateSameAccess);
+            if (dupStatus != 0 || dup == IntPtr.Zero) return null;
+
+            int size = Marshal.SizeOf<SECTION_BASIC_INFORMATION>();
+            IntPtr buffer = Marshal.AllocHGlobal(size);
+            try
+            {
+                int status = NtQuerySection(dup, SectionBasicInformation, buffer, size, out _);
+                if (status != 0) return null;
+                var info = Marshal.PtrToStructure<SECTION_BASIC_INFORMATION>(buffer);
+                return info.MaximumSize > 0 ? info.MaximumSize : null;
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(buffer);
+            }
+        }
+        catch
+        {
+            return null;
+        }
+        finally
+        {
+            if (dup != IntPtr.Zero) { try { CloseHandle(dup); } catch { /* ignore */ } }
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct SECTION_BASIC_INFORMATION
+    {
+        public IntPtr BaseAddress;
+        public uint AllocationAttributes;
+        public long MaximumSize;
+    }
+
+    private const int SectionBasicInformation = 0;
+
+    [DllImport("ntdll.dll")]
+    private static extern int NtQuerySection(IntPtr sectionHandle, int sectionInformationClass, IntPtr sectionInformation, int sectionInformationLength, out int returnLength);
+
+    /// <summary>#411: system-wide handle table, reduced to just (pid, handle value) pairs - the
+    /// two fields SharedMemoryInspectionService needs, without exposing the raw marshaled struct
+    /// (and its ObjectTypeIndex/GrantedAccess fields, which are unstable across Windows versions
+    /// and only meaningful to ReadHandleTypeCounts' own per-pid filtering above) outside this
+    /// class.</summary>
+    internal static List<(int ProcessId, ushort HandleValue)> ReadSystemHandlesAll() =>
+        ReadSystemHandles().Select(e => ((int)e.UniqueProcessId, e.HandleValue)).ToList();
+
     private static List<SYSTEM_HANDLE_TABLE_ENTRY_INFO> ReadSystemHandles()
     {
         int size = 1 << 20; // 1 MB starting guess, grown below if needed
@@ -161,6 +285,7 @@ public static class HandleInspectionService
 
     private const int SystemHandleInformation = 16;
     private const int ObjectTypeInformation = 2;
+    private const int ObjectNameInformation = 1;
     private const int StatusInfoLengthMismatch = unchecked((int)0xC0000004);
     private const uint ProcessDupHandle = 0x0040;
     private const uint DuplicateSameAccess = 2;

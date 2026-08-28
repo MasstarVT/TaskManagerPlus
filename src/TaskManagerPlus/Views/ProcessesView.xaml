@@ -78,6 +78,9 @@
             <Button Content="View environment" Margin="0,0,8,8" Command="{Binding ViewEnvironmentCommand}" />
             <!-- Round 7 #12 -->
             <Button Content="View handle types" Margin="0,0,8,8" Command="{Binding ViewHandleTypesCommand}" />
+            <!-- #408: single-process, on-demand VirtualQueryEx address-space walk. -->
+            <Button Content="Address space" Margin="0,0,8,8" Command="{Binding ViewAddressSpaceCommand}"
+                    ToolTip="Walk this process's virtual address space and bucket it by private/image/mapped-file, committed/reserved/free - never run automatically, only on request" />
             <!-- Round 7 #17 - only meaningful for a svchost.exe row, see IsSvchostSelected. -->
             <Button Content="Hosted services" Margin="0,0,8,8" Command="{Binding ViewHostedServicesCommand}"
                     ToolTip="Which service names live inside this svchost.exe process" />
@@ -155,6 +158,37 @@
                      instead of a redundant "commit" duplicate of private bytes. -->
                 <DataGridTextColumn Header="Private bytes" Binding="{Binding PrivateBytes, Converter={StaticResource BytesToReadableConverter}}" Width="100" />
                 <DataGridTextColumn Header="Virtual size" Binding="{Binding VirtualBytes, Converter={StaticResource BytesToReadableConverter}}" Width="100" />
+                <!-- #412: resident, non-shared memory only - a shared-DLL-heavy process's total
+                     working set (above) can look large even though most of it is pages shared
+                     with other processes. -->
+                <DataGridTextColumn Header="Private WS" Binding="{Binding PrivateWorkingSetBytes, Converter={StaticResource BytesToReadableConverter}}" Width="100" />
+                <!-- #410: per-process page-fault rate - identifies which process is actually
+                     causing paging pressure, rather than only the system-wide figure. -->
+                <DataGridTextColumn Header="Page faults" Binding="{Binding PageFaultsPerSec, StringFormat={}{0:0.0}/s}" Width="90" />
+                <!-- #409: private bytes ahead of working set by a wide margin means a meaningful
+                     chunk of this process's committed memory has been paged/trimmed out of
+                     physical RAM - not genuinely small, just not currently resident. -->
+                <DataGridTemplateColumn Header="WS/Priv gap" Width="100" SortMemberPath="WorkingSetPrivateGapBytes">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding WorkingSetPrivateGapBytes, Converter={StaticResource BytesToReadableConverter}}"
+                                       VerticalAlignment="Center"
+                                       ToolTip="Private bytes minus working set - a large gap means this much of the process's committed memory has been paged/trimmed out of physical RAM.">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsWorkingSetDivergent}" Value="True">
+                                                <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                <Setter Property="FontWeight" Value="SemiBold" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
                 <!-- #14: possible memory leak - working set has grown without ever giving memory
                      back over the whole tracked history window. See ProcessMonitorService.ComputeLeakSuspect. -->
                 <DataGridTemplateColumn Header="Mem trend" Width="90" SortMemberPath="IsLeakSuspect">
@@ -359,6 +393,7 @@
                     <MenuItem Header="View modules" Command="{Binding ViewModulesCommand}" />
                     <MenuItem Header="View environment" Command="{Binding ViewEnvironmentCommand}" />
                     <MenuItem Header="View handle types" Command="{Binding ViewHandleTypesCommand}" />
+                    <MenuItem Header="Address space" Command="{Binding ViewAddressSpaceCommand}" />
                     <MenuItem Header="Hosted services (svchost)" Command="{Binding ViewHostedServicesCommand}" />
                     <Separator />
                     <!-- #406: pinned leak-watch list - see LeakWatchViewModel and the Memory
@@ -496,7 +531,7 @@
             </Border>
 
             <!-- Round 7 #17 -->
-            <Border Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
+            <Border Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Margin="0,0,0,6">
                 <Border.Style>
                     <Style TargetType="Border">
                         <Setter Property="Visibility" Value="Visible" />
@@ -516,6 +551,63 @@
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #408: address-space breakdown from the most recent on-demand walk. -->
+            <Border Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Visibility" Value="Visible" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding SelectedProcessAddressSpace}" Value="{x:Null}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,6">
+                        <Run Text="Address space — " />
+                        <Run Text="{Binding SelectedProcessAddressSpace.ProcessName, Mode=OneWay}" FontWeight="SemiBold" />
+                        <Run Text=" (PID " /><Run Text="{Binding SelectedProcessAddressSpace.Pid, Mode=OneWay}" /><Run Text=")" />
+                    </TextBlock>
+                    <TextBlock Text="{Binding SelectedProcessAddressSpace.Error}" Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" Margin="0,0,0,6">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding SelectedProcessAddressSpace.Error}" Value="{x:Null}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <ItemsControl ItemsSource="{Binding SelectedProcessAddressSpace.Buckets}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Background="{DynamicResource BgPanelBrush}" CornerRadius="4" Padding="8,4" Margin="0,0,8,6">
+                                    <TextBlock FontSize="11.5">
+                                        <Run Text="{Binding Category, Mode=OneWay}" FontWeight="SemiBold" />
+                                        <Run Text=": " />
+                                        <Run Text="{Binding TotalBytes, Converter={StaticResource BytesToReadableConverter}, Mode=OneWay}" />
+                                        <Run Text=" (" /><Run Text="{Binding RegionCount, Mode=OneWay}" /><Run Text=" regions)" />
+                                    </TextBlock>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock FontSize="11.5" Margin="0,4,0,0" Foreground="{DynamicResource TextSecondaryBrush}">
+                        <Run Text="Largest contiguous free block: " />
+                        <Run Text="{Binding SelectedProcessAddressSpace.LargestFreeBlockBytes, Converter={StaticResource BytesToReadableConverter}, Mode=OneWay}" FontWeight="SemiBold" />
+                        <Run Text=" — a small largest-block figure despite a large total free figure above points to fragmentation, not a leak." />
+                    </TextBlock>
                 </StackPanel>
             </Border>
         </StackPanel>
