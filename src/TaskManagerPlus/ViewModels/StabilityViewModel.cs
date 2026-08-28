@@ -76,6 +76,16 @@ public sealed class StabilityViewModel : ObservableObject
     // _kb/_anomaly/_timeline/_wer above).
     private readonly KernelEventFamilyService _kernelFamily = new(new EventLogExplorerService());
 
+    // #195/#196: Perflib counter-corruption card + the assorted subsystem error family rollup -
+    // same "own EventLogExplorerService instance" convention as _kernelFamily above.
+    private readonly SubsystemErrorFamilyService _subsystemFamily = new(new EventLogExplorerService());
+
+    // #197-199: channel health / retention / log-clearing - only #199's DetectLogClearEvents is
+    // used from this ViewModel (the #197/#198 channel-health detail lives on the Events tab, which
+    // already has the channel tree this extends); same "own EventLogExplorerService instance"
+    // convention as the services above.
+    private readonly EventLogHealthService _logHealth = new(new EventLogExplorerService());
+
     /// <summary>The last WER report scan's results, stashed so RefreshTimelineExtrasAsync's
     /// BuildTimeline call (#161) can fold them into the unified timeline without a second scan.</summary>
     private List<WerReportInfo> _lastWerReports = new();
@@ -203,6 +213,24 @@ public sealed class StabilityViewModel : ObservableObject
 
     // ---- #190: power-transition failure family ----
     public ObservableCollection<PowerTransitionIncident> PowerTransitionIncidents { get; } = new();
+
+    // ---- #195: Perflib counter-corruption card ----
+    private PerflibFailureSummary _perflibSummary = new();
+    public PerflibFailureSummary PerflibSummary { get => _perflibSummary; private set => SetProperty(ref _perflibSummary, value); }
+
+    private string? _perflibStatusText;
+    public string? PerflibStatusText { get => _perflibStatusText; private set => SetProperty(ref _perflibStatusText, value); }
+
+    /// <summary>#195: `lodctr /R` - a real system change, gated behind its own explicit MessageBox
+    /// confirmation (same shape as #165/#172's registry writes) - see RunLodctrRebuild.</summary>
+    public RelayCommand RunLodctrRebuildCommand { get; }
+
+    // ---- #196: assorted subsystem error families rollup ----
+    public ObservableCollection<SubsystemFamilyGroup> SubsystemFamilies { get; } = new();
+
+    // ---- #199: log-clearing detection - surfaced prominently (its own banner, ahead of the
+    // known-bad-IDs scorecard) rather than silently folded into "no problems found". ----
+    public ObservableCollection<LogClearEvent> LogClearEvents { get; } = new();
 
     /// <summary>#128: "New error types this week" - (provider, eventId) signatures present only in
     /// the last 7 days of RecentEvents' 30-day window, with no occurrence in the older 23 days of
@@ -344,6 +372,9 @@ public sealed class StabilityViewModel : ObservableObject
         EnableLocalDumpsCommand = new RelayCommand(EnableLocalDumps);
         RevertLocalDumpsCommand = new RelayCommand(RevertLocalDumps, () => CanRevertLocalDumps);
         CanRevertLocalDumps = WerReportService.BackupExists();
+
+        // #195: gated behind its own explicit MessageBox confirmation - see RunLodctrRebuild.
+        RunLodctrRebuildCommand = new RelayCommand(RunLodctrRebuild);
 
         // #171: its own action (runs the RAC task, then re-queries) - not folded into RefreshCommand.
         RefreshReliabilityCommand = new AsyncRelayCommand(RunReliabilityRefreshAsync);
@@ -501,6 +532,10 @@ public sealed class StabilityViewModel : ObservableObject
             // #184-190: kernel/storage/driver event-family cards - folded into this same on-demand
             // refresh, never a new timer.
             await RefreshKernelEventFamiliesAsync();
+
+            // #195/#196/#199: Perflib card, the assorted-family rollup, and log-clear detection -
+            // folded into this same on-demand refresh, never a new timer.
+            await RefreshSubsystemAndLogHealthAsync();
 
             // #137/#142/#143/#144: folded into this same on-demand refresh, never a new timer.
             await RefreshTimelineExtrasAsync(snapshot);
@@ -690,6 +725,63 @@ public sealed class StabilityViewModel : ObservableObject
             foreach (var i in incidents) PowerTransitionIncidents.Add(i);
         }
         catch { /* degrade to an empty power-transition list */ }
+    }
+
+    /// <summary>#195/#196/#199: Perflib counter-corruption card, the assorted subsystem-family
+    /// rollup, and log-clear detection - each read wrapped independently so one failing part doesn't
+    /// blank out the others, same tolerance every other multi-part refresh step in this method
+    /// already applies.</summary>
+    private async Task RefreshSubsystemAndLogHealthAsync()
+    {
+        try { PerflibSummary = await Task.Run(() => _subsystemFamily.ReadPerflibFailures()); }
+        catch { /* degrade - keeps whatever the last successful scan found */ }
+
+        try
+        {
+            var families = await Task.Run(() => _subsystemFamily.ReadSubsystemFamilies());
+            SubsystemFamilies.Clear();
+            foreach (var f in families) SubsystemFamilies.Add(f);
+        }
+        catch { /* degrade to an empty rollup */ }
+
+        try
+        {
+            var clears = await Task.Run(() => _logHealth.DetectLogClearEvents());
+            LogClearEvents.Clear();
+            foreach (var c in clears) LogClearEvents.Add(c);
+        }
+        catch { /* degrade to an empty list - never claim "no clears" when the scan itself failed */ }
+    }
+
+    /// <summary>#195: explicit confirmation before running `lodctr /R` - a real system change (it
+    /// resets every performance-counter provider's registration to its installed defaults), same
+    /// "state what the write does, then confirm" shape as EnableLocalDumps/EnableReliabilityAnalysis
+    /// above. No backup/revert offered here (unlike #165/#172's registry-value toggles) - lodctr /R
+    /// is a repair action with no meaningful "previous state" to restore, not a settings change.</summary>
+    private void RunLodctrRebuild()
+    {
+        var confirm = MessageBox.Show(
+            "This runs `lodctr /R`, which rebuilds the Windows performance-counter registry from the "
+            + ".ini files each counter provider installed with. This can take a minute or more, and "
+            + "every performance-counter provider currently in a broken state is reset to its "
+            + "installed defaults.\n\n"
+            + "Rebuild the performance-counter registry now?",
+            "Rebuild performance counters",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        _ = RunLodctrRebuildInnerAsync();
+    }
+
+    private async Task RunLodctrRebuildInnerAsync()
+    {
+        PerflibStatusText = "Running lodctr /R - this can take a minute or more…";
+        var (success, output) = await SubsystemErrorFamilyService.RunLodctrRebuildAsync();
+        string trimmed = output.Length > 300 ? output[..300] + "…" : output;
+        PerflibStatusText = success
+            ? "Performance-counter registry rebuilt. Click Refresh to see if the Perflib failures above clear."
+            : $"lodctr /R reported a problem: {trimmed}";
     }
 
     /// <summary>#169/#170/#172/#173/#174: Reliability Monitor data - reads Windows' own per-day

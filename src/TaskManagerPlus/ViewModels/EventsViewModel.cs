@@ -31,6 +31,15 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
     private readonly EventKnowledgeBaseService _kb = new();
     private readonly StatusCodeResolverService _statusCodes = new();
 
+    // #194: DistributedCOM CLSID/APPID -> friendly-name resolver, and #197/#198/#199: per-channel
+    // health/retention/gap detection - both plain Services/* instances composed directly here, same
+    // no-DI-container convention as every field above.
+    private readonly EventLogHealthService _logHealth = new();
+
+    // #200: evidence bundle export - composed as a sub-ViewModel (Evidence, below), the same
+    // pattern Etw/Servicing already use for their own toggleable overlay panels.
+    public EvidenceBundleViewModel Evidence { get; }
+
     // Needed only for #106's "which process logged this" PID -> name lookup in the detail pane -
     // reads the already-live Processes collection (no new polling) purely on the UI thread inside
     // BuildDetail, so there's no cross-thread ObservableCollection access to worry about.
@@ -89,10 +98,44 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
             if (!SetProperty(ref _selectedChannel, value)) return;
             OnPropertyChanged(nameof(CanQuerySelectedChannel));
             if (IsFollowing) StopFollow();
+            // #197: loads the newly-selected channel's health detail - see LoadChannelHealthAsync.
+            _ = LoadChannelHealthAsync(value);
         }
     }
 
     public bool CanQuerySelectedChannel => _selectedChannel is { IsGroup: false, IsAccessible: true };
+
+    // ---- #197/#198/#199: per-channel health detail, extending the existing channel tree with an
+    // on-select details panel (rather than a wholly separate dashboard - the tree's own selection is
+    // already "which channel am I looking at", so a details panel that follows it needs no new
+    // navigation of its own) - plus the retention recommendation/apply/revert and gap-detection that
+    // read off the same selection. ----
+
+    private ChannelHealthInfo? _selectedChannelHealth;
+    public ChannelHealthInfo? SelectedChannelHealth { get => _selectedChannelHealth; private set => SetProperty(ref _selectedChannelHealth, value); }
+
+    private RetentionRecommendation? _channelRetentionRecommendation;
+    public RetentionRecommendation? ChannelRetentionRecommendation
+    {
+        get => _channelRetentionRecommendation;
+        private set { if (SetProperty(ref _channelRetentionRecommendation, value)) { ApplyRetentionCommand.RaiseCanExecuteChanged(); EnableSelectedChannelCommand.RaiseCanExecuteChanged(); } }
+    }
+
+    public ObservableCollection<LogGapFlag> ChannelGapFlags { get; } = new();
+
+    private string? _channelHealthStatusText;
+    public string? ChannelHealthStatusText { get => _channelHealthStatusText; private set => SetProperty(ref _channelHealthStatusText, value); }
+
+    private bool _canRevertChannelMaxSize;
+    public bool CanRevertChannelMaxSize { get => _canRevertChannelMaxSize; private set { if (SetProperty(ref _canRevertChannelMaxSize, value)) RevertChannelMaxSizeCommand.RaiseCanExecuteChanged(); } }
+
+    private bool _canRevertChannelEnabled;
+    public bool CanRevertChannelEnabled { get => _canRevertChannelEnabled; private set { if (SetProperty(ref _canRevertChannelEnabled, value)) RevertChannelEnabledCommand.RaiseCanExecuteChanged(); } }
+
+    public RelayCommand ApplyRetentionCommand { get; }
+    public RelayCommand EnableSelectedChannelCommand { get; }
+    public RelayCommand RevertChannelMaxSizeCommand { get; }
+    public RelayCommand RevertChannelEnabledCommand { get; }
 
     // ---- Filter bar (#104) ----
     private bool _levelCritical = true;
@@ -312,6 +355,17 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
     public ObservableCollection<StatusCodeExplain> ExplainStatusCodes { get; } = new();
     private CancellationTokenSource? _statusCodeCts;
 
+    // ---- #194: DistributedCOM CLSID/APPID resolver - a detail-pane extension in the same spirit
+    // as #123/#124's named-field/status-code decoding above, computed synchronously in BuildDetail
+    // (a couple of registry reads, no shell-out) rather than a second async pass. ----
+    public ObservableCollection<DcomComponentResolution> ExplainDcomComponents { get; } = new();
+
+    /// <summary>Non-null only for a DistributedCOM event - the prominent "this is almost always
+    /// harmless, don't 'fix' it by editing registry permissions" note #194 asks for, shown next to
+    /// the resolved CLSID/APPID chips above regardless of whether every GUID resolved.</summary>
+    private string? _explainDcomNote;
+    public string? ExplainDcomNote { get => _explainDcomNote; private set => SetProperty(ref _explainDcomNote, value); }
+
     // ---- #121: known-benign noise suppression ----
     private bool _hideKnownNoise;
     public bool HideKnownNoise
@@ -448,6 +502,7 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
         _processes = processes;
         _services = services;
         _anomaly = new EventAnomalyDetectionService(_service);
+        Evidence = new EvidenceBundleViewModel { ResolveChannels = BuildEvidenceBundleChannelDefaults };
 
         RefreshChannelsCommand = new AsyncRelayCommand(RefreshChannelsAsync);
         BuildXPathCommand = new RelayCommand(_ => RawXPathText = BuildXPathFromFilters());
@@ -493,6 +548,13 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
         RunKbActionCommand = new RelayCommand(_ => RunKbAction(), _ => _kbActionTargetRow is not null);
         ExportUnknownEventsCommand = new RelayCommand(_ => ExportUnknownEvents(), _ => UnknownEventCount > 0);
 
+        // #198: each gated behind its own explicit MessageBox confirmation - same shape as #165/
+        // #172's registry writes elsewhere in this app.
+        ApplyRetentionCommand = new RelayCommand(ApplyRetention, () => ChannelRetentionRecommendation is { SuggestEnabling: false });
+        EnableSelectedChannelCommand = new RelayCommand(EnableSelectedChannel, () => ChannelRetentionRecommendation is { SuggestEnabling: true });
+        RevertChannelMaxSizeCommand = new RelayCommand(RevertChannelMaxSize, () => CanRevertChannelMaxSize);
+        RevertChannelEnabledCommand = new RelayCommand(RevertChannelEnabled, () => CanRevertChannelEnabled);
+
         RunAnomalyScanCommand = new AsyncRelayCommand(RunAnomalyScanAsync, () => !IsAnomalyScanRunning);
         CancelAnomalyScanCommand = new RelayCommand(_ => _anomalyScanCts?.Cancel(), _ => IsAnomalyScanRunning);
         RecomputeCollapsedBurstsCommand = new RelayCommand(_ => RecomputeCollapsedBursts());
@@ -529,6 +591,220 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
         {
             IsChannelsLoading = false;
         }
+    }
+
+    /// <summary>#197: loads the newly-selected channel's EventLogConfiguration/EventLogInformation
+    /// detail plus #198's retention recommendation and #199's record-gap flags. A group heading, an
+    /// inaccessible leaf, or an opened .evtx file (none of these have a live registry-backed
+    /// configuration to inspect) simply clears everything and returns. The ReferenceEquals guards
+    /// mean a fast second selection change while this is still loading never lets a stale result
+    /// land on the wrong channel - the same pattern LoadStatusCodesAsync already uses.</summary>
+    private async Task LoadChannelHealthAsync(EventChannelNode? node)
+    {
+        SelectedChannelHealth = null;
+        ChannelRetentionRecommendation = null;
+        ChannelGapFlags.Clear();
+        ChannelHealthStatusText = null;
+        CanRevertChannelMaxSize = false;
+        CanRevertChannelEnabled = false;
+
+        if (node is null || node.IsGroup || !node.IsAccessible || node.IsFilePath) return;
+
+        string channelName = node.Name;
+        var health = await Task.Run(() => _logHealth.GetChannelHealth(channelName));
+        if (!ReferenceEquals(SelectedChannel, node)) return;
+
+        SelectedChannelHealth = health;
+        ChannelRetentionRecommendation = EventLogHealthService.GetRetentionRecommendation(health);
+        CanRevertChannelMaxSize = EventLogHealthService.FindConfigChange(channelName, EventLogConfigChangeType.MaxSize) is not null;
+        CanRevertChannelEnabled = EventLogHealthService.FindConfigChange(channelName, EventLogConfigChangeType.Enabled) is not null;
+
+        var gaps = await Task.Run(() => _logHealth.DetectRecordGaps(channelName));
+        if (!ReferenceEquals(SelectedChannel, node)) return;
+        foreach (var g in gaps) ChannelGapFlags.Add(g);
+    }
+
+    /// <summary>#198: explicit confirmation stating the exact `wevtutil sl` command and its disk
+    /// cost before raising a channel's max size - same "state the exact command and its cost" shape
+    /// CLAUDE.md documents for #165/#172's registry writes.</summary>
+    private void ApplyRetention()
+    {
+        var rec = ChannelRetentionRecommendation;
+        var health = SelectedChannelHealth;
+        if (rec is null || health is null || rec.SuggestEnabling) return;
+
+        var confirm = MessageBox.Show(
+            $"This runs:\nwevtutil sl \"{rec.ChannelName}\" /ms:{rec.SuggestedMaxSizeBytes}\n\n"
+            + $"Raises this channel's maximum size from {Formatting.FormatBytes(rec.CurrentMaxSizeBytes)} to "
+            + $"{Formatting.FormatBytes(rec.SuggestedMaxSizeBytes)} (about {Formatting.FormatBytes(rec.AdditionalDiskCostBytes)} more disk "
+            + $"space) so it holds roughly this app's 30-day lookback instead of its current ~{rec.CurrentRetentionDays:0.#} days "
+            + "- an estimate based on this channel's current write rate, not an exact projection.\n\n"
+            + "Apply this change now?",
+            "Raise channel retention",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        _ = ApplyRetentionInnerAsync(rec, health);
+    }
+
+    private async Task ApplyRetentionInnerAsync(RetentionRecommendation rec, ChannelHealthInfo health)
+    {
+        ChannelHealthStatusText = "Applying...";
+        var (success, output) = await EventLogHealthService.ApplyMaxSizeAsync(rec.ChannelName, rec.SuggestedMaxSizeBytes);
+        if (success)
+        {
+            EventLogHealthService.RecordConfigChange(rec.ChannelName, EventLogConfigChangeType.MaxSize, (health.MaxSizeBytes ?? 0).ToString(), rec.SuggestedMaxSizeBytes.ToString());
+            ChannelHealthStatusText = "Retention raised.";
+            await LoadChannelHealthAsync(SelectedChannel);
+        }
+        else
+        {
+            ChannelHealthStatusText = $"Couldn't apply: {output}";
+        }
+    }
+
+    /// <summary>#198: same confirmation shape as ApplyRetention above, for enabling a disabled
+    /// diagnostic channel instead of raising an already-enabled one's size.</summary>
+    private void EnableSelectedChannel()
+    {
+        var rec = ChannelRetentionRecommendation;
+        if (rec is null || !rec.SuggestEnabling) return;
+
+        var confirm = MessageBox.Show(
+            $"This runs:\nwevtutil sl \"{rec.ChannelName}\" /e:true\n\n"
+            + "Enables this diagnostic channel so it starts collecting events going forward (it has no history before "
+            + "the moment it's enabled). Enable it now?",
+            "Enable channel",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        _ = EnableSelectedChannelInnerAsync(rec.ChannelName);
+    }
+
+    private async Task EnableSelectedChannelInnerAsync(string channelName)
+    {
+        ChannelHealthStatusText = "Enabling...";
+        var (success, output) = await EventLogHealthService.EnableChannelAsync(channelName);
+        if (success)
+        {
+            EventLogHealthService.RecordConfigChange(channelName, EventLogConfigChangeType.Enabled, "False", "True");
+            ChannelHealthStatusText = "Channel enabled.";
+            await LoadChannelHealthAsync(SelectedChannel);
+        }
+        else
+        {
+            ChannelHealthStatusText = $"Couldn't enable: {output}";
+        }
+    }
+
+    /// <summary>#198: one-click revert for ApplyRetention above - restores whatever max size this
+    /// app found before it last raised it (persisted in event-log-config.json, so this survives an
+    /// app restart, same as #165/#172's revert flows).</summary>
+    private void RevertChannelMaxSize()
+    {
+        var node = SelectedChannel;
+        if (node is null) return;
+        var change = EventLogHealthService.FindConfigChange(node.Name, EventLogConfigChangeType.MaxSize);
+        if (change is null) return;
+
+        var confirm = MessageBox.Show(
+            $"This runs:\nwevtutil sl \"{node.Name}\" /ms:{change.PreviousValue}\n\n"
+            + "Restores this channel's maximum size to what it was before this app last changed it. Revert now?",
+            "Revert channel retention",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Question);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        _ = RevertChannelMaxSizeInnerAsync(node.Name, change);
+    }
+
+    private async Task RevertChannelMaxSizeInnerAsync(string channelName, EventLogConfigChangeRecord change)
+    {
+        if (!long.TryParse(change.PreviousValue, out long prevBytes))
+        {
+            ChannelHealthStatusText = "Couldn't parse the saved previous value - nothing was changed.";
+            return;
+        }
+
+        ChannelHealthStatusText = "Reverting...";
+        var (success, output) = await EventLogHealthService.ApplyMaxSizeAsync(channelName, prevBytes);
+        if (success)
+        {
+            EventLogHealthService.RemoveConfigChange(channelName, EventLogConfigChangeType.MaxSize);
+            ChannelHealthStatusText = "Reverted.";
+            await LoadChannelHealthAsync(SelectedChannel);
+        }
+        else
+        {
+            ChannelHealthStatusText = $"Couldn't revert: {output}";
+        }
+    }
+
+    /// <summary>#198: one-click revert for EnableSelectedChannel above.</summary>
+    private void RevertChannelEnabled()
+    {
+        var node = SelectedChannel;
+        if (node is null) return;
+        var change = EventLogHealthService.FindConfigChange(node.Name, EventLogConfigChangeType.Enabled);
+        if (change is null) return;
+
+        bool prevEnabled = change.PreviousValue.Equals("True", StringComparison.OrdinalIgnoreCase);
+        var confirm = MessageBox.Show(
+            $"This runs:\nwevtutil sl \"{node.Name}\" /e:{(prevEnabled ? "true" : "false")}\n\n"
+            + "Restores this channel's enabled state to what it was before this app last changed it. Revert now?",
+            "Revert channel enabled state",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Question);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        _ = RevertChannelEnabledInnerAsync(node.Name, prevEnabled);
+    }
+
+    private async Task RevertChannelEnabledInnerAsync(string channelName, bool prevEnabled)
+    {
+        ChannelHealthStatusText = "Reverting...";
+        var (success, output) = prevEnabled
+            ? await EventLogHealthService.EnableChannelAsync(channelName)
+            : await EventLogHealthService.DisableChannelAsync(channelName);
+        if (success)
+        {
+            EventLogHealthService.RemoveConfigChange(channelName, EventLogConfigChangeType.Enabled);
+            ChannelHealthStatusText = "Reverted.";
+            await LoadChannelHealthAsync(SelectedChannel);
+        }
+        else
+        {
+            ChannelHealthStatusText = $"Couldn't revert: {output}";
+        }
+    }
+
+    /// <summary>#200: the evidence bundle's default channel set - every channel currently checked in
+    /// the tree for #112's "Multi-channel query" (IsSelectedForMulti), reused here rather than a
+    /// second channel-selection UI, plus every distinct channel the last anomaly scan actually read
+    /// from (ProviderChurn/#131) and every channel among rows the user has explicitly starred via
+    /// "Add to evidence" (#115's EvidenceBundle stub) - falling back to System+Application when none
+    /// of those three sources found anything.</summary>
+    private List<string> BuildEvidenceBundleChannelDefaults()
+    {
+        var channels = new List<string>();
+
+        void CollectSelected(IEnumerable<EventChannelNode> nodes)
+        {
+            foreach (var node in nodes)
+            {
+                if (node.IsGroup) { CollectSelected(node.Children); continue; }
+                if (node.IsSelectedForMulti && node.IsAccessible && !node.IsFilePath) channels.Add(node.Name);
+            }
+        }
+        CollectSelected(ChannelTree);
+
+        channels.AddRange(_lastAnomalyScanRows.Select(r => r.ChannelName).Where(c => !string.IsNullOrWhiteSpace(c)));
+        channels.AddRange(EvidenceBundle.Select(r => r.ChannelName).Where(c => !string.IsNullOrWhiteSpace(c)));
+
+        var distinct = channels.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        return distinct.Count > 0 ? distinct : new List<string> { "System", "Application" };
     }
 
     /// <summary>#104: composes RawXPathText from the filter bar controls - a snapshot, not a live
@@ -667,6 +943,10 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
         ExplainActionLabel = null;
         RunKbActionCommand.RaiseCanExecuteChanged();
 
+        // #194: reset every time - only a DistributedCOM event repopulates these below.
+        ExplainDcomComponents.Clear();
+        ExplainDcomNote = null;
+
         if (row is null)
         {
             ExplainHasContent = false;
@@ -676,6 +956,22 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
             ExplainIsBenign = false;
             ExplainSourceLabel = string.Empty;
             return;
+        }
+
+        // #194: DCOM permission-error detail-pane extension - extract and resolve every CLSID/APPID
+        // named in the message text, paired with a prominent "this is almost always harmless" note
+        // (reusing the KB's own #121 "benign" framing for 10016 where it applies, on top of this
+        // note rather than instead of it - editing registry DCOM permissions is specifically
+        // discouraged regardless of what the KB entry's own confidence/severity happens to say).
+        if (row.ProviderName.Equals("Microsoft-Windows-DistributedCOM", StringComparison.OrdinalIgnoreCase))
+        {
+            foreach (var resolution in ServiceHealthEventService.ResolveDcomComponentsInMessage(row.Message))
+                ExplainDcomComponents.Add(resolution);
+
+            ExplainDcomNote = "DCOM permission events like this are almost always harmless (usually a built-in Windows "
+                + "component asking for more access than it strictly needs) and are not something to \"fix\" by editing "
+                + "CLSID/AppID permissions in Component Services or the registry - doing so is far more likely to break "
+                + "something than resolve anything.";
         }
 
         var entry = _kb.Lookup(row.ProviderName, row.EventId);

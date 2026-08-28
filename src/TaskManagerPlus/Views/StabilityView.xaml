@@ -33,6 +33,42 @@
                 </TextBlock>
             </Border>
 
+            <!-- #199: a cleared log must be flagged prominently, never silently folded into "no
+                 problems found" - shown ahead of the Known-bad-IDs scorecard below, which is exactly
+                 the kind of "nothing flagged" card a cleared log could otherwise make look clean. -->
+            <Border Background="{DynamicResource DangerMutedBrush}" BorderBrush="{DynamicResource DangerBrush}"
+                    BorderThickness="1" CornerRadius="8" Padding="14,10" Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Visibility" Value="Visible" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding LogClearEvents.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Foreground="{DynamicResource DangerBrush}" FontWeight="SemiBold" FontSize="12.5">
+                        <Run Text="Log integrity - a log was cleared in the last 30 days" />
+                    </TextBlock>
+                    <TextBlock Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" FontSize="11.5" Margin="0,4,0,0">
+                        <Run Text="History before the clear is gone from that log - any &quot;no problems found&quot; card elsewhere on this tab only reflects what's still there." />
+                    </TextBlock>
+                    <ItemsControl ItemsSource="{Binding LogClearEvents}" Margin="0,6,0,0">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Foreground="{DynamicResource DangerBrush}" FontSize="11.5" TextWrapping="Wrap" Margin="0,0,0,2">
+                                    <Run Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}" FontWeight="SemiBold" />
+                                    <Run Text=" — the " /><Run Text="{Binding ClearedChannelName, Mode=OneWay}" /><Run Text=" log was cleared by " />
+                                    <Run Text="{Binding Account, Mode=OneWay}" FontWeight="SemiBold" /><Run Text="." />
+                                </TextBlock>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
             <Grid Margin="0,0,0,16">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
@@ -1357,6 +1393,118 @@
                                     <Run Text=" · " /><Run Text="{Binding Provider, Mode=OneWay}" /><Run Text=" " /><Run Text="{Binding EventId, Mode=OneWay}" />
                                     <Run Text=" — " /><Run Text="{Binding Description, Mode=OneWay}" />
                                 </TextBlock>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #195: Perflib counter-corruption card - directly relevant to this app itself, since
+                 a broken counter provider also breaks this app's own PerformanceCounter reads.
+                 Collapsed when nothing was found. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding PerflibSummary.Failures.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Performance counter provider failures (Perflib)" Style="{StaticResource CardTitle}" Margin="0" />
+                        <Button Grid.Column="1" Content="Rebuild counters (lodctr /R)" Command="{Binding RunLodctrRebuildCommand}" Padding="8,3" FontSize="11"
+                                 ToolTip="Rebuilds the Windows performance-counter registry from each provider's own .ini files - a real system change, confirmed before it runs." />
+                    </Grid>
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap">
+                        <Run Text="Perflib 1008/1010/1017/1023/2004 - a performance counter DLL failed to load or returned bad data. A broken provider here can also mean this app's own CPU/Memory/Disk/Network tabs are reading stale or missing data for that provider." />
+                    </TextBlock>
+                    <TextBlock FontWeight="SemiBold" FontSize="11.5" Margin="0,0,0,4">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding PerflibSummary.AffectedProviders.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                        <Run Text="Affected counter providers: " /><Run Text="{Binding PerflibSummary.AffectedProviders, Converter={StaticResource StringListJoinConverter}, Mode=OneWay}" />
+                    </TextBlock>
+                    <TextBlock Text="{Binding PerflibStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,6"
+                                Visibility="{Binding PerflibStatusText, Converter={StaticResource NullToVisibilityConverter}}" />
+                    <ItemsControl ItemsSource="{Binding PerflibSummary.Failures}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock FontSize="11" TextWrapping="Wrap" Margin="0,0,0,4">
+                                    <Run Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}" FontWeight="SemiBold" />
+                                    <Run Text=" · Perflib " /><Run Text="{Binding EventId, Mode=OneWay}" />
+                                    <Run Text=" — " /><Run Text="{Binding Description, Mode=OneWay}" />
+                                    <Run Text=" (" /><Run Text="{Binding CounterProviderName, TargetNullValue='provider unknown', Mode=OneWay}" /><Run Text=")" />
+                                </TextBlock>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #196: rollup of six more high-signal-but-lower-volume families (Schannel/ESENT/
+                 GroupPolicy/Time-Service/DNS Client/Tcpip), each with its own drill-down list.
+                 Collapsed when nothing was found. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding SubsystemFamilies.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Other subsystem error families" Style="{StaticResource CardTitle}" />
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap">
+                        <Run Text="TLS, database engine, Group Policy, time sync, DNS, and TCP/IP port-exhaustion failures from the last 30 days, one rolled-up count per family." />
+                    </TextBlock>
+                    <ItemsControl ItemsSource="{Binding SubsystemFamilies}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Expander Margin="0,0,0,6" FontSize="11.5">
+                                    <Expander.Header>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" FontSize="12.5" FontWeight="SemiBold" Text="{Binding FamilyName}" />
+                                            <TextBlock Grid.Column="1" FontSize="11" Foreground="{DynamicResource DangerBrush}">
+                                                <Run Text="{Binding TotalCount, Mode=OneWay}" /><Run Text="× · last " />
+                                                <Run Text="{Binding LastSeen, StringFormat={}{0:g}, Mode=OneWay}" />
+                                            </TextBlock>
+                                        </Grid>
+                                    </Expander.Header>
+                                    <StackPanel Margin="16,6,0,0">
+                                        <TextBlock Text="{Binding Summary}" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,0,0,6" />
+                                        <ItemsControl ItemsSource="{Binding Hits}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock FontSize="10.5" TextWrapping="Wrap" Margin="0,0,0,3">
+                                                        <Run Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}" FontWeight="SemiBold" />
+                                                        <Run Text=" · " /><Run Text="{Binding Provider, Mode=OneWay}" /><Run Text=" " /><Run Text="{Binding EventId, Mode=OneWay}" />
+                                                        <Run Text=" — " /><Run Text="{Binding Description, Mode=OneWay}" />
+                                                    </TextBlock>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </StackPanel>
+                                </Expander>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>

@@ -107,6 +107,16 @@ public sealed class ServiceRow : ObservableObject
     /// account), so the Services view hides those columns for driver rows.</summary>
     public bool IsDriver { get; init; }
 
+    /// <summary>#192: set after "Scan for crash loops & timeouts" runs - true when
+    /// ServiceHealthEventService.ReadServiceCrashLoops flagged this service as having crashed and
+    /// restarted repeatedly (SCM 7031/7034/7009 recurrence). Drives the row badge; a quick flag, not
+    /// a verdict. False/empty until the scan has run.</summary>
+    private bool _isCrashLooping;
+    public bool IsCrashLooping { get => _isCrashLooping; set => SetProperty(ref _isCrashLooping, value); }
+
+    private string _crashLoopSummaryText = string.Empty;
+    public string CrashLoopSummaryText { get => _crashLoopSummaryText; set => SetProperty(ref _crashLoopSummaryText, value); }
+
     public bool CanStart => Status is ServiceControllerStatus.Stopped;
     public bool CanStop => Status is ServiceControllerStatus.Running && ServiceName is not ("RpcSs" or "RpcEptMapper" or "DcomLaunch");
 }

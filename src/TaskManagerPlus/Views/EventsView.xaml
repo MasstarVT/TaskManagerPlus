@@ -224,8 +224,12 @@
                             <!-- #175-183: CBS.log/DISM.log/setup log parsing, WindowsUpdate.log decoding, update
                                  history, pending-servicing signals, and the AppX/AppReadiness failure channel -
                                  a third overlay, same toggleable-panel pattern as the two above. -->
-                            <ToggleButton Content="Servicing logs" IsChecked="{Binding Servicing.IsPanelOpen}" Padding="8,3"
+                            <ToggleButton Content="Servicing logs" IsChecked="{Binding Servicing.IsPanelOpen}" Padding="8,3" Margin="0,0,8,0"
                                            ToolTip="CBS.log/DISM.log/setup log parsing, WindowsUpdate.log decoding, update history, pending-servicing signals, and the AppX/Store failure channel (#175-183)." />
+                            <!-- #200: filtered evidence bundle export - the diagnostic hub's own
+                                 "package everything up" action, a fourth toggleable overlay panel. -->
+                            <ToggleButton Content="Export evidence bundle" IsChecked="{Binding Evidence.IsPanelOpen}" Padding="8,3"
+                                           ToolTip="Exports filtered .evtx files, WER reports, minidumps, systeminfo/msinfo32/dxdiag output, and a SUMMARY.md into one timestamped folder (#200)." />
                         </WrapPanel>
 
                         <!-- #109: import Event Viewer's own custom views / export a saved filter back to one -->
@@ -472,6 +476,91 @@
                         <TextBlock Grid.Column="0" Text="Channels" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" FontSize="13" />
                         <Button Grid.Column="1" Content="Refresh" Command="{Binding RefreshChannelsCommand}" Padding="8,3" FontSize="11" />
                     </Grid>
+
+                    <!-- #197/#198/#199: the selected channel's health detail - extends the existing
+                         channel tree with an on-select details panel (rather than a wholly separate
+                         dashboard), since the tree's own selection already answers "which channel am
+                         I looking at". Docked to the bottom so the tree above keeps most of the
+                         space; collapsed until a real (non-group, accessible, non-.evtx) channel is
+                         selected. -->
+                    <Border DockPanel.Dock="Bottom" Margin="8,0,8,8" Padding="8,6" MaxHeight="260"
+                            Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding SelectedChannelHealth}" Value="{x:Null}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                            <StackPanel>
+                                <TextBlock Text="Channel health" FontSize="11.5" FontWeight="SemiBold" Margin="0,0,0,4" />
+                                <TextBlock FontSize="10.5" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}">
+                                    <Run Text="Enabled: " /><Run Text="{Binding SelectedChannelHealth.IsEnabled, Mode=OneWay}" />
+                                    <Run Text=" · Mode: " /><Run Text="{Binding SelectedChannelHealth.LogModeText, Mode=OneWay}" />
+                                    <Run Text=" · Max size: " /><Run Text="{Binding SelectedChannelHealth.MaxSizeBytes, Converter={StaticResource BytesToReadableConverter}, Mode=OneWay}" />
+                                </TextBlock>
+                                <TextBlock FontSize="10.5" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,2,0,0">
+                                    <Run Text="Records: " /><Run Text="{Binding SelectedChannelHealth.RecordCount, Mode=OneWay}" />
+                                    <Run Text=" · File size: " /><Run Text="{Binding SelectedChannelHealth.FileSizeBytes, Converter={StaticResource BytesToReadableConverter}, Mode=OneWay}" />
+                                    <Run Text=" · Full: " /><Run Text="{Binding SelectedChannelHealth.IsLogFull, Mode=OneWay}" />
+                                </TextBlock>
+                                <TextBlock FontSize="10.5" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,2,0,0">
+                                    <Run Text="Holds about " /><Run Text="{Binding SelectedChannelHealth.EffectiveRetentionDays, StringFormat={}{0:0.#}, TargetNullValue='unknown', Mode=OneWay}" />
+                                    <Run Text=" day(s) of history (oldest record " />
+                                    <Run Text="{Binding SelectedChannelHealth.OldestRecordTime, StringFormat={}{0:g}, TargetNullValue='none', Mode=OneWay}" /><Run Text=")." />
+                                </TextBlock>
+                                <TextBlock FontSize="9.5" FontFamily="Consolas" TextWrapping="Wrap" Foreground="{DynamicResource TextTertiaryBrush}"
+                                            Margin="0,2,0,0" Text="{Binding SelectedChannelHealth.FilePath}" />
+                                <TextBlock FontSize="10" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,2,0,0">
+                                    <Run Text="Providers: " /><Run Text="{Binding SelectedChannelHealth.ProviderNames, Converter={StaticResource StringListJoinConverter}, Mode=OneWay}" />
+                                </TextBlock>
+
+                                <!-- #198: retention/enable recommendation + confirmed apply/revert. -->
+                                <Border BorderBrush="{DynamicResource WarningBrush}" BorderThickness="1" CornerRadius="4" Padding="6,5" Margin="0,6,0,0">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding ChannelRetentionRecommendation}" Value="{x:Null}">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
+                                    <StackPanel>
+                                        <TextBlock FontSize="10.5" TextWrapping="Wrap" Foreground="{DynamicResource WarningBrush}">
+                                            <Run Text="Retention shorter than this app's 30-day lookback (~" />
+                                            <Run Text="{Binding ChannelRetentionRecommendation.CurrentRetentionDays, StringFormat={}{0:0.#}, Mode=OneWay}" />
+                                            <Run Text=" days), or a diagnostic channel this app reads is disabled." />
+                                        </TextBlock>
+                                        <WrapPanel Margin="0,4,0,0">
+                                            <Button Content="Raise size" Command="{Binding ApplyRetentionCommand}" Padding="6,2" FontSize="10" Margin="0,0,6,4" />
+                                            <Button Content="Enable channel" Command="{Binding EnableSelectedChannelCommand}" Padding="6,2" FontSize="10" Margin="0,0,6,4" />
+                                            <Button Content="Revert size" Command="{Binding RevertChannelMaxSizeCommand}" Padding="6,2" FontSize="10" Margin="0,0,6,4" />
+                                            <Button Content="Revert enable" Command="{Binding RevertChannelEnabledCommand}" Padding="6,2" FontSize="10" Margin="0,0,0,4" />
+                                        </WrapPanel>
+                                    </StackPanel>
+                                </Border>
+
+                                <!-- #199: record-gap / log-clear flags found in the most recently
+                                     read page of this channel. -->
+                                <ItemsControl ItemsSource="{Binding ChannelGapFlags}" Margin="0,6,0,0">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <TextBlock FontSize="10" Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" Margin="0,0,0,3" Text="{Binding Description}" />
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <TextBlock Text="{Binding ChannelHealthStatusText}" FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,0" TextWrapping="Wrap"
+                                            Visibility="{Binding ChannelHealthStatusText, Converter={StaticResource NullToVisibilityConverter}}" />
+                            </StackPanel>
+                        </ScrollViewer>
+                    </Border>
+
                     <TreeView x:Name="ChannelTreeView" ItemsSource="{Binding ChannelTree}"
                               SelectedItemChanged="ChannelTreeView_SelectedItemChanged"
                               BorderThickness="0" Background="Transparent" Margin="4,0,4,4">
@@ -947,6 +1036,31 @@
                                                 </DataTemplate>
                                             </ItemsControl.ItemTemplate>
                                         </ItemsControl>
+
+                                        <!-- #194: DistributedCOM CLSID/APPID resolver - chips
+                                             showing the friendly component name for each GUID found
+                                             in the message text, plus a prominent "don't 'fix' this
+                                             by editing registry permissions" note. Only present for
+                                             a DistributedCOM event - see EventsViewModel.BuildExplain. -->
+                                        <TextBlock Text="{Binding ExplainDcomNote}" TextWrapping="Wrap" FontSize="10.5" Foreground="{DynamicResource WarningBrush}" Margin="0,4,0,6"
+                                                    Visibility="{Binding ExplainDcomNote, Converter={StaticResource NullToVisibilityConverter}}" />
+                                        <ItemsControl ItemsSource="{Binding ExplainDcomComponents}">
+                                            <ItemsControl.ItemsPanel>
+                                                <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                                            </ItemsControl.ItemsPanel>
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate DataType="{x:Type models:DcomComponentResolution}">
+                                                    <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="10" Padding="7,3" Margin="0,0,6,6"
+                                                             ToolTip="{Binding Guid}">
+                                                        <TextBlock FontSize="10.5">
+                                                            <Run Text="{Binding Kind, Mode=OneWay}" FontWeight="SemiBold" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                                            <Run Text=": " Foreground="{DynamicResource TextSecondaryBrush}" />
+                                                            <Run Text="{Binding FriendlyName, TargetNullValue='(not registered locally)', Mode=OneWay}" />
+                                                        </TextBlock>
+                                                    </Border>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
                                     </StackPanel>
                                 </StackPanel>
 
@@ -1078,6 +1192,89 @@
                     </Style>
                 </Border.Style>
                 <views:ServicingLogsPanel DataContext="{Binding Servicing}" />
+            </Border>
+
+            <!-- #200: evidence bundle export overlay - same "spans every column, sits on top of the
+                 three panes below" shape as the three overlays above, reached via the "Export
+                 evidence bundle" toggle in the filter bar's "More tools" expander. Channel selection
+                 is NOT a control here - it reuses whatever's checked in the channel tree's own #112
+                 multi-select (falling back to a sensible default) so there's no second channel
+                 picker to keep in sync - see EventsViewModel.BuildEvidenceBundleChannelDefaults. -->
+            <Border Grid.Column="0" Grid.ColumnSpan="5" Panel.ZIndex="13">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding Evidence.IsPanelOpen}" Value="True">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <Grid DataContext="{Binding Evidence}">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <Grid Grid.Row="0" Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="Export evidence bundle" Style="{StaticResource CardTitle}" FontSize="14" Margin="0" />
+                            <TextBlock TextWrapping="Wrap" Style="{StaticResource SubStat}" Margin="0,2,0,0">
+                                <Run Text="Packages filtered .evtx exports, matching WER reports, minidumps, systeminfo/msinfo32/dxdiag output, and a SUMMARY.md timeline into one timestamped folder." />
+                            </TextBlock>
+                        </StackPanel>
+                        <ToggleButton Grid.Column="1" Content="Close" IsChecked="{Binding IsPanelOpen}" Padding="10,4" VerticalAlignment="Top" />
+                    </Grid>
+
+                    <WrapPanel Grid.Row="1" Margin="0,0,0,10">
+                        <TextBlock Text="Time window (last N days):" VerticalAlignment="Center" Margin="0,0,6,0" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5" />
+                        <TextBox Text="{Binding LookbackDays, UpdateSourceTrigger=PropertyChanged}" Width="50" Margin="0,0,16,0" />
+                        <Button Content="Export" Command="{Binding ExportCommand}" Padding="10,4" Margin="0,0,8,0" />
+                        <Button Content="Open export folder" Command="{Binding RevealFolderCommand}" Padding="10,4" Margin="0,0,8,0" />
+                        <ProgressBar Width="140" Height="6" IsIndeterminate="{Binding IsExporting}" VerticalAlignment="Center" />
+                    </WrapPanel>
+                    <TextBlock Grid.Row="2" Text="{Binding StatusText}" TextWrapping="Wrap" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,10" />
+
+                    <ItemsControl Grid.Row="3" ItemsSource="{Binding Steps}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate DataType="{x:Type models:EvidenceBundleStepResult}">
+                                <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="8,5" Margin="0,0,0,4">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" FontSize="11" FontWeight="Bold" Margin="0,0,8,0" Width="16">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Text" Value="✓" />
+                                                    <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding Succeeded}" Value="False">
+                                                            <Setter Property="Text" Value="!" />
+                                                            <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                        <StackPanel Grid.Column="1">
+                                            <TextBlock Text="{Binding StepName}" FontSize="11.5" FontWeight="SemiBold" />
+                                            <TextBlock Text="{Binding Detail}" FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,1,0,0" />
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </Grid>
             </Border>
         </Grid>
     </Grid>
