@@ -49,6 +49,19 @@ public sealed class EventChannelNode
     /// CheckBox's own two-way binding drives the visual, this is just where the value lands for the
     /// query-building code to read back).</summary>
     public bool IsSelectedForMulti { get; set; }
+
+    /// <summary>#135: this channel's configured max size, when readable - null when
+    /// EventLogConfiguration couldn't be opened for it (same "degrade, never fabricate" rule as
+    /// everything else on this node). Shown next to the silent-channel flag below so the "non-trivial
+    /// max size" half of that heuristic isn't a black box.</summary>
+    public long? MaxSizeBytes { get; init; }
+
+    /// <summary>#135: true when this channel is enabled, has a non-trivial configured max size, and
+    /// has written zero records in a long time (or never) - usually means a broken provider
+    /// registration or a corrupt .evtx rather than "this channel is just quiet." See
+    /// EventLogExplorerService.IsChannelSilent for the exact thresholds. A group heading or an
+    /// inaccessible/disabled leaf is never flagged (nothing meaningful to say about them here).</summary>
+    public bool IsSilent { get; init; }
 }
 
 /// <summary>One event record as shown in the center grid (#103) and read by the detail pane

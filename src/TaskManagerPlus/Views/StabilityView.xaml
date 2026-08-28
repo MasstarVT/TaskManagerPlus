@@ -138,6 +138,95 @@
                 </StackPanel>
             </Border>
 
+            <!-- #130: day x hour-of-day Critical/Error density grid, sitting directly under the
+                 Reliability History chart above - patterns invisible in a daily bar total ("every
+                 night at 3 AM", "only after resume") pop out as a vertical/clustered stripe here.
+                 Custom UniformGrid/ItemsControl rendering (not LiveChartsCore's HeatSeries) - see
+                 StabilityViewModel/EventAnomalyDetectionService's remarks for why. Collapsed when
+                 nothing was found (a quiet system in the lookback window). -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding ErrorDensityHeatmap.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Error density (day x hour of day)" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Critical/Error counts bucketed by the hour they were logged, one row per day - a recurring vertical stripe means &quot;every day around this hour&quot;." Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,-4,0,10" />
+                    <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+                        <ItemsControl ItemsSource="{Binding ErrorDensityHeatmap}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <UniformGrid Columns="24" />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Width="14" Height="14" Margin="1"
+                                             Background="{Binding Count, Converter={StaticResource HeatCellCountToBrushConverter}}"
+                                             ToolTip="{Binding}" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                </StackPanel>
+            </Border>
+
+            <!-- #128: "New error types this week" - signatures present only in the last 7 days of
+                 the same 30-day snapshot above, with no older occurrence in it - the single
+                 strongest "something changed" signal an event log gives. Collapsed when nothing
+                 qualifies (the common case). -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding NewErrorTypesThisWeek.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="New error types this week" Style="{StaticResource CardTitle}" />
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap">
+                        <Run Text="Quick flag, not a verdict — " FontWeight="SemiBold" />
+                        <Run Text="event signatures seen in the last 7 days with no earlier occurrence in this snapshot's 30-day window." />
+                    </TextBlock>
+                    <ItemsControl ItemsSource="{Binding NewErrorTypesThisWeek}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,8" Margin="0,0,0,6">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Grid.Column="0">
+                                            <TextBlock FontSize="12.5" FontWeight="SemiBold">
+                                                <Run Text="{Binding Provider, Mode=OneWay}" /><Run Text=" " /><Run Text="{Binding EventId, Mode=OneWay}" />
+                                            </TextBlock>
+                                            <TextBlock Text="{Binding SampleMessage}" FontSize="11.5" TextWrapping="Wrap" Margin="0,2,0,0" MaxHeight="34" TextTrimming="CharacterEllipsis" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="1" HorizontalAlignment="Right" Margin="10,0,0,0">
+                                            <TextBlock FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" HorizontalAlignment="Right">
+                                                <Run Text="First seen " /><Run Text="{Binding FirstSeen, StringFormat={}{0:g}, Mode=OneWay}" />
+                                            </TextBlock>
+                                            <TextBlock FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" HorizontalAlignment="Right">
+                                                <Run Text="{Binding OccurrenceCount, Mode=OneWay}" /><Run Text=" occurrence(s)" />
+                                            </TextBlock>
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
             <!-- #3: minidump files, timestamp + best-effort bugcheck code correlated from a
                  nearby Kernel-Power 41 event - see EventLogService.ReadMinidumps. -->
             <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">

@@ -329,10 +329,104 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
     private bool _showCorrelationColumns;
     public bool ShowCorrelationColumns { get => _showCorrelationColumns; set => SetProperty(ref _showCorrelationColumns, value); }
 
+    // ---- #127-134: error-burst / anomaly detection deep scan ----
+    private readonly EventAnomalyDetectionService _anomaly;
+    private CancellationTokenSource? _anomalyScanCts;
+
+    /// <summary>The dataset the last anomaly scan (#127-133) read - cached so #134's "since it was
+    /// working" diff can reuse it instead of re-reading the log a second time.</summary>
+    private List<EventRecordRow> _lastAnomalyScanRows = new();
+
+    public ObservableCollection<EventIdBaselineFlag> BaselineFlags { get; } = new();
+    public ObservableCollection<FirstOccurrenceFlag> AnomalyFirstOccurrences { get; } = new();
+    public ObservableCollection<BurstGroup> AnomalyBurstGroups { get; } = new();
+    public ObservableCollection<PeriodicLoopFlag> PeriodicLoopFlags { get; } = new();
+    public ObservableCollection<BootErrorProfileRow> BootProfileRows { get; } = new();
+
+    private bool _isAnomalyScanRunning;
+    public bool IsAnomalyScanRunning
+    {
+        get => _isAnomalyScanRunning;
+        private set { if (SetProperty(ref _isAnomalyScanRunning, value)) CancelAnomalyScanCommand.RaiseCanExecuteChanged(); }
+    }
+
+    private string? _anomalyScanStatusText;
+    public string? AnomalyScanStatusText { get => _anomalyScanStatusText; private set => SetProperty(ref _anomalyScanStatusText, value); }
+
+    private int _anomalyLookbackDays = 90;
+    /// <summary>#127's "90-day baseline" default - also drives #131/#132/#133's scans since they
+    /// all read from the same window.</summary>
+    public int AnomalyLookbackDays { get => _anomalyLookbackDays; set => SetProperty(ref _anomalyLookbackDays, value); }
+
+    public AsyncRelayCommand RunAnomalyScanCommand { get; }
+    public RelayCommand CancelAnomalyScanCommand { get; }
+
+    // ---- #129: burst collapsing ----
+    private int _burstWindowMinutes = 5;
+    public int BurstWindowMinutes { get => _burstWindowMinutes; set => SetProperty(ref _burstWindowMinutes, value); }
+    private int _burstMinCount = 20;
+    public int BurstMinCount { get => _burstMinCount; set => SetProperty(ref _burstMinCount, value); }
+
+    private bool _showBurstCollapsedView;
+    /// <summary>Toggle for the main events grid (#129) - when on, the grid swaps to
+    /// CollapsedEventBursts (runs of 20+ within 5 minutes collapsed to one incident row) instead of
+    /// the raw per-record list, so a driver retry storm reads as one row.</summary>
+    public bool ShowBurstCollapsedView
+    {
+        get => _showBurstCollapsedView;
+        set { if (SetProperty(ref _showBurstCollapsedView, value) && value) RecomputeCollapsedBursts(); }
+    }
+    public ObservableCollection<BurstGroup> CollapsedEventBursts { get; } = new();
+    public RelayCommand RecomputeCollapsedBurstsCommand { get; }
+
+    // ---- #131: log churn attribution ----
+    public ObservableCollection<ProviderChurnRow> ProviderChurn { get; } = new();
+
+    private bool _isChurnScanRunning;
+    public bool IsChurnScanRunning
+    {
+        get => _isChurnScanRunning;
+        private set => SetProperty(ref _isChurnScanRunning, value);
+    }
+
+    private string? _churnStatusText;
+    public string? ChurnStatusText { get => _churnStatusText; private set => SetProperty(ref _churnStatusText, value); }
+
+    public AsyncRelayCommand ScanLogChurnCommand { get; }
+
+    // ---- #134: "since it was working" diff ----
+    private DateTime _diffCutoffDate = DateTime.Now.AddDays(-7);
+    public DateTime DiffCutoffDate { get => _diffCutoffDate; set => SetProperty(ref _diffCutoffDate, value); }
+    public ObservableCollection<EventSignatureDiffRow> DiffNewSignatures { get; } = new();
+    public ObservableCollection<EventSignatureDiffRow> DiffStoppedSignatures { get; } = new();
+
+    private string? _diffStatusText;
+    public string? DiffStatusText { get => _diffStatusText; private set => SetProperty(ref _diffStatusText, value); }
+
+    public RelayCommand RunSinceWorkingDiffCommand { get; }
+
+    // ---- #136: live watchlist alerts ----
+    public ObservableCollection<WatchlistEntry> Watchlist { get; } = new();
+    private readonly Dictionary<string, EventLogExplorerService.EventWatchHandle> _watchlistHandles = new(StringComparer.OrdinalIgnoreCase);
+
+    public RelayCommand AddSelectedToWatchlistCommand { get; }
+    public RelayCommand RemoveFromWatchlistCommand { get; }
+
+    private bool _isWatchlistActive;
+    /// <summary>Not persisted - a fresh session always starts with watchlist alerts off, so pinning
+    /// signatures never silently starts a background subscription the user didn't just ask for.
+    /// Re-subscribes (StartWatchlist) whenever the pinned set changes while this is on.</summary>
+    public bool IsWatchlistActive
+    {
+        get => _isWatchlistActive;
+        set { if (SetProperty(ref _isWatchlistActive, value)) { if (value) StartWatchlist(); else StopWatchlistHandles(); } }
+    }
+
     public EventsViewModel(ProcessesViewModel processes, ServicesViewModel services)
     {
         _processes = processes;
         _services = services;
+        _anomaly = new EventAnomalyDetectionService(_service);
 
         RefreshChannelsCommand = new AsyncRelayCommand(RefreshChannelsAsync);
         BuildXPathCommand = new RelayCommand(_ => RawXPathText = BuildXPathFromFilters());
@@ -375,12 +469,21 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
         RunKbActionCommand = new RelayCommand(_ => RunKbAction(), _ => _kbActionTargetRow is not null);
         ExportUnknownEventsCommand = new RelayCommand(_ => ExportUnknownEvents(), _ => UnknownEventCount > 0);
 
+        RunAnomalyScanCommand = new AsyncRelayCommand(RunAnomalyScanAsync, () => !IsAnomalyScanRunning);
+        CancelAnomalyScanCommand = new RelayCommand(_ => _anomalyScanCts?.Cancel(), _ => IsAnomalyScanRunning);
+        RecomputeCollapsedBurstsCommand = new RelayCommand(_ => RecomputeCollapsedBursts());
+        ScanLogChurnCommand = new AsyncRelayCommand(ScanLogChurnAsync, () => !IsChurnScanRunning);
+        RunSinceWorkingDiffCommand = new RelayCommand(_ => RunSinceWorkingDiff());
+        AddSelectedToWatchlistCommand = new RelayCommand(p => AddSelectedToWatchlist(p as EventRecordRow));
+        RemoveFromWatchlistCommand = new RelayCommand(p => RemoveFromWatchlist(p as WatchlistEntry));
+
         EventsView = CollectionViewSource.GetDefaultView(Events);
         // #121: hides rows the KB flags as benign noise while the toggle is on - applied on top of
         // whatever grouping #116 already sets, not instead of it.
         EventsView.Filter = o => !(HideKnownNoise && o is EventRecordRow row && row.KbIsBenign);
 
         LoadSavedFilters();
+        LoadWatchlist();
         _ = RefreshChannelsAsync();
     }
 
@@ -474,6 +577,7 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
             HasMore = result.HasMore;
             StatusText = Events.Count == 0 ? "No matching events found." : $"{Events.Count} event(s) loaded.";
             UpdateHiddenNoiseText();
+            if (ShowBurstCollapsedView) RecomputeCollapsedBursts();
         }
         catch (Exception ex)
         {
@@ -781,6 +885,7 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
                 Events.Insert(0, row);
                 StatusText = $"{Events.Count} event(s) loaded (following live).";
                 UpdateHiddenNoiseText();
+                if (ShowBurstCollapsedView) RecomputeCollapsedBursts();
             }),
             err => Application.Current?.Dispatcher.Invoke(() => StatusText = $"Follow stopped: {err}"));
 
@@ -1211,12 +1316,262 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
         }
     }
 
+    // ---- #127-133: error-burst / anomaly-detection deep scan ----
+
+    /// <summary>Runs one deep scan (Critical/Error/Warning across whichever channels are checked in
+    /// the tree, or System+Application if none are checked - mirroring RunMultiChannelQueryAsync's
+    /// own fallback) and computes every #127/#128/#129/#132/#133 flag from that single dataset,
+    /// which is also cached for #134's diff so a second read isn't needed. Capped at 20,000 records
+    /// - a "quick flag, not an exhaustive audit" sweep of a busy machine's logs, the same tradeoff
+    /// #111's cross-channel search already makes, and exactly why this is gated behind an explicit
+    /// button rather than ever running on a tick.</summary>
+    private async Task RunAnomalyScanAsync()
+    {
+        var channels = ChannelTree.SelectMany(g => g.Children)
+            .Where(c => !c.IsGroup && c.IsAccessible && c.IsSelectedForMulti)
+            .Select(c => c.Name)
+            .ToList();
+        if (channels.Count == 0)
+        {
+            channels = ChannelTree.SelectMany(g => g.Children)
+                .Where(c => !c.IsGroup && c.IsAccessible
+                    && (string.Equals(c.Name, "System", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(c.Name, "Application", StringComparison.OrdinalIgnoreCase)))
+                .Select(c => c.Name)
+                .ToList();
+        }
+        if (channels.Count == 0)
+        {
+            AnomalyScanStatusText = "No accessible channels to scan.";
+            return;
+        }
+
+        _anomalyScanCts?.Cancel();
+        _anomalyScanCts?.Dispose();
+        _anomalyScanCts = new CancellationTokenSource();
+        var token = _anomalyScanCts.Token;
+
+        IsAnomalyScanRunning = true;
+        BaselineFlags.Clear();
+        AnomalyFirstOccurrences.Clear();
+        AnomalyBurstGroups.Clear();
+        PeriodicLoopFlags.Clear();
+        BootProfileRows.Clear();
+        AnomalyScanStatusText = $"Scanning {string.Join(", ", channels)} (last {AnomalyLookbackDays} day(s))...";
+
+        try
+        {
+            string xpath = $"*[System[(Level=1 or Level=2 or Level=3) and TimeCreated[timediff(@SystemTime) <= {AnomalyLookbackDays * 24L * 60 * 60 * 1000}]]]";
+            var progress = new Progress<int>(n => AnomalyScanStatusText = $"Scanning... {n} record(s) read so far.");
+            var scan = await Task.Run(() => _anomaly.ReadWindow(channels, xpath, maxRecords: 20000, progress, token), token);
+            if (scan.ErrorText is not null)
+            {
+                AnomalyScanStatusText = $"Scan failed: {scan.ErrorText}";
+                return;
+            }
+
+            _lastAnomalyScanRows = scan.Rows;
+            var now = DateTime.Now;
+
+            foreach (var f in _anomaly.ComputeBaselineFlags(scan.Rows, now)) BaselineFlags.Add(f);
+            foreach (var f in _anomaly.ComputeFirstOccurrences(
+                scan.Rows.Select(r => (r.ProviderName, r.EventId, r.TimeCreated, (string?)r.Message)), now, recentWindowDays: 7))
+                AnomalyFirstOccurrences.Add(f);
+            foreach (var g in _anomaly.CollapseBursts(scan.Rows, TimeSpan.FromMinutes(BurstWindowMinutes), BurstMinCount))
+                AnomalyBurstGroups.Add(g);
+            foreach (var f in _anomaly.DetectPeriodicLoops(scan.Rows)) PeriodicLoopFlags.Add(f);
+
+            var bootMarkers = await Task.Run(() => _anomaly.FindBootMarkers(AnomalyLookbackDays, token), token);
+            var bootProfile = _anomaly.ComputeBootProfile(scan.Rows, bootMarkers, TimeSpan.FromSeconds(120));
+            foreach (var r in bootProfile.Providers) BootProfileRows.Add(r);
+
+            string cappedNote = scan.WasCapped ? " (capped - there may be more in range)" : string.Empty;
+            AnomalyScanStatusText = $"Scanned {scan.Rows.Count} record(s){cappedNote}. " +
+                $"{BaselineFlags.Count} unusual-for-this-PC flag(s), {AnomalyFirstOccurrences.Count} new signature(s), " +
+                $"{AnomalyBurstGroups.Count} burst(s), {PeriodicLoopFlags.Count} periodic loop(s), {bootProfile.BootMarkersFound} boot marker(s) found.";
+        }
+        catch (OperationCanceledException)
+        {
+            AnomalyScanStatusText = $"Scan cancelled - {_lastAnomalyScanRows.Count} record(s) read before stopping.";
+        }
+        catch (Exception ex)
+        {
+            AnomalyScanStatusText = $"Scan failed: {ex.Message}";
+        }
+        finally
+        {
+            IsAnomalyScanRunning = false;
+        }
+    }
+
+    // ---- #129: burst collapsing (main grid toggle) ----
+
+    private void RecomputeCollapsedBursts()
+    {
+        CollapsedEventBursts.Clear();
+        foreach (var g in _anomaly.CollapseBursts(Events, TimeSpan.FromMinutes(BurstWindowMinutes), BurstMinCount))
+            CollapsedEventBursts.Add(g);
+    }
+
+    // ---- #131: log churn attribution ----
+
+    /// <summary>Scans whichever channel is currently selected in the tree (falls back to "System" -
+    /// the channel item 131's own "why does my System log only go back 2 days" framing is about) for
+    /// provider record-count share within the lookback window - a separate, lightweight scan from
+    /// the main anomaly deep scan above since churn needs every level (mostly Information), not just
+    /// Critical/Error/Warning.</summary>
+    private async Task ScanLogChurnAsync()
+    {
+        string channel = SelectedChannel is { IsGroup: false, IsAccessible: true } ch ? ch.Name : "System";
+
+        IsChurnScanRunning = true;
+        ChurnStatusText = $"Scanning \"{channel}\" for provider churn (last {AnomalyLookbackDays} day(s))...";
+        try
+        {
+            var result = await Task.Run(() => _anomaly.ScanProviderChurn(channel, AnomalyLookbackDays, maxRecords: 200000, CancellationToken.None));
+            if (result.ErrorText is not null)
+            {
+                ChurnStatusText = $"Couldn't scan \"{channel}\": {result.ErrorText}";
+                return;
+            }
+
+            ProviderChurn.Clear();
+            foreach (var row in result.Rows) ProviderChurn.Add(row);
+
+            string cappedNote = result.WasCapped ? " (capped - there may be more)" : string.Empty;
+            ChurnStatusText = $"Scanned {result.TotalRecordsScanned} record(s) in \"{channel}\"{cappedNote}. {ProviderChurn.Count} provider(s) wrote to it.";
+        }
+        catch (Exception ex)
+        {
+            ChurnStatusText = $"Couldn't scan \"{channel}\": {ex.Message}";
+        }
+        finally
+        {
+            IsChurnScanRunning = false;
+        }
+    }
+
+    // ---- #134: "since it was working" diff ----
+
+    /// <summary>Reuses the last anomaly scan's dataset (#127-133) rather than reading the log a
+    /// second time - the cutoff date just needs to fall within whatever window that scan already
+    /// covered.</summary>
+    private void RunSinceWorkingDiff()
+    {
+        if (_lastAnomalyScanRows.Count == 0)
+        {
+            DiffStatusText = "Run the anomaly scan above first - the diff reuses that scan's data instead of reading the log again.";
+            return;
+        }
+
+        var result = _anomaly.DiffSinceDate(_lastAnomalyScanRows, DiffCutoffDate);
+        DiffNewSignatures.Clear();
+        foreach (var r in result.NewSignatures) DiffNewSignatures.Add(r);
+        DiffStoppedSignatures.Clear();
+        foreach (var r in result.StoppedSignatures) DiffStoppedSignatures.Add(r);
+
+        DiffStatusText = $"{result.NewSignatures.Count} new signature(s) since {DiffCutoffDate:d}, {result.StoppedSignatures.Count} stopped - " +
+            $"based on the {_lastAnomalyScanRows.Count} record(s) from the last anomaly scan.";
+    }
+
+    // ---- #136: live watchlist alerts ----
+
+    private void LoadWatchlist()
+    {
+        var settings = EventWatchlistSettingsService.Load();
+        Watchlist.Clear();
+        foreach (var e in settings.Entries) Watchlist.Add(e);
+    }
+
+    private void PersistWatchlist() => EventWatchlistSettingsService.Save(new EventWatchlistSettings { Entries = Watchlist.ToList() });
+
+    private void AddSelectedToWatchlist(EventRecordRow? row)
+    {
+        row ??= SelectedEvent;
+        if (row is null) return;
+
+        bool alreadyPinned = Watchlist.Any(w =>
+            string.Equals(w.Channel, row.ChannelName, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(w.Provider, row.ProviderName, StringComparison.OrdinalIgnoreCase)
+            && w.EventId == row.EventId);
+        if (alreadyPinned)
+        {
+            StatusText = $"{row.ProviderName} {row.EventId} is already on the watchlist.";
+            return;
+        }
+
+        Watchlist.Add(new WatchlistEntry { Channel = row.ChannelName, Provider = row.ProviderName, EventId = row.EventId });
+        PersistWatchlist();
+        if (IsWatchlistActive) StartWatchlist(); // re-subscribe so the new signature is covered immediately
+        StatusText = $"Pinned {row.ProviderName} {row.EventId} ({row.ChannelName}) to the watchlist.";
+    }
+
+    private void RemoveFromWatchlist(WatchlistEntry? entry)
+    {
+        if (entry is null) return;
+        Watchlist.Remove(entry);
+        PersistWatchlist();
+        if (IsWatchlistActive) StartWatchlist(); // re-subscribe without the removed signature
+    }
+
+    /// <summary>Opens one EventLogWatcher per distinct channel among the pinned entries (an OR of
+    /// "this provider AND this event ID" clauses per channel), reusing EventLogExplorerService.
+    /// StartWatch - the same watcher-wrapper #107's live tail already uses - rather than a second
+    /// watcher mechanism. Fires ToastService.Show on a match (this app's existing toast popup, see
+    /// ToastService's remarks), never a bespoke notification path.</summary>
+    private void StartWatchlist()
+    {
+        StopWatchlistHandles();
+
+        foreach (var channelGroup in Watchlist.GroupBy(w => w.Channel, StringComparer.OrdinalIgnoreCase))
+        {
+            string channel = channelGroup.Key;
+            if (string.IsNullOrWhiteSpace(channel)) continue;
+
+            var clauses = channelGroup
+                .Select(w => $"(Provider[@Name={EventLogExplorerService.QuoteXPathLiteral(w.Provider)}] and EventID={w.EventId})")
+                .ToList();
+            if (clauses.Count == 0) continue;
+            string xpath = "*[System[" + string.Join(" or ", clauses) + "]]";
+
+            var handle = _service.StartWatch(channel, xpath,
+                row => Application.Current?.Dispatcher.Invoke(() =>
+                {
+                    var entry = Watchlist.FirstOrDefault(w =>
+                        string.Equals(w.Channel, row.ChannelName, StringComparison.OrdinalIgnoreCase)
+                        && string.Equals(w.Provider, row.ProviderName, StringComparison.OrdinalIgnoreCase)
+                        && w.EventId == row.EventId);
+                    string title = entry?.DisplayName ?? $"{row.ProviderName} {row.EventId}";
+                    string message = string.IsNullOrWhiteSpace(row.Message) ? $"Fired in {row.ChannelName}." : TruncateForToast(row.Message);
+                    ToastService.Show($"Watchlist: {title}", message, isCritical: row.LevelValue is 1 or 2);
+                }),
+                err => Application.Current?.Dispatcher.Invoke(() => StatusText = $"Watchlist alert on \"{channel}\" stopped: {err}"));
+
+            if (handle is not null) _watchlistHandles[channel] = handle;
+        }
+
+        StatusText = _watchlistHandles.Count > 0
+            ? $"Watchlist alerts active on {_watchlistHandles.Count} channel(s) for {Watchlist.Count} pinned signature(s)."
+            : "Watchlist alerts enabled, but there's nothing pinned yet.";
+    }
+
+    private void StopWatchlistHandles()
+    {
+        foreach (var h in _watchlistHandles.Values) h.Dispose();
+        _watchlistHandles.Clear();
+    }
+
+    private static string TruncateForToast(string text) => text.Length <= 220 ? text : text[..220] + "...";
+
     public void Dispose()
     {
         StopFollow();
+        StopWatchlistHandles();
         _searchCts?.Cancel();
         _searchCts?.Dispose();
         _statusCodeCts?.Cancel();
         _statusCodeCts?.Dispose();
+        _anomalyScanCts?.Cancel();
+        _anomalyScanCts?.Dispose();
     }
 }

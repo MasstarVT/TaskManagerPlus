@@ -25,6 +25,13 @@ public sealed class StabilityViewModel : ObservableObject
     // Services/* instances directly" convention (no DI container - see CLAUDE.md).
     private readonly EventKnowledgeBaseService _kb = new();
 
+    // #128/#130: the same anomaly-detection service the Events tab's deep-scan panel uses - another
+    // independent instance (see _kb's remarks above for why), used here purely for its stateless
+    // ComputeFirstOccurrences/ComputeDensityHeatmap math over RecentEvents below, no new event-log
+    // query of its own (the EventLogExplorerService it's constructed with is only needed by the
+    // Events tab's ReadWindow/ScanProviderChurn/FindBootMarkers methods, none of which this tab calls).
+    private readonly EventAnomalyDetectionService _anomaly = new(new EventLogExplorerService());
+
     public ObservableCollection<StabilityEvent> RecentEvents { get; } = new();
     public ObservableCollection<MinidumpInfo> Minidumps { get; } = new();
 
@@ -37,6 +44,18 @@ public sealed class StabilityViewModel : ObservableObject
     // Round 10, #66: repeated crashes grouped by faulting module, most frequent first - see
     // FaultingModuleSummary's remarks. Pure derived aggregation over RecentEvents, no new query.
     public ObservableCollection<FaultingModuleSummary> CrashesByModule { get; } = new();
+
+    /// <summary>#128: "New error types this week" - (provider, eventId) signatures present only in
+    /// the last 7 days of RecentEvents' 30-day window, with no occurrence in the older 23 days of
+    /// that same snapshot. A pure re-grouping of data this tab already reads, no new query - the
+    /// single strongest "something changed" signal an event log can give.</summary>
+    public ObservableCollection<FirstOccurrenceFlag> NewErrorTypesThisWeek { get; } = new();
+
+    /// <summary>#130: day x hour-of-day Critical/Error density grid, bucketed from the same
+    /// RecentEvents snapshot as the Reliability History chart above it - see
+    /// EventAnomalyDetectionService.ComputeDensityHeatmap's remarks for why "day" is chronological,
+    /// not a folded 1-31 day-of-month bucket.</summary>
+    public ObservableCollection<ErrorDensityHeatmapCell> ErrorDensityHeatmap { get; } = new();
 
     private bool _isLoading;
     public bool IsLoading { get => _isLoading; private set => SetProperty(ref _isLoading, value); }
@@ -209,6 +228,21 @@ public sealed class StabilityViewModel : ObservableObject
         }
 
         StabilityIndex = ComputeStabilityIndex(snapshot);
+
+        // #128: first-ever-occurrence signatures within RecentEvents' own 30-day window - reuses
+        // the snapshot already read above, no new event-log query.
+        NewErrorTypesThisWeek.Clear();
+        foreach (var flag in _anomaly.ComputeFirstOccurrences(
+            snapshot.RecentEvents.Select(e => (e.ProviderName, e.EventId, e.TimeCreated, (string?)e.Message)),
+            DateTime.Now, recentWindowDays: 7))
+        {
+            NewErrorTypesThisWeek.Add(flag);
+        }
+
+        // #130: same reuse - the day x hour-of-day density grid over the same 30-day snapshot.
+        ErrorDensityHeatmap.Clear();
+        foreach (var cell in _anomaly.ComputeDensityHeatmap(snapshot.RecentEvents.Select(e => e.TimeCreated)))
+            ErrorDensityHeatmap.Add(cell);
     }
 
     /// <summary>

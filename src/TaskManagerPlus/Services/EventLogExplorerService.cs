@@ -89,16 +89,21 @@ public sealed class EventLogExplorerService
     {
         var group = ClassicWindowsLogs.Contains(name) ? EventChannelGroup.WindowsLogs : EventChannelGroup.AppsAndServices;
 
+        bool? isEnabled = null;
+        long? maxSizeBytes = null;
         try
         {
             using var config = new EventLogConfiguration(name);
             if (config.LogType is EventLogType.Analytical or EventLogType.Debug)
                 group = EventChannelGroup.AnalyticDebug;
+            isEnabled = config.IsEnabled;
+            maxSizeBytes = config.MaximumSizeInBytes;
         }
         catch
         {
             // Config unreadable for this channel - keep the name-based guess above; the
-            // accessibility check right below is what actually decides "no access" display.
+            // accessibility check right below is what actually decides "no access" display. #135's
+            // silent-channel flag below just has less to go on (isEnabled/maxSizeBytes stay null).
         }
 
         try
@@ -112,6 +117,8 @@ public sealed class EventLogExplorerService
                 IsAccessible = true,
                 RecordCount = info.RecordCount,
                 LastWriteTime = info.LastWriteTime,
+                MaxSizeBytes = maxSizeBytes,
+                IsSilent = IsChannelSilent(isEnabled, maxSizeBytes, info.LastWriteTime, info.RecordCount),
             };
         }
         catch
@@ -120,6 +127,28 @@ public sealed class EventLogExplorerService
             // rather than silently dropping it from the tree.
             return new EventChannelNode { Name = name, DisplayName = name, Group = group, IsAccessible = false };
         }
+    }
+
+    // #135: a "non-trivial" configured max size - below this, a channel that's never written
+    // anything isn't worth flagging (a lot of near-unused Analytic/Debug channels ship with a tiny
+    // default cap and are *supposed* to sit empty until someone explicitly enables tracing on them).
+    private const long SilentChannelNonTrivialMaxSizeBytes = 1024 * 1024; // 1 MB
+    private const int SilentChannelStaleDays = 14;
+
+    /// <summary>#135: flags a channel that's enabled, has a real configured capacity, and hasn't
+    /// written a record in a long time (or ever) - usually a broken provider registration or a
+    /// corrupt .evtx, not "this channel is just quiet." Disabled channels and channels with only a
+    /// token max size are never flagged - there's nothing actionable to say about either.</summary>
+    private static bool IsChannelSilent(bool? isEnabled, long? maxSizeBytes, DateTime? lastWriteTime, long? recordCount)
+    {
+        if (isEnabled != true) return false;
+        if (maxSizeBytes is not { } size || size < SilentChannelNonTrivialMaxSizeBytes) return false;
+
+        if (recordCount is > 0)
+            return lastWriteTime is { } lw && (DateTime.Now - lw).TotalDays >= SilentChannelStaleDays;
+
+        // Zero records ever written despite being enabled with real configured capacity.
+        return true;
     }
 
     /// <summary>#104: turns a structured filter into the same style of "*[System[...]]" XPath
@@ -163,8 +192,10 @@ public sealed class EventLogExplorerService
     /// <summary>Wraps a value as an XPath 1.0 string literal. XPath has no in-literal escape
     /// sequence, so a value containing a single quote is instead wrapped in double quotes (and one
     /// containing both, the vanishingly rare case, falls back to stripping single quotes rather
-    /// than emitting an unparseable query).</summary>
-    private static string QuoteXPathLiteral(string value)
+    /// than emitting an unparseable query). Public (not just used by BuildXPath above) since #136's
+    /// watchlist builds its own provider+eventId XPath clauses the same way, rather than duplicating
+    /// this escaping logic.</summary>
+    public static string QuoteXPathLiteral(string value)
     {
         if (!value.Contains('\'')) return $"'{value}'";
         if (!value.Contains('"')) return $"\"{value}\"";

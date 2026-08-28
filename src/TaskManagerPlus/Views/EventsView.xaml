@@ -237,6 +237,193 @@
                     </StackPanel>
                 </Expander>
 
+                <!-- #127-134/#136: error-burst and anomaly detection - one deep-scan panel covering
+                     per-event-ID baseline spikes (#127), burst incidents (#129), periodic/retry
+                     loops (#132), post-boot vs steady-state (#133), log churn (#131, a separate
+                     lightweight scan), a "since it was working" diff (#134), and a live watchlist
+                     (#136). #128/#130 have their own landing spot on the Stability tab per their
+                     own spec, but #128's first-occurrence flags are shown here too since this
+                     panel's 90-day scan already computes them as a side effect of the same read. -->
+                <Expander Header="Anomaly detection" Margin="0,10,0,0" FontSize="11.5">
+                    <StackPanel Margin="0,10,0,0">
+                        <TextBlock TextWrapping="Wrap" FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8">
+                            <Run Text="Quick flag, not a verdict — " FontWeight="SemiBold" />
+                            <Run Text="everything below is a statistical/pattern heuristic over whatever channels and lookback window you scan, not a diagnosis. A PC's normal log noise is highly individual." />
+                        </TextBlock>
+
+                        <WrapPanel Margin="0,0,0,4">
+                            <Button Content="Run anomaly scan" Command="{Binding RunAnomalyScanCommand}" Padding="8,3" Margin="0,0,8,0"
+                                     ToolTip="Reads Critical/Error/Warning across whichever channels are checked in the tree (or System+Application if none are checked) over the lookback window below, then computes every flag on this panel from that one scan." />
+                            <Button Content="Cancel" Command="{Binding CancelAnomalyScanCommand}" Padding="8,3" Margin="0,0,8,0" />
+                            <TextBlock Text="Lookback (days):" VerticalAlignment="Center" Margin="0,0,4,0" Foreground="{DynamicResource TextSecondaryBrush}" />
+                            <TextBox Text="{Binding AnomalyLookbackDays, UpdateSourceTrigger=PropertyChanged}" Width="45" Margin="0,0,8,0" />
+                            <ProgressBar Width="110" Height="6" IsIndeterminate="{Binding IsAnomalyScanRunning}" VerticalAlignment="Center" Margin="0,0,8,0" />
+                        </WrapPanel>
+                        <TextBlock Text="{Binding AnomalyScanStatusText}" TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,12" />
+
+                        <!-- #127: per-event-ID baseline spikes -->
+                        <TextBlock Text="Unusual for this PC (#127)" FontWeight="SemiBold" FontSize="11.5" Margin="0,0,0,4" />
+                        <ItemsControl ItemsSource="{Binding BaselineFlags}" Margin="0,0,0,4">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate DataType="{x:Type models:EventIdBaselineFlag}">
+                                    <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="8,5" Margin="0,0,0,4">
+                                        <TextBlock FontSize="11" TextWrapping="Wrap">
+                                            <Run Text="{Binding Provider}" FontWeight="SemiBold" /><Run Text=" " /><Run Text="{Binding EventId}" />
+                                            <Run Text=" — " /><Run Text="{Binding Last24HourCount}" /><Run Text=" in the last 24h vs. a median of " />
+                                            <Run Text="{Binding MedianDailyCount, StringFormat={}{0:0.0}}" /><Run Text="/day over " />
+                                            <Run Text="{Binding ObservedDays}" /><Run Text=" observed day(s)." />
+                                        </TextBlock>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+
+                        <!-- #128: new-signature flags (see also the Stability tab's own weekly card) -->
+                        <TextBlock Text="First-ever in this scan's window (#128)" FontWeight="SemiBold" FontSize="11.5" Margin="0,0,0,4" />
+                        <ItemsControl ItemsSource="{Binding AnomalyFirstOccurrences}" Margin="0,0,0,10">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate DataType="{x:Type models:FirstOccurrenceFlag}">
+                                    <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="8,5" Margin="0,0,0,4">
+                                        <TextBlock FontSize="11" TextWrapping="Wrap">
+                                            <Run Text="{Binding Provider}" FontWeight="SemiBold" /><Run Text=" " /><Run Text="{Binding EventId}" />
+                                            <Run Text=" — first seen " /><Run Text="{Binding FirstSeen, StringFormat={}{0:g}}" />
+                                            <Run Text=", " /><Run Text="{Binding OccurrenceCount}" /><Run Text=" occurrence(s) since." />
+                                        </TextBlock>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+
+                        <!-- #129: burst groups from this scan -->
+                        <TextBlock Text="Burst / incident clusters (#129)" FontWeight="SemiBold" FontSize="11.5" Margin="0,0,0,4" />
+                        <DataGrid ItemsSource="{Binding AnomalyBurstGroups}" IsReadOnly="True" AutoGenerateColumns="False" MaxHeight="160" Margin="0,0,0,10">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Provider" Binding="{Binding Provider}" Width="2*" />
+                                <DataGridTextColumn Header="Event ID" Binding="{Binding EventId}" Width="65" />
+                                <DataGridTextColumn Header="Count" Binding="{Binding Count}" Width="55" />
+                                <DataGridTextColumn Header="First" Binding="{Binding FirstTime, StringFormat={}{0:g}}" Width="120" />
+                                <DataGridTextColumn Header="Last" Binding="{Binding LastTime, StringFormat={}{0:g}}" Width="120" />
+                                <DataGridTextColumn Header="Duration" Binding="{Binding Duration}" Width="90" />
+                            </DataGrid.Columns>
+                        </DataGrid>
+
+                        <!-- #132: periodic / retry loops -->
+                        <TextBlock Text="Periodic / retry loops (#132)" FontWeight="SemiBold" FontSize="11.5" Margin="0,0,0,4" />
+                        <DataGrid ItemsSource="{Binding PeriodicLoopFlags}" IsReadOnly="True" AutoGenerateColumns="False" MaxHeight="160" Margin="0,0,0,10">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Provider" Binding="{Binding Provider}" Width="2*" />
+                                <DataGridTextColumn Header="Event ID" Binding="{Binding EventId}" Width="65" />
+                                <DataGridTextColumn Header="Period" Binding="{Binding PeriodDescription}" Width="110" />
+                                <DataGridTextColumn Header="Coeff. of variation" Binding="{Binding CoefficientOfVariation, StringFormat={}{0:0.00}}" Width="120" />
+                                <DataGridTextColumn Header="Count" Binding="{Binding OccurrenceCount}" Width="55" />
+                            </DataGrid.Columns>
+                        </DataGrid>
+
+                        <!-- #133: post-boot vs. steady-state -->
+                        <TextBlock Text="Boot-only vs. steady-state (#133)" FontWeight="SemiBold" FontSize="11.5" Margin="0,0,0,4" />
+                        <DataGrid ItemsSource="{Binding BootProfileRows}" IsReadOnly="True" AutoGenerateColumns="False" MaxHeight="160" Margin="0,0,0,10">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Provider" Binding="{Binding Provider}" Width="2*" />
+                                <DataGridTextColumn Header="Boot-window count" Binding="{Binding BootCount}" Width="120" />
+                                <DataGridTextColumn Header="Steady-state count" Binding="{Binding SteadyStateCount}" Width="120" />
+                                <DataGridTextColumn Header="Boot-only?" Binding="{Binding IsBootOnly}" Width="80" />
+                            </DataGrid.Columns>
+                        </DataGrid>
+
+                        <!-- #131: log churn attribution - a separate lightweight scan, since it
+                             needs every level (mostly Information), not just the anomaly scan's
+                             Critical/Error/Warning above. -->
+                        <TextBlock Text="Log churn attribution (#131)" FontWeight="SemiBold" FontSize="11.5" Margin="0,0,0,4" />
+                        <WrapPanel Margin="0,0,0,4">
+                            <Button Content="Scan log churn (selected channel)" Command="{Binding ScanLogChurnCommand}" Padding="8,3" Margin="0,0,8,0"
+                                     ToolTip="Ranks providers by how many records they wrote into the currently-selected channel (falls back to System) within the lookback window - who's actually consuming the log's finite size." />
+                            <TextBlock Text="{Binding ChurnStatusText}" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" FontSize="11" />
+                        </WrapPanel>
+                        <DataGrid ItemsSource="{Binding ProviderChurn}" IsReadOnly="True" AutoGenerateColumns="False" MaxHeight="160" Margin="0,0,0,10">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Provider" Binding="{Binding Provider}" Width="2*" />
+                                <DataGridTextColumn Header="Records" Binding="{Binding RecordCount}" Width="80" />
+                                <DataGridTextColumn Header="% of channel" Binding="{Binding PercentOfTotal, StringFormat={}{0:0.0}%}" Width="90" />
+                            </DataGrid.Columns>
+                        </DataGrid>
+
+                        <!-- #134: "since it was working" diff - reuses the anomaly scan's cached
+                             dataset above rather than reading the log again. -->
+                        <TextBlock Text="&quot;Since it was working&quot; diff (#134)" FontWeight="SemiBold" FontSize="11.5" Margin="0,0,0,4" />
+                        <WrapPanel Margin="0,0,0,4">
+                            <TextBlock Text="Known-good date:" VerticalAlignment="Center" Margin="0,0,6,0" Foreground="{DynamicResource TextSecondaryBrush}" />
+                            <TextBox Text="{Binding DiffCutoffDate, StringFormat=d, UpdateSourceTrigger=PropertyChanged}" Width="100" Margin="0,0,8,0" />
+                            <Button Content="Diff" Command="{Binding RunSinceWorkingDiffCommand}" Padding="8,3" Margin="0,0,8,0"
+                                     ToolTip="Reuses the last anomaly scan's data (run the scan above first) - splits it at this date and lists signatures new vs. stopped." />
+                        </WrapPanel>
+                        <TextBlock Text="{Binding DiffStatusText}" TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4" />
+                        <Grid Margin="0,0,0,10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="8" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0">
+                                <TextBlock Text="New since cutoff" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,2" />
+                                <DataGrid ItemsSource="{Binding DiffNewSignatures}" IsReadOnly="True" AutoGenerateColumns="False" MaxHeight="140">
+                                    <DataGrid.Columns>
+                                        <DataGridTextColumn Header="Provider" Binding="{Binding Provider}" Width="2*" />
+                                        <DataGridTextColumn Header="ID" Binding="{Binding EventId}" Width="50" />
+                                        <DataGridTextColumn Header="First seen" Binding="{Binding Timestamp, StringFormat={}{0:g}}" Width="110" />
+                                    </DataGrid.Columns>
+                                </DataGrid>
+                            </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Text="Stopped after cutoff" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,2" />
+                                <DataGrid ItemsSource="{Binding DiffStoppedSignatures}" IsReadOnly="True" AutoGenerateColumns="False" MaxHeight="140">
+                                    <DataGrid.Columns>
+                                        <DataGridTextColumn Header="Provider" Binding="{Binding Provider}" Width="2*" />
+                                        <DataGridTextColumn Header="ID" Binding="{Binding EventId}" Width="50" />
+                                        <DataGridTextColumn Header="Last seen" Binding="{Binding Timestamp, StringFormat={}{0:g}}" Width="110" />
+                                    </DataGrid.Columns>
+                                </DataGrid>
+                            </StackPanel>
+                        </Grid>
+
+                        <!-- #136: live watchlist alerts -->
+                        <TextBlock Text="Live watchlist alerts (#136)" FontWeight="SemiBold" FontSize="11.5" Margin="0,0,0,4" />
+                        <WrapPanel Margin="0,0,0,6">
+                            <ToggleButton Content="Enable watchlist alerts" IsChecked="{Binding IsWatchlistActive}" Padding="8,3" Margin="0,0,8,0"
+                                           ToolTip="Subscribes to every pinned signature below via a live EventLogWatcher and shows a toast when one fires. Right-click any event row and choose 'Pin to watchlist' to add one. Not persisted active/inactive - re-enable each session." />
+                        </WrapPanel>
+                        <ItemsControl ItemsSource="{Binding Watchlist}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate DataType="{x:Type models:WatchlistEntry}">
+                                    <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="10" Margin="0,0,6,6" Padding="8,3">
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Text="{Binding DisplayName}" FontSize="11" ToolTip="{Binding Channel}" />
+                                            <Button Content=" ✕" FontSize="10.5" Padding="0" Margin="4,0,0,0"
+                                                     Background="Transparent" BorderThickness="0" Foreground="{DynamicResource TextSecondaryBrush}"
+                                                     Command="{Binding DataContext.RemoveFromWatchlistCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                     CommandParameter="{Binding}" ToolTip="Unpin" />
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <TextBlock Text="Nothing pinned yet - right-click an event row and choose &quot;Pin to watchlist.&quot;">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding Watchlist.Count}" Value="0">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </StackPanel>
+                </Expander>
+
                 <TextBlock Text="{Binding StatusText}" Margin="0,8,0,0" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}">
                     <TextBlock.Style>
                         <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
@@ -320,6 +507,22 @@
                                             </Style>
                                         </TextBlock.Style>
                                     </TextBlock>
+                                    <!-- #135: enabled, has a real configured max size, but has written
+                                         zero records in a long time (or ever) - usually a broken
+                                         provider registration or a corrupt .evtx. -->
+                                    <TextBlock Text=" (silent)" FontSize="10.5" Foreground="{DynamicResource WarningBrush}"
+                                                ToolTip="Enabled with a non-trivial max size, but hasn't written a record in 14+ days (or ever) - worth checking whether its provider is registered correctly.">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsSilent}" Value="True">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
                                     <TextBlock Text="{Binding RecordCount, StringFormat=' ({0})'}" FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}">
                                         <TextBlock.Style>
                                             <Style TargetType="TextBlock">
@@ -350,10 +553,15 @@
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" Text="{Binding Events.Count, StringFormat='{}{0} event(s) in view'}"
                                     VerticalAlignment="Center" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" />
-                        <Button Grid.Column="1" Content="Load more" Command="{Binding LoadMoreCommand}" Padding="10,4">
+                        <!-- #129: burst collapsing - runs of the same signature within a configurable
+                             window (e.g. 20+ within 5 minutes) collapse into one incident row. -->
+                        <ToggleButton Grid.Column="1" Content="Collapse bursts" IsChecked="{Binding ShowBurstCollapsedView}" Padding="8,4" Margin="0,0,8,0"
+                                       ToolTip="Groups runs of the same signature within the window below into one expandable incident row, instead of flooding the grid with near-identical rows (#129)." />
+                        <Button Grid.Column="2" Content="Load more" Command="{Binding LoadMoreCommand}" Padding="10,4">
                             <Button.Style>
                                 <Style TargetType="Button">
                                     <Setter Property="Visibility" Value="Collapsed" />
@@ -366,10 +574,83 @@
                             </Button.Style>
                         </Button>
                     </Grid>
+
+                    <!-- #129: window/min-count controls for both the burst-collapsed grid below and
+                         the anomaly-scan panel's own burst results (More tools -> Anomaly detection). -->
+                    <WrapPanel DockPanel.Dock="Bottom" Margin="12,0,12,6">
+                        <WrapPanel.Style>
+                            <Style TargetType="WrapPanel">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding ShowBurstCollapsedView}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </WrapPanel.Style>
+                        <TextBlock Text="Window (min):" VerticalAlignment="Center" Margin="0,0,4,0" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        <TextBox Text="{Binding BurstWindowMinutes, UpdateSourceTrigger=PropertyChanged}" Width="40" Margin="0,0,12,0" FontSize="11" />
+                        <TextBlock Text="Min count:" VerticalAlignment="Center" Margin="0,0,4,0" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        <TextBox Text="{Binding BurstMinCount, UpdateSourceTrigger=PropertyChanged}" Width="40" Margin="0,0,12,0" FontSize="11" />
+                        <Button Content="Recompute" Command="{Binding RecomputeCollapsedBurstsCommand}" Padding="6,2" FontSize="11" />
+                    </WrapPanel>
+
+                    <!-- Both grids below share this one fill cell (only one visible at a time via
+                         its own Style/DataTrigger) so toggling #129's burst view doesn't reflow the
+                         rest of the DockPanel - a plain sibling DataGrid here would instead dock
+                         Left at its own desired width instead of filling the remaining area. -->
+                    <Grid>
+                    <!-- #129: collapsed-incident view - shown instead of the raw grid while the
+                         toggle above is on. Expand a row (click to select) to see its member events. -->
+                    <DataGrid ItemsSource="{Binding CollapsedEventBursts}" IsReadOnly="True" AutoGenerateColumns="False"
+                               Margin="4,10,4,0" RowDetailsVisibilityMode="VisibleWhenSelected">
+                        <DataGrid.Style>
+                            <Style TargetType="DataGrid">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding ShowBurstCollapsedView}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </DataGrid.Style>
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Provider" Binding="{Binding Provider}" Width="2*" />
+                            <DataGridTextColumn Header="Event ID" Binding="{Binding EventId}" Width="70" />
+                            <DataGridTextColumn Header="Level" Binding="{Binding Level}" Width="70" />
+                            <DataGridTextColumn Header="Count" Binding="{Binding Count}" Width="60" />
+                            <DataGridTextColumn Header="First" Binding="{Binding FirstTime, StringFormat={}{0:g}}" Width="130" />
+                            <DataGridTextColumn Header="Last" Binding="{Binding LastTime, StringFormat={}{0:g}}" Width="130" />
+                            <DataGridTextColumn Header="Duration" Binding="{Binding Duration}" Width="100" />
+                        </DataGrid.Columns>
+                        <DataGrid.RowDetailsTemplate>
+                            <DataTemplate>
+                                <StackPanel Margin="20,4,4,8">
+                                    <TextBlock Text="{Binding SampleMessage}" TextWrapping="Wrap" FontSize="11" Margin="0,0,0,6" />
+                                    <TextBlock FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}">
+                                        <Run Text="{Binding Rows.Count, Mode=OneWay}" /><Run Text=" member event(s) - first " />
+                                        <Run Text="{Binding FirstTime, StringFormat={}{0:g}, Mode=OneWay}" /><Run Text=", last " />
+                                        <Run Text="{Binding LastTime, StringFormat={}{0:g}, Mode=OneWay}" />
+                                    </TextBlock>
+                                </StackPanel>
+                            </DataTemplate>
+                        </DataGrid.RowDetailsTemplate>
+                    </DataGrid>
+
                     <DataGrid x:Name="EventsGrid" ItemsSource="{Binding EventsView}" SelectedItem="{Binding SelectedEvent}"
                                Margin="4,10,4,0"
                                VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
                                EnableRowVirtualization="True" ScrollViewer.CanContentScroll="True">
+                        <DataGrid.Style>
+                            <Style TargetType="DataGrid">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding ShowBurstCollapsedView}" Value="True">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </DataGrid.Style>
                         <DataGrid.RowStyle>
                             <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
                                 <Setter Property="ToolTip" Value="{Binding Message}" />
@@ -419,6 +700,9 @@
                                 <Separator />
                                 <MenuItem Header="Add to evidence bundle"
                                            Command="{Binding PlacementTarget.DataContext.AddToEvidenceCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                           CommandParameter="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                <MenuItem Header="Pin to watchlist (#136)"
+                                           Command="{Binding PlacementTarget.DataContext.AddSelectedToWatchlistCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                                            CommandParameter="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
                             </ContextMenu>
                         </DataGrid.ContextMenu>
@@ -499,6 +783,7 @@
                                                   Visibility="{Binding DataContext.ShowCorrelationColumns, ElementName=EventsGrid, Converter={StaticResource BoolToVisibilityConverter}}" />
                         </DataGrid.Columns>
                     </DataGrid>
+                    </Grid>
                 </DockPanel>
             </Border>
 

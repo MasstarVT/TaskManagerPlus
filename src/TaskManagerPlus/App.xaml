@@ -29,6 +29,7 @@
             <conv:IntEqualsConverter x:Key="IntEqualsConverter" />
             <conv:BoolToVisibilityConverter x:Key="BoolToVisibilityConverter" />
             <conv:ActivePlanSuffixConverter x:Key="ActivePlanSuffixConverter" />
+            <conv:HeatCellCountToBrushConverter x:Key="HeatCellCountToBrushConverter" />
         </ResourceDictionary>
     </Application.Resources>
 </Application>
