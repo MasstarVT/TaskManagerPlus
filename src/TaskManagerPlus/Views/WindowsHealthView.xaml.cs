@@ -26,4 +26,24 @@ public partial class WindowsHealthView : UserControl
         if (Window.GetWindow(this) is MainWindow window)
             window.SelectTabByName("Storage");
     }
+
+    /// <summary>#792: cross-link from a WMI-Activity query-failure group's client process over to
+    /// the Processes tab, filtered to that name - same SelectTabByName/FilterText mechanism
+    /// StartupView.xaml.cs's own cross-links use.</summary>
+    private void ViewWmiClientProcess_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { Tag: string processName } || string.IsNullOrWhiteSpace(processName)) return;
+        if (Window.GetWindow(this) is not MainWindow window) return;
+        if (window.DataContext is MainViewModel mainViewModel) mainViewModel.Processes.FilterText = processName;
+        window.SelectTabByName("Processes");
+    }
+
+    /// <summary>#799: cross-link from the process-environment-drift summary over to the Processes
+    /// tab - just switches tabs (drift can affect many differently-named processes at once, so
+    /// there's no single name to filter by, unlike the other cross-links in this file).</summary>
+    private void ViewDriftedProcesses_Click(object sender, RoutedEventArgs e)
+    {
+        if (Window.GetWindow(this) is MainWindow window)
+            window.SelectTabByName("Processes");
+    }
 }

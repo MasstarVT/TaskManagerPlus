@@ -77,8 +77,17 @@ public static class PrefetchAuditService
             if (key is null) errors.Add("PrefetchParameters registry key not found or access denied.");
             else
             {
+                int? prevPrefetcher = key.GetValue("EnablePrefetcher") as int?;
+                int? prevSuperfetch = key.GetValue("EnableSuperfetch") as int?;
                 key.SetValue("EnablePrefetcher", 3, RegistryValueKind.DWord);
                 key.SetValue("EnableSuperfetch", 3, RegistryValueKind.DWord);
+
+                // #796: journal both writes - see RegistryChangeJournalService's remarks for the
+                // rest of this chunk's (deliberately partial) registry-write coverage.
+                RegistryChangeJournalService.Record("Prefetch", "Restored EnablePrefetcher to default (3)",
+                    "HKLM", KeyPath, "EnablePrefetcher", RegistryValueKind.DWord, prevPrefetcher?.ToString(), "3");
+                RegistryChangeJournalService.Record("Prefetch", "Restored EnableSuperfetch to default (3)",
+                    "HKLM", KeyPath, "EnableSuperfetch", RegistryValueKind.DWord, prevSuperfetch?.ToString(), "3");
             }
         }
         catch (Exception ex)
@@ -88,9 +97,16 @@ public static class PrefetchAuditService
 
         try
         {
-            using var svcKey = Registry.LocalMachine.OpenSubKey($@"SYSTEM\CurrentControlSet\Services\{SysMainServiceName}", writable: true);
+            string svcKeyPath = $@"SYSTEM\CurrentControlSet\Services\{SysMainServiceName}";
+            using var svcKey = Registry.LocalMachine.OpenSubKey(svcKeyPath, writable: true);
             if (svcKey is null) errors.Add("SysMain service registry key not found or access denied.");
-            else svcKey.SetValue("Start", 2, RegistryValueKind.DWord); // 2 = Automatic, the Windows default
+            else
+            {
+                int? prevStart = svcKey.GetValue("Start") as int?;
+                svcKey.SetValue("Start", 2, RegistryValueKind.DWord); // 2 = Automatic, the Windows default
+                RegistryChangeJournalService.Record("Prefetch", "Restored SysMain service start type to Automatic (2)",
+                    "HKLM", svcKeyPath, "Start", RegistryValueKind.DWord, prevStart?.ToString(), "2");
+            }
         }
         catch (Exception ex)
         {

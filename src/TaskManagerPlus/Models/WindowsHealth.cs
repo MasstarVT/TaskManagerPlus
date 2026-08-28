@@ -357,3 +357,252 @@ public sealed class SystemRestoreSnapshot
     /// <summary>#789: "System Protection is off, so you have no restore points at all" flag.</summary>
     public bool HasNoRestorePointsAtAll => SystemRestoreAvailable && RestorePoints.Count == 0;
 }
+
+/// <summary>#791: `winmgmt /verifyrepository` result plus the on-disk footprint of
+/// %windir%\System32\wbem\Repository - IsConsistent is null until VerifyRepositoryCommand has run
+/// at least once this session (this app never runs a repair verb unprompted). See
+/// WmiHealthService.ReadRepositoryFootprint/VerifyRepositoryAsync.</summary>
+public sealed class WmiRepositoryHealth
+{
+    public string RepositoryPath { get; init; } = string.Empty;
+    public long? RepositorySizeBytes { get; init; }
+    public DateTime? RepositoryLastModified { get; init; }
+    public bool? IsConsistent { get; init; }
+    public string? VerifyOutputText { get; init; }
+}
+
+/// <summary>#792: one Microsoft-Windows-WMI-Activity/Operational event 5858 ("a WMI query
+/// failed") - OperationText/ClientProcessId/ResultCode are extracted from the event's rendered
+/// message by label text (event 5858 has no stable indexed Properties layout across OS builds,
+/// the same "read the rendered message, not an indexed property" tradeoff
+/// EventLogService.ScmServiceNamePatterns' remarks already explain for a different event family).
+/// See WmiHealthService.ReadActivityErrorsAsync.</summary>
+public sealed class WmiActivityErrorEvent
+{
+    public DateTime TimeCreated { get; init; }
+    public int? ClientProcessId { get; init; }
+    public string OperationText { get; init; } = string.Empty;
+    public string? ResultCode { get; init; }
+    public string RawMessage { get; init; } = string.Empty;
+}
+
+/// <summary>#792: WmiActivityErrorEvent rows grouped by ClientProcessId - ProcessName/
+/// ProcessStillRunning are resolved afterward against the currently running process list (best
+/// effort; a pid that's since exited or been reused just shows "Unknown"/false), so the grid can
+/// cross-link straight to the Processes tab the same way every other cross-tab flag in this app
+/// does.</summary>
+public sealed class WmiActivityErrorGroup
+{
+    public int? ClientProcessId { get; init; }
+    public string ProcessName { get; init; } = "Unknown";
+    public bool ProcessStillRunning { get; init; }
+    public int ErrorCount { get; init; }
+    public DateTime LastErrorTime { get; init; }
+    public List<WmiActivityErrorEvent> Events { get; init; } = new();
+}
+
+/// <summary>#793: one permanent WMI event subscription in root\subscription - a filter
+/// (__EventFilter, its WQL query text) paired with the consumer it's bound to
+/// (CommandLineEventConsumer's command line, or ActiveScriptEventConsumer's script text) via
+/// __FilterToConsumerBinding. This exact mechanism is also a well-known persistence technique for
+/// malware/APT tooling, which is why this app surfaces it as a plain read-only inventory rather
+/// than hiding it behind another action - CLAUDE.md's "quick flag, not a verdict" applies here too:
+/// plenty of legitimate management tooling (SCCM, some AV suites) also registers permanent WMI
+/// consumers.</summary>
+public sealed class WmiEventConsumerEntry
+{
+    public string FilterName { get; init; } = string.Empty;
+    public string Query { get; init; } = string.Empty;
+    public string ConsumerType { get; init; } = string.Empty;
+    public string ConsumerName { get; init; } = string.Empty;
+    public string ConsumerDetail { get; init; } = string.Empty;
+    public bool BindingFound { get; init; }
+}
+
+/// <summary>#794: one registry hive/hive-log file's size and last-write time -
+/// %windir%\System32\config\{SYSTEM,SOFTWARE,SAM,SECURITY,DEFAULT} for the system hives, or a
+/// profile's NTUSER.DAT/UsrClass.dat for a user hive. IsOversized is a quick size-threshold flag,
+/// not a verdict (CLAUDE.md's "quick flag" convention) - a legitimately large SOFTWARE hive from
+/// years of software installs is common and not itself a problem.</summary>
+public sealed class RegistryHiveFileInfo
+{
+    public string Name { get; init; } = string.Empty;
+    public string Path { get; init; } = string.Empty;
+    public bool Exists { get; init; }
+    public long SizeBytes { get; init; }
+    public DateTime? LastWriteTime { get; init; }
+    public bool IsOversized { get; init; }
+    public List<string> TransactionLogNotes { get; init; } = new();
+}
+
+/// <summary>#794: the full registry-health card - every system hive plus every discoverable user
+/// profile's NTUSER.DAT/UsrClass.dat. See RegistryHealthService.ReadHiveHealth.</summary>
+public sealed class RegistryHealthSnapshot
+{
+    public List<RegistryHiveFileInfo> SystemHives { get; init; } = new();
+    public List<RegistryHiveFileInfo> UserHives { get; init; } = new();
+}
+
+/// <summary>#795: %windir%\System32\config\RegBack's own populated/empty state (empty by default
+/// since Windows 10 1803 - KB4098428) plus the documented EnablePeriodicBackup registry toggle
+/// that turns the old automatic-backup behavior back on. See RegistryHealthService.ReadBackupStatus.</summary>
+public sealed class RegistryBackupStatus
+{
+    public string FolderPath { get; init; } = string.Empty;
+    public bool FolderExists { get; init; }
+    public bool IsPopulated { get; init; }
+    public DateTime? NewestFileTime { get; init; }
+    public long TotalSizeBytes { get; init; }
+    public bool? PeriodicBackupEnabled { get; init; }
+
+    public string PopulatedStatusText => IsPopulated ? "Populated" : FolderExists ? "Empty (default since Windows 10 1803)" : "Folder not found";
+    public string PeriodicBackupStatusText => PeriodicBackupEnabled switch { true => "Enabled", false => "Disabled (default)", null => "Unknown" };
+}
+
+/// <summary>#796: one entry in this app's own registry-change journal (registry-changes.json under
+/// AppPaths.SettingsDirectory) - every write this app itself makes to the registry that's been
+/// routed through RegistryChangeJournalService, with enough detail (hive/subkey/value/old-and-new
+/// value/kind) for a later Undo to write the old value straight back, or for ExportAsReg to
+/// reproduce the change as a standalone .reg file. OldValueText is null when the value didn't
+/// exist before this app created it (Undo then deletes the value rather than writing "null" back).
+/// See RegistryChangeJournalService's own remarks for exactly which of this app's registry writes
+/// are (and are not yet) routed through here.</summary>
+public sealed class RegistryChangeEntry
+{
+    public Guid Id { get; init; } = Guid.NewGuid();
+    public DateTime Timestamp { get; init; }
+    public string Source { get; init; } = string.Empty;
+    public string Description { get; init; } = string.Empty;
+    public string Hive { get; init; } = string.Empty;
+    public string SubKeyPath { get; init; } = string.Empty;
+    public string ValueName { get; init; } = string.Empty;
+    public string ValueKind { get; init; } = string.Empty;
+    public string? OldValueText { get; init; }
+    public string? NewValueText { get; init; }
+    public bool Undone { get; set; }
+
+    public string FullKeyText => $@"{Hive}\{SubKeyPath}";
+}
+
+/// <summary>#797: one flagged PATH segment/scope issue - see PathDoctorResult and
+/// EnvironmentHealthService.ReadPathDoctorResult for the full set of checks this covers.</summary>
+public sealed class PathIssue
+{
+    public string Scope { get; init; } = string.Empty;
+    public string Segment { get; init; } = string.Empty;
+    public string IssueType { get; init; } = string.Empty;
+    public string Detail { get; init; } = string.Empty;
+}
+
+/// <summary>#797: "PATH doctor" - the raw machine (HKLM\...\Session Manager\Environment) and user
+/// (HKCU\Environment) PATH values plus every issue found across both: nonexistent directories,
+/// exact/cross-scope duplicates, empty/trailing-semicolon segments, unexpanded %VAR% references,
+/// REG_SZ used where REG_EXPAND_SZ is needed, and the combined expanded length against the
+/// documented 8191-character CreateProcess environment-block practical limit. See
+/// EnvironmentHealthService.ReadPathDoctorResult.</summary>
+public sealed class PathDoctorResult
+{
+    public const int MaxExpandedLength = 8191;
+
+    public string MachinePathRaw { get; init; } = string.Empty;
+    public string UserPathRaw { get; init; } = string.Empty;
+    public bool MachineIsExpandSz { get; init; }
+    public bool UserIsExpandSz { get; init; }
+    public int TotalExpandedLength { get; init; }
+    public bool ExceedsLimit => TotalExpandedLength > MaxExpandedLength;
+    public List<PathIssue> Issues { get; init; } = new();
+
+    public string MachineValueKindText => MachineIsExpandSz ? "REG_EXPAND_SZ" : "REG_SZ";
+}
+
+/// <summary>#798: one machine- or user-scope environment variable, as read straight from
+/// HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment / HKCU\Environment - not
+/// this process's own (possibly stale) Environment.GetEnvironmentVariable copy. See
+/// EnvironmentHealthService.ReadAllVariables.</summary>
+public sealed class EnvironmentVariableEntry
+{
+    public string Scope { get; init; } = string.Empty;
+    public string Name { get; init; } = string.Empty;
+    public string Value { get; init; } = string.Empty;
+    public bool IsExpandString { get; init; }
+}
+
+/// <summary>#798: one environment sanity check (TEMP/TMP pointing at a missing/non-writable
+/// folder, ComSpec/windir/SystemRoot pointing at a missing file/folder, PATHEXT missing .EXE,
+/// NUMBER_OF_PROCESSORS disagreeing with what the CPU tab itself reports). A quick flag, not a
+/// verdict - see EnvironmentHealthService.RunSanityChecks.</summary>
+public sealed class EnvironmentSanityCheck
+{
+    public string Title { get; init; } = string.Empty;
+    public bool Passed { get; init; }
+    public string Detail { get; init; } = string.Empty;
+}
+
+/// <summary>#799: whether a process's own PATH/TEMP (read via ProcessEnvironmentService's PEB
+/// walk) still matches the machine+user environment as it stands right now - a process launched
+/// before the last PATH/TEMP change keeps whatever it inherited at launch for its entire lifetime,
+/// which this flags as "restart it" rather than a bug in the process itself. See
+/// ProcessEnvironmentDriftService.</summary>
+public sealed class ProcessEnvironmentDrift
+{
+    public int Pid { get; init; }
+    public string ProcessName { get; init; } = string.Empty;
+    public bool HasDrift { get; init; }
+    public string Detail { get; init; } = string.Empty;
+}
+
+/// <summary>#800: SoftwareLicensingProduct's fuller activation detail beyond the existing plain
+/// Licensed/Not-activated read (SystemSpecsService.ReadActivationStatus) - Description/
+/// LicenseFamily/ProductKeyChannel/LicenseStatusReason/GracePeriodRemaining/EvaluationEndDate from
+/// SoftwareLicensingProduct, plus KmsHost/KmsRenewalIntervalMinutes from the separate
+/// SoftwareLicensingService class. Never includes a product key in any form - see
+/// UpgradeReadinessService.ReadActivationDetailsAsync.</summary>
+public sealed class ActivationDetails
+{
+    public string Description { get; init; } = "Unknown";
+    public string LicenseFamily { get; init; } = "Unknown";
+    public string ProductKeyChannel { get; init; } = "Unknown";
+    public int? LicenseStatus { get; init; }
+    public string LicenseStatusText { get; init; } = "Unknown";
+    public string? LicenseStatusReason { get; init; }
+    public TimeSpan? GracePeriodRemaining { get; init; }
+    public DateTime? EvaluationEndDate { get; init; }
+    public string? KmsHost { get; init; }
+    public int? KmsRenewalIntervalMinutes { get; init; }
+}
+
+/// <summary>#800: one bundled end-of-servicing table entry (a handful of recent Windows 10/11
+/// releases, not an exhaustive/auto-updated table - see UpgradeReadinessService.EndOfServicingTable's
+/// remarks for why a small bundled list is an acceptable tradeoff here).</summary>
+public sealed class EndOfServicingInfo
+{
+    public string ReleaseName { get; init; } = "Unknown";
+    public DateTime? EndOfServicingDate { get; init; }
+    public bool? IsPastEndOfServicing => EndOfServicingDate is { } d ? DateTime.Now.Date > d.Date : null;
+}
+
+/// <summary>#800: the Windows Health tab's top card - activation detail, build/servicing-stack
+/// lifecycle, and a single "can this PC take the next feature update" verdict that reuses TPM/
+/// Secure Boot/partition-style/ESP readings already added by earlier chunks of this domain
+/// (SystemSpecsService's SecurityInfo/FirmwareDiskInfo, SystemPartitionService's ESP measurement)
+/// rather than re-reading any of them. See UpgradeReadinessService.ReadSnapshotAsync.</summary>
+public sealed class UpgradeReadinessSnapshot
+{
+    public ActivationDetails Activation { get; init; } = new();
+
+    public string EditionText { get; init; } = "Unknown";
+    public string BuildText { get; init; } = "Unknown";
+    public string DisplayVersionText { get; init; } = "Unknown";
+    public EndOfServicingInfo? EndOfServicing { get; init; }
+    public string ServicingStackVersionText { get; init; } = "Load servicing packages below (Update history section) to check.";
+
+    public bool? TpmReady { get; init; }
+    public bool? SecureBootEnabled { get; init; }
+    public bool SystemDiskIsMbr { get; init; }
+    public long? SystemDriveFreeBytes { get; init; }
+    public bool EspFound { get; init; }
+    public long? EspFreeBytes { get; init; }
+
+    public List<string> BlockingItems { get; init; } = new();
+    public bool ReadyForNextFeatureUpdate => BlockingItems.Count == 0;
+}

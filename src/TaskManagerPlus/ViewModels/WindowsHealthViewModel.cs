@@ -313,6 +313,137 @@ public sealed class WindowsHealthViewModel : ObservableObject
 
     #endregion
 
+    #region #791 - WMI repository verify/repair
+
+    private WmiRepositoryHealth? _wmiRepositoryHealth;
+    public WmiRepositoryHealth? WmiRepositoryHealth { get => _wmiRepositoryHealth; private set => SetProperty(ref _wmiRepositoryHealth, value); }
+
+    private bool _isCheckingWmiRepository;
+    public bool IsCheckingWmiRepository { get => _isCheckingWmiRepository; private set => SetProperty(ref _isCheckingWmiRepository, value); }
+
+    private bool _isSalvagingWmiRepository;
+    public bool IsSalvagingWmiRepository { get => _isSalvagingWmiRepository; private set => SetProperty(ref _isSalvagingWmiRepository, value); }
+
+    private bool _isResettingWmiRepository;
+    public bool IsResettingWmiRepository { get => _isResettingWmiRepository; private set => SetProperty(ref _isResettingWmiRepository, value); }
+
+    public AsyncRelayCommand VerifyWmiRepositoryCommand { get; }
+    public AsyncRelayCommand SalvageWmiRepositoryCommand { get; }
+    public AsyncRelayCommand ResetWmiRepositoryCommand { get; }
+
+    #endregion
+
+    #region #792/#793 - WMI activity error analyzer + permanent event consumer inventory
+
+    public ObservableCollection<WmiActivityErrorGroup> WmiActivityErrorGroups { get; } = new();
+    public ObservableCollection<WmiEventConsumerEntry> WmiEventConsumers { get; } = new();
+
+    private bool _isLoadingWmiDiagnostics;
+    public bool IsLoadingWmiDiagnostics { get => _isLoadingWmiDiagnostics; private set => SetProperty(ref _isLoadingWmiDiagnostics, value); }
+
+    private bool _hasLoadedWmiDiagnostics;
+    public bool HasLoadedWmiDiagnostics { get => _hasLoadedWmiDiagnostics; private set => SetProperty(ref _hasLoadedWmiDiagnostics, value); }
+
+    public AsyncRelayCommand LoadWmiDiagnosticsCommand { get; }
+
+    #endregion
+
+    #region #794/#795 - Registry hive health + backup status/re-enable
+
+    private RegistryHealthSnapshot? _registryHealth;
+    public RegistryHealthSnapshot? RegistryHealth { get => _registryHealth; private set => SetProperty(ref _registryHealth, value); }
+
+    private RegistryBackupStatus? _registryBackupStatus;
+    public RegistryBackupStatus? RegistryBackupStatus { get => _registryBackupStatus; private set => SetProperty(ref _registryBackupStatus, value); }
+
+    private bool _isLoadingRegistryHealth;
+    public bool IsLoadingRegistryHealth { get => _isLoadingRegistryHealth; private set => SetProperty(ref _isLoadingRegistryHealth, value); }
+
+    public AsyncRelayCommand LoadRegistryHealthCommand { get; }
+    public AsyncRelayCommand EnablePeriodicBackupCommand { get; }
+
+    #endregion
+
+    #region #796 - Registry change journal (undo + export-as-.reg)
+
+    public ObservableCollection<RegistryChangeEntry> RegistryChanges { get; } = new();
+
+    public RelayCommand UndoRegistryChangeCommand { get; }
+    public RelayCommand ExportRegistryChangeCommand { get; }
+
+    #endregion
+
+    #region #797 - PATH doctor
+
+    private PathDoctorResult? _pathDoctorResult;
+    public PathDoctorResult? PathDoctorResult { get => _pathDoctorResult; private set => SetProperty(ref _pathDoctorResult, value); }
+
+    private bool _isRunningPathDoctor;
+    public bool IsRunningPathDoctor { get => _isRunningPathDoctor; private set => SetProperty(ref _isRunningPathDoctor, value); }
+
+    public AsyncRelayCommand RunPathDoctorCommand { get; }
+
+    #endregion
+
+    #region #798 - Environment variable inspector/editor
+
+    public ObservableCollection<EnvironmentVariableEntry> EnvironmentVariables { get; } = new();
+    public ObservableCollection<EnvironmentSanityCheck> EnvironmentSanityChecks { get; } = new();
+
+    private bool _isLoadingEnvironmentVariables;
+    public bool IsLoadingEnvironmentVariables { get => _isLoadingEnvironmentVariables; private set => SetProperty(ref _isLoadingEnvironmentVariables, value); }
+
+    private bool _hasLoadedEnvironmentVariables;
+    public bool HasLoadedEnvironmentVariables { get => _hasLoadedEnvironmentVariables; private set => SetProperty(ref _hasLoadedEnvironmentVariables, value); }
+
+    private string _newEnvVarScope = "User";
+    public string NewEnvVarScope { get => _newEnvVarScope; set => SetProperty(ref _newEnvVarScope, value); }
+
+    private string _newEnvVarName = string.Empty;
+    public string NewEnvVarName { get => _newEnvVarName; set => SetProperty(ref _newEnvVarName, value); }
+
+    private string _newEnvVarValue = string.Empty;
+    public string NewEnvVarValue { get => _newEnvVarValue; set => SetProperty(ref _newEnvVarValue, value); }
+
+    public IReadOnlyList<string> EnvVarScopeOptions { get; } = new[] { "User", "Machine" };
+
+    public AsyncRelayCommand LoadEnvironmentVariablesCommand { get; }
+    public AsyncRelayCommand SetEnvironmentVariableCommand { get; }
+    public AsyncRelayCommand DeleteEnvironmentVariableCommand { get; }
+
+    #endregion
+
+    #region #799 - Process vs. system environment drift (Windows Health tab summary side)
+
+    private int _processEnvironmentDriftCount;
+    public int ProcessEnvironmentDriftCount { get => _processEnvironmentDriftCount; private set => SetProperty(ref _processEnvironmentDriftCount, value); }
+
+    private int _processEnvironmentCheckedCount;
+    public int ProcessEnvironmentCheckedCount { get => _processEnvironmentCheckedCount; private set => SetProperty(ref _processEnvironmentCheckedCount, value); }
+
+    private bool _hasScannedProcessEnvironmentDrift;
+    public bool HasScannedProcessEnvironmentDrift { get => _hasScannedProcessEnvironmentDrift; private set => SetProperty(ref _hasScannedProcessEnvironmentDrift, value); }
+
+    private bool _isScanningProcessEnvironmentDrift;
+    public bool IsScanningProcessEnvironmentDrift { get => _isScanningProcessEnvironmentDrift; private set => SetProperty(ref _isScanningProcessEnvironmentDrift, value); }
+
+    public AsyncRelayCommand ScanProcessEnvironmentDriftCommand { get; }
+
+    #endregion
+
+    #region #800 - Activation, build lifecycle and upgrade-readiness roll-up (top card)
+
+    private UpgradeReadinessSnapshot? _upgradeReadiness;
+    public UpgradeReadinessSnapshot? UpgradeReadiness { get => _upgradeReadiness; private set => SetProperty(ref _upgradeReadiness, value); }
+
+    private bool _isLoadingUpgradeReadiness;
+    public bool IsLoadingUpgradeReadiness { get => _isLoadingUpgradeReadiness; private set => SetProperty(ref _isLoadingUpgradeReadiness, value); }
+
+    public AsyncRelayCommand LoadUpgradeReadinessCommand { get; }
+    public AsyncRelayCommand MeasureEspForReadinessCommand { get; }
+
+    #endregion
+
     public WindowsHealthViewModel()
     {
         RefreshCommand = new AsyncRelayCommand(RefreshAsync);
@@ -351,6 +482,49 @@ public sealed class WindowsHealthViewModel : ObservableObject
         LoadSystemRestoreCommand = new AsyncRelayCommand(LoadSystemRestoreAsync);
         CreateRestorePointCommand = new AsyncRelayCommand(CreateRestorePointAsync, () => !IsCreatingRestorePoint);
         LaunchRstruiCommand = new RelayCommand(SystemRestoreService.LaunchRstrui);
+
+        VerifyWmiRepositoryCommand = new AsyncRelayCommand(VerifyWmiRepositoryAsync, () => !IsCheckingWmiRepository);
+        SalvageWmiRepositoryCommand = new AsyncRelayCommand(SalvageWmiRepositoryAsync, () => !IsSalvagingWmiRepository);
+        ResetWmiRepositoryCommand = new AsyncRelayCommand(ResetWmiRepositoryAsync, () => !IsResettingWmiRepository);
+
+        LoadWmiDiagnosticsCommand = new AsyncRelayCommand(LoadWmiDiagnosticsAsync, () => !IsLoadingWmiDiagnostics);
+
+        LoadRegistryHealthCommand = new AsyncRelayCommand(LoadRegistryHealthAsync, () => !IsLoadingRegistryHealth);
+        EnablePeriodicBackupCommand = new AsyncRelayCommand(EnablePeriodicBackupAsync, () => RegistryBackupStatus?.PeriodicBackupEnabled != true);
+
+        UndoRegistryChangeCommand = new RelayCommand(param => _ = UndoRegistryChangeAsync(param as RegistryChangeEntry), param => param is RegistryChangeEntry { Undone: false });
+        ExportRegistryChangeCommand = new RelayCommand(param => ExportRegistryChange(param as RegistryChangeEntry), param => param is RegistryChangeEntry);
+
+        RunPathDoctorCommand = new AsyncRelayCommand(RunPathDoctorAsync, () => !IsRunningPathDoctor);
+
+        LoadEnvironmentVariablesCommand = new AsyncRelayCommand(LoadEnvironmentVariablesAsync, () => !IsLoadingEnvironmentVariables);
+        SetEnvironmentVariableCommand = new AsyncRelayCommand(SetEnvironmentVariableAsync, () => !string.IsNullOrWhiteSpace(NewEnvVarName));
+        DeleteEnvironmentVariableCommand = new AsyncRelayCommand(param => DeleteEnvironmentVariableAsync(param as EnvironmentVariableEntry));
+
+        ScanProcessEnvironmentDriftCommand = new AsyncRelayCommand(ScanProcessEnvironmentDriftAsync, () => !IsScanningProcessEnvironmentDrift);
+
+        LoadUpgradeReadinessCommand = new AsyncRelayCommand(LoadUpgradeReadinessAsync, () => !IsLoadingUpgradeReadiness);
+        MeasureEspForReadinessCommand = new AsyncRelayCommand(MeasureEspForReadinessAsync, () => !IsLoadingUpgradeReadiness && UpgradeReadiness is { EspFound: true });
+
+        // #796: the registry-change journal is a small local file (same cost tier as #787's
+        // integrity-history.json below) - loaded up front so "Changes made by this app" already
+        // reflects prior sessions the moment the tab (or the settings drawer) opens.
+        foreach (var change in RegistryChangeJournalService.LoadHistory().OrderByDescending(c => c.Timestamp))
+            RegistryChanges.Add(change);
+
+        // #791: the repository folder's own size/last-modified is a plain directory-size sum (no
+        // shell-out) - cheap on a typical repository, but a large one can still mean walking many
+        // thousands of small files, so this is read off the UI thread (like every other "fire off
+        // an initial load from the constructor" case in this file) rather than synchronously
+        // inline, which would otherwise block MainViewModel's own synchronous construction of
+        // every tab's ViewModel at app startup.
+        _ = LoadWmiRepositoryFootprintAsync();
+
+        // #800: the upgrade-readiness card is this tab's OTHER top card (alongside #774's pending-
+        // reboot panel above) - every read it does (BCD/TPM/Secure Boot/partition-style/ESP/
+        // licensing) is a quick registry/WMI/bcdedit read, no event-log scan or DISM call, so it
+        // loads automatically rather than waiting on a button like #791-799's heavier cards below.
+        _ = LoadUpgradeReadinessAsync();
 
         // #787: integrity-history.json is a small local file (same cost as ThemeService's theme.json
         // or PollIntervalSettingsService's own JSON) - cheap enough to load up front, unlike every
@@ -462,6 +636,10 @@ public sealed class WindowsHealthViewModel : ObservableObject
             ServicingPackages.Clear();
             foreach (var p in packages) ServicingPackages.Add(p);
             HasLoadedPackages = true;
+
+            // #800: now that a real package list exists, replace the readiness card's placeholder
+            // servicing-stack-version text - see RefreshServicingStackVersionText's remarks.
+            RefreshServicingStackVersionText();
         }
         finally
         {
@@ -1011,4 +1189,387 @@ public sealed class WindowsHealthViewModel : ObservableObject
             IsCreatingRestorePoint = false;
         }
     }
+
+    #region #791 methods - WMI repository verify/salvage/reset
+
+    private async Task LoadWmiRepositoryFootprintAsync()
+    {
+        WmiRepositoryHealth = await Task.Run(WmiHealthService.ReadRepositoryFootprint).ConfigureAwait(true);
+    }
+
+    /// <summary>#791: `winmgmt /verifyrepository` - read-only, no confirmation needed (same
+    /// treatment #784's DISM CheckHealth gets).</summary>
+    private async Task VerifyWmiRepositoryAsync()
+    {
+        IsCheckingWmiRepository = true;
+        try
+        {
+            WmiRepositoryHealth = await WmiHealthService.VerifyRepositoryAsync().ConfigureAwait(true);
+        }
+        finally
+        {
+            IsCheckingWmiRepository = false;
+        }
+    }
+
+    /// <summary>#791: `winmgmt /salvagerepository` - confirmed first (attempts an in-place repair),
+    /// matching CLAUDE.md's mutating-action convention.</summary>
+    private async Task SalvageWmiRepositoryAsync()
+    {
+        var confirm = MessageBox.Show(
+            "This runs:\n\n  winmgmt /salvagerepository\n\n" +
+            "Attempts to repair the WMI repository in place, keeping as much of its existing content " +
+            "as possible. Usually safe, but a WMI service restart happens as part of it. Run now?",
+            "Salvage WMI repository", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        IsSalvagingWmiRepository = true;
+        try
+        {
+            var (success, output) = await WmiHealthService.SalvageRepositoryAsync().ConfigureAwait(true);
+            StatusMessage = success ? "WMI repository salvage finished." : $"WMI repository salvage reported a problem: {output}";
+            WmiRepositoryHealth = await WmiHealthService.VerifyRepositoryAsync().ConfigureAwait(true);
+        }
+        finally
+        {
+            IsSalvagingWmiRepository = false;
+        }
+    }
+
+    /// <summary>#791: `winmgmt /resetrepository` - the last-resort, fully-destructive rebuild.
+    /// Labelled and dialog-worded as escalation per this chunk's own instructions: it can break
+    /// third-party management/monitoring agents (SCCM, many AV/EDR/backup agents) that registered
+    /// their own WMI classes/providers, since those registrations are discarded along with
+    /// everything else in the repository.</summary>
+    private async Task ResetWmiRepositoryAsync()
+    {
+        var confirm = MessageBox.Show(
+            "ESCALATION - LAST RESORT ONLY. This runs:\n\n  winmgmt /resetrepository\n\n" +
+            "Discards the ENTIRE WMI repository and rebuilds it from scratch. This can break any " +
+            "third-party management, monitoring, antivirus/EDR, or backup agent that registered its " +
+            "own WMI classes or providers - they will very likely need reinstalling or re-registering " +
+            "afterward. Only use this if \"Salvage\" above has already failed to fix an inconsistent " +
+            "repository. Reset the WMI repository now?",
+            "Reset WMI repository (PERMANENT, ESCALATION)", MessageBoxButton.YesNo, MessageBoxImage.Stop);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        IsResettingWmiRepository = true;
+        try
+        {
+            var (success, output) = await WmiHealthService.ResetRepositoryAsync().ConfigureAwait(true);
+            StatusMessage = success ? "WMI repository reset finished." : $"WMI repository reset reported a problem: {output}";
+            WmiRepositoryHealth = await WmiHealthService.VerifyRepositoryAsync().ConfigureAwait(true);
+        }
+        finally
+        {
+            IsResettingWmiRepository = false;
+        }
+    }
+
+    #endregion
+
+    #region #792/#793 methods - WMI activity errors + permanent event consumers
+
+    /// <summary>#792/#793: bundled behind one button (same "share one refresh" shape #769/#771/
+    /// #772/#774/#775 already use above) since both are read-only WMI-card diagnostics gathered in
+    /// one pass - a 30-day WMI-Activity/Operational scan plus a root\subscription enumeration.</summary>
+    private async Task LoadWmiDiagnosticsAsync()
+    {
+        IsLoadingWmiDiagnostics = true;
+        try
+        {
+            var errorGroups = await Task.Run(() => WmiHealthService.ReadActivityErrorGroups()).ConfigureAwait(true);
+            var consumers = await Task.Run(WmiHealthService.ReadPermanentConsumers).ConfigureAwait(true);
+
+            WmiActivityErrorGroups.Clear();
+            foreach (var g in errorGroups) WmiActivityErrorGroups.Add(g);
+
+            WmiEventConsumers.Clear();
+            foreach (var c in consumers) WmiEventConsumers.Add(c);
+
+            HasLoadedWmiDiagnostics = true;
+        }
+        finally
+        {
+            IsLoadingWmiDiagnostics = false;
+        }
+    }
+
+    #endregion
+
+    #region #794/#795 methods - Registry hive health + backup status/re-enable
+
+    /// <summary>#794/#795: bundled behind one button - both read the same System32\config folder
+    /// tree (hive files, RegBack) so one "Load" click populates the whole Registry card.</summary>
+    private async Task LoadRegistryHealthAsync()
+    {
+        IsLoadingRegistryHealth = true;
+        try
+        {
+            RegistryHealth = await Task.Run(RegistryHealthService.ReadHiveHealth).ConfigureAwait(true);
+            RegistryBackupStatus = await Task.Run(RegistryHealthService.ReadBackupStatus).ConfigureAwait(true);
+            EnablePeriodicBackupCommand.RaiseCanExecuteChanged();
+        }
+        finally
+        {
+            IsLoadingRegistryHealth = false;
+        }
+    }
+
+    /// <summary>#795: sets EnablePeriodicBackup=1 - confirmed first, matching CLAUDE.md's
+    /// mutating-action convention.</summary>
+    private async Task EnablePeriodicBackupAsync()
+    {
+        var confirm = MessageBox.Show(
+            "This sets:\n\n  HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Configuration Manager\n  EnablePeriodicBackup = 1\n\n" +
+            "Restores the pre-Windows-10-1803 behavior of Windows automatically refreshing " +
+            "System32\\config\\RegBack roughly every 10 days via a scheduled task. Enable periodic " +
+            "registry backups now?",
+            "Enable periodic registry backup", MessageBoxButton.YesNo, MessageBoxImage.Question);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        var (success, error) = await Task.Run(RegistryHealthService.EnablePeriodicBackup).ConfigureAwait(true);
+        StatusMessage = success ? "Periodic registry backup enabled." : $"Couldn't enable periodic registry backup: {error}";
+        if (success)
+        {
+            var updated = RegistryChangeJournalService.LoadHistory().OrderByDescending(c => c.Timestamp).ToList();
+            RegistryChanges.Clear();
+            foreach (var c in updated) RegistryChanges.Add(c);
+            RegistryBackupStatus = await Task.Run(RegistryHealthService.ReadBackupStatus).ConfigureAwait(true);
+            EnablePeriodicBackupCommand.RaiseCanExecuteChanged();
+        }
+    }
+
+    #endregion
+
+    #region #796 methods - Registry change journal (undo + export-as-.reg)
+
+    /// <summary>#796: confirmed first (it's itself a registry write), then re-reads the whole
+    /// journal file rather than just flipping Undone locally, so the list stays correct even if
+    /// something else in this session also appended to it in the meantime.</summary>
+    private async Task UndoRegistryChangeAsync(RegistryChangeEntry? entry)
+    {
+        if (entry is null) return;
+
+        var confirm = MessageBox.Show(
+            $"This writes the previous value back to:\n\n  {entry.FullKeyText}\n  \"{entry.ValueName}\"\n\n" +
+            (entry.OldValueText is null
+                ? "The value didn't exist before this app created it - undoing will DELETE it."
+                : $"Old value: {entry.OldValueText}\nCurrent value: {entry.NewValueText}") +
+            "\n\nUndo this change now?",
+            "Undo registry change", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        var (success, error) = await Task.Run(() => RegistryChangeJournalService.Undo(entry)).ConfigureAwait(true);
+        StatusMessage = success ? "Change undone." : $"Couldn't undo this change: {error}";
+
+        var updated = RegistryChangeJournalService.LoadHistory().OrderByDescending(c => c.Timestamp).ToList();
+        RegistryChanges.Clear();
+        foreach (var c in updated) RegistryChanges.Add(c);
+    }
+
+    /// <summary>#796: exports one journal entry as a standalone .reg file via a Save dialog - same
+    /// OpenFileDialog/SaveFileDialog usage #785's BrowseRepairSourceAsync already takes for a
+    /// different file-picker need in this same class.</summary>
+    private void ExportRegistryChange(RegistryChangeEntry? entry)
+    {
+        if (entry is null) return;
+
+        var dialog = new SaveFileDialog
+        {
+            Title = "Export registry change as .reg",
+            Filter = "Registry files (*.reg)|*.reg|All files (*.*)|*.*",
+            FileName = $"{entry.ValueName}.reg",
+        };
+        if (dialog.ShowDialog() != true) return;
+
+        try
+        {
+            System.IO.File.WriteAllText(dialog.FileName, RegistryChangeJournalService.BuildRegFileContent(entry));
+            StatusMessage = $"Exported to \"{dialog.FileName}\".";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Couldn't export: {ex.Message}";
+        }
+    }
+
+    #endregion
+
+    #region #797 methods - PATH doctor
+
+    private async Task RunPathDoctorAsync()
+    {
+        IsRunningPathDoctor = true;
+        try
+        {
+            PathDoctorResult = await Task.Run(EnvironmentHealthService.ReadPathDoctorResult).ConfigureAwait(true);
+        }
+        finally
+        {
+            IsRunningPathDoctor = false;
+        }
+    }
+
+    #endregion
+
+    #region #798 methods - Environment variable inspector/editor
+
+    private async Task LoadEnvironmentVariablesAsync()
+    {
+        IsLoadingEnvironmentVariables = true;
+        try
+        {
+            var variables = await Task.Run(EnvironmentHealthService.ReadAllVariables).ConfigureAwait(true);
+            EnvironmentVariables.Clear();
+            foreach (var v in variables) EnvironmentVariables.Add(v);
+
+            var checks = await Task.Run(() => EnvironmentHealthService.RunSanityChecks(variables)).ConfigureAwait(true);
+            EnvironmentSanityChecks.Clear();
+            foreach (var c in checks) EnvironmentSanityChecks.Add(c);
+
+            HasLoadedEnvironmentVariables = true;
+        }
+        finally
+        {
+            IsLoadingEnvironmentVariables = false;
+        }
+    }
+
+    /// <summary>#798: add-or-edit, confirmed first with the exact scope/name/value shown - matching
+    /// CLAUDE.md's mutating-action convention for #795's EnablePeriodicBackup toggle and #791's
+    /// Salvage/Reset above. Broadcasts WM_SETTINGCHANGE afterward (inside
+    /// EnvironmentHealthService.SetVariable) and reloads the list/sanity checks/journal.</summary>
+    private async Task SetEnvironmentVariableAsync()
+    {
+        string scope = NewEnvVarScope, name = NewEnvVarName.Trim(), value = NewEnvVarValue;
+        if (name.Length == 0) return;
+
+        bool existed = EnvironmentVariables.Any(v => v.Scope == scope && v.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+        var confirm = MessageBox.Show(
+            $"This {(existed ? "changes" : "creates")} the {scope} environment variable:\n\n  {name} = {value}\n\n" +
+            "and notifies already-running programs that listen for environment changes (Explorer " +
+            "among them) - programs that don't listen still need a restart to see it. Continue?",
+            $"{(existed ? "Edit" : "Add")} environment variable", MessageBoxButton.YesNo, MessageBoxImage.Question);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        var (success, error) = await Task.Run(() => EnvironmentHealthService.SetVariable(scope, name, value)).ConfigureAwait(true);
+        StatusMessage = success ? $"{name} saved." : $"Couldn't save {name}: {error}";
+        if (success)
+        {
+            NewEnvVarName = string.Empty;
+            NewEnvVarValue = string.Empty;
+            await LoadEnvironmentVariablesAsync();
+            ReloadRegistryChanges();
+        }
+    }
+
+    /// <summary>#798: delete, confirmed first with the exact scope/name/current-value shown.</summary>
+    private async Task DeleteEnvironmentVariableAsync(EnvironmentVariableEntry? entry)
+    {
+        if (entry is null) return;
+
+        var confirm = MessageBox.Show(
+            $"This deletes the {entry.Scope} environment variable:\n\n  {entry.Name} = {entry.Value}\n\n" +
+            "and notifies already-running programs that listen for environment changes. Delete now?",
+            "Delete environment variable", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        var (success, error) = await Task.Run(() => EnvironmentHealthService.DeleteVariable(entry.Scope, entry.Name)).ConfigureAwait(true);
+        StatusMessage = success ? $"{entry.Name} deleted." : $"Couldn't delete {entry.Name}: {error}";
+        if (success)
+        {
+            await LoadEnvironmentVariablesAsync();
+            ReloadRegistryChanges();
+        }
+    }
+
+    private void ReloadRegistryChanges()
+    {
+        var updated = RegistryChangeJournalService.LoadHistory().OrderByDescending(c => c.Timestamp).ToList();
+        RegistryChanges.Clear();
+        foreach (var c in updated) RegistryChanges.Add(c);
+    }
+
+    #endregion
+
+    #region #799 methods - Process vs. system environment drift (tab summary)
+
+    /// <summary>#799 (Windows Health side): an explicit, on-demand sweep of every running process's
+    /// PATH/TEMP against the current machine+user values - see ProcessEnvironmentDriftService's own
+    /// remarks for why this is a button, not something run automatically. Per-row detail for a
+    /// single already-selected process lives on the Processes tab instead (ProcessesViewModel.
+    /// SelectedProcessEnvironmentDrift) - this side only needs the summary count/link.</summary>
+    private async Task ScanProcessEnvironmentDriftAsync()
+    {
+        IsScanningProcessEnvironmentDrift = true;
+        try
+        {
+            var (checkedCount, drifted) = await ProcessEnvironmentDriftService.ScanAllAsync().ConfigureAwait(true);
+            ProcessEnvironmentCheckedCount = checkedCount;
+            ProcessEnvironmentDriftCount = drifted.Count;
+            HasScannedProcessEnvironmentDrift = true;
+        }
+        finally
+        {
+            IsScanningProcessEnvironmentDrift = false;
+        }
+    }
+
+    #endregion
+
+    #region #800 methods - Upgrade readiness roll-up
+
+    private Task LoadUpgradeReadinessAsync() => LoadUpgradeReadinessAsync(measureEsp: false);
+
+    private async Task LoadUpgradeReadinessAsync(bool measureEsp)
+    {
+        IsLoadingUpgradeReadiness = true;
+        try
+        {
+            UpgradeReadiness = await UpgradeReadinessService.ReadSnapshotAsync(measureEsp).ConfigureAwait(true);
+            MeasureEspForReadinessCommand.RaiseCanExecuteChanged();
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Couldn't read upgrade-readiness data: {ex.Message}";
+        }
+        finally
+        {
+            IsLoadingUpgradeReadiness = false;
+        }
+    }
+
+    /// <summary>#800: the ESP-mount step is opt-in, matching the Startup tab's own #738 "Measure
+    /// free space" button (SystemPartitionService.MeasureEspFreeSpaceAsync briefly mutates system
+    /// state by mounting the partition) - never run automatically, only from this explicit click.</summary>
+    private async Task MeasureEspForReadinessAsync() => await LoadUpgradeReadinessAsync(measureEsp: true).ConfigureAwait(true);
+
+    /// <summary>#800: once #770's servicing-package list has been loaded (its own button, above),
+    /// this re-describes the readiness card's servicing-stack version text from that already-
+    /// fetched list rather than running a second DISM enumeration - called from
+    /// LoadServicingPackagesAsync below via a small hook.</summary>
+    private void RefreshServicingStackVersionText()
+    {
+        if (UpgradeReadiness is not { } current) return;
+        string versionText = UpgradeReadinessService.DescribeServicingStackVersion(ServicingPackages);
+        UpgradeReadiness = new UpgradeReadinessSnapshot
+        {
+            Activation = current.Activation,
+            EditionText = current.EditionText,
+            BuildText = current.BuildText,
+            DisplayVersionText = current.DisplayVersionText,
+            EndOfServicing = current.EndOfServicing,
+            ServicingStackVersionText = versionText,
+            TpmReady = current.TpmReady,
+            SecureBootEnabled = current.SecureBootEnabled,
+            SystemDiskIsMbr = current.SystemDiskIsMbr,
+            SystemDriveFreeBytes = current.SystemDriveFreeBytes,
+            EspFound = current.EspFound,
+            EspFreeBytes = current.EspFreeBytes,
+            BlockingItems = current.BlockingItems,
+        };
+    }
+
+    #endregion
 }

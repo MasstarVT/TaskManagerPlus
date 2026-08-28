@@ -252,7 +252,21 @@ public sealed class StartupManagerService
                 return (false, "This autorun location has no Explorer-managed approval flag, so it can't be toggled from here.");
 
             using var key = t.Hive.CreateSubKey(t.ApprovedPath, writable: true);
+            byte[]? previousFlag = key.GetValue(t.ValueName) as byte[];
             key.SetValue(t.ValueName, enabled ? EnabledFlag : DisabledFlag, RegistryValueKind.Binary);
+
+            // #796: journal this write - one of the four registry-writing actions this chunk
+            // routes through RegistryChangeJournalService (see its own remarks for the rest).
+            RegistryChangeJournalService.Record(
+                source: "Startup",
+                description: $"{(enabled ? "Enabled" : "Disabled")} startup item \"{item.Name}\"",
+                hive: t.Hive == Registry.CurrentUser ? "HKCU" : "HKLM",
+                subKeyPath: t.ApprovedPath,
+                valueName: t.ValueName,
+                kind: RegistryValueKind.Binary,
+                oldValueText: previousFlag is null ? null : Convert.ToHexString(previousFlag),
+                newValueText: Convert.ToHexString(enabled ? EnabledFlag : DisabledFlag));
+
             return (true, null);
         }
         catch (Exception ex)

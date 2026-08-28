@@ -251,7 +251,21 @@ public static class FastStartupService
         {
             using var key = Registry.LocalMachine.OpenSubKey(PowerKeyPath, writable: true);
             if (key is null) return (false, "Couldn't open the Power registry key (needs Administrator).");
+            int? previous = key.GetValue("HiberbootEnabled") as int?;
             key.SetValue("HiberbootEnabled", 0, RegistryValueKind.DWord);
+
+            // #796: journal this write - see RegistryChangeJournalService's remarks for the rest
+            // of this chunk's (deliberately partial) registry-write coverage.
+            RegistryChangeJournalService.Record(
+                source: "Fast Startup",
+                description: "Turned off Fast Startup (HiberbootEnabled)",
+                hive: "HKLM",
+                subKeyPath: PowerKeyPath,
+                valueName: "HiberbootEnabled",
+                kind: RegistryValueKind.DWord,
+                oldValueText: previous?.ToString(),
+                newValueText: "0");
+
             return (true, null);
         }
         catch (Exception ex)

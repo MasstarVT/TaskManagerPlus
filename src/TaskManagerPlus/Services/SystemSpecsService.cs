@@ -880,7 +880,12 @@ public sealed class SystemSpecsService
     /// policy; Win32_DeviceGuard (root\Microsoft\Windows\DeviceGuard) is unelevated-readable but
     /// simply doesn't exist pre-Windows 10 1607.
     /// </summary>
-    private static SecurityInfo ReadSecurityInfo(string? hypervisorLaunchType)
+    /// <summary>Internal (not private) so #800's UpgradeReadinessService can reuse this exact
+    /// TPM/Secure Boot/VBS read for its own upgrade-readiness verdict, rather than re-implementing
+    /// the same WMI/registry reads a second time - see this chunk's own remarks in
+    /// UpgradeReadinessService for why calling this directly (instead of the full, much heavier
+    /// QueryAsync sweep) is the appropriate reuse here.</summary>
+    internal static SecurityInfo ReadSecurityInfo(string? hypervisorLaunchType)
     {
         var (vbsPolicy, hvciPolicy, hvciScenario) = ReadDeviceGuardRegistry();
         return new SecurityInfo
@@ -1012,7 +1017,8 @@ public sealed class SystemSpecsService
     /// legacy/MBR system disk is a hard blocker for both Windows 11 and Secure Boot, so this is
     /// stated plainly (see FirmwareDiskInfo.IsHardBlocker) rather than left for the user to infer.
     /// </summary>
-    private static FirmwareDiskInfo ReadFirmwareDiskInfo() => new()
+    /// <summary>Internal (not private) - see ReadSecurityInfo's remarks; #800 reuses this directly.</summary>
+    internal static FirmwareDiskInfo ReadFirmwareDiskInfo() => new()
     {
         FirmwareType = ReadFirmwareType(),
         SystemDiskPartitionStyle = ReadSystemDiskPartitionStyle(),

@@ -46,6 +46,7 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
                 // Stale on-demand results from a previous selection would be misleading.
                 SelectedProcessModules.Clear();
                 SelectedProcessEnvironment.Clear();
+                SelectedProcessEnvironmentDrift = null;
                 SelectedProcessHandleTypes.Clear();
                 SelectedProcessHostedServices.Clear();
                 FileLockResults.Clear();
@@ -70,6 +71,14 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
     /// ViewEnvironmentCommand - see ProcessEnvironmentService for why this needs a PEB memory walk
     /// and is best-effort/64-bit-only.</summary>
     public ObservableCollection<string> SelectedProcessEnvironment { get; } = new();
+
+    /// <summary>#799: whether SelectedProcess's own PATH/TEMP (from the environment dump just
+    /// above) has drifted from the current machine+user environment - populated alongside
+    /// SelectedProcessEnvironment by the same ViewEnvironmentCommand click (no extra query - it's a
+    /// pure comparison over data already read). Null until "View environment" has been run for this
+    /// selection. See ProcessEnvironmentDriftService.</summary>
+    private ProcessEnvironmentDrift? _selectedProcessEnvironmentDrift;
+    public ProcessEnvironmentDrift? SelectedProcessEnvironmentDrift { get => _selectedProcessEnvironmentDrift; private set => SetProperty(ref _selectedProcessEnvironmentDrift, value); }
 
     /// <summary>Round 7 #12: open-handle counts by object type for SelectedProcess, populated on
     /// demand via ViewHandleTypesCommand - see HandleInspectionService.</summary>
@@ -367,11 +376,16 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
     private void LoadSelectedProcessEnvironment()
     {
         SelectedProcessEnvironment.Clear();
+        SelectedProcessEnvironmentDrift = null;
         var target = SelectedProcess;
         if (target is null) return;
 
-        foreach (var entry in ProcessEnvironmentService.Read(target.Pid))
+        var env = ProcessEnvironmentService.Read(target.Pid);
+        foreach (var entry in env)
             SelectedProcessEnvironment.Add(entry);
+
+        // #799: pure comparison over the environment dump just read - no extra query.
+        SelectedProcessEnvironmentDrift = ProcessEnvironmentDriftService.CheckSingle(target.Pid, target.Name, env);
     }
 
     /// <summary>Round 7 #12: on-demand open-handle-by-type breakdown - see

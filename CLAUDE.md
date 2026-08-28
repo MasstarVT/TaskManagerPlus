@@ -5,9 +5,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 Task Manager Plus — a Windows Task Manager replacement written in C# / WPF
-(.NET 8). Twelve top-level tabs (Summary, CPU, Memory, Storage, Network, GPU,
-Energy & Thermals, Processes, Services, Startup, System Specs, Stability),
-live color-theming (six palette families + saturation + high-contrast +
+(.NET 8). Thirteen top-level tabs (Summary, CPU, Memory, Storage, Network,
+GPU, Energy & Thermals, Processes, Services, Startup, System Specs,
+Stability, Windows Health), live color-theming (six palette families +
+saturation + high-contrast +
 color-blind-safe alerts), a CSV/HTML/Markdown logging & reporting system, a
 system tray icon with a global hotkey, and an optional LAN-visible remote
 monitor endpoint. Navigation is a TMOG-style top horizontal tab strip
@@ -75,10 +76,11 @@ container — everything is `new`'d directly). Layers:
   — `EnergyThermalsViewModel` and `GpuViewModel` don't fit the shared-sampler
   pattern because sensor/GPU-engine enumeration is a genuinely separate,
   heavier data source than the fixed `HardwareMonitorService` counter array.
-  `StartupViewModel`, `SystemSpecsViewModel`, and `StabilityViewModel` are
-  on-demand instead (an initial load plus a manual Refresh command, no
-  timer) since their underlying queries (registry/WMI inventory sweeps,
-  event-log scans) aren't cheap enough to repeat on a tick.
+  `StartupViewModel`, `SystemSpecsViewModel`, `StabilityViewModel`, and
+  `WindowsHealthViewModel` are on-demand instead (an initial load plus a
+  manual Refresh command, no timer) since their underlying queries
+  (registry/WMI inventory sweeps, event-log scans, DISM/SFC runs) aren't
+  cheap enough to repeat on a tick.
   `LoggingViewModel` owns a timer but samples nothing itself — it just reads
   already-polled state off `PerformanceViewModel`/`EnergyThermalsViewModel`.
   `MainViewModel` composes all of them plus settings-drawer state, tray/
@@ -128,6 +130,27 @@ AncestorType=Window}}` (or `UserControl`) rather than new plumbing.
 `PerformanceViewModel` (one knob for CPU/Memory/Storage/Network too),
 `ServicesViewModel`, `EnergyThermalsViewModel`. On-demand ViewModels
 (Startup/SystemSpecs/Stability) have no interval to configure.
+
+### Registry change journal
+
+`RegistryChangeJournalService` (`registry-changes.json` under
+`AppPaths.SettingsDirectory`, same fail-silent-to-empty-history pattern as
+every other settings file) is an append-only log of registry writes this
+app makes on the user's behalf — each entry records the key, value name,
+previous data, new data and a timestamp, with a per-entry programmatic
+undo and an export-as-`.reg` of the prior state. It backs a "Changes made
+by this app" list on the **Windows Health** tab (and a compact undo-only
+mirror in the settings drawer). It is deliberately **not** wired into every
+registry-writing call in the app — introduced late in the Windows Health
+work, it currently covers `StartupManagerService`'s approval-flag flip,
+`FastStartupService`'s `HiberbootEnabled` write, `PrefetchAuditService`'s
+restore-to-defaults, and the Windows Health tab's own registry writes
+(RegBack `EnablePeriodicBackup`, the environment-variable editor). Other
+registry-writing services (`ServiceControlService`, `WindowsUpdatePolicyService`,
+BCD-adjacent writes, etc.) still write directly. When you touch one of
+those other write paths, prefer routing it through the journal too rather
+than leaving it as a silent direct write — but don't treat the absence of
+journaling elsewhere as a bug to fix in an unrelated change.
 
 ### UI shell (top tab strip, icons, footer, tray)
 

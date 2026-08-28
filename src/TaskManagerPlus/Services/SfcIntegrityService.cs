@@ -361,6 +361,11 @@ public static class SfcIntegrityService
     /// registry, so the repair-install guidance names the exact ISO to go get rather than leaving
     /// the user to guess. Same "read a documented registry value, degrade to Unknown on anything
     /// missing" tradeoff every other registry read in this app takes.</summary>
+    /// <summary>Public wrapper around ReadMatchingImageSpec so #800's UpgradeReadinessService can
+    /// reuse this exact CurrentBuild/UBR/EditionID/DisplayVersion read for its own build-lifecycle
+    /// card, rather than re-reading the same registry values a second time.</summary>
+    public static (string Edition, string Build, string DisplayVersion, string Language, string Architecture) ReadCurrentImageSpec() => ReadMatchingImageSpec();
+
     private static (string Edition, string Build, string DisplayVersion, string Language, string Architecture) ReadMatchingImageSpec()
     {
         string edition = "Unknown", build = "Unknown", displayVersion = "Unknown";
