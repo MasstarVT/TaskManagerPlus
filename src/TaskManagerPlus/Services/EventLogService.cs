@@ -317,4 +317,84 @@ public sealed class EventLogService
         }
         return result;
     }
+
+    // #223: USB/PnP re-enumeration churn - repeated device arrive/remove cycling from one device is
+    // the classic "the whole PC hitches every few seconds" symptom (each re-enumeration briefly
+    // spikes DPC/interrupt activity while the bus re-negotiates). Kernel-PnP 410/411/430 in the
+    // System log cover the kernel-level device-node start/stop/removal transitions; the
+    // DriverFrameworks-UserMode provider's own Operational channel covers UMDF driver instances
+    // (many USB peripherals) that the kernel-level events alone don't capture.
+    private static readonly Regex DeviceInstanceIdRegex = new(
+        @"(?:USB|PCI|HID|ACPI|SWD|ROOT|STORAGE)\\[A-Za-z0-9_&.\\-]+", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly int[] KernelPnpChurnEventIds = { 410, 411, 430 };
+
+    public List<UsbChurnRow> ReadUsbChurnEvents(TimeSpan window)
+    {
+        var byDevice = new Dictionary<string, (int Count, DateTime Last, string Description)>(StringComparer.OrdinalIgnoreCase);
+        long maxAgeMs = (long)window.TotalMilliseconds;
+
+        void ScanLog(string logName, string providerName, int[]? eventIds)
+        {
+            try
+            {
+                string idFilter = eventIds is null || eventIds.Length == 0
+                    ? string.Empty
+                    : $" and ({string.Join(" or ", eventIds.Select(id => $"EventID={id}"))})";
+                var query = new EventLogQuery(logName, PathType.LogName,
+                    $"*[System[Provider[@Name='{providerName}']{idFilter} and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]");
+
+                using var reader = new EventLogReader(query);
+                int count = 0;
+                const int maxEvents = 2000; // generous - PnP churn is exactly the scenario that can legitimately produce thousands of entries
+                while (count < maxEvents && reader.ReadEvent() is { } record)
+                {
+                    using (record)
+                    {
+                        count++;
+                        string message;
+                        try { message = record.FormatDescription() ?? string.Empty; }
+                        catch { message = string.Empty; } // provider's message file isn't registered - a known, common gap
+
+                        var match = DeviceInstanceIdRegex.Match(message);
+                        // A message that doesn't parse still counts toward total churn volume, just
+                        // bucketed as unresolved rather than fabricating a device identity for it.
+                        string key = match.Success ? match.Value : $"(unresolved — {providerName} event {record.Id})";
+                        string desc = match.Success ? Truncate(message, 120) : string.Empty;
+                        var time = record.TimeCreated ?? DateTime.MinValue;
+
+                        if (byDevice.TryGetValue(key, out var existing))
+                        {
+                            byDevice[key] = (
+                                existing.Count + 1,
+                                time > existing.Last ? time : existing.Last,
+                                existing.Description.Length > 0 ? existing.Description : desc);
+                        }
+                        else
+                        {
+                            byDevice[key] = (1, time, desc);
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                // Log/provider unavailable/access denied - contributes nothing from this source.
+            }
+        }
+
+        ScanLog("System", "Microsoft-Windows-Kernel-PnP", KernelPnpChurnEventIds);
+        ScanLog("Microsoft-Windows-DriverFrameworks-UserMode/Operational", "Microsoft-Windows-DriverFrameworks-UserMode", null);
+
+        return byDevice
+            .Select(kv => new UsbChurnRow
+            {
+                DeviceInstanceId = kv.Key,
+                DeviceDescription = kv.Value.Description,
+                EventCount = kv.Value.Count,
+                LastEvent = kv.Value.Last,
+            })
+            .Where(r => r.EventCount > 1) // a single arrive/remove pair is normal (plug/unplug); only repeated churn is the symptom
+            .OrderByDescending(r => r.EventCount)
+            .ToList();
+    }
 }

@@ -110,6 +110,8 @@
                             <DataGridTextColumn Header="Max (µs)" Binding="{Binding MaxTimeUs, StringFormat={}{0:0.#}}" Width="90" />
                             <DataGridTextColumn Header="Timer / Device" Binding="{Binding TimerVsDeviceText}" Width="1.1*" />
                             <DataGridTextColumn Header="Outdated?" Binding="{Binding IsOutdated}" Width="80" />
+                            <!-- #216: best-effort driver-file -> device-name join, blank on a miss. -->
+                            <DataGridTextColumn Header="Device" Binding="{Binding DeviceName}" Width="1.6*" />
                             <DataGridTextColumn Header="Hint" Binding="{Binding KnownOffenderHint}" Width="2.4*" />
                         </DataGrid.Columns>
                     </DataGrid>
@@ -127,6 +129,8 @@
                             <DataGridTextColumn Header="Total (µs)" Binding="{Binding TotalTimeUs, StringFormat={}{0:0}}" Width="90" />
                             <DataGridTextColumn Header="Avg (µs)" Binding="{Binding AvgTimeUs, StringFormat={}{0:0.#}}" Width="90" />
                             <DataGridTextColumn Header="Max (µs)" Binding="{Binding MaxTimeUs, StringFormat={}{0:0.#}}" Width="90" />
+                            <!-- #216: best-effort driver-file -> device-name join, blank on a miss. -->
+                            <DataGridTextColumn Header="Device" Binding="{Binding DeviceName}" Width="1.8*" />
                         </DataGrid.Columns>
                     </DataGrid>
                 </StackPanel>
@@ -176,6 +180,175 @@
                         </DataGrid>
                     </StackPanel>
                 </Grid>
+            </Border>
+
+            <!-- #215: interrupt-storm detector - a suspiciously high per-core interrupt rate can
+                 produce stutter with almost no visible CPU usage in the normal Task Manager, since
+                 the work happens in interrupt/DPC context rather than a process's own CPU time. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding InterruptStormDetected}" Value="True">
+                                <Setter Property="BorderBrush" Value="{DynamicResource DangerBrush}" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Interrupt storm detector" FontWeight="SemiBold" Margin="0,0,0,6" />
+                    <TextBlock Text="{Binding InterruptStormStatusText}" TextWrapping="Wrap" FontSize="12" Margin="0,0,0,8">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding InterruptStormDetected}" Value="True">
+                                        <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <DataGrid ItemsSource="{Binding CoreInterruptRows}" MaxHeight="200">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Core" Binding="{Binding CoreIndex}" Width="60" />
+                            <DataGridTextColumn Header="Interrupts/sec" Binding="{Binding InterruptsPerSec, StringFormat={}{0:0.#}}" Width="*" />
+                            <DataGridTextColumn Header="Suspected storm?" Binding="{Binding IsSuspectedStorm}" Width="130" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <TextBlock Text="Quick flag, not a verdict: a core sustaining an interrupt rate far above its siblings (or above an absolute ceiling) points at a possible interrupt storm, not a confirmed diagnosis."
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" FontStyle="Italic" Margin="0,8,0,0" TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+
+            <!-- #217/#219: IRQ sharing map + interrupt affinity policy, side by side since they're
+                 both "how is this machine's interrupt hardware wired up" facets. #218: MSI/MSI-X
+                 status folded into the same per-device grid as #219, since both live under the same
+                 registry subtree/device enumeration. On-demand: device/IRQ topology essentially
+                 never changes tick to tick, so these load once at start-up plus a manual refresh. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <Grid Margin="0,0,0,6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Device / IRQ topology" FontWeight="SemiBold" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Refresh" Command="{Binding LoadDeviceTopologyCommand}" Padding="10,4" />
+                    </Grid>
+                    <TextBlock Text="{Binding DeviceTopologyStatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,10" />
+
+                    <TextBlock Text="#217: IRQ sharing map — lines with 3+ sharers are flagged." FontWeight="SemiBold" FontSize="12.5" Margin="0,0,0,4" />
+                    <DataGrid ItemsSource="{Binding IrqShareRows}" MaxHeight="180" Margin="0,0,0,14">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="IRQ" Binding="{Binding IrqNumber}" Width="60" />
+                            <DataGridTextColumn Header="Sharers" Binding="{Binding SharerCount}" Width="70" />
+                            <DataGridTextColumn Header="Heavily shared?" Binding="{Binding IsHeavilyShared}" Width="120" />
+                            <DataGridTextColumn Header="Devices" Binding="{Binding DevicesText}" Width="3*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+
+                    <TextBlock Text="#218/#219: MSI/MSI-X status and interrupt-affinity policy per device — a high-traffic device (GPU/NIC/NVMe/USB controller) still on line-based interrupts is flagged, but this is worth a manual check, not a confirmed misconfiguration." FontWeight="SemiBold" FontSize="12.5" TextWrapping="Wrap" Margin="0,0,0,4" />
+                    <DataGrid ItemsSource="{Binding DeviceInterruptRows}" MaxHeight="220">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Device" Binding="{Binding DeviceName}" Width="2*" />
+                            <DataGridTextColumn Header="Class" Binding="{Binding DeviceClass}" Width="80" />
+                            <DataGridTextColumn Header="Interrupt mode" Binding="{Binding MsiStatusText}" Width="140" />
+                            <DataGridTextColumn Header="Line-based (high-traffic)?" Binding="{Binding IsLineBasedHighTraffic}" Width="150" />
+                            <DataGridTextColumn Header="Affinity policy" Binding="{Binding AffinityText}" Width="1.4*" />
+                            <DataGridTextColumn Header="Priority" Binding="{Binding DevicePriorityText}" Width="80" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- #220: Platform latency settings - a small, generically-named list intended for
+                 later chunks in this domain to append more rows to. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Platform latency settings" FontWeight="SemiBold" Margin="0,0,0,6" />
+                    <ItemsControl ItemsSource="{Binding PlatformLatencySettings}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="{Binding SettingName}" FontSize="12.5" VerticalAlignment="Center" />
+                                    <TextBlock Grid.Column="1" Text="{Binding ValueText}" FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #224: problem devices - anything Device Manager would show with a yellow bang. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Problem devices" FontWeight="SemiBold" Margin="0,0,0,6" />
+                    <DataGrid ItemsSource="{Binding ProblemDeviceRows}" MaxHeight="200">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Device" Binding="{Binding Name}" Width="2*" />
+                            <DataGridTextColumn Header="Code" Binding="{Binding ConfigManagerErrorCode}" Width="60" />
+                            <DataGridTextColumn Header="Meaning" Binding="{Binding ErrorText}" Width="3*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <TextBlock Text="No problem devices found.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding ProblemDeviceRows.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- #222: Wi-Fi background-scan-storm suspected cause - on-demand, not a timer. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Wi-Fi background scan storm" FontWeight="SemiBold" Margin="0,0,0,6" />
+                    <TextBlock Text="Checks whether a Wi-Fi adapter is still associated (and therefore still periodically scanning/roaming) while the machine is actually getting its traffic over Ethernet."
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8" />
+                    <Button Content="Check now" Command="{Binding CheckWifiScanStormCommand}" HorizontalAlignment="Left" Padding="10,4" Margin="0,0,0,8" />
+                    <TextBlock Text="{Binding WifiScanStorm.StatusText}" TextWrapping="Wrap" FontSize="12.5">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding WifiScanStorm.Detected}" Value="True">
+                                        <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- #223: USB/PnP re-enumeration churn - on-demand scan button, not a timer. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="USB re-enumeration churn" FontWeight="SemiBold" Margin="0,0,0,6" />
+                    <TextBlock Text="Repeated device arrive/remove cycling from one device is the classic 'the whole PC hitches every few seconds' symptom - scans the last 30 minutes of PnP events."
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8" />
+                    <Button Content="Scan now" Command="{Binding ScanUsbChurnCommand}" HorizontalAlignment="Left" Padding="10,4" Margin="0,0,0,8" />
+                    <TextBlock Text="{Binding UsbChurnStatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8" />
+                    <DataGrid ItemsSource="{Binding UsbChurnRows}" MaxHeight="200">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Device instance" Binding="{Binding DeviceInstanceId}" Width="2*" />
+                            <DataGridTextColumn Header="Events" Binding="{Binding EventCount}" Width="70" />
+                            <DataGridTextColumn Header="Last seen" Binding="{Binding LastEvent, StringFormat={}{0:T}}" Width="100" />
+                            <DataGridTextColumn Header="Detail" Binding="{Binding DeviceDescription}" Width="2*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
             </Border>
 
             <!-- #210: offline wpr.exe capture, for a user who'd rather not run a live session. -->

@@ -39,8 +39,13 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
 
     private readonly DpcLatencyService _dpc = new();
     private readonly PerCoreDpcService _perCore = new();
+    private readonly EventLogService _eventLog = new();
     private readonly DispatcherTimer _lightTimer;
     private Dictionary<string, DriverIdentityInfo> _driverIdentities = new(StringComparer.OrdinalIgnoreCase);
+
+    // #216: bare driver filename -> best-effort device friendly name(s), loaded once alongside
+    // driver identity metadata - see DeviceInterruptAttributionService's remarks.
+    private Dictionary<string, string> _driverDeviceMap = new(StringComparer.OrdinalIgnoreCase);
 
     private CancellationTokenSource? _measureCts;
     private Task? _measureLoopTask;
@@ -50,6 +55,57 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
     public ObservableCollection<CoreDpcRow> CoreDpcRows { get; } = new();
     public ObservableCollection<CoreDpcQueueRow> CoreDpcQueueRows { get; } = new();
     public ObservableCollection<DpcSpikeEvent> RecentSpikes { get; } = new();
+
+    // #215: per-core interrupt-storm detection - rides the same lightweight always-on timer as
+    // the per-core DPC/interrupt-time and queue-rate rows above (cheap syscall/perf-counter reads).
+    public ObservableCollection<CoreInterruptRow> CoreInterruptRows { get; } = new();
+
+    private bool _interruptStormDetected;
+    public bool InterruptStormDetected { get => _interruptStormDetected; private set => SetProperty(ref _interruptStormDetected, value); }
+
+    private string _interruptStormStatusText = "Sampling interrupt rates...";
+    public string InterruptStormStatusText { get => _interruptStormStatusText; private set => SetProperty(ref _interruptStormStatusText, value); }
+
+    // #217/#218/#219/#224: device/IRQ topology essentially never changes tick to tick, and each of
+    // these is a WMI/registry enumeration too heavy for a per-tick timer per CLAUDE.md's on-demand
+    // rule - loaded once at start-up (below) plus a manual refresh button, all under one status
+    // text/command since they're all "how is this machine's interrupt hardware wired up right now"
+    // facets of the same refresh.
+    public ObservableCollection<IrqShareRow> IrqShareRows { get; } = new();
+    public ObservableCollection<DeviceInterruptRow> DeviceInterruptRows { get; } = new();
+    public ObservableCollection<ProblemDeviceRow> ProblemDeviceRows { get; } = new();
+
+    // #220: "Platform latency settings" - deliberately generic so later chunks in this same domain
+    // can append more rows without a new collection.
+    public ObservableCollection<PlatformLatencySettingRow> PlatformLatencySettings { get; } = new();
+
+    private bool _isLoadingDeviceTopology;
+    public bool IsLoadingDeviceTopology { get => _isLoadingDeviceTopology; private set => SetProperty(ref _isLoadingDeviceTopology, value); }
+
+    private string _deviceTopologyStatusText = "Not loaded yet.";
+    public string DeviceTopologyStatusText { get => _deviceTopologyStatusText; private set => SetProperty(ref _deviceTopologyStatusText, value); }
+
+    public AsyncRelayCommand LoadDeviceTopologyCommand { get; }
+
+    // #222: Wi-Fi background-scan-storm suspected cause - on-demand only (an event-log scan).
+    private WifiScanStormResult? _wifiScanStorm;
+    public WifiScanStormResult? WifiScanStorm { get => _wifiScanStorm; private set => SetProperty(ref _wifiScanStorm, value); }
+
+    private bool _isCheckingWifiScanStorm;
+    public bool IsCheckingWifiScanStorm { get => _isCheckingWifiScanStorm; private set => SetProperty(ref _isCheckingWifiScanStorm, value); }
+
+    public AsyncRelayCommand CheckWifiScanStormCommand { get; }
+
+    // #223: USB/PnP re-enumeration churn - on-demand only (an event-log scan).
+    public ObservableCollection<UsbChurnRow> UsbChurnRows { get; } = new();
+
+    private string _usbChurnStatusText = "Not scanned yet.";
+    public string UsbChurnStatusText { get => _usbChurnStatusText; private set => SetProperty(ref _usbChurnStatusText, value); }
+
+    private bool _isScanningUsbChurn;
+    public bool IsScanningUsbChurn { get => _isScanningUsbChurn; private set => SetProperty(ref _isScanningUsbChurn, value); }
+
+    public AsyncRelayCommand ScanUsbChurnCommand { get; }
 
     // #207: rolling max-DPC-latency-per-sample chart, following the app's glow+core LineSeries
     // convention, plus a flat dashed line at the audio-glitch threshold (#214) so a user can see
@@ -187,6 +243,10 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
         OpenCaptureCommand = new RelayCommand(() => { if (_lastEtlPath is not null) WprCaptureService.OpenInDefaultApp(_lastEtlPath); }, () => _lastEtlPath is not null);
         OpenReportCommand = new RelayCommand(() => { if (_lastReportPath is not null) WprCaptureService.OpenInDefaultApp(_lastReportPath); }, () => _lastReportPath is not null);
 
+        LoadDeviceTopologyCommand = new AsyncRelayCommand(LoadDeviceTopologyAsync, () => !IsLoadingDeviceTopology);
+        CheckWifiScanStormCommand = new AsyncRelayCommand(CheckWifiScanStormAsync, () => !IsCheckingWifiScanStorm);
+        ScanUsbChurnCommand = new AsyncRelayCommand(ScanUsbChurnAsync, () => !IsScanningUsbChurn);
+
         _lightTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(2) };
         _lightTimer.Tick += (_, _) => SampleLight();
         _lightTimer.Start();
@@ -194,21 +254,114 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
 
         Watchdog = DpcWatchdogService.Read();
         _ = LoadDriverIdentitiesAsync();
+        _ = LoadDeviceTopologyAsync();
     }
 
-    /// <summary>#211: driver metadata join, loaded once (a couple of shell-outs, not a per-tick
-    /// cost) and re-applied to whatever driver rows already exist so the grid gains identity text
-    /// as soon as the join finishes, even if it lands mid-session.</summary>
+    /// <summary>#211/#216: driver metadata join plus the best-effort driver-file -> device-name
+    /// join, both loaded once (a couple of shell-outs/one WMI query, not a per-tick cost) and
+    /// re-applied to whatever driver rows already exist so the grids gain identity/device text as
+    /// soon as the joins finish, even if that lands mid-session.</summary>
     private async Task LoadDriverIdentitiesAsync()
     {
         try
         {
-            _driverIdentities = await DriverIdentityService.LoadAsync();
+            var identitiesTask = DriverIdentityService.LoadAsync();
+            var deviceMapTask = DeviceInterruptAttributionService.LoadDriverToDeviceMapAsync();
+            await Task.WhenAll(identitiesTask, deviceMapTask);
+            _driverIdentities = identitiesTask.Result;
+            _driverDeviceMap = deviceMapTask.Result;
             RebuildDriverRows();
+            RebuildIsrRows();
         }
         catch
         {
-            // best-effort - rows just keep showing bare filenames
+            // best-effort - rows just keep showing bare filenames / no device attribution
+        }
+    }
+
+    /// <summary>#217/#218/#219/#224: one combined on-demand load for the device/IRQ/platform-
+    /// settings facets that don't fit a per-tick timer - see the properties' remarks. Runs once at
+    /// start-up (constructor) and again on every LoadDeviceTopologyCommand click.</summary>
+    private async Task LoadDeviceTopologyAsync()
+    {
+        if (IsLoadingDeviceTopology) return;
+        IsLoadingDeviceTopology = true;
+        DeviceTopologyStatusText = "Loading IRQ map, interrupt-management policy, platform settings, and problem devices...";
+        try
+        {
+            var irqTask = IrqResourceService.LoadAsync();
+            var interruptMgmtTask = InterruptManagementService.LoadAsync();
+            var problemDevicesTask = ProblemDeviceService.LoadAsync();
+            var platformSettingsTask = PowerSchemeInterruptSteeringService.ReadInterruptSteeringSettingsAsync();
+            await Task.WhenAll(irqTask, interruptMgmtTask, problemDevicesTask, platformSettingsTask);
+
+            IrqShareRows.Clear();
+            foreach (var r in irqTask.Result) IrqShareRows.Add(r);
+
+            DeviceInterruptRows.Clear();
+            foreach (var r in interruptMgmtTask.Result) DeviceInterruptRows.Add(r);
+
+            ProblemDeviceRows.Clear();
+            foreach (var r in problemDevicesTask.Result) ProblemDeviceRows.Add(r);
+
+            PlatformLatencySettings.Clear();
+            foreach (var r in platformSettingsTask.Result) PlatformLatencySettings.Add(r);
+
+            DeviceTopologyStatusText = $"Loaded — {IrqShareRows.Count} IRQ lines, {DeviceInterruptRows.Count} devices with interrupt policy, {ProblemDeviceRows.Count} problem device(s).";
+        }
+        catch (Exception ex)
+        {
+            DeviceTopologyStatusText = $"Load failed: {ex.Message}";
+        }
+        finally
+        {
+            IsLoadingDeviceTopology = false;
+        }
+    }
+
+    /// <summary>#222: on-demand Wi-Fi background-scan-storm check - see WifiScanStormService.</summary>
+    private async Task CheckWifiScanStormAsync()
+    {
+        if (IsCheckingWifiScanStorm) return;
+        IsCheckingWifiScanStorm = true;
+        try
+        {
+            WifiScanStorm = await WifiScanStormService.CheckAsync();
+        }
+        catch (Exception ex)
+        {
+            WifiScanStorm = new WifiScanStormResult { Detected = false, StatusText = $"Check failed: {ex.Message}" };
+        }
+        finally
+        {
+            IsCheckingWifiScanStorm = false;
+        }
+    }
+
+    /// <summary>#223: on-demand USB/PnP re-enumeration churn scan - see
+    /// EventLogService.ReadUsbChurnEvents. A 30-minute lookback window: long enough to catch a
+    /// device that churns every few minutes, short enough to stay a quick scan.</summary>
+    private async Task ScanUsbChurnAsync()
+    {
+        if (IsScanningUsbChurn) return;
+        IsScanningUsbChurn = true;
+        UsbChurnStatusText = "Scanning the last 30 minutes of PnP arrive/remove events...";
+        try
+        {
+            var rows = await Task.Run(() => _eventLog.ReadUsbChurnEvents(TimeSpan.FromMinutes(30)));
+            UsbChurnRows.Clear();
+            foreach (var r in rows) UsbChurnRows.Add(r);
+            UsbChurnStatusText = rows.Count == 0
+                ? "No repeated device churn found in the last 30 minutes."
+                : $"{rows.Count} device(s) with repeated arrive/remove churn in the last 30 minutes.";
+        }
+        catch (Exception ex)
+        {
+            UsbChurnStatusText = $"Scan failed: {ex.Message}";
+        }
+        finally
+        {
+            IsScanningUsbChurn = false;
         }
     }
 
@@ -232,6 +385,20 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
         {
             CoreDpcQueueRows.Clear();
             foreach (var r in queueRows) CoreDpcQueueRows.Add(r);
+        }
+
+        // #215: interrupt-storm detection - same cheap-tick cadence as the rows above.
+        var interruptRows = _perCore.SampleInterruptStorm();
+        if (interruptRows.Count > 0)
+        {
+            CoreInterruptRows.Clear();
+            foreach (var r in interruptRows) CoreInterruptRows.Add(r);
+
+            var storming = interruptRows.Where(r => r.IsSuspectedStorm).ToList();
+            InterruptStormDetected = storming.Count > 0;
+            InterruptStormStatusText = storming.Count == 0
+                ? "No core is showing a suspiciously high interrupt rate relative to the others."
+                : $"Core {string.Join(", ", storming.Select(s => s.CoreIndex))} showing a sustained interrupt rate far above the rest — possible interrupt storm (quick flag, not a verdict).";
         }
     }
 
@@ -268,8 +435,7 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
                 if (ok)
                 {
                     RebuildDriverRows();
-                    DriverIsrRows.Clear();
-                    foreach (var r in _dpc.BuildDriverIsrRows()) DriverIsrRows.Add(r);
+                    RebuildIsrRows();
 
                     RecentSpikes.Clear();
                     foreach (var s in _dpc.RecentSpikes) RecentSpikes.Add(s);
@@ -342,7 +508,13 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
     private void RebuildDriverRows()
     {
         DriverDpcRows.Clear();
-        foreach (var row in _dpc.BuildDriverDpcRows(Enrich)) DriverDpcRows.Add(row);
+        foreach (var row in _dpc.BuildDriverDpcRows(Enrich, DeviceFor)) DriverDpcRows.Add(row);
+    }
+
+    private void RebuildIsrRows()
+    {
+        DriverIsrRows.Clear();
+        foreach (var row in _dpc.BuildDriverIsrRows(DeviceFor)) DriverIsrRows.Add(row);
     }
 
     /// <summary>#211/#212: joins a bare driver filename to its identity metadata plus the small
@@ -353,6 +525,11 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
         _driverIdentities.TryGetValue(driverName, out var identity);
         return (KnownOffenderDriverLookup.Hint(driverName), identity);
     }
+
+    /// <summary>#216: best-effort driver-file -> device-name join - see
+    /// DeviceInterruptAttributionService's remarks. Null (blank in the UI) on a miss, never guessed.</summary>
+    private string? DeviceFor(string driverName) =>
+        _driverDeviceMap.TryGetValue(driverName, out var device) ? device : null;
 
     private void RaiseHeadlineChanged()
     {

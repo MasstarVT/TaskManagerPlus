@@ -20,6 +20,14 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
     private readonly DispatcherTimer _timer;
     private bool _isChecking;
 
+    // #221: optional cross-link to the Responsiveness tab's DPC-by-driver table - the same
+    // "reach a sibling ViewModel via an explicit constructor reference" pattern CpuViewModel
+    // already takes for EnergyThermalsViewModel. Nullable/optional rather than a hard requirement:
+    // NetworkViewModel is also constructed on its own wherever a future test/tool might want just
+    // the Network tab, so the cross-link degrades to a plain one-line note (no cross-tab claim) when
+    // it isn't wired.
+    private readonly ResponsivenessViewModel? _responsiveness;
+
     public PerformanceViewModel Performance { get; }
 
     private bool? _gatewayReachable;
@@ -133,9 +141,30 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
     // Round 9, #46: hosts-file quick-open shortcut for DNS override troubleshooting.
     public RelayCommand OpenHostsFileCommand { get; }
 
-    public NetworkViewModel(PerformanceViewModel performance)
+    // #221: NIC interrupt-moderation/RSS audit - see NicInterruptModerationService. Loaded once at
+    // start-up plus a manual refresh (registry reads are cheap, but this rides the same "device
+    // topology essentially never changes tick to tick" reasoning as the one-time #48 driver read
+    // right below it, not the 15s connectivity timer).
+    public ObservableCollection<NicInterruptModerationInfo> NicInterruptSettings { get; } = new();
+
+    private string _nicAuditStatusText = "Not loaded yet.";
+    public string NicAuditStatusText { get => _nicAuditStatusText; private set => SetProperty(ref _nicAuditStatusText, value); }
+
+    public AsyncRelayCommand LoadNicInterruptSettingsCommand { get; }
+
+    public NetworkViewModel(PerformanceViewModel performance, ResponsivenessViewModel? responsiveness = null)
     {
         Performance = performance;
+        _responsiveness = responsiveness;
+
+        // #221: keep the cross-link text live as either side's data arrives asynchronously,
+        // rather than a one-shot computed property that could bind before either collection is
+        // populated and then never update.
+        if (_responsiveness is not null)
+            _responsiveness.DriverDpcRows.CollectionChanged += (_, _) => OnPropertyChanged(nameof(NdisDpcCrossLinkText));
+        AdapterDrivers.CollectionChanged += (_, _) => OnPropertyChanged(nameof(NdisDpcCrossLinkText));
+
+        LoadNicInterruptSettingsCommand = new AsyncRelayCommand(LoadNicInterruptSettingsAsync);
 
         CheckConnectivityCommand = new RelayCommand(_ => _ = CheckConnectivityAsync());
         LookupPublicIpCommand = new AsyncRelayCommand(LookupPublicIpAsync);
@@ -158,6 +187,56 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
                 foreach (var d in drivers) AdapterDrivers.Add(d);
             });
         });
+
+        // #221: one-time NIC interrupt-moderation/RSS audit - see NicInterruptSettings' remarks.
+        _ = LoadNicInterruptSettingsAsync();
+    }
+
+    /// <summary>#221: reads each adapter's interrupt-moderation/RSS registry settings and flags an
+    /// adapter with moderation disabled or RSS off on a multi-core machine - see
+    /// NicInterruptModerationService's remarks for why some fields can legitimately come back
+    /// Unknown rather than a guessed on/off state.</summary>
+    private async Task LoadNicInterruptSettingsAsync()
+    {
+        NicAuditStatusText = "Reading NIC interrupt-moderation/RSS settings...";
+        try
+        {
+            var results = await NicInterruptModerationService.LoadAsync();
+            NicInterruptSettings.Clear();
+            foreach (var r in results) NicInterruptSettings.Add(r);
+            NicAuditStatusText = results.Count == 0
+                ? "No physical adapters exposed these registry settings on this system."
+                : $"{results.Count} adapter(s) read.";
+        }
+        catch (Exception ex)
+        {
+            NicAuditStatusText = $"Read failed: {ex.Message}";
+        }
+    }
+
+    /// <summary>#221: plain-text cross-link to the Responsiveness tab's DPC-by-driver table - a
+    /// simple string comparison against DriverDpcRows rather than new bidirectional plumbing, per
+    /// the assignment's own "keep it a simpler one-way text note" fallback. Matches either the
+    /// generic "ndis.sys" network-stack driver, or (using the #216 driver-to-device attribution
+    /// already on each row) a DPC row whose attributed device matches one of this tab's known NIC
+    /// adapters. Only meaningful when this NetworkViewModel was constructed with a
+    /// ResponsivenessViewModel reference (see MainViewModel's construction order); returns null when
+    /// it wasn't, so the view just hides the note instead of claiming "not a DPC offender" with no
+    /// data behind that claim.</summary>
+    public string? NdisDpcCrossLinkText
+    {
+        get
+        {
+            if (_responsiveness is null) return null;
+            var ndisRow = _responsiveness.DriverDpcRows.FirstOrDefault(r =>
+                r.DriverName.Equals("ndis.sys", StringComparison.OrdinalIgnoreCase) ||
+                (r.DeviceName.Length > 0 && AdapterDrivers.Any(d =>
+                    r.DeviceName.Contains(d.DeviceName, StringComparison.OrdinalIgnoreCase) ||
+                    d.DeviceName.Contains(r.DeviceName, StringComparison.OrdinalIgnoreCase))));
+            return ndisRow is null
+                ? null
+                : $"Heads up: \"{ndisRow.DriverName}\" is also showing up as a top DPC-time offender on the Responsiveness tab ({ndisRow.TotalTimeUs:0} µs total) - this adapter's own driver may be contributing to system-wide stutter, not just network throughput.";
+        }
     }
 
     private async Task CheckConnectivityAsync()

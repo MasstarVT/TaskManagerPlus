@@ -36,6 +36,10 @@ public sealed class DriverDpcRow
 
     // #212: "usually means..." hint - null when this driver isn't in the small built-in table.
     public string? KnownOffenderHint { get; init; }
+
+    // #216: best-effort device attribution - see DeviceInterruptAttributionService. Blank when no
+    // device could be matched to this driver file, never a guess.
+    public string DeviceName { get; init; } = string.Empty;
 }
 
 /// <summary>One driver's aggregated ISR stats (#203) - kept as a separate row type from
@@ -47,6 +51,9 @@ public sealed class DriverIsrRow
     public double TotalTimeUs { get; init; }
     public double MaxTimeUs { get; init; }
     public double AvgTimeUs => Count > 0 ? TotalTimeUs / Count : 0;
+
+    // #216: best-effort device attribution - see DeviceInterruptAttributionService.
+    public string DeviceName { get; init; } = string.Empty;
 }
 
 /// <summary>A single DPC/ISR spike above the configured threshold, stamped with the foreground
@@ -141,4 +148,105 @@ public sealed class MeasurementSessionSummary
     }
 
     private static string Truncate(string s, int max) => s.Length <= max ? s : s[..(max - 1)] + "…";
+}
+
+/// <summary>#215: one logical core's interrupt rate for the last sample interval, plus whether it's
+/// flagged as a suspected storm relative to its siblings/an absolute ceiling - see
+/// PerCoreDpcService.SampleInterruptStorm's remarks. "Quick flag, not a verdict."</summary>
+public sealed class CoreInterruptRow
+{
+    public int CoreIndex { get; init; }
+    public double InterruptsPerSec { get; init; }
+    public bool IsSuspectedStorm { get; init; }
+}
+
+/// <summary>#217: one IRQ line and the device(s) allocated to it, via Win32_PnPAllocatedResource /
+/// Win32_IRQResource / Win32_PnPEntity - see IrqResourceService. Flags lines with 3+ sharers, since
+/// two devices peacefully sharing a level-triggered PCI IRQ is normal; three or more is the
+/// classic "worth a second look" case.</summary>
+public sealed class IrqShareRow
+{
+    public int IrqNumber { get; init; }
+    public List<string> DeviceNames { get; init; } = new();
+    public int SharerCount => DeviceNames.Count;
+    public bool IsHeavilyShared => SharerCount >= 3;
+    public string DevicesText => string.Join(", ", DeviceNames);
+}
+
+/// <summary>#218/#219: one device's MSI/MSI-X status and interrupt-affinity policy, read from its
+/// `Device Parameters\Interrupt Management` registry subtree - see InterruptManagementService.
+/// Combined into one row/one device enumeration since both facts live under the same subtree.
+/// "Quick flag, not a verdict": IsHighTrafficClass is a name/class heuristic, not a confirmed
+/// device category.</summary>
+public sealed class DeviceInterruptRow
+{
+    public string DeviceName { get; init; } = string.Empty;
+    public string DeviceClass { get; init; } = string.Empty;
+
+    // #218
+    public bool? MsiSupported { get; init; }
+    public int? MessageNumberLimit { get; init; }
+    public string MsiStatusText => MsiSupported switch
+    {
+        true => MessageNumberLimit is > 0 ? $"MSI/MSI-X ({MessageNumberLimit} messages)" : "MSI/MSI-X",
+        false => "Line-based",
+        null => "Unknown",
+    };
+
+    /// <summary>#218: a high-traffic-class device (GPU/NIC/NVMe/USB controller, matched by class/
+    /// name heuristic) still running line-based interrupts instead of MSI/MSI-X - worth a manual
+    /// check, not a confirmed misconfiguration.</summary>
+    public bool IsHighTrafficClass { get; init; }
+    public bool IsLineBasedHighTraffic => IsHighTrafficClass && MsiSupported == false;
+
+    // #219
+    public int? DevicePolicy { get; init; }
+    public string DevicePolicyText { get; init; } = "Unknown";
+    public string? AssignmentSetOverride { get; init; }
+    public int? DevicePriority { get; init; }
+    public string DevicePriorityText { get; init; } = "Unknown";
+    public string AffinityText => AssignmentSetOverride is { Length: > 0 } o
+        ? $"{DevicePolicyText} — cores {o}"
+        : DevicePolicyText;
+}
+
+/// <summary>#220: one row of the "Platform latency settings" card - a small, generically-named
+/// ObservableCollection<PlatformLatencySettingRow> (see ResponsivenessViewModel) that later chunks
+/// in this same domain are expected to append more rows to, per suggestions.md's own framing.</summary>
+public sealed class PlatformLatencySettingRow
+{
+    public string SettingName { get; init; } = string.Empty;
+    public string ValueText { get; init; } = "Unknown";
+    public string? Note { get; init; }
+}
+
+/// <summary>#222: Wi-Fi background-scan-storm suspected-cause result - see WifiScanStormService.
+/// Null/false fields mean "couldn't tell" or "not detected", never a guess.</summary>
+public sealed class WifiScanStormResult
+{
+    public bool Detected { get; init; }
+    public string StatusText { get; init; } = string.Empty;
+    public string? AdapterName { get; init; }
+    public int RecentScanEventCount { get; init; }
+    public bool IsOnEthernet { get; init; }
+}
+
+/// <summary>#223: one device instance's arrive/remove churn count over the scanned window - see
+/// EventLogService.ReadUsbChurnEvents.</summary>
+public sealed class UsbChurnRow
+{
+    public string DeviceInstanceId { get; init; } = string.Empty;
+    public string DeviceDescription { get; init; } = string.Empty;
+    public int EventCount { get; init; }
+    public DateTime LastEvent { get; init; }
+}
+
+/// <summary>#224: one Device-Manager-visible "problem device" - Win32_PnPEntity with a nonzero
+/// ConfigManagerErrorCode, decoded via a small table of the most common codes - see
+/// ProblemDeviceService.</summary>
+public sealed class ProblemDeviceRow
+{
+    public string Name { get; init; } = string.Empty;
+    public int ConfigManagerErrorCode { get; init; }
+    public string ErrorText { get; init; } = string.Empty;
 }

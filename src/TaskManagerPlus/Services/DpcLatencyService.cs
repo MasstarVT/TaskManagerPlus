@@ -99,7 +99,7 @@ public sealed class DpcLatencyService
         AudioGlitchCount = 0;
     }
 
-    public List<DriverDpcRow> BuildDriverDpcRows(Func<string, (string? Hint, DriverIdentityInfo? Identity)> enrich)
+    public List<DriverDpcRow> BuildDriverDpcRows(Func<string, (string? Hint, DriverIdentityInfo? Identity)> enrich, Func<string, string?>? deviceLookup = null)
     {
         var rows = new List<DriverDpcRow>();
         foreach (var (name, a) in _dpcByDriver)
@@ -122,18 +122,21 @@ public sealed class DpcLatencyService
                 IdentityText = identity is not null && identity.Provider.Length > 0
                     ? $"{name} — {identity.Provider}{(identity.Version.Length > 0 ? $" v{identity.Version}" : "")}"
                     : name,
+                // #216: best-effort driver-file -> device-friendly-name join, never a guess.
+                DeviceName = deviceLookup?.Invoke(name) ?? string.Empty,
             });
         }
         return rows.OrderByDescending(r => r.TotalTimeUs).ToList();
     }
 
-    public List<DriverIsrRow> BuildDriverIsrRows() =>
+    public List<DriverIsrRow> BuildDriverIsrRows(Func<string, string?>? deviceLookup = null) =>
         _isrByDriver.Select(kv => new DriverIsrRow
         {
             DriverName = kv.Key,
             Count = kv.Value.Count,
             TotalTimeUs = kv.Value.TotalUs,
             MaxTimeUs = kv.Value.MaxUs,
+            DeviceName = deviceLookup?.Invoke(kv.Key) ?? string.Empty,
         }).OrderByDescending(r => r.TotalTimeUs).ToList();
 
     /// <summary>#213: builds the final min/avg/max/p99-per-driver + total-DPC-time-as-%-of-wall-
