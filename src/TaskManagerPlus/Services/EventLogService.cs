@@ -3,6 +3,7 @@ using System.Diagnostics.Eventing.Reader;
 using System.IO;
 using System.Management;
 using System.Text.RegularExpressions;
+using Microsoft.Win32;
 using TaskManagerPlus.Models;
 
 namespace TaskManagerPlus.Services;
@@ -65,7 +66,16 @@ public sealed class EventLogService
         // (Microsoft's own Reliability Monitor index), 12 (log-coverage health check). Each is its
         // own independently-wrapped query/read, same "one provider/source, degrade to empty on any
         // failure" shape as every existing method in this file.
-        var bugChecks = ReadBugCheckRecords();
+        //
+        // Round 15: items 33/36 need the WHEA-error list and the sleep/resume event times *before*
+        // the bugcheck records are built, so those two reads happen first and EnrichBugCheckRecord
+        // joins them onto each record (0x9F -> sleep/resume, 0x124 -> nearest WHEA record) - item
+        // 28-32/35/37's plain per-code decode is attached the same way, via BugcheckDecoder.
+        var wheaErrors = ReadWheaErrors();
+        var sleepResumeEvents = ReadSleepResumeEventTimes();
+        var bugChecks = ReadBugCheckRecords()
+            .Select(b => EnrichBugCheckRecord(b, sleepResumeEvents, wheaErrors))
+            .ToList();
         var unexpectedShutdowns = ReadUnexpectedShutdowns();
 
         return new StabilitySnapshot
@@ -85,9 +95,200 @@ public sealed class EventLogService
             UnexpectedShutdowns = unexpectedShutdowns,
             ShutdownTimeline = ReadShutdownTimeline(),
             DumpFailures = ReadDumpFailures(),
-            WheaErrors = ReadWheaErrors(),
+            WheaErrors = wheaErrors,
             ReliabilityMetrics = ReadReliabilityMetrics(),
             LogHealth = ReadLogHealth(),
+            TdrEventDetails = ReadTdrEventDetails(),
+            TdrSettings = ReadTdrRegistrySettings(),
+        };
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Round 15, items 28-37: bugcheck code/parameter decoding, joined onto each BugCheckRecord.
+    // ---------------------------------------------------------------------------------------
+
+    // Item 33: how close a Kernel-Power sleep/resume event has to be to a 0x9F crash's own
+    // timestamp to count as "happened during sleep/resume" - generous enough to allow for the
+    // event-log timestamp jitter already tolerated elsewhere in this file (e.g. the ±10-minute
+    // Minidump/Kernel-Power-41 correlation window), tight enough that an unrelated sleep/resume
+    // cycle earlier or later in the day doesn't get treated as related.
+    private const double SleepResumeJoinWindowMinutes = 5;
+
+    // Item 36: how close a WHEA-Logger record's own timestamp has to be to a 0x124 crash to be
+    // treated as "the" hardware-error record that likely caused it.
+    private const double WheaJoinWindowMinutes = 10;
+
+    /// <summary>Items 28-37 (parameter decode) + 33 (sleep/resume) + 36 (WHEA join): attaches a
+    /// BugcheckDecodedInfo plus the two timestamp-based joins to one already-read BugCheckRecord.
+    /// BugCheckRecord's properties are all init-only, so this returns a new instance rather than
+    /// mutating - cheap, since there are at most a few dozen records in the lookback window.</summary>
+    private static BugCheckRecord EnrichBugCheckRecord(BugCheckRecord record, List<DateTime> sleepResumeEvents, List<WheaErrorEvent> wheaErrors)
+    {
+        if (!BugcheckHex.TryParseCode(record.StopCode, out var code))
+            return record with { Decoded = BugcheckDecoder.Decode(record.StopCode, record.Parameters) };
+
+        bool nearSleepResume = code == 0x0000009F &&
+            sleepResumeEvents.Any(t => Math.Abs((t - record.TimeCreated).TotalMinutes) <= SleepResumeJoinWindowMinutes);
+
+        string? wheaJoin = null;
+        if (code == 0x00000124)
+        {
+            var nearest = wheaErrors
+                .Where(w => Math.Abs((w.TimeCreated - record.TimeCreated).TotalMinutes) <= WheaJoinWindowMinutes)
+                .OrderBy(w => Math.Abs((w.TimeCreated - record.TimeCreated).TotalMinutes))
+                .FirstOrDefault();
+            if (nearest is not null)
+                wheaJoin = $"{nearest.Decoded} (WHEA-Logger event {nearest.EventId} at {nearest.TimeCreated:g})";
+        }
+
+        return record with
+        {
+            Decoded = BugcheckDecoder.Decode(record.StopCode, record.Parameters),
+            HappenedDuringSleepResume = nearSleepResume,
+            WheaJoinText = wheaJoin,
+        };
+    }
+
+    // Item 33: Kernel-Power sleep/resume markers - 42 "entering sleep", 107/187 resume/wake
+    // markers - the same provider ReadUnexpectedShutdowns already reads (41) but a different set
+    // of event IDs, so this is its own targeted query rather than reusing that one's result.
+    private static List<DateTime> ReadSleepResumeEventTimes()
+    {
+        var result = new List<DateTime>();
+        try
+        {
+            long maxAgeMs = LookbackDays * 24L * 60 * 60 * 1000;
+            var query = new EventLogQuery("System", PathType.LogName,
+                $"*[System[Provider[@Name='Microsoft-Windows-Kernel-Power'] and (EventID=42 or EventID=107 or EventID=187) and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]")
+            {
+                ReverseDirection = true,
+            };
+            using var reader = new EventLogReader(query);
+            int count = 0;
+            const int maxEvents = 500;
+            while (count < maxEvents && reader.ReadEvent() is { } record)
+            {
+                using (record)
+                {
+                    count++;
+                    if (record.TimeCreated is { } t) result.Add(t);
+                }
+            }
+        }
+        catch
+        {
+            // Provider/log unavailable - no sleep/resume cross-reference available for item 33.
+        }
+        return result;
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Round 15, item 34: TDR detail beyond a bare count - per-event driver/app, plus the live
+    // TdrDelay/TdrDdiDelay/TdrLevel registry settings.
+    // ---------------------------------------------------------------------------------------
+
+    private static readonly Regex TdrDriverRegex = new(@"[Dd]isplay driver\s+(\S+)\s+stopped responding", RegexOptions.Compiled);
+
+    /// <summary>Item 34: event 4101's own insertion strings name the display driver (property 0)
+    /// and, on Windows versions/drivers that populate it, the application whose GPU context was
+    /// reset (property 1) - read positionally like every other legacy-provider parse in this file,
+    /// with a regex fallback against the formatted message text (which always names the driver)
+    /// when the named property isn't present. This is a separate targeted query rather than
+    /// reusing the Level-filtered `events` list the plain TdrEventCount tile is built from, the
+    /// same "Warning-level event needs its own query" shape ReadLowMemoryEvents already uses.</summary>
+    private static List<TdrEventDetail> ReadTdrEventDetails()
+    {
+        var result = new List<TdrEventDetail>();
+        try
+        {
+            long maxAgeMs = LookbackDays * 24L * 60 * 60 * 1000;
+            var query = new EventLogQuery("System", PathType.LogName,
+                $"*[System[Provider[@Name='Display'] and (EventID={TdrEventId}) and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]")
+            {
+                ReverseDirection = true,
+            };
+            using var reader = new EventLogReader(query);
+            int count = 0;
+            const int maxEvents = 100;
+            while (count < maxEvents && reader.ReadEvent() is { } record)
+            {
+                using (record)
+                {
+                    count++;
+                    string message;
+                    try { message = record.FormatDescription() ?? string.Empty; }
+                    catch { message = string.Empty; }
+
+                    string? driver = null, app = null;
+                    try
+                    {
+                        if (record.Properties.Count > 0) driver = record.Properties[0].Value as string;
+                        if (record.Properties.Count > 1) app = record.Properties[1].Value as string;
+                    }
+                    catch { /* fall through to the regex parse of the formatted message below */ }
+
+                    if (string.IsNullOrWhiteSpace(driver))
+                    {
+                        var m = TdrDriverRegex.Match(message);
+                        if (m.Success) driver = m.Groups[1].Value;
+                    }
+
+                    result.Add(new TdrEventDetail
+                    {
+                        TimeCreated = record.TimeCreated ?? DateTime.MinValue,
+                        Driver = string.IsNullOrWhiteSpace(driver) ? null : driver,
+                        Application = string.IsNullOrWhiteSpace(app) ? null : app,
+                    });
+                }
+            }
+        }
+        catch
+        {
+            // Provider/log unavailable - degrade to "no TDR event detail available" (the plain
+            // count/last-seen tile above still works independently via the Level-filtered scan).
+        }
+        return result;
+    }
+
+    /// <summary>Item 34: the three registry values that actually control TDR's timeout behavior -
+    /// null fields mean "not set, Windows' own undocumented built-in default applies" rather than
+    /// a fabricated number (CLAUDE.md's "degrade to Unknown, never fabricate").</summary>
+    private static TdrRegistrySettings ReadTdrRegistrySettings()
+    {
+        const string keyPath = @"SYSTEM\CurrentControlSet\Control\GraphicsDrivers";
+        int? delay = null, ddiDelay = null, level = null;
+        try
+        {
+            using var key = Registry.LocalMachine.OpenSubKey(keyPath);
+            if (key is not null)
+            {
+                if (key.GetValue("TdrDelay") is { } d) delay = Convert.ToInt32(d);
+                if (key.GetValue("TdrDdiDelay") is { } dd) ddiDelay = Convert.ToInt32(dd);
+                if (key.GetValue("TdrLevel") is { } l) level = Convert.ToInt32(l);
+            }
+        }
+        catch
+        {
+            // Key/values not present, or access denied - Windows falls back to its own
+            // undocumented built-in defaults, not something this app should guess at.
+        }
+
+        string levelText = level switch
+        {
+            0 => "0 — detection disabled",
+            1 => "1 — detection enabled, recovery disabled (bugchecks instead of recovering)",
+            2 => "2 — detection and recovery both disabled",
+            3 => "3 — detection and recovery enabled (Windows default)",
+            null => "not set (Windows default applies)",
+            _ => $"{level} (unrecognized value)",
+        };
+
+        return new TdrRegistrySettings
+        {
+            TdrDelaySeconds = delay,
+            TdrDdiDelaySeconds = ddiDelay,
+            TdrLevel = level,
+            TdrLevelText = levelText,
         };
     }
 
@@ -257,6 +458,12 @@ public sealed class EventLogService
                         BugcheckParameters = matched.Parameters,
                         WerReport = matched.WerReport,
                         IsAuthoritative = !matched.FromWerSummary,
+                        // Round 15, items 28-37: reuse the same decode + joins already computed
+                        // for the BugCheckRecord itself (EnrichBugCheckRecord), rather than
+                        // recomputing them from scratch for this per-file view of the same record.
+                        Decoded = matched.Decoded,
+                        HappenedDuringSleepResume = matched.HappenedDuringSleepResume,
+                        WheaJoinText = matched.WheaJoinText,
                     });
                     continue;
                 }
@@ -271,6 +478,10 @@ public sealed class EventLogService
                     FileName = info.Name,
                     Timestamp = info.LastWriteTime,
                     BugcheckCode = nearest?.BugcheckCode,
+                    // The old nearby-timestamp fallback never recovered parameters (see
+                    // MinidumpInfo.BugcheckParameters' own remarks), so there's nothing for
+                    // BugcheckDecoder to decode beyond the bare code itself.
+                    Decoded = nearest?.BugcheckCode is not null ? BugcheckDecoder.Decode(nearest.BugcheckCode, Array.Empty<string>()) : null,
                 });
             }
         }

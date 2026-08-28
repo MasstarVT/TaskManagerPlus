@@ -46,6 +46,24 @@ public sealed class MinidumpInfo
     /// rather than the WER-SystemErrorReporting fallback (item 8, FromWerSummary) or the old
     /// nearby-timestamp guess - shown as a small "confirmed" hint vs. a plainer label.</summary>
     public bool IsAuthoritative { get; init; }
+
+    /// <summary>Round 15, items 28-37: the fully decoded bugcheck (labelled parameters, guidance,
+    /// per-code sub-lines) - see BugcheckDecoder. Null only when BugcheckCode itself is null (the
+    /// old nearby-timestamp fallback found no bugcheck code at all for this dump).</summary>
+    public BugcheckDecodedInfo? Decoded { get; init; }
+
+    /// <summary>Round 15, item 33: true when this dump's own bugcheck was DRIVER_POWER_STATE_
+    /// FAILURE (0x9F) AND a Kernel-Power sleep/resume event (42/107/187) was found within a few
+    /// minutes of the crash time - see EventLogService's sleep/resume cross-reference. Always
+    /// false for every other stop code.</summary>
+    public bool HappenedDuringSleepResume { get; init; }
+
+    /// <summary>Round 15, item 36: for a WHEA_UNCORRECTABLE_ERROR (0x124) bugcheck, the nearest
+    /// WHEA-Logger hardware-error record's own decoded description - reuses the WHEA card's
+    /// existing CPER decode (EventLogService.DecodeWheaErrorRecord) rather than re-parsing
+    /// anything. Null when the code isn't 0x124, or no WHEA-Logger record was found near the
+    /// crash time.</summary>
+    public string? WheaJoinText { get; init; }
 }
 
 /// <summary>
@@ -60,7 +78,11 @@ public sealed class MinidumpInfo
 /// from, since the WER summary parse can't recover a Report Id (so <see cref="WerReport"/> is
 /// always null for those).
 /// </summary>
-public sealed class BugCheckRecord
+/// <summary>A record (not a plain class) purely so EventLogService.EnrichBugCheckRecord (round
+/// 15, items 33/36) can use a `with` expression to attach the sleep/resume/WHEA join fields
+/// without hand-copying every other property - every existing call site's `new BugCheckRecord {
+/// ... }` object-initializer syntax is unaffected by this.</summary>
+public sealed record BugCheckRecord
 {
     public DateTime TimeCreated { get; init; }
     public string StopCode { get; init; } = string.Empty; // "0x000000EF"
@@ -69,6 +91,22 @@ public sealed class BugCheckRecord
     public string? ReportId { get; init; }
     public bool FromWerSummary { get; init; }
     public WerReportInfo? WerReport { get; init; }
+
+    /// <summary>Round 15, items 28-37: the fully decoded bugcheck (labelled parameters, guidance,
+    /// per-code sub-lines) for this record's own StopCode/Parameters - see BugcheckDecoder. Set by
+    /// EventLogService.EnrichBugCheckRecord, not by ReadBugCheckRecords/ReadWerSummaryBugChecks
+    /// themselves.</summary>
+    public BugcheckDecodedInfo? Decoded { get; init; }
+
+    /// <summary>Round 15, item 33: true only for a DRIVER_POWER_STATE_FAILURE (0x9F) record whose
+    /// TimeCreated falls within a few minutes of a Kernel-Power sleep/resume event (42/107/187) -
+    /// see EventLogService.ReadSleepResumeEventTimes.</summary>
+    public bool HappenedDuringSleepResume { get; init; }
+
+    /// <summary>Round 15, item 36: for a WHEA_UNCORRECTABLE_ERROR (0x124) record, the nearest
+    /// WHEA-Logger hardware-error record's own decoded description - see
+    /// EventLogService.DecodeWheaErrorRecord (items 9/10), reused rather than reimplemented.</summary>
+    public string? WheaJoinText { get; init; }
 }
 
 /// <summary>
@@ -200,6 +238,31 @@ public sealed class EventLogHealth
     public DateTime? LastClearedTime { get; init; }
 }
 
+/// <summary>Round 15, item 34: one Display-provider event 4101 (TDR) occurrence, with the display
+/// driver and (when the event's own insertion strings carry one) the application whose GPU
+/// context was reset - see EventLogService.ReadTdrEventDetails. Driver/Application are best-
+/// effort (regex fallback on the formatted message when the named property isn't present), null
+/// when neither source found a value.</summary>
+public sealed class TdrEventDetail
+{
+    public DateTime TimeCreated { get; init; }
+    public string? Driver { get; init; }
+    public string? Application { get; init; }
+}
+
+/// <summary>Round 15, item 34: the three registry values under
+/// HKLM\SYSTEM\CurrentControlSet\Control\GraphicsDrivers that actually control TDR's own timeout
+/// behavior - null fields mean the value isn't set (Windows then falls back to its own
+/// undocumented built-in default), not a fabricated number. TdrLevelText is a plain-English
+/// label for TdrLevel's small documented enum (0-3).</summary>
+public sealed class TdrRegistrySettings
+{
+    public int? TdrDelaySeconds { get; init; }
+    public int? TdrDdiDelaySeconds { get; init; }
+    public int? TdrLevel { get; init; }
+    public string TdrLevelText { get; init; } = "Unknown";
+}
+
 /// <summary>One day's worth of Critical/Error event counts (#1 - Reliability History) - bucketed
 /// from the same 30-day event query everything else on this tab already runs, no second query.</summary>
 public sealed class DailyEventCount
@@ -279,6 +342,14 @@ public sealed class StabilitySnapshot
 
     /// <summary>Round 13, item 12: "is the lookback window even trustworthy" health check.</summary>
     public EventLogHealth? LogHealth { get; init; }
+
+    /// <summary>Round 15, item 34: per-event TDR detail (driver/app/time) beyond the plain
+    /// TdrEventCount/LastTdrEvent tile above - see EventLogService.ReadTdrEventDetails.</summary>
+    public List<TdrEventDetail> TdrEventDetails { get; init; } = new();
+
+    /// <summary>Round 15, item 34: the live TdrDelay/TdrDdiDelay/TdrLevel registry settings that
+    /// actually control TDR's timeout behavior on this machine.</summary>
+    public TdrRegistrySettings? TdrSettings { get; init; }
 }
 
 /// <summary>#66 (Round 10): repeated application crashes grouped by faulting module, with a count -

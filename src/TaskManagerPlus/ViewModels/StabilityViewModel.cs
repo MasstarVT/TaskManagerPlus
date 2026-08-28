@@ -171,6 +171,14 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
     private string _lastTdrEventText = "None in the last 30 days";
     public string LastTdrEventText { get => _lastTdrEventText; private set => SetProperty(ref _lastTdrEventText, value); }
 
+    // Round 15, item 34: per-event TDR detail (driver/app/time) plus the live registry settings
+    // that control TDR's timeout behavior - see EventLogService.ReadTdrEventDetails/
+    // ReadTdrRegistrySettings.
+    public ObservableCollection<TdrEventDetail> TdrEventDetails { get; } = new();
+
+    private TdrRegistrySettings? _tdrSettings;
+    public TdrRegistrySettings? TdrSettings { get => _tdrSettings; private set => SetProperty(ref _tdrSettings, value); }
+
     private string _timeSinceLastCrashText = "No crash found in the last 30 days";
     public string TimeSinceLastCrashText { get => _timeSinceLastCrashText; private set => SetProperty(ref _timeSinceLastCrashText, value); }
 
@@ -395,7 +403,13 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
     {
         public DebuggerAvailability Debugger { get; init; } = new();
         public List<ParsedDumpInfo> ParsedDumps { get; init; } = new();
+
+        // Round 15, items 28-37: one BugcheckDecodedInfo per ParsedDumps entry, same index -
+        // computed here (off the UI thread) rather than inside DumpRowViewModel's constructor,
+        // since item #35's pool-tag resolution can involve a bounded driver-binary scan.
+        public List<BugcheckDecodedInfo> DecodedInfos { get; init; } = new();
         public MemoryDumpInfo MemoryDump { get; init; } = new();
+        public BugcheckDecodedInfo? MemoryDumpDecoded { get; init; }
         public List<LiveKernelReportInfo> LiveKernelReports { get; init; } = new();
         public List<CommonDriverRow> CommonDrivers { get; init; } = new();
         public MinidumpHousekeepingInfo Housekeeping { get; init; } = new();
@@ -409,6 +423,13 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
         var liveReports = MinidumpParserService.ScanLiveKernelReports();
         var housekeeping = MinidumpHousekeepingService.ReadHousekeeping();
 
+        var decodedInfos = parsedDumps
+            .Select(p => BugcheckDecoder.Decode(p.BugcheckCode, p.BugcheckParameters))
+            .ToList();
+        var memDumpDecoded = memDump.Parsed is not null
+            ? BugcheckDecoder.Decode(memDump.Parsed.BugcheckCode, memDump.Parsed.BugcheckParameters)
+            : null;
+
         // Item 19: intersected across every dump this app could parse a module list from,
         // including MEMORY.DMP when it happens to be in the (much rarer) minidump/triage format.
         var forCommon = new List<ParsedDumpInfo>(parsedDumps);
@@ -418,7 +439,9 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
         {
             Debugger = debugger,
             ParsedDumps = parsedDumps,
+            DecodedInfos = decodedInfos,
             MemoryDump = memDump,
+            MemoryDumpDecoded = memDumpDecoded,
             LiveKernelReports = liveReports,
             CommonDrivers = MinidumpParserService.FindCommonDrivers(forCommon),
             Housekeeping = housekeeping,
@@ -430,11 +453,12 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
         Debugger = bundle.Debugger;
 
         DumpRows.Clear();
-        foreach (var p in bundle.ParsedDumps) DumpRows.Add(new DumpRowViewModel(p, bundle.Debugger));
+        for (int i = 0; i < bundle.ParsedDumps.Count; i++)
+            DumpRows.Add(new DumpRowViewModel(bundle.ParsedDumps[i], bundle.Debugger, bundle.DecodedInfos[i]));
 
         MemoryDump = bundle.MemoryDump;
         MemoryDumpRow = bundle.MemoryDump.Exists && bundle.MemoryDump.Parsed is not null
-            ? new DumpRowViewModel(bundle.MemoryDump.Parsed, bundle.Debugger)
+            ? new DumpRowViewModel(bundle.MemoryDump.Parsed, bundle.Debugger, bundle.MemoryDumpDecoded ?? new BugcheckDecodedInfo())
             : null;
         OpenMemoryDumpFolderCommand.RaiseCanExecuteChanged();
         CopyMemoryDumpCommand.RaiseCanExecuteChanged();
@@ -504,6 +528,11 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
         TdrEventCount = snapshot.TdrEventCount;
         LastTdrEventText = snapshot.LastTdrEvent is { } tdr
             ? $"Last: {tdr:g}" : "None in the last 30 days";
+
+        // Round 15, item 34.
+        TdrEventDetails.Clear();
+        foreach (var t in snapshot.TdrEventDetails) TdrEventDetails.Add(t);
+        TdrSettings = snapshot.TdrSettings;
 
         TimeSinceLastCrashText = snapshot.LastCrashTime is { } crash
             ? FormatSince(DateTime.Now - crash)

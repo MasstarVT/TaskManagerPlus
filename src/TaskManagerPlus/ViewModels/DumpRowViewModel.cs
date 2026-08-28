@@ -15,6 +15,13 @@ public sealed class DumpRowViewModel : ObservableObject
 {
     public ParsedDumpInfo Parsed { get; }
 
+    /// <summary>Round 15, items 28-37: the fully decoded bugcheck (labelled parameters, guidance,
+    /// per-code sub-lines) for this dump's own binary-parsed BugcheckCode/BugcheckParameters -
+    /// built off the UI thread by StabilityViewModel.BuildDumpAnalysisBundle (item #35's pool-tag
+    /// resolution can involve a bounded driver-binary scan) and passed in here rather than
+    /// computed in this constructor, which callers run on the UI thread.</summary>
+    public BugcheckDecodedInfo Decoded { get; }
+
     private CdbAnalysisResult? _analysis;
     public CdbAnalysisResult? Analysis { get => _analysis; private set => SetProperty(ref _analysis, value); }
 
@@ -28,7 +35,6 @@ public sealed class DumpRowViewModel : ObservableObject
     public string DebuggerHintText { get; }
 
     public string ContentsText => Parsed.StreamKinds.Count > 0 ? string.Join(", ", Parsed.StreamKinds) : "(no stream directory - classic kernel/complete dump format)";
-    public string ParametersText => Parsed.BugcheckParameters.Length > 0 ? string.Join(", ", Parsed.BugcheckParameters) : "(none read)";
     public string ModuleCountText => Parsed.Modules.Count == 1 ? "1 module" : $"{Parsed.Modules.Count} modules";
 
     /// <summary>Item 15: whichever of IncompleteReason (a header-level truncation/corruption
@@ -40,9 +46,10 @@ public sealed class DumpRowViewModel : ObservableObject
     public AsyncRelayCommand AnalyzeCommand { get; }
     public RelayCommand OpenInWinDbgCommand { get; }
 
-    public DumpRowViewModel(ParsedDumpInfo parsed, DebuggerAvailability debugger)
+    public DumpRowViewModel(ParsedDumpInfo parsed, DebuggerAvailability debugger, BugcheckDecodedInfo decoded)
     {
         Parsed = parsed;
+        Decoded = decoded;
         CanUseDebugger = debugger.AnyFound;
         DebuggerHintText = debugger.AnyFound
             ? string.Empty

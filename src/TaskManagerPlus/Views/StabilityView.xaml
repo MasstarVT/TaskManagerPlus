@@ -123,6 +123,45 @@
                 </StackPanel>
             </Border>
 
+            <!-- Round 15, item 34: GPU driver timeouts/resets (TDR) - per-event driver/app detail
+                 plus the live TdrDelay/TdrDdiDelay/TdrLevel registry settings, beyond the plain
+                 count tile in the summary row above. Collapsed entirely when no per-event detail
+                 was found (the count tile above still works independently). -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding TdrEventDetails.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="GPU driver timeouts / resets (TDR)" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Each display-driver timeout-detection-and-recovery event, with the driver and (when Windows recorded one) the application whose GPU context was reset."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,8" TextWrapping="Wrap" />
+                    <ItemsControl ItemsSource="{Binding TdrEventDetails}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,4">
+                                    <Run Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}" />
+                                    <Run Text=" — driver: " /><Run Text="{Binding Driver, TargetNullValue='Unknown'}" />
+                                    <Run Text=" · app: " /><Run Text="{Binding Application, TargetNullValue='Unknown'}" />
+                                </TextBlock>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <Border BorderBrush="{DynamicResource BorderBrush2}" BorderThickness="0,1,0,0" Margin="0,8,0,0" Padding="0,8,0,0">
+                        <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap">
+                            <Run Text="TdrDelay: " /><Run Text="{Binding TdrSettings.TdrDelaySeconds, TargetNullValue='not set', StringFormat={}{0}s, Mode=OneWay}" />
+                            <Run Text=" · TdrDdiDelay: " /><Run Text="{Binding TdrSettings.TdrDdiDelaySeconds, TargetNullValue='not set', StringFormat={}{0}s, Mode=OneWay}" />
+                            <Run Text=" · TdrLevel: " /><Run Text="{Binding TdrSettings.TdrLevelText, Mode=OneWay}" />
+                        </TextBlock>
+                    </Border>
+                </StackPanel>
+            </Border>
+
             <!-- Round 13, items 1/2/7/8: minidump files, backed by the authoritative BugCheck 1001
                  record when found (falling back to the old nearby-Kernel-Power-41-timestamp guess),
                  an expandable "Full crash record" (joined WER report), and an inline warning when
@@ -170,13 +209,69 @@
                                         </Grid>
                                     </Expander.Header>
                                     <StackPanel Margin="0,6,0,0">
-                                        <!-- Item 1: all four bugcheck parameters from the authoritative record. -->
-                                        <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap">
-                                            <Run Text="Parameters: " /><Run Text="{Binding BugcheckParameters, Converter={StaticResource StringListJoinConverter}, Mode=OneWay}" />
-                                        </TextBlock>
+                                        <!-- Round 15, item 29: per-code labelled parameters (with an inline NTSTATUS
+                                             decode, item 30, when this code documents a parameter as a status/
+                                             exception code) - replaces the old flat hex "Parameters: ..." row. -->
+                                        <ItemsControl ItemsSource="{Binding Decoded.ParameterRows}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding DisplayText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" />
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
                                         <TextBlock Style="{StaticResource SubStat}" Margin="0,2,0,0">
                                             <Run Text="Source: " /><Run Text="{Binding IsAuthoritative, Converter={StaticResource BugcheckSourceToTextConverter}, Mode=OneWay}" />
                                         </TextBlock>
+
+                                        <!-- Round 15, item 32: DPC_WATCHDOG_VIOLATION (0x133) subtype line - only
+                                             present for that one code. -->
+                                        <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,2,0,0"
+                                                   Text="{Binding Decoded.DpcWatchdogSubtypeText}"
+                                                   Visibility="{Binding Decoded.DpcWatchdogSubtypeText, Converter={StaticResource NullToVisibilityConverter}}" />
+
+                                        <!-- Round 15, item 33: DRIVER_POWER_STATE_FAILURE (0x9F) subcode + the
+                                             sleep/resume cross-reference. -->
+                                        <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,2,0,0"
+                                                   Text="{Binding Decoded.DriverPowerStateSubcodeText}"
+                                                   Visibility="{Binding Decoded.DriverPowerStateSubcodeText, Converter={StaticResource NullToVisibilityConverter}}" />
+                                        <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="10" Padding="8,2"
+                                                HorizontalAlignment="Left" Margin="0,4,0,0">
+                                            <Border.Style>
+                                                <Style TargetType="Border">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding HappenedDuringSleepResume}" Value="True">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Border.Style>
+                                            <TextBlock Text="Happened during sleep/resume" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource WarningBrush}" />
+                                        </Border>
+
+                                        <!-- Round 15, item 36: 0x124's joined WHEA-Logger record. -->
+                                        <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,4,0,0"
+                                                   Visibility="{Binding WheaJoinText, Converter={StaticResource NullToVisibilityConverter}}">
+                                            <Run Text="Matching hardware error (WHEA): " /><Run Text="{Binding WheaJoinText}" />
+                                        </TextBlock>
+
+                                        <!-- Round 15, item 35: pool-tag decode for 0xC2/0xC5. -->
+                                        <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,2,0,0"
+                                                   Text="{Binding Decoded.PoolTagText}"
+                                                   Visibility="{Binding Decoded.PoolTagText, Converter={StaticResource NullToVisibilityConverter}}" />
+
+                                        <!-- Round 15, item 37: fault-address classification for 0xA/0xD1/0x50. -->
+                                        <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,2,0,0"
+                                                   Text="{Binding Decoded.FaultAddressClassification}"
+                                                   Visibility="{Binding Decoded.FaultAddressClassification, Converter={StaticResource NullToVisibilityConverter}}" />
+
+                                        <!-- Round 15, item 31: curated "what usually causes this" note - explicitly
+                                             non-authoritative, per CLAUDE.md's "quick flag, not a verdict". -->
+                                        <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,6,0,0"
+                                                   Visibility="{Binding Decoded.Guidance, Converter={StaticResource NullToVisibilityConverter}}">
+                                            <Run Text="What usually causes this (not a diagnosis): " FontWeight="SemiBold" /><Run Text="{Binding Decoded.Guidance}" />
+                                        </TextBlock>
+
                                         <!-- Item 2: WER "full crash record" - the joined ReportArchive folder. -->
                                         <StackPanel Margin="0,4,0,0">
                                             <StackPanel.Style>
@@ -299,9 +394,45 @@
                                         <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,2,0,0">
                                             <Run Text="Bugcheck (from binary parse): " /><Run Text="{Binding Parsed.BugcheckCode, Converter={StaticResource BugcheckCodeToDescriptionConverter}, TargetNullValue='not found'}" />
                                         </TextBlock>
-                                        <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,2,0,0">
-                                            <Run Text="Parameters: " /><Run Text="{Binding ParametersText}" />
+
+                                        <!-- Round 15, item 29: per-code labelled parameters (item 30's NTSTATUS
+                                             decode inline where applicable) - replaces the old flat "Parameters: ..."
+                                             hex row. -->
+                                        <ItemsControl ItemsSource="{Binding Decoded.ParameterRows}" Margin="0,2,0,0">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding DisplayText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" />
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+
+                                        <!-- Round 15, item 32: DPC_WATCHDOG_VIOLATION (0x133) subtype line. -->
+                                        <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,2,0,0"
+                                                   Text="{Binding Decoded.DpcWatchdogSubtypeText}"
+                                                   Visibility="{Binding Decoded.DpcWatchdogSubtypeText, Converter={StaticResource NullToVisibilityConverter}}" />
+
+                                        <!-- Round 15, item 33: DRIVER_POWER_STATE_FAILURE (0x9F) subcode line. -->
+                                        <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,2,0,0"
+                                                   Text="{Binding Decoded.DriverPowerStateSubcodeText}"
+                                                   Visibility="{Binding Decoded.DriverPowerStateSubcodeText, Converter={StaticResource NullToVisibilityConverter}}" />
+
+                                        <!-- Round 15, item 35: pool-tag decode for 0xC2/0xC5. -->
+                                        <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,2,0,0"
+                                                   Text="{Binding Decoded.PoolTagText}"
+                                                   Visibility="{Binding Decoded.PoolTagText, Converter={StaticResource NullToVisibilityConverter}}" />
+
+                                        <!-- Round 15, item 37: fault-address classification for 0xA/0xD1/0x50. -->
+                                        <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,2,0,0"
+                                                   Text="{Binding Decoded.FaultAddressClassification}"
+                                                   Visibility="{Binding Decoded.FaultAddressClassification, Converter={StaticResource NullToVisibilityConverter}}" />
+
+                                        <!-- Round 15, item 31: curated "what usually causes this" note - explicitly
+                                             non-authoritative, per CLAUDE.md's "quick flag, not a verdict". -->
+                                        <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,4,0,0"
+                                                   Visibility="{Binding Decoded.Guidance, Converter={StaticResource NullToVisibilityConverter}}">
+                                            <Run Text="What usually causes this (not a diagnosis): " FontWeight="SemiBold" /><Run Text="{Binding Decoded.Guidance}" />
                                         </TextBlock>
+
                                         <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,2,0,0">
                                             <Run Text="Contents: " /><Run Text="{Binding ContentsText}" />
                                             <Run Text=" (" /><Run Text="{Binding ModuleCountText}" /><Run Text=")" />
