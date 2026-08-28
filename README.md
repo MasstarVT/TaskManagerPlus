@@ -1,32 +1,53 @@
 # Task Manager Plus
 
-A Windows Task Manager alternative built in C# / WPF (.NET 8), with a few things
-the built-in one doesn't do as well: smooth live graphs (CPU usage *and* clock
-speed, per-core breakdown, RAM, disk, network), and a Startup tab that flips
-the same Windows flags Explorer itself uses.
+A Windows Task Manager replacement built in C# / WPF (.NET 8), with a TMOG/
+HWiNFO-inspired depth the built-in one doesn't offer: real hardware sensors,
+per-subsystem tabs, live theming, CSV logging, and a lot of "what's actually
+wrong with this PC" diagnostics.
 
 ## Features
 
-- **Processes** — live CPU%, memory, threads, status, owner and path for every
-  process. End a single process or its entire tree.
-- **Performance** — real-time charts for total & per-core CPU usage, current
-  clock speed (computed the same way Task Manager does: base clock ×
-  `% Processor Performance`), RAM, disk activity, and network throughput, plus
-  a system summary (process/thread/handle counts, uptime).
-- **Services** — list every Windows service with status, startup type and
-  owning PID; start, stop, or restart any of them.
-- **Startup** — see everything registered to launch at sign-in (registry Run
-  keys + Startup folders, current user and all users) and enable/disable
-  individual entries.
-- **Colors** — click the ⊙ button in the header to open the Colors panel and
-  pick the accent color plus each Performance chart's color from swatches or
-  a hex code. Applies live and is saved to `%AppData%\TaskManagerPlus\theme.json`.
+- **Summary** — a dashboard with live CPU/RAM charts, top-process cards, a
+  rule-based Health Check list, configurable threshold alerts, snapshot
+  baseline/diff, and one-click Markdown/HTML diagnostic reports.
+- **CPU** — total & per-core usage, clock speed (base × `% Processor
+  Performance`, the same way Task Manager computes it), NUMA/P-core-E-core
+  topology, SMT sibling pairing, core parking, C-state residency, a turbo-
+  boost histogram, and thermal-throttle/power-limit flags.
+- **Memory** — Available/Committed/Cached breakdown, page faults, standby
+  list, kernel pool, page file, and top memory/pool-consuming processes.
+- **Storage** — activity, queue length/latency bottleneck diagnostics, SSD
+  wear, HDD fragmentation analysis, and on-demand SMART details.
+- **Network** — throughput, adapter errors, gateway/DNS reachability,
+  active connections by process, Wi-Fi signal, and on-demand traceroute/
+  jitter tests.
+- **GPU** — per-engine utilization, VRAM, driver/WDDM version, and which
+  processes are using it.
+- **Energy & Thermals** — real temperature/fan/voltage/power sensors (via
+  LibreHardwareMonitorLib), fan curve, battery health, and power-plan info.
+- **Processes** — live CPU%/memory/threads/handles for every process, a
+  process tree view, priority/affinity/suspend controls, and per-file
+  signature checks. End a single process or its whole tree.
+- **Services** — status, startup type, dependency graph, recovery actions,
+  and "failed to start" detection for every Windows service.
+- **Startup** — everything registered to launch at sign-in (registry Run
+  keys + Startup folders) plus Scheduled Tasks, with measured logon delay
+  and enable/disable.
+- **System Specs** — hardware inventory, security posture (Secure Boot/
+  TPM/VBS), disk health, installed software, and outdated-driver hints.
+- **Stability** — event-log-based crash/TDR/minidump diagnostics and a
+  computed stability index.
+- **Theming** — six palette families (Dark/Light/Green/Amber/Blue/
+  Monochrome) plus High Contrast, a saturation slider, and per-metric
+  accent colors. Click the ⊙ button in the tab strip to open the Colors
+  panel; applies live and saves to `%AppData%\TaskManagerPlus\theme.json`.
+- **Logging** — a footer Start/Stop Logging control writes every metric to
+  CSV (one row/second, HWiNFO-style), with rotation and gzip cleanup.
 
 ## Requirements
 
 - Windows 10/11
-- [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) (already
-  installed on this machine)
+- [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)
 
 ## Running it
 
@@ -87,12 +108,16 @@ dotnet build -c Release
 src/TaskManagerPlus/
   Models/       Data classes for rows shown in the UI (ProcessRow, ServiceRow, ...)
   Services/     The actual system-interaction code (WMI, performance counters,
-                ServiceController, registry) - no UI dependencies
-  ViewModels/   One view model per tab, each owns its own refresh timer
+                ServiceController, registry, native interop) - no UI dependencies
+  ViewModels/   One view model per tab; most poll on a timer, a few (Startup,
+                System Specs, Stability) load on demand
   Views/        XAML for each tab
   Converters/   Value converters for formatting (bytes, percentages, ...)
-  Themes/       Dark theme resource dictionary
+  Themes/       Theme resource dictionary (palettes, tab strip, control styles)
 ```
+
+See [CLAUDE.md](CLAUDE.md) for the fuller architecture writeup and the
+conventions the codebase follows.
 
 ## Notes on how a few things work
 
@@ -107,3 +132,6 @@ src/TaskManagerPlus/
   for Startup-folder shortcuts) that Explorer checks before launching things at
   sign-in. This app does the same, so it stays consistent with what Explorer
   and the built-in Task Manager show.
+- **Sensors** (temperature/fan/voltage/power): Windows has no reliable API for
+  these, so the Energy & Thermals tab is the one place this app takes a
+  third-party dependency, LibreHardwareMonitorLib (MPL-2.0).
