@@ -1803,15 +1803,23 @@
                             <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" VerticalAlignment="Center"
                                    Text="Scheduled Tasks - a second, often-larger source of background auto-launches."
                                    Foreground="{DynamicResource TextSecondaryBrush}" />
-                        <Button Grid.Column="1" Margin="0,0,8,0" Content="Check logon delay"
-                                Command="{Binding CheckLogonDelayCommand}" />
-                        <Button Grid.Column="2" Margin="0,0,8,0" Content="Enable/Disable"
+                        <!-- #80/#767: now also loads the full plain-language trigger summary below,
+                             reusing the same XML fetch - see ScheduledTaskService.ReadLogonTriggerInfoAsync. -->
+                        <Button Grid.Column="1" Margin="0,0,8,0" Content="Trigger details"
+                                Command="{Binding CheckLogonDelayCommand}"
+                                ToolTip="Logon-trigger delay, run mode, and a full plain-language trigger summary for the selected task" />
+                        <!-- #765: certutil fallback for a Last Result code not in the small known-codes table. -->
+                        <Button Grid.Column="2" Margin="0,0,8,0" Content="Decode result"
+                                Command="{Binding DecodeLastResultCommand}"
+                                ToolTip="Decode the selected task's Last Result code via certutil -error" />
+                        <Button Grid.Column="3" Margin="0,0,8,0" Content="Enable/Disable"
                                 Command="{Binding ToggleScheduledTaskCommand}" CommandParameter="{Binding SelectedScheduledTask}" />
-                        <Button Grid.Column="3" Style="{StaticResource PrimaryButton}"
+                        <Button Grid.Column="4" Style="{StaticResource PrimaryButton}"
                                 Command="{Binding LoadScheduledTasksCommand}">
                             <TextBlock>
                                 <TextBlock.Style>
@@ -1835,23 +1843,51 @@
                                     <DataTrigger Binding="{Binding IsEnabled}" Value="False">
                                         <Setter Property="Opacity" Value="0.5" />
                                     </DataTrigger>
+                                    <!-- #766: task's resolved target file doesn't exist. -->
+                                    <DataTrigger Binding="{Binding HasMissingTarget}" Value="True">
+                                        <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
+                                        <Setter Property="ToolTip" Value="{Binding MissingTargetReason}" />
+                                    </DataTrigger>
                                 </Style.Triggers>
                             </Style>
                         </DataGrid.RowStyle>
                         <DataGrid.Columns>
-                            <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="2.5*" />
-                            <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="100" />
-                            <DataGridTextColumn Header="Next run" Binding="{Binding NextRunTime}" Width="150" />
+                            <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="2.2*" />
+                            <!-- #766: flag column - blank for a task whose target resolved fine. -->
+                            <DataGridTemplateColumn Header="Flag" Width="90">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="Missing target" FontSize="10" FontWeight="SemiBold" TextWrapping="Wrap"
+                                                   Foreground="{DynamicResource DangerBrush}" ToolTip="{Binding MissingTargetReason}">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding HasMissingTarget}" Value="True">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="90" />
+                            <DataGridTextColumn Header="Next run" Binding="{Binding NextRunTime}" Width="140" />
                             <DataGridTextColumn Header="Last result" Binding="{Binding LastResult}" Width="90" />
-                            <DataGridTextColumn Header="Author" Binding="{Binding Author}" Width="140" />
-                            <!-- #80: logon-trigger delay - blank until "Check logon delay" is
+                            <!-- #765: plain-language meaning of Last Result - a known code decodes
+                                 instantly; an unmapped code stays blank until "Decode result" runs. -->
+                            <DataGridTextColumn Header="Result meaning" Binding="{Binding LastResultDecodedText}" Width="1.3*" />
+                            <DataGridTextColumn Header="Author" Binding="{Binding Author}" Width="120" />
+                            <!-- #80: logon-trigger delay - blank until "Trigger details" is
                                  clicked for the selected row, see StartupViewModel.CheckLogonDelayAsync. -->
-                            <DataGridTextColumn Header="Logon delay" Binding="{Binding DelayText}" Width="150" />
+                            <DataGridTextColumn Header="Logon delay" Binding="{Binding DelayText}" Width="130" />
                             <!-- #23 (Round 8): "Only when logged on" vs. "Whether or not logged
                                  on" - a distinct startup-impact category, since the latter can run
-                                 work even at the lock screen. Populated by the same "Check logon
-                                 delay" click as the column above. -->
-                            <DataGridTemplateColumn Header="Runs" Width="170" SortMemberPath="RunModeText">
+                                 work even at the lock screen. Populated by the same "Trigger
+                                 details" click as the column above. -->
+                            <DataGridTemplateColumn Header="Runs" Width="160" SortMemberPath="RunModeText">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="{Binding RunModeText}" VerticalAlignment="Center" TextWrapping="Wrap">
@@ -1869,9 +1905,78 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTextColumn Header="Task to run" Binding="{Binding TaskToRun}" Width="3*" />
+                            <DataGridTextColumn Header="Task to run" Binding="{Binding TaskToRun}" Width="2.4*" />
                         </DataGrid.Columns>
                     </DataGrid>
+
+                    <!-- #767: full plain-language trigger summary for the selected task, populated
+                         by the same "Trigger details" click as the Logon delay/Runs columns above. -->
+                    <Border Margin="0,8,0,0" Padding="10,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding SelectedScheduledTask.TriggerSummaryText}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding SelectedScheduledTask}" Value="{x:Null}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                        <StackPanel>
+                            <TextBlock Text="Trigger summary" Style="{StaticResource SubStat}" />
+                            <TextBlock Text="{Binding SelectedScheduledTask.TriggerSummaryText}" TextWrapping="Wrap" FontSize="11.5" Margin="0,4,0,0" />
+                        </StackPanel>
+                    </Border>
+
+                    <!-- #764/#768: Task Scheduler operational log - disabled by default, so this
+                         offers a one-click enable (never silent) before there's anything to read. -->
+                    <Grid Margin="0,16,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" VerticalAlignment="Center" TextWrapping="Wrap"
+                                   Text="Task failures - Microsoft-Windows-TaskScheduler/Operational (start/action failures, timeouts, credential problems)."
+                                   Foreground="{DynamicResource TextSecondaryBrush}" />
+                        <Button Grid.Column="1" Margin="0,0,8,0" Content="Enable operational log…"
+                                Command="{Binding EnableTaskFailureLogCommand}"
+                                ToolTip="Runs wevtutil sl &quot;Microsoft-Windows-TaskScheduler/Operational&quot; /e:true, after confirmation">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsTaskSchedulerLogEnabled}" Value="True">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                        <Button Grid.Column="2" Style="{StaticResource PrimaryButton}" Content="Load task failures"
+                                Command="{Binding LoadTaskFailuresCommand}" />
+                    </Grid>
+                    <TextBlock Text="{Binding TaskFailuresStatus}" Margin="0,4,0,8" FontSize="11.5"
+                               TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" />
+
+                    <DataGrid Height="180" ItemsSource="{Binding TaskFailures}" IsReadOnly="True">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="When" Binding="{Binding TimeCreated, StringFormat=g}" Width="1.2*" />
+                            <DataGridTextColumn Header="Task" Binding="{Binding TaskName}" Width="2*" />
+                            <DataGridTextColumn Header="What happened" Binding="{Binding EventLabel}" Width="1.6*" />
+                            <DataGridTextColumn Header="Details" Binding="{Binding Message}" Width="3*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+
+                    <!-- #768: worst-offender run-duration chart, under the Task failures grid. -->
+                    <TextBlock Text="Slowest tasks (max observed run duration)" Style="{StaticResource SubStat}" Margin="0,12,0,4" />
+                    <lvc:CartesianChart Height="180" Background="Transparent" TooltipPosition="Top" LegendPosition="Hidden"
+                                        Series="{Binding WorstTaskDurationsSeries}"
+                                        XAxes="{Binding WorstTaskDurationsXAxes}"
+                                        YAxes="{Binding WorstTaskDurationsYAxes}" />
                 </StackPanel>
             </Border>
 

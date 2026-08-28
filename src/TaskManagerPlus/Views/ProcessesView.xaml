@@ -81,6 +81,10 @@
             <!-- Round 7 #17 - only meaningful for a svchost.exe row, see IsSvchostSelected. -->
             <Button Content="Hosted services" Margin="0,0,8,8" Command="{Binding ViewHostedServicesCommand}"
                     ToolTip="Which service names live inside this svchost.exe process" />
+            <!-- #761 - cross-links to the Services tab's svchost group breakdown, see ProcessesView.xaml.cs. -->
+            <Button Content="svchost groups" Margin="0,0,8,8" IsEnabled="{Binding IsSvchostRowSelected}"
+                    Click="ViewSvchostGroupsInServices_Click"
+                    ToolTip="Open the Services tab's svchost group breakdown (CPU/working set/handles/threads per -k group)" />
             <!-- Round 7 #4 -->
             <Button Content="Trim working set" Margin="0,0,8,8" Command="{Binding TrimWorkingSetCommand}"
                     ToolTip="Ask Windows to release the process's resident memory back to the system (EmptyWorkingSet)" />

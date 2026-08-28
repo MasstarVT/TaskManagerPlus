@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IO;
 using System.Management;
@@ -11,6 +12,21 @@ namespace TaskManagerPlus.Services;
 /// <summary>Enumerates and controls Windows services.</summary>
 public sealed class ServiceControlService
 {
+    /// <summary>#758: services this app declines to offer editable recovery-action configuration
+    /// for - core RPC/COM/eventing plumbing so fundamental that a bad recovery-action write (e.g.
+    /// "reboot the computer on every failure") could make the machine hard to manage or even hard
+    /// to boot to a usable desktop. Deliberately small and conservative - this is a hard block, not
+    /// a "quick flag, not a verdict" heuristic. RpcSs/RpcEptMapper/DcomLaunch already can't be
+    /// stopped at all (see ServiceRow.CanStop, for the same reason); EventLog is added here too
+    /// since losing event logging on a machine already fighting service failures makes diagnosing
+    /// the underlying problem itself much harder.</summary>
+    public static readonly IReadOnlySet<string> ProtectedCoreServiceNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "RpcSs", "RpcEptMapper", "DcomLaunch", "EventLog",
+    };
+
+    public static bool IsProtectedCoreService(string serviceName) => ProtectedCoreServiceNames.Contains(serviceName);
+
     /// <summary>Builds the current list of services. Safe to call from a background thread.</summary>
     public List<ServiceRow> Sample()
     {
@@ -30,6 +46,7 @@ public sealed class ServiceControlService
                     DisplayName = sc.DisplayName,
                     Status = sc.Status,
                     Description = ReadDescriptionFromRegistry(sc.ServiceName),
+                    IsProtectedCore = IsProtectedCoreService(sc.ServiceName),
                 };
                 try { row.StartType = sc.StartType; } catch { row.StartType = ServiceStartMode.Manual; }
                 if (pids.TryGetValue(sc.ServiceName, out var pid))
@@ -560,6 +577,35 @@ public sealed class ServiceControlService
         return commandLine.Split(' ')[0];
     }
 
+    /// <summary>#757: does `exePath` exist as-is, or (for a bare executable name with no directory
+    /// component - e.g. a recovery action of "cmd.exe") resolve via the same System32/Windows/PATH
+    /// search Windows itself performs when launching a program named without a path? Checking
+    /// File.Exists on a bare name alone would false-positive on a perfectly valid recovery action -
+    /// the same reasoning ScheduledTaskService.EvaluateTarget/ResolveViaPath already applies to a
+    /// Scheduled Task's Task To Run.</summary>
+    private static bool ResolvesToAnExistingFile(string exePath)
+    {
+        if (File.Exists(exePath)) return true;
+        if (Path.GetDirectoryName(exePath) is { Length: > 0 }) return false; // has a path - already checked, genuinely missing
+
+        try
+        {
+            var candidateDirs = new List<string>
+            {
+                Environment.GetFolderPath(Environment.SpecialFolder.System),
+                Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+            };
+            string? pathEnv = Environment.GetEnvironmentVariable("PATH");
+            if (pathEnv is not null) candidateDirs.AddRange(pathEnv.Split(';', StringSplitOptions.RemoveEmptyEntries));
+
+            return candidateDirs.Any(dir => File.Exists(Path.Combine(dir, exePath)));
+        }
+        catch
+        {
+            return false; // malformed PATH entry or similar - couldn't confirm, falls back to "missing"
+        }
+    }
+
     /// <summary>#754: the classic unquoted-service-path pattern - an unquoted ImagePath whose
     /// file-path portion (before its .exe extension) contains a space lets Windows try each
     /// space-delimited prefix as a candidate executable in turn, so a file planted at one of those
@@ -759,4 +805,386 @@ public sealed class ServiceControlService
             return (false, ex.Message);
         }
     }
+
+    /// <summary>Shells to sc.exe and captures combined stdout+stderr, bounded by a real timeout -
+    /// the same concurrent-read/bounded-wait/kill-on-timeout pattern every other sc.exe call in this
+    /// file already uses (see ReadFailureActionsTextAsync's remarks), factored out once a second and
+    /// third caller (SetFailureActionsAsync, QueryExAsync) needed the identical shape.</summary>
+    private static async Task<(bool Success, string Output, int ExitCode)> RunScAsync(string args, int timeoutMs = 10000)
+    {
+        var psi = new ProcessStartInfo("sc.exe", args)
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        using var proc = Process.Start(psi);
+        if (proc is null) return (false, "(couldn't run sc.exe)", -1);
+
+        var outputTask = proc.StandardOutput.ReadToEndAsync();
+        var errorTask = proc.StandardError.ReadToEndAsync();
+
+        using var cts = new CancellationTokenSource(timeoutMs);
+        try
+        {
+            await proc.WaitForExitAsync(cts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            try { proc.Kill(); } catch { /* best-effort */ }
+            return (false, "(sc.exe timed out)", -1);
+        }
+
+        string output = (await outputTask) + (await errorTask);
+        return (proc.ExitCode == 0, output, proc.ExitCode);
+    }
+
+    #region #757 - Bulk recovery-action audit
+
+    /// <summary>
+    /// #757: runs `sc qfailure` across every service, batched off the UI thread with bounded
+    /// concurrency (a few hundred sc.exe process spawns run serially would take a while; unbounded
+    /// concurrency would just as easily flood the process table), reporting three outliers: no
+    /// recovery action configured (Automatic-start services only - see EvaluateRecoveryOutliers),
+    /// configured to reboot the computer on failure, and a "run a program" action pointing at a
+    /// missing binary. Reuses ReadFailureActionsTextAsync's own text output rather than a second,
+    /// differently-shaped sc.exe call - the per-row "Recovery actions" button and this bulk audit
+    /// read exactly the same data.
+    /// </summary>
+    public static async Task<List<ServiceRecoveryAuditEntry>> RunRecoveryActionAuditAsync(
+        IReadOnlyList<(string ServiceName, bool IsAutomaticStart)> services,
+        IProgress<(int Done, int Total)>? progress = null)
+    {
+        var result = new ConcurrentBag<ServiceRecoveryAuditEntry>();
+        int total = services.Count;
+        int done = 0;
+
+        using var gate = new SemaphoreSlim(8);
+        var tasks = services.Select(async svc =>
+        {
+            await gate.WaitAsync();
+            try
+            {
+                string text = await ReadFailureActionsTextAsync(svc.ServiceName);
+                var entry = EvaluateRecoveryOutliers(svc.ServiceName, svc.IsAutomaticStart, text);
+                if (entry is not null) result.Add(entry);
+            }
+            finally
+            {
+                int d = Interlocked.Increment(ref done);
+                progress?.Report((d, total));
+                gate.Release();
+            }
+        });
+
+        await Task.WhenAll(tasks);
+        return result.OrderBy(e => e.ServiceName, StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    private static readonly Regex RunProcessCommandLineRegex = new(@"COMMAND_LINE\s*:\s*(.*)", RegexOptions.IgnoreCase);
+
+    /// <summary>#757: parses one service's `sc qfailure` text (see ReadFailureActionsTextAsync) into
+    /// outlier flags. No "FAILURE_ACTIONS" section at all means no recovery action is configured
+    /// (sc.exe simply omits that line rather than printing an empty one - verified against a live
+    /// machine's own trigger-start/manual services). A "RUN PROCESS" action is checked against
+    /// COMMAND_LINE resolved the same way RunInventoryAudit resolves an ImagePath.</summary>
+    private static ServiceRecoveryAuditEntry? EvaluateRecoveryOutliers(string serviceName, bool isAutomaticStart, string qfailureText)
+    {
+        // ReadFailureActionsTextAsync's own error/timeout fallbacks are always wrapped in
+        // parentheses (e.g. "(sc.exe timed out)") - never mistake "couldn't read this" for "no
+        // recovery action configured" and report a false outlier.
+        if (qfailureText.Length == 0 || qfailureText.StartsWith('(')) return null;
+
+        bool hasFailureActionsSection = qfailureText.Contains("FAILURE_ACTIONS", StringComparison.OrdinalIgnoreCase);
+        bool noneConfigured = isAutomaticStart && !hasFailureActionsSection;
+        bool rebootsOnFailure = false;
+        bool runsMissingProgram = false;
+        string missingProgramPath = string.Empty;
+
+        if (hasFailureActionsSection)
+        {
+            var lines = qfailureText.Replace("\r\n", "\n").Split('\n').Select(l => l.Trim());
+            foreach (var line in lines)
+            {
+                if (line.StartsWith("REBOOT", StringComparison.OrdinalIgnoreCase))
+                {
+                    rebootsOnFailure = true;
+                }
+                else if (line.StartsWith("RUN PROCESS", StringComparison.OrdinalIgnoreCase) ||
+                         line.StartsWith("RUN COMMAND", StringComparison.OrdinalIgnoreCase))
+                {
+                    var cmdMatch = RunProcessCommandLineRegex.Match(qfailureText);
+                    string cmdLine = cmdMatch.Success ? cmdMatch.Groups[1].Value.Trim() : string.Empty;
+                    if (cmdLine.Length == 0) continue;
+
+                    string exePath = ExtractExecutablePath(Environment.ExpandEnvironmentVariables(cmdLine));
+                    if (exePath.Length > 0 && !ResolvesToAnExistingFile(exePath))
+                    {
+                        runsMissingProgram = true;
+                        missingProgramPath = exePath;
+                    }
+                }
+            }
+        }
+
+        if (!noneConfigured && !rebootsOnFailure && !runsMissingProgram) return null;
+
+        return new ServiceRecoveryAuditEntry
+        {
+            ServiceName = serviceName,
+            NoRecoveryConfigured = noneConfigured,
+            RebootsOnFailure = rebootsOnFailure,
+            RunsMissingProgram = runsMissingProgram,
+            MissingProgramPath = missingProgramPath,
+        };
+    }
+
+    #endregion
+
+    #region #758 - Editable recovery actions
+
+    /// <summary>
+    /// #758: writes recovery-action config via `sc failure "&lt;name&gt;" reset= &lt;seconds&gt;
+    /// actions= &lt;action1&gt;/&lt;delay1&gt;/&lt;action2&gt;/&lt;delay2&gt;/&lt;action3&gt;/&lt;delay3&gt;`
+    /// - the exact command is built once by the caller (ServicesViewModel) and shown verbatim in the
+    /// confirmation dialog before this runs it, matching CLAUDE.md's "mutating actions require
+    /// confirmation with the exact command shown" rule. `sc failure /?` documents only run/restart/
+    /// reboot as valid action keywords (verified live) - there is no "none" keyword, so a "None"
+    /// selection is represented by an empty action slot between slashes (e.g.
+    /// "restart/60000/restart/60000//0"), the documented way to write SC_ACTION_NONE for that step.
+    /// Declines to run at all for a ServiceControlService.IsProtectedCoreService name - defense in
+    /// depth alongside ServicesViewModel already gating the command's CanExecute on the same check.
+    /// </summary>
+    public static async Task<(bool Success, string? Error)> SetFailureActionsAsync(string serviceName, string args)
+    {
+        if (IsProtectedCoreService(serviceName))
+            return (false, $"{serviceName} is a protected core service - this app declines to change its recovery actions.");
+
+        var (success, output, _) = await RunScAsync(args, timeoutMs: 10000);
+        return success ? (true, null) : (false, output.Trim().Length > 0 ? output.Trim() : "sc.exe reported an error");
+    }
+
+    #endregion
+
+    #region #761/#762 - svchost group breakdown and split threshold
+
+    private static readonly Regex ImagePathGroupRegex = new(@"-k\s+(\S+)", RegexOptions.IgnoreCase);
+
+    /// <summary>
+    /// #761: maps every svchost.exe host group under
+    /// HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Svchost to the currently-running services
+    /// actually hosted under it (the Svchost key's REG_MULTI_SZ values list group *membership* -
+    /// which services are eligible for a group - not a live mapping, so each candidate service's own
+    /// ImagePath is checked for a matching `-k &lt;group&gt;` argument before counting it as
+    /// currently hosted there), then rolls up CPU time/working set/handle count/thread count per
+    /// *process* (a group can be split across more than one svchost.exe instance - see
+    /// SvcHostSplitInfo) using the PIDs ReadServicePids already collects. On-demand only
+    /// (ServicesViewModel.ShowSvcHostGroups) - a registry read plus a Process snapshot per running
+    /// host is more work than the polling timer's per-tick budget.
+    /// </summary>
+    public static List<SvcHostGroupInfo> ReadSvchostGroups()
+    {
+        var groups = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            using var key = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Svchost");
+            if (key is not null)
+            {
+                foreach (var valueName in key.GetValueNames())
+                {
+                    if (key.GetValue(valueName) is string[] members)
+                        groups[valueName] = members.Where(m => !string.IsNullOrWhiteSpace(m)).ToList();
+                }
+            }
+        }
+        catch
+        {
+            // Key unavailable - degrade to an empty group list, same as every other registry read here.
+        }
+
+        var pidsByService = ReadServicePids();
+        var result = new List<SvcHostGroupInfo>();
+
+        foreach (var (groupName, members) in groups)
+        {
+            var runningPids = new HashSet<int>();
+            var runningServices = new List<string>();
+            foreach (var svc in members)
+            {
+                if (!pidsByService.TryGetValue(svc, out var pid) || pid == 0) continue;
+                if (!ImagePathClaimsGroup(svc, groupName)) continue;
+                runningServices.Add(svc);
+                runningPids.Add(pid);
+            }
+
+            if (members.Count == 0 && runningPids.Count == 0) continue;
+
+            long ws = 0;
+            int handles = 0, threads = 0;
+            TimeSpan cpu = TimeSpan.Zero;
+            foreach (var pid in runningPids)
+            {
+                try
+                {
+                    using var proc = Process.GetProcessById(pid);
+                    ws += proc.WorkingSet64;
+                    handles += proc.HandleCount;
+                    threads += proc.Threads.Count;
+                    cpu += proc.TotalProcessorTime;
+                }
+                catch
+                {
+                    // Process exited mid-scan, or access denied to a protected host - skip it,
+                    // same "one entry's failure doesn't drop the rest" pattern as RunInventoryAudit.
+                }
+            }
+
+            result.Add(new SvcHostGroupInfo
+            {
+                GroupName = groupName,
+                ServiceNames = members,
+                RunningServiceNames = runningServices,
+                ProcessIds = runningPids.ToList(),
+                TotalWorkingSetBytes = ws,
+                TotalHandleCount = handles,
+                TotalThreadCount = threads,
+                TotalCpuTime = cpu,
+            });
+        }
+
+        return result.OrderByDescending(g => g.TotalWorkingSetBytes).ToList();
+    }
+
+    /// <summary>#761: does this service's own ImagePath actually carry `-k &lt;groupName&gt;`? A
+    /// service can be listed as a group member in the Svchost key without currently running under
+    /// that flag (or at all), so group membership alone isn't enough to attribute a running PID.</summary>
+    private static bool ImagePathClaimsGroup(string serviceName, string groupName)
+    {
+        try
+        {
+            using var key = Registry.LocalMachine.OpenSubKey($@"SYSTEM\CurrentControlSet\Services\{serviceName}");
+            string? imagePath = key?.GetValue("ImagePath") as string;
+            if (imagePath is null) return false;
+
+            var match = ImagePathGroupRegex.Match(imagePath);
+            return match.Success && match.Groups[1].Value.Equals(groupName, StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>#762: reads SvcHostSplitThresholdInKB and this machine's total RAM (reusing
+    /// BcdInspectorService.ReadSystemTotals's existing GlobalMemoryStatusEx call rather than a
+    /// second P/Invoke) to report whether per-service svchost splitting is active.</summary>
+    public static SvcHostSplitInfo ReadSvcHostSplitInfo()
+    {
+        long? configured = null;
+        try
+        {
+            using var key = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Control");
+            if (key?.GetValue("SvcHostSplitThresholdInKB") is int i && i > 0) configured = i;
+        }
+        catch
+        {
+            // Key unavailable - degrade to "not configured", same as every other registry read here.
+        }
+
+        var (_, totalRamBytes) = BcdInspectorService.ReadSystemTotals();
+        return new SvcHostSplitInfo { ConfiguredThresholdKb = configured, TotalRamKb = totalRamBytes / 1024 };
+    }
+
+    #endregion
+
+    #region #763 - Hung-service diagnosis
+
+    private static readonly Regex QueryExStateRegex = new(@"STATE\s*:\s*(\d+)\s+(\S+)", RegexOptions.IgnoreCase);
+    private static readonly Regex QueryExCheckpointRegex = new(@"CHECKPOINT\s*:\s*0x([0-9A-Fa-f]+)", RegexOptions.IgnoreCase);
+    private static readonly Regex QueryExWaitHintRegex = new(@"WAIT_HINT\s*:\s*0x([0-9A-Fa-f]+)", RegexOptions.IgnoreCase);
+    private static readonly Regex QueryExPidRegex = new(@"PID\s*:\s*(\d+)", RegexOptions.IgnoreCase);
+
+    private readonly record struct QueryExSnapshot(string StateText, uint Checkpoint, uint WaitHintMs, int Pid);
+
+    /// <summary>#763: one `sc queryex &lt;name&gt;` snapshot - CHECKPOINT/WAIT_HINT are only
+    /// meaningful while STATE is START_PENDING/STOP_PENDING (Windows reports 0x0 for both once a
+    /// service settles into RUNNING/STOPPED), which is exactly the case DiagnoseHangAsync cares
+    /// about.</summary>
+    private static async Task<QueryExSnapshot?> QueryExAsync(string serviceName)
+    {
+        var (success, output, _) = await RunScAsync($"queryex \"{serviceName}\"", timeoutMs: 5000);
+        if (!success) return null;
+
+        var stateMatch = QueryExStateRegex.Match(output);
+        if (!stateMatch.Success) return null;
+
+        uint checkpoint = QueryExCheckpointRegex.Match(output) is { Success: true } cp ? Convert.ToUInt32(cp.Groups[1].Value, 16) : 0;
+        uint waitHint = QueryExWaitHintRegex.Match(output) is { Success: true } wh ? Convert.ToUInt32(wh.Groups[1].Value, 16) : 0;
+        int pid = QueryExPidRegex.Match(output) is { Success: true } p ? int.Parse(p.Groups[1].Value) : 0;
+
+        return new QueryExSnapshot(stateMatch.Groups[2].Value.ToUpperInvariant(), checkpoint, waitHint, pid);
+    }
+
+    /// <summary>#763: `HKLM\SYSTEM\CurrentControlSet\Control\ServicesPipeTimeout` - absent means
+    /// Windows' documented 30-second default applies, the same "absent is the common case, not an
+    /// error" tradeoff ReadGlobalAutoStartDelaySeconds already takes for AutoStartDelay.</summary>
+    private static int ReadServicesPipeTimeoutMs()
+    {
+        try
+        {
+            using var key = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Control");
+            return key?.GetValue("ServicesPipeTimeout") is int i && i > 0 ? i : 30000;
+        }
+        catch
+        {
+            return 30000;
+        }
+    }
+
+    /// <summary>
+    /// #763: takes two `sc queryex` CHECKPOINT samples ~3 seconds apart to tell "still making
+    /// progress" from "genuinely stuck" for a service in START_PENDING/STOP_PENDING, rather than
+    /// guessing off one snapshot - pairs the result with ServicesPipeTimeout (context for how long
+    /// Windows itself will wait before giving up) and the caller-supplied PendingDuration (from
+    /// ServicesViewModel's own live-observed "since when has this row been pending" tracking - never
+    /// fabricated here).
+    /// </summary>
+    public static async Task<HungServiceDiagnosis> DiagnoseHangAsync(string serviceName, TimeSpan? pendingDuration)
+    {
+        var first = await QueryExAsync(serviceName);
+        if (first is null)
+            return new HungServiceDiagnosis { ServiceName = serviceName, Error = "couldn't query service state (sc queryex failed or timed out)" };
+
+        bool isPending = first.Value.StateText is "START_PENDING" or "STOP_PENDING";
+        if (!isPending)
+        {
+            return new HungServiceDiagnosis
+            {
+                ServiceName = serviceName,
+                IsPending = false,
+                StateText = first.Value.StateText,
+                HostProcessId = first.Value.Pid,
+            };
+        }
+
+        await Task.Delay(3000);
+        var second = await QueryExAsync(serviceName);
+        bool advancing = second is not null && second.Value.Checkpoint > first.Value.Checkpoint;
+
+        return new HungServiceDiagnosis
+        {
+            ServiceName = serviceName,
+            IsPending = true,
+            StateText = second?.StateText ?? first.Value.StateText,
+            CheckpointAdvancing = advancing,
+            Checkpoint = second?.Checkpoint ?? first.Value.Checkpoint,
+            WaitHintMs = first.Value.WaitHintMs,
+            ServicesPipeTimeoutMs = ReadServicesPipeTimeoutMs(),
+            HostProcessId = second?.Pid ?? first.Value.Pid,
+            PendingDuration = pendingDuration,
+        };
+    }
+
+    #endregion
 }

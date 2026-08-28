@@ -32,11 +32,14 @@
             </DoubleAnimation>
         </Storyboard>
     </UserControl.Resources>
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
     <Grid Margin="16">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" />
+            <RowDefinition Height="420" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
@@ -78,6 +81,11 @@
                       IsChecked="{Binding OrphanedOnly}"
                       ToolTip="Show only services whose ImagePath resolves to a binary that no longer exists (requires 'Run service audit')" />
 
+            <!-- #761/#762 -->
+            <CheckBox Grid.Column="5" Content="Show svchost groups" VerticalAlignment="Center" HorizontalAlignment="Left" Margin="16,0,0,0"
+                      IsChecked="{Binding ShowSvcHostGroups}"
+                      ToolTip="Roll up CPU time/working set/handles/threads per svchost.exe -k group" />
+
             <Button Grid.Column="6" Content="Start" Margin="0,0,8,0" Command="{Binding StartCommand}" Style="{StaticResource SuccessButton}" />
             <Button Grid.Column="7" Content="Stop" Margin="0,0,8,0" Command="{Binding StopCommand}" Style="{StaticResource DangerButton}" />
             <Button Grid.Column="8" Content="Restart" Margin="0,0,8,0" Command="{Binding RestartCommand}" Style="{StaticResource PrimaryButton}" />
@@ -101,6 +109,30 @@
                     ToolTip="Mine the System event log's SCM failure/crash events (7000/7001/7009/7011/7022/7023/7024/7031/7034/7043) for a per-service failure timeline, crash-loop count, and dependency root cause" />
             <Button Content="Run service audit" Margin="0,0,16,4" Command="{Binding RunInventoryAuditCommand}"
                     ToolTip="Scan HKLM\SYSTEM\CurrentControlSet\Services for broken dependencies, orphaned binaries, and unquoted paths" />
+            <!-- #757 -->
+            <Button Content="Audit recovery actions" Margin="0,0,8,4" Command="{Binding RunRecoveryAuditCommand}"
+                    ToolTip="Runs sc qfailure across every service, batched off the UI thread, flagging no-recovery-configured, reboot-on-failure, and a missing run-program target" />
+            <ProgressBar Width="120" Height="16" Margin="0,0,8,4" Minimum="0" Maximum="100" Value="{Binding RecoveryAuditProgress, Mode=OneWay}">
+                <ProgressBar.Style>
+                    <Style TargetType="ProgressBar">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsRunningRecoveryAudit}" Value="True">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </ProgressBar.Style>
+            </ProgressBar>
+            <!-- #759 -->
+            <Button Content="Load config changes" Margin="0,0,8,4" Command="{Binding LoadStartTypeChangesCommand}"
+                    ToolTip="Mine the System event log's event 7040 (start-type changed) for recent configuration changes" />
+            <!-- #760 -->
+            <Button Content="Load new installs" Margin="0,0,8,4" Command="{Binding LoadNewServiceInstallsCommand}"
+                    ToolTip="Mine the System event log's event 7045 (service installed) for services/drivers new in the last 30 days" />
+            <!-- #763 -->
+            <Button Content="Diagnose hang" Margin="0,0,16,4" Command="{Binding DiagnoseHangCommand}"
+                    ToolTip="Samples the selected service's sc queryex CHECKPOINT twice, ~3s apart, to tell a stuck START_PENDING/STOP_PENDING service from one still making progress" />
             <TextBlock Text="{Binding StartDurationStatus}" VerticalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4" />
         </WrapPanel>
 
@@ -288,6 +320,41 @@
             </DataGrid.Columns>
         </DataGrid>
 
+        <!-- #761/#762: svchost group breakdown sub-view, shown instead of the grid above while
+             ShowSvcHostGroups is on. -->
+        <Grid Grid.Row="2">
+            <Grid.Style>
+                <Style TargetType="Grid">
+                    <Setter Property="Visibility" Value="Collapsed" />
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding ShowSvcHostGroups}" Value="True">
+                            <Setter Property="Visibility" Value="Visible" />
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </Grid.Style>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+            <TextBlock Grid.Row="0" Margin="0,0,0,8" TextWrapping="Wrap" FontSize="11.5"
+                       Foreground="{DynamicResource TextSecondaryBrush}"
+                       Text="{Binding SvcHostSplitInfo.CaptionText}" />
+            <DataGrid Grid.Row="1" ItemsSource="{Binding SvcHostGroups}" IsReadOnly="True">
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="Group" Binding="{Binding GroupName}" Width="1.6*" />
+                    <DataGridTextColumn Header="Services" Binding="{Binding RunningServiceCount}" Width="80" />
+                    <DataGridTextColumn Header="Processes" Binding="{Binding ProcessCount}" Width="90" />
+                    <DataGridTextColumn Header="PIDs" Binding="{Binding ProcessIdsText}" Width="1.2*" />
+                    <DataGridTextColumn Header="Working set" Binding="{Binding TotalWorkingSetBytes, Converter={StaticResource BytesToReadableConverter}}" Width="110" />
+                    <DataGridTextColumn Header="Handles" Binding="{Binding TotalHandleCount}" Width="80" />
+                    <DataGridTextColumn Header="Threads" Binding="{Binding TotalThreadCount}" Width="80" />
+                    <DataGridTextColumn Header="CPU time" Binding="{Binding CpuTimeText}" Width="90" />
+                    <DataGridTextColumn Header="Hosted services" Binding="{Binding RunningServiceNames, Converter={StaticResource StringListJoinConverter}}" Width="2.5*" />
+                </DataGrid.Columns>
+            </DataGrid>
+        </Grid>
+
         <!-- #37: dependency graph for the selected service, so a user understands the blast
              radius before stopping something. -->
         <Border Grid.Row="3" Margin="0,10,0,0" Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
@@ -437,10 +504,167 @@
                     <TextBlock Text="Root cause" Style="{StaticResource SubStat}" Margin="0,6,0,0" />
                     <TextBlock Text="{Binding SelectedService.DependencyRootCauseText}" TextWrapping="Wrap" FontSize="11.5" Margin="0,2,0,0" />
                 </StackPanel>
+
+                <!-- #758: editable recovery actions - a small form rather than raw sc.exe syntax,
+                     with a confirmation dialog showing the exact command. Hidden for a protected
+                     core service (see ServiceControlService.ProtectedCoreServiceNames). -->
+                <StackPanel MaxWidth="360" Margin="0,0,24,8">
+                    <StackPanel.Style>
+                        <Style TargetType="StackPanel">
+                            <Setter Property="Visibility" Value="Visible" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding SelectedService.IsProtectedCore}" Value="True">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding SelectedService}" Value="{x:Null}">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </StackPanel.Style>
+                    <TextBlock Text="Recovery actions (editable)" Style="{StaticResource SubStat}" />
+                    <Grid Margin="0,4,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <TextBlock Grid.Row="0" Grid.Column="0" Text="First failure:" VerticalAlignment="Center" FontSize="11" Margin="0,0,8,4" />
+                        <ComboBox Grid.Row="0" Grid.Column="1" Margin="0,0,0,4" ItemsSource="{x:Static vm:ServicesViewModel.RecoveryActionOptions}"
+                                  SelectedItem="{Binding RecoveryFirstFailureAction}" />
+                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Second failure:" VerticalAlignment="Center" FontSize="11" Margin="0,0,8,4" />
+                        <ComboBox Grid.Row="1" Grid.Column="1" Margin="0,0,0,4" ItemsSource="{x:Static vm:ServicesViewModel.RecoveryActionOptions}"
+                                  SelectedItem="{Binding RecoverySecondFailureAction}" />
+                        <TextBlock Grid.Row="2" Grid.Column="0" Text="Subsequent failures:" VerticalAlignment="Center" FontSize="11" Margin="0,0,8,4" />
+                        <ComboBox Grid.Row="2" Grid.Column="1" Margin="0,0,0,4" ItemsSource="{x:Static vm:ServicesViewModel.RecoveryActionOptions}"
+                                  SelectedItem="{Binding RecoverySubsequentFailureAction}" />
+                        <TextBlock Grid.Row="3" Grid.Column="0" Text="Reset period (days):" VerticalAlignment="Center" FontSize="11" Margin="0,0,8,4" />
+                        <TextBox Grid.Row="3" Grid.Column="1" Margin="0,0,0,4" Text="{Binding RecoveryResetPeriodDays, UpdateSourceTrigger=PropertyChanged}" />
+                        <TextBlock Grid.Row="4" Grid.Column="0" Text="Restart delay (s):" VerticalAlignment="Center" FontSize="11" Margin="0,0,8,4" />
+                        <TextBox Grid.Row="4" Grid.Column="1" Margin="0,0,0,4" Text="{Binding RecoveryRestartDelaySeconds, UpdateSourceTrigger=PropertyChanged}" />
+                    </Grid>
+                    <Button Content="Save recovery actions…" HorizontalAlignment="Left" Margin="0,4,0,0" Style="{StaticResource PrimaryButton}"
+                            Command="{Binding SaveRecoveryActionsCommand}"
+                            ToolTip="Runs sc failure with the exact command shown in a confirmation dialog first" />
+                </StackPanel>
+
+                <!-- #763: hung-service diagnosis + a confirmed force-kill of the host process. -->
+                <StackPanel MaxWidth="420" Margin="0,0,24,8">
+                    <StackPanel.Style>
+                        <Style TargetType="StackPanel">
+                            <Setter Property="Visibility" Value="Visible" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding SelectedService.HangDiagnosisText}" Value="">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </StackPanel.Style>
+                    <TextBlock Text="Hang diagnosis" Style="{StaticResource SubStat}" Foreground="{DynamicResource WarningBrush}" />
+                    <TextBlock Text="{Binding SelectedService.HangDiagnosisText}" TextWrapping="Wrap" FontSize="11.5" Margin="0,2,0,4" />
+                    <Button Content="Force-end host process…" HorizontalAlignment="Left" Style="{StaticResource DangerButton}"
+                            Command="{Binding ForceKillHostProcessCommand}"
+                            ToolTip="Kills the process currently hosting this service - confirmed first" />
+                </StackPanel>
             </WrapPanel>
         </Border>
 
-        <TextBlock Grid.Row="4" Text="{Binding StatusMessage}" Margin="0,8,0,0"
+        <!-- #757: bulk recovery-action audit results, shown only once at least one outlier has
+             been found. -->
+        <Border Grid.Row="4" Margin="0,10,0,0" Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
+            <Border.Style>
+                <Style TargetType="Border">
+                    <Setter Property="Visibility" Value="Visible" />
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding RecoveryAuditResults.Count}" Value="0">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </Border.Style>
+            <StackPanel>
+                <TextBlock Text="Recovery action audit - outliers" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                <DataGrid Height="140" ItemsSource="{Binding RecoveryAuditResults}" IsReadOnly="True">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="Service" Binding="{Binding ServiceName}" Width="1.5*" />
+                        <DataGridTextColumn Header="Outlier(s)" Binding="{Binding SummaryText}" Width="3*" />
+                        <DataGridTemplateColumn Header="" Width="90">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <Button Content="Go to" Padding="8,2" Command="{Binding DataContext.JumpToRecoveryAuditServiceCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                            CommandParameter="{Binding}" />
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                    </DataGrid.Columns>
+                </DataGrid>
+            </StackPanel>
+        </Border>
+
+        <!-- #759/#760: recent start-type changes (event 7040) and newly installed services/drivers
+             (event 7045) - each shown only once loaded and non-empty. -->
+        <Grid Grid.Row="5" Margin="0,10,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <Border Grid.Column="0" Margin="0,0,8,0" Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Visibility" Value="Visible" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding RecentConfigChanges.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Recent configuration changes (event 7040)" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                    <DataGrid Height="160" ItemsSource="{Binding RecentConfigChanges}" IsReadOnly="True">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="When" Binding="{Binding TimeCreated, StringFormat=g}" Width="1.3*" />
+                            <DataGridTextColumn Header="Service" Binding="{Binding DisplayName}" Width="1.6*" />
+                            <DataGridTextColumn Header="Old" Binding="{Binding OldStartType}" Width="*" />
+                            <DataGridTextColumn Header="New" Binding="{Binding NewStartType}" Width="*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+            <Border Grid.Column="1" Margin="8,0,0,0" Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Visibility" Value="Visible" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding NewServiceInstalls.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="New services/drivers, last 30 days (event 7045)" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                    <DataGrid Height="160" ItemsSource="{Binding NewServiceInstalls}" IsReadOnly="True">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="When" Binding="{Binding TimeCreated, StringFormat=g}" Width="1.1*" />
+                            <DataGridTextColumn Header="Service" Binding="{Binding ServiceName}" Width="1.3*" />
+                            <DataGridTextColumn Header="Signature" Binding="{Binding SignatureStatus}" Width="80" />
+                            <DataGridTextColumn Header="Account" Binding="{Binding Account}" Width="*" />
+                            <DataGridTextColumn Header="Image path" Binding="{Binding ImagePath}" Width="2*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+        </Grid>
+
+        <TextBlock Grid.Row="6" Text="{Binding StatusMessage}" Margin="0,8,0,0"
                    Foreground="{DynamicResource TextSecondaryBrush}" />
     </Grid>
+    </ScrollViewer>
 </UserControl>

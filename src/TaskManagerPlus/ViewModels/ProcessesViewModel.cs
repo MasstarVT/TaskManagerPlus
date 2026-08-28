@@ -50,9 +50,16 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
                 SelectedProcessHostedServices.Clear();
                 FileLockResults.Clear();
                 LoadAffinityForSelection();
+                OnPropertyChanged(nameof(IsSvchostRowSelected));
             }
         }
     }
+
+    /// <summary>#761: public mirror of IsSvchostSelected() (below), so the Services-tab cross-link
+    /// button's IsEnabled can bind to it directly - IsSvchostSelected() itself stays private since
+    /// it only otherwise backs ViewHostedServicesCommand's CanExecute, which doesn't need a bindable
+    /// property.</summary>
+    public bool IsSvchostRowSelected => IsSvchostSelected();
 
     /// <summary>Loaded modules/DLLs for SelectedProcess (#39), populated on demand via
     /// ViewModulesCommand rather than every tick - walking a process's full module list is

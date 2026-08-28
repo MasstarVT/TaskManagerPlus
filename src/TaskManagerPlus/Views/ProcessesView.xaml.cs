@@ -20,4 +20,16 @@ public partial class ProcessesView : UserControl
         if (DataContext is ProcessesViewModel vm)
             vm.SelectedProcess = (e.NewValue as ProcessTreeNode)?.Row;
     }
+
+    /// <summary>#761: cross-link from a selected svchost.exe row over to the Services tab's svchost
+    /// group breakdown - same SelectTabByName mechanism StartupView.xaml.cs's own cross-links use
+    /// (this view's ViewModel has no reference to sibling ViewModels/the window by design, see
+    /// CLAUDE.md's cross-tab-coupling remarks). Button IsEnabled is bound to
+    /// ProcessesViewModel.IsSvchostRowSelected, so this only ever fires for a svchost row.</summary>
+    private void ViewSvchostGroupsInServices_Click(object sender, RoutedEventArgs e)
+    {
+        if (Window.GetWindow(this) is not MainWindow window) return;
+        if (window.DataContext is MainViewModel mainViewModel) mainViewModel.Services.ShowSvcHostGroups = true;
+        window.SelectTabByName("Services");
+    }
 }

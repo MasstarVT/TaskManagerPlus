@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Diagnostics.Eventing.Reader;
 using System.IO;
 using System.Text.RegularExpressions;
@@ -414,4 +415,318 @@ public sealed class EventLogService
         var m = RestartCountRegex.Match(message);
         return m.Success && int.TryParse(m.Groups["n"].Value, out int n) ? n : null;
     }
+
+    #region #759 - Service start-type change audit (event 7040)
+
+    /// <summary>
+    /// #759: System-log Service Control Manager event 7040 ("The start type of the %1 service was
+    /// changed from %2 to %3.") - unlike the #749 failure-event family, 7040's properties are stable
+    /// and indexed (verified live: [0]=display name, [1]=old start type, [2]=new start type,
+    /// [3]=service name), so no message-text regex is needed here. 7040 does not record which
+    /// account made the change - that needs Security-log object-access auditing, a separate audit
+    /// policy this app doesn't turn on, so no Account field is fabricated (see
+    /// ServiceStartTypeChangeEvent's remarks).
+    /// </summary>
+    public List<ServiceStartTypeChangeEvent> ReadStartTypeChangeEvents()
+    {
+        var result = new List<ServiceStartTypeChangeEvent>();
+        try
+        {
+            long maxAgeMs = LookbackDays * 24L * 60 * 60 * 1000;
+            var query = new EventLogQuery("System", PathType.LogName,
+                $"*[System[Provider[@Name='Service Control Manager'] and (EventID=7040) and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]")
+            {
+                ReverseDirection = true,
+            };
+
+            using var reader = new EventLogReader(query);
+            int count = 0;
+            const int maxEvents = 1000;
+            while (count < maxEvents && reader.ReadEvent() is { } record)
+            {
+                using (record)
+                {
+                    count++;
+                    if (record.TimeCreated is null || record.Properties.Count < 4) continue;
+                    try
+                    {
+                        result.Add(new ServiceStartTypeChangeEvent
+                        {
+                            TimeCreated = record.TimeCreated.Value,
+                            DisplayName = record.Properties[0].Value as string ?? string.Empty,
+                            OldStartType = record.Properties[1].Value as string ?? string.Empty,
+                            NewStartType = record.Properties[2].Value as string ?? string.Empty,
+                            ServiceName = record.Properties[3].Value as string ?? string.Empty,
+                        });
+                    }
+                    catch { /* one malformed entry shouldn't stop the rest of the scan */ }
+                }
+            }
+        }
+        catch
+        {
+            // Log unavailable/access denied - degrade to "no configuration-change history", same as
+            // every other event-log read in this service.
+        }
+        return result.OrderByDescending(e => e.TimeCreated).ToList();
+    }
+
+    #endregion
+
+    #region #760 - Newly installed service and driver log (event 7045)
+
+    /// <summary>
+    /// #760: System-log Service Control Manager event 7045 ("A service was installed in the
+    /// system.") - also stable and indexed (verified live: [0]=service name, [1]=service file name
+    /// (quoted image path), [2]=service type, [3]=service start type, [4]=service account).
+    /// SignatureStatus is left "Unknown" here - correlated in afterward by the caller
+    /// (StartupViewModel/ServicesViewModel), since a signature check reads the file from disk and
+    /// this method should stay a pure event-log read.
+    /// </summary>
+    public List<NewServiceInstallEvent> ReadNewServiceInstallEvents()
+    {
+        var result = new List<NewServiceInstallEvent>();
+        try
+        {
+            long maxAgeMs = LookbackDays * 24L * 60 * 60 * 1000;
+            var query = new EventLogQuery("System", PathType.LogName,
+                $"*[System[Provider[@Name='Service Control Manager'] and (EventID=7045) and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]")
+            {
+                ReverseDirection = true,
+            };
+
+            using var reader = new EventLogReader(query);
+            int count = 0;
+            const int maxEvents = 1000;
+            while (count < maxEvents && reader.ReadEvent() is { } record)
+            {
+                using (record)
+                {
+                    count++;
+                    if (record.TimeCreated is null || record.Properties.Count < 5) continue;
+                    try
+                    {
+                        string imagePath = (record.Properties[1].Value as string ?? string.Empty).Trim().Trim('"');
+                        result.Add(new NewServiceInstallEvent
+                        {
+                            TimeCreated = record.TimeCreated.Value,
+                            ServiceName = record.Properties[0].Value as string ?? string.Empty,
+                            ImagePath = imagePath,
+                            ServiceType = record.Properties[2].Value as string ?? string.Empty,
+                            StartType = record.Properties[3].Value as string ?? string.Empty,
+                            Account = record.Properties[4].Value as string ?? string.Empty,
+                        });
+                    }
+                    catch { /* one malformed entry shouldn't stop the rest of the scan */ }
+                }
+            }
+        }
+        catch
+        {
+            // Log unavailable/access denied - degrade to "nothing new found", same as every other
+            // event-log read in this service.
+        }
+        return result.OrderByDescending(e => e.TimeCreated).ToList();
+    }
+
+    #endregion
+
+    #region #764/#768 - Task Scheduler operational log
+
+    private const string TaskSchedulerOperationalLog = "Microsoft-Windows-TaskScheduler/Operational";
+
+    /// <summary>#764: Microsoft-Windows-TaskScheduler/Operational is disabled by default on a stock
+    /// Windows install - checked via EventLogConfiguration (a supported .NET API, no shell-out
+    /// needed for a read-only check) so the Startup tab can offer a one-click enable rather than
+    /// just silently returning an empty failure list that looks like "no failures" instead of
+    /// "nothing was ever recorded".</summary>
+    public static bool IsTaskSchedulerOperationalLogEnabled()
+    {
+        try
+        {
+            using var config = new EventLogConfiguration(TaskSchedulerOperationalLog);
+            return config.IsEnabled;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>#764: `wevtutil sl "Microsoft-Windows-TaskScheduler/Operational" /e:true` - shells to
+    /// wevtutil rather than EventLogConfiguration.IsEnabled/SaveChanges() so the confirmation dialog
+    /// this is gated behind (CLAUDE.md's "mutating actions require confirmation with the exact
+    /// command shown") has a literal command line to display, the same pattern every other
+    /// mutating action in this app already follows. Never enabled silently - see
+    /// StartupViewModel.EnableTaskFailureLogAsync.</summary>
+    public static async Task<(bool Success, string? Error)> EnableTaskSchedulerOperationalLogAsync()
+    {
+        try
+        {
+            var psi = new ProcessStartInfo("wevtutil.exe", $"sl \"{TaskSchedulerOperationalLog}\" /e:true")
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            using var proc = Process.Start(psi);
+            if (proc is null) return (false, "couldn't run wevtutil.exe");
+
+            var outputTask = proc.StandardOutput.ReadToEndAsync();
+            var errorTask = proc.StandardError.ReadToEndAsync();
+            using var cts = new CancellationTokenSource(10000);
+            try
+            {
+                await proc.WaitForExitAsync(cts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                try { proc.Kill(); } catch { /* best-effort */ }
+                return (false, "wevtutil timed out");
+            }
+
+            string output = (await outputTask) + (await errorTask);
+            return proc.ExitCode == 0 ? (true, null) : (false, output.Trim());
+        }
+        catch (Exception ex)
+        {
+            return (false, ex.Message);
+        }
+    }
+
+    private static readonly int[] TaskFailureEventIds = { 101, 103, 111, 203, 322, 332 };
+    private static readonly Regex QuotedTaskNameRegex = new(@"""([^""]+)""", RegexOptions.Compiled);
+
+    /// <summary>Every Task Scheduler operational event template quotes the affected task's path as
+    /// its first quoted segment - the same "extract from the rendered message, not an indexed
+    /// property" approach ScmServiceNamePatterns already takes for the #749 failure-event family,
+    /// used here instead of guessing at an unverified manifest property order.</summary>
+    private static string ExtractTaskSchedulerTaskName(string message)
+    {
+        var m = QuotedTaskNameRegex.Match(message);
+        return m.Success ? m.Groups[1].Value.Trim() : "(unknown task)";
+    }
+
+    /// <summary>
+    /// #764: scans the Task Scheduler operational channel for the failure-family event IDs (101
+    /// task start failed, 103 action start failed, 111 terminated due to timeout, 203 action failed
+    /// with a return code, 322 not run - instance already running, 332 not run - credential
+    /// problem). Degrades to an empty list (not an exception) when the channel is disabled or
+    /// doesn't exist yet - see IsTaskSchedulerOperationalLogEnabled for telling that state apart
+    /// from "enabled, but genuinely nothing failed" in the UI.
+    /// </summary>
+    public List<TaskSchedulerOperationalEvent> ReadTaskFailureEvents()
+    {
+        var result = new List<TaskSchedulerOperationalEvent>();
+        try
+        {
+            long maxAgeMs = LookbackDays * 24L * 60 * 60 * 1000;
+            string idFilter = string.Join(" or ", TaskFailureEventIds.Select(id => $"EventID={id}"));
+            var query = new EventLogQuery(TaskSchedulerOperationalLog, PathType.LogName,
+                $"*[System[({idFilter}) and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]")
+            {
+                ReverseDirection = true,
+            };
+
+            using var reader = new EventLogReader(query);
+            int count = 0;
+            const int maxEvents = 2000;
+            while (count < maxEvents && reader.ReadEvent() is { } record)
+            {
+                using (record)
+                {
+                    count++;
+                    if (record.TimeCreated is null) continue;
+
+                    string message;
+                    try { message = record.FormatDescription() ?? string.Empty; }
+                    catch { message = string.Empty; } // provider's message file isn't registered - same known gap ReadLog already handles
+
+                    result.Add(new TaskSchedulerOperationalEvent
+                    {
+                        TimeCreated = record.TimeCreated.Value,
+                        EventId = record.Id,
+                        TaskName = ExtractTaskSchedulerTaskName(message),
+                        Message = Truncate(message, 300),
+                    });
+                }
+            }
+        }
+        catch
+        {
+            // Channel disabled/unavailable/access denied - degrade to "no failure history", same as
+            // every other event-log read in this service.
+        }
+        return result.OrderByDescending(e => e.TimeCreated).ToList();
+    }
+
+    private static readonly int[] TaskStartEventIds = { 100, 129 };
+    private static readonly int[] TaskCompleteEventIds = { 102, 201 };
+
+    /// <summary>
+    /// #768: pairs Task Scheduler operational start events (100 task started, 129 action started)
+    /// with their matching completion events (102 task completed, 201 action completed) by the
+    /// event log's own ActivityId correlation GUID - the mechanism Task Scheduler itself uses to tie
+    /// every event belonging to one task-instance run together, not a text-parsed "instance ID"
+    /// (which isn't reliably at a stable message position across this event set, the same reasoning
+    /// ScmServiceNamePatterns' remarks already give for a different event family). Reads oldest-
+    /// first (not reversed) so a completion is naturally seen after the start it pairs with. A gap
+    /// wider than 24h is discarded as implausible rather than reported as a wildly inflated
+    /// duration, the same "sanity ceiling" ReadServiceStartDurations already applies to its own
+    /// stopped-to-running pairing.
+    /// </summary>
+    public List<TaskRunDuration> ReadTaskRunDurations()
+    {
+        var starts = new Dictionary<Guid, (DateTime Time, string TaskName)>();
+        var durations = new List<TaskRunDuration>();
+        try
+        {
+            long maxAgeMs = LookbackDays * 24L * 60 * 60 * 1000;
+            var allIds = TaskStartEventIds.Concat(TaskCompleteEventIds);
+            string idFilter = string.Join(" or ", allIds.Select(id => $"EventID={id}"));
+            var query = new EventLogQuery(TaskSchedulerOperationalLog, PathType.LogName,
+                $"*[System[({idFilter}) and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]");
+
+            using var reader = new EventLogReader(query);
+            int count = 0;
+            const int maxEvents = 5000;
+            while (count < maxEvents && reader.ReadEvent() is { } record)
+            {
+                using (record)
+                {
+                    count++;
+                    if (record.TimeCreated is null || record.ActivityId is not { } activityId) continue;
+
+                    if (TaskStartEventIds.Contains(record.Id))
+                    {
+                        string message;
+                        try { message = record.FormatDescription() ?? string.Empty; } catch { message = string.Empty; }
+                        starts[activityId] = (record.TimeCreated.Value, ExtractTaskSchedulerTaskName(message));
+                    }
+                    else if (TaskCompleteEventIds.Contains(record.Id) && starts.TryGetValue(activityId, out var start))
+                    {
+                        var elapsed = record.TimeCreated.Value - start.Time;
+                        if (elapsed > TimeSpan.Zero && elapsed < TimeSpan.FromHours(24))
+                        {
+                            durations.Add(new TaskRunDuration
+                            {
+                                TaskName = start.TaskName,
+                                StartTime = start.Time,
+                                DurationMs = elapsed.TotalMilliseconds,
+                            });
+                        }
+                        starts.Remove(activityId);
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // Channel disabled/unavailable - degrade to "no duration history".
+        }
+        return durations;
+    }
+
+    #endregion
 }

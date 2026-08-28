@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
@@ -96,7 +97,7 @@ public static class ScheduledTaskService
     /// together from one on-demand XML fetch per task (like Processes' module list or Services'
     /// recovery actions) rather than fetched for every row up front.
     /// </summary>
-    public static async Task<(string DelayText, string RunModeText)> ReadLogonTriggerInfoAsync(string taskName)
+    public static async Task<(string DelayText, string RunModeText, string TriggerSummaryText)> ReadLogonTriggerInfoAsync(string taskName)
     {
         try
         {
@@ -110,13 +111,122 @@ public static class ScheduledTaskService
             var logonTypeMatch = Regex.Match(xml, @"<LogonType>([^<]+)</LogonType>");
             string runModeText = logonTypeMatch.Success ? DescribeLogonType(logonTypeMatch.Groups[1].Value) : "Unknown";
 
-            return (delayText, runModeText);
+            // #767: the same XML fetch above also backs a full plain-language trigger summary -
+            // reuses the raw `xml` string rather than a second schtasks /xml call ("share the
+            // reader" between #80's delay/run-mode check and #767's fuller summary).
+            string triggerSummaryText = BuildTriggerSummary(xml);
+
+            return (delayText, runModeText, triggerSummaryText);
         }
         catch (Exception ex)
         {
-            return ($"(couldn't read delay: {ex.Message})", "Unknown");
+            return ($"(couldn't read delay: {ex.Message})", "Unknown", $"(couldn't read trigger summary: {ex.Message})");
         }
     }
+
+    /// <summary>
+    /// #767: builds one plain-language sentence per trigger element in a task's XML export, beyond
+    /// just LogonTrigger's delay - BootTrigger, TimeTrigger, CalendarTrigger, IdleTrigger,
+    /// EventTrigger, RegistrationTrigger, plus the RandomDelay/ExecutionTimeLimit modifiers a
+    /// trigger can carry and the RunOnlyIfIdle/StartWhenAvailable task-wide settings that change how
+    /// every trigger behaves. Uses XDocument (like ListBootAndLogonTriggeredAsync's bulk parse)
+    /// rather than the regex approach the delay/run-mode fields above use, since there are now
+    /// several trigger element shapes to walk instead of one fixed pair of fields.
+    /// </summary>
+    private static string BuildTriggerSummary(string xml)
+    {
+        if (xml.Length == 0) return "(couldn't read this task's trigger configuration)";
+
+        XDocument doc;
+        try { doc = XDocument.Parse(xml); }
+        catch { return "(couldn't parse this task's trigger XML)"; }
+        if (doc.Root is null) return "(couldn't parse this task's trigger XML)";
+        XNamespace ns = doc.Root.Name.Namespace;
+
+        var triggersEl = doc.Root.Element(ns + "Triggers");
+        var lines = new List<string>();
+
+        if (triggersEl is null || !triggersEl.Elements().Any())
+        {
+            lines.Add("No triggers configured - this task only runs when started manually.");
+        }
+        else
+        {
+            foreach (var trigger in triggersEl.Elements())
+            {
+                string sentence = DescribeTrigger(trigger, ns);
+                if (sentence.Length > 0) lines.Add(sentence);
+            }
+        }
+
+        var settingsEl = doc.Root.Element(ns + "Settings");
+        if (settingsEl?.Element(ns + "RunOnlyIfIdle")?.Value == "true")
+            lines.Add("Only runs while the computer is idle.");
+        if (settingsEl?.Element(ns + "StartWhenAvailable")?.Value == "true")
+            lines.Add("A missed scheduled run is started as soon as possible once the computer becomes available.");
+
+        return lines.Count == 0
+            ? "This task has trigger configuration that couldn't be described in plain language."
+            : string.Join("\n", lines);
+    }
+
+    private static string DescribeTrigger(XElement trigger, XNamespace ns)
+    {
+        string kind = trigger.Name.LocalName;
+        string core = kind switch
+        {
+            "LogonTrigger" => "Runs at log on" + DescribeUserId(trigger, ns),
+            "BootTrigger" => "Runs at system startup",
+            "TimeTrigger" => "Runs once" + DescribeStartBoundary(trigger, ns),
+            "CalendarTrigger" => "Runs on a schedule" + DescribeStartBoundary(trigger, ns) + DescribeCalendarRecurrence(trigger, ns),
+            "IdleTrigger" => "Runs when the computer becomes idle",
+            "EventTrigger" => "Runs in response to an event log entry" + DescribeEventSubscription(trigger, ns),
+            "RegistrationTrigger" => "Runs when the task itself is created or modified",
+            "SessionStateChangeTrigger" => "Runs on a session state change (lock/unlock/connect/disconnect)",
+            _ => $"Has a {kind} trigger",
+        };
+
+        var modifiers = new List<string>();
+        string? delay = trigger.Element(ns + "RandomDelay")?.Value;
+        if (!string.IsNullOrEmpty(delay)) modifiers.Add($"randomized by up to {FormatIso8601Duration(delay)}");
+
+        string? limit = trigger.Element(ns + "ExecutionTimeLimit")?.Value;
+        if (!string.IsNullOrEmpty(limit)) modifiers.Add($"stopped if still running after {FormatIso8601Duration(limit)}");
+
+        string modifierText = modifiers.Count > 0 ? " (" + string.Join(", ", modifiers) + ")" : string.Empty;
+        string enabledSuffix = trigger.Element(ns + "Enabled")?.Value == "false" ? " - currently disabled" : string.Empty;
+        return core + modifierText + enabledSuffix + ".";
+    }
+
+    private static string DescribeStartBoundary(XElement trigger, XNamespace ns)
+    {
+        var sb = trigger.Element(ns + "StartBoundary")?.Value;
+        if (string.IsNullOrEmpty(sb)) return string.Empty;
+        return DateTimeOffset.TryParse(sb, out var dt) ? $" starting {dt:g}" : string.Empty;
+    }
+
+    private static string DescribeUserId(XElement trigger, XNamespace ns)
+    {
+        var userId = trigger.Element(ns + "UserId")?.Value;
+        return string.IsNullOrEmpty(userId) ? string.Empty : $" for {userId}";
+    }
+
+    private static string DescribeCalendarRecurrence(XElement trigger, XNamespace ns)
+    {
+        if (trigger.Element(ns + "ScheduleByDay") is not null) return ", daily";
+        if (trigger.Element(ns + "ScheduleByWeek") is not null) return ", weekly";
+        if (trigger.Element(ns + "ScheduleByMonth") is not null) return ", monthly";
+        if (trigger.Element(ns + "ScheduleByMonthDayOfWeek") is not null) return ", monthly (by day of week)";
+        return string.Empty;
+    }
+
+    private static string DescribeEventSubscription(XElement trigger, XNamespace ns)
+    {
+        var query = trigger.Element(ns + "Subscription")?.Value;
+        return string.IsNullOrEmpty(query) ? string.Empty : $": {Truncate(query, 120)}";
+    }
+
+    private static string Truncate(string s, int maxLen) => s.Length <= maxLen ? s : s[..maxLen] + "…";
 
     /// <summary>Maps Task Scheduler's &lt;LogonType&gt; values to the same "only when logged on"
     /// vs. "whether or not logged on" distinction the Task Scheduler UI itself shows on a task's
@@ -325,4 +435,138 @@ public static class ScheduledTaskService
         fields.Add(current.ToString());
         return fields;
     }
+
+    #region #765 - Task last-result decoder
+
+    private static readonly Dictionary<string, string> KnownLastResultCodes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["0x0"] = "Success",
+        ["0x41300"] = "Task is ready to run",
+        ["0x41301"] = "Task is currently running",
+        ["0x41303"] = "Task has not yet run",
+        ["0x41306"] = "Task was terminated by the user",
+        ["0x8004131F"] = "An instance of this task is already running",
+        ["0x80070002"] = "The system cannot find the file specified",
+        ["0x800704DD"] = "No mapped/logged-on user for this operation",
+    };
+
+    /// <summary>#765: decodes the common hex "Last Result" codes schtasks reports inline,
+    /// synchronously, with no shell-out - see DecodeLastResultAsync for the certutil fallback used
+    /// for anything not in this small known-codes table.</summary>
+    public static string? DecodeKnownLastResult(string lastResult)
+    {
+        string trimmed = lastResult.Trim();
+        return trimmed.Length > 0 && KnownLastResultCodes.TryGetValue(trimmed, out var known) ? known : null;
+    }
+
+    /// <summary>#765: falls back to `certutil -error &lt;code&gt;` for any Last Result code not in
+    /// the small known-codes table above - certutil's own generic Win32/HRESULT-to-text lookup, the
+    /// same "known Windows tool" tradeoff this file already takes for schtasks/Task Scheduler
+    /// itself. On-demand only (DecodeLastResultCommand, for the selected row), not run for every row
+    /// up front.</summary>
+    public static async Task<string> DecodeLastResultAsync(string lastResult)
+    {
+        if (DecodeKnownLastResult(lastResult) is { } known) return known;
+
+        string trimmed = lastResult.Trim();
+        if (trimmed.Length == 0) return "Unknown";
+
+        try
+        {
+            var (output, exitCode) = await RunCapturedAsync("certutil.exe", $"-error {trimmed}");
+            var line = output.Split('\n').Select(l => l.Trim()).FirstOrDefault(l => l.Length > 0);
+            return exitCode == 0 && line is { Length: > 0 } ? line : "Unknown error code";
+        }
+        catch (Exception ex)
+        {
+            return $"(couldn't decode: {ex.Message})";
+        }
+    }
+
+    #endregion
+
+    #region #766 - Tasks with a missing target
+
+    /// <summary>
+    /// #766: resolves a task's "Task To Run" command line down to its target executable the same
+    /// way StartupManagerService.ExtractPath already does for the Startup tab's own registry Run
+    /// entries (quoted-path / first-space-before-.exe heuristic), then checks whether that resolved
+    /// file actually exists - flags an uninstalled app, a deleted user profile path, or an
+    /// unreachable network share the same way (File.Exists returns false for all three). A
+    /// genuinely unreachable UNC share degrades to "unknown" (never flagged as missing) via a
+    /// bounded timeout, rather than blocking the whole scan on a slow/offline share and rather than
+    /// fabricating a missing verdict for a share that simply couldn't be reached in time.
+    /// </summary>
+    public static (bool HasMissingTarget, string Reason) EvaluateTarget(string taskToRun)
+    {
+        if (string.IsNullOrWhiteSpace(taskToRun)) return (false, string.Empty);
+
+        string path = StartupManagerService.ExtractPath(taskToRun);
+        if (path.Length == 0) return (false, string.Empty);
+
+        string expanded = Environment.ExpandEnvironmentVariables(path);
+
+        // A bare executable name with no directory component (e.g. "cmd.exe") is meant to resolve
+        // via the OS's own PATH search at launch time, not relative to this app's own working
+        // directory - checking File.Exists on the bare name alone would false-positive on every
+        // perfectly valid task that just names a well-known tool. Try PATH resolution first for
+        // that shape; only fall through to the plain existence check once a directory is present.
+        if (Path.GetDirectoryName(expanded) is { Length: 0 } or null && Path.GetFileName(expanded) == expanded)
+        {
+            if (ResolveViaPath(expanded) is not null) return (false, string.Empty);
+        }
+
+        bool? exists = FileExistsWithTimeout(expanded);
+        if (exists is not false) return (false, string.Empty); // true, or null ("couldn't confirm in time") - never fabricated as missing
+
+        string reason = expanded.StartsWith(@"\\", StringComparison.Ordinal)
+            ? $"Points at a network path that couldn't be found: {expanded}"
+            : $"Points at a file that no longer exists: {expanded}";
+        return (true, reason);
+    }
+
+    /// <summary>Resolves a bare executable name (no directory component) against System32,
+    /// Windows, and the PATH environment variable, the same search Windows itself performs when
+    /// launching a program named without a path - so "cmd.exe"/"notepad.exe"/etc never
+    /// false-positive as missing.</summary>
+    private static string? ResolveViaPath(string fileName)
+    {
+        try
+        {
+            var candidateDirs = new List<string>
+            {
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System)),
+                Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+            };
+            string? pathEnv = Environment.GetEnvironmentVariable("PATH");
+            if (pathEnv is not null) candidateDirs.AddRange(pathEnv.Split(';', StringSplitOptions.RemoveEmptyEntries));
+
+            foreach (var dir in candidateDirs)
+            {
+                string candidate = Path.Combine(dir, fileName);
+                if (File.Exists(candidate)) return candidate;
+            }
+        }
+        catch
+        {
+            // Malformed PATH entry or similar - fall through to "couldn't resolve", the caller
+            // then falls back to the plain File.Exists check on the bare name.
+        }
+        return null;
+    }
+
+    private static bool? FileExistsWithTimeout(string path, int timeoutMs = 2000)
+    {
+        try
+        {
+            var task = Task.Run(() => File.Exists(path));
+            return task.Wait(timeoutMs) ? task.Result : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    #endregion
 }

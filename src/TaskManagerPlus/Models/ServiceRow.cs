@@ -216,6 +216,22 @@ public sealed class ServiceRow : ObservableObject
     private string _triggerInfoText = string.Empty;
     public string TriggerInfoText { get => _triggerInfoText; set => SetProperty(ref _triggerInfoText, value); }
 
+    /// <summary>#758: set once, in ServiceControlService.Sample(), for a service on the small
+    /// hard-coded core-plumbing denylist (see ServiceControlService.ProtectedCoreServiceNames) -
+    /// this app declines to offer editable recovery-action configuration for these, the same
+    /// "won't touch protected core services" line CanStop below already draws for
+    /// Rpc/DCOM.</summary>
+    public bool IsProtectedCore { get; init; }
+
+    /// <summary>#763: set after ServicesViewModel.DiagnoseHangCommand runs for this row - true only
+    /// when the service was found pending (START_PENDING/STOP_PENDING) with a checkpoint that isn't
+    /// advancing. See ServiceControlService.DiagnoseHangAsync/HungServiceDiagnosis.</summary>
+    private bool _isHung;
+    public bool IsHung { get => _isHung; set => SetProperty(ref _isHung, value); }
+
+    private string _hangDiagnosisText = string.Empty;
+    public string HangDiagnosisText { get => _hangDiagnosisText; set => SetProperty(ref _hangDiagnosisText, value); }
+
     public bool CanStart => Status is ServiceControllerStatus.Stopped;
     public bool CanStop => Status is ServiceControllerStatus.Running && ServiceName is not ("RpcSs" or "RpcEptMapper" or "DcomLaunch");
 }

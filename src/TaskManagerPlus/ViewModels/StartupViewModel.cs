@@ -13,6 +13,7 @@ namespace TaskManagerPlus.ViewModels;
 public sealed class StartupViewModel : ObservableObject
 {
     private readonly StartupManagerService _service = new();
+    private readonly EventLogService _eventLog = new();
 
     public ObservableCollection<StartupItem> Items { get; } = new();
 
@@ -48,9 +49,10 @@ public sealed class StartupViewModel : ObservableObject
             var previous = _selectedScheduledTask;
             if (SetProperty(ref _selectedScheduledTask, value) && previous is not null)
             {
-                // Stale delay/run-mode text from a previous selection would be misleading.
+                // Stale delay/run-mode/trigger-summary text from a previous selection would be misleading.
                 previous.DelayText = string.Empty;
                 previous.RunModeText = string.Empty;
+                previous.TriggerSummaryText = string.Empty;
             }
         }
     }
@@ -58,6 +60,10 @@ public sealed class StartupViewModel : ObservableObject
     public AsyncRelayCommand LoadScheduledTasksCommand { get; }
     public AsyncRelayCommand ToggleScheduledTaskCommand { get; }
     public AsyncRelayCommand CheckLogonDelayCommand { get; }
+
+    /// <summary>#765: certutil fallback decode for the selected task's LastResult - see
+    /// ScheduledTaskService.DecodeLastResultAsync.</summary>
+    public AsyncRelayCommand DecodeLastResultCommand { get; }
 
     // #19/#20: browser extension inventory and registered shell extensions - both loaded on
     // demand (a couple of hundred filesystem/registry reads apiece is more I/O than this tab's
@@ -358,6 +364,34 @@ public sealed class StartupViewModel : ObservableObject
 
     #endregion
 
+    #region #764-768 - Scheduled task inventory and failure history
+
+    // #764: Microsoft-Windows-TaskScheduler/Operational is disabled by default - IsTaskSchedulerLogEnabled
+    // is re-checked every time the section loads (never cached) so a user who enables it from here
+    // sees the "enable" prompt disappear immediately. TaskFailures itself stays empty (not an error)
+    // when the channel is disabled - the "Task failures" grid caption tells the two states apart.
+    private bool _isTaskSchedulerLogEnabled;
+    public bool IsTaskSchedulerLogEnabled { get => _isTaskSchedulerLogEnabled; private set => SetProperty(ref _isTaskSchedulerLogEnabled, value); }
+    public AsyncRelayCommand EnableTaskFailureLogCommand { get; }
+    public AsyncRelayCommand LoadTaskFailuresCommand { get; }
+
+    public ObservableCollection<TaskSchedulerOperationalEvent> TaskFailures { get; } = new();
+
+    private string? _taskFailuresStatus;
+    public string? TaskFailuresStatus { get => _taskFailuresStatus; private set => SetProperty(ref _taskFailuresStatus, value); }
+
+    // #768: worst-offender run-duration chart, under the Task failures grid - top 10 tasks by max
+    // observed wall-clock duration, paired from operational events 100/129 (started) and 102/201
+    // (completed) by ActivityId - see EventLogService.ReadTaskRunDurations. Same ColumnSeries shape
+    // StabilityViewModel's Reliability History chart already uses for a ranked/discrete series.
+    public ObservableCollection<double> WorstTaskDurationsMs { get; } = new();
+    private readonly ColumnSeries<double> _worstTaskDurationsColumn;
+    public ISeries[] WorstTaskDurationsSeries { get; }
+    public Axis[] WorstTaskDurationsXAxes { get; }
+    public Axis[] WorstTaskDurationsYAxes { get; }
+
+    #endregion
+
     public StartupViewModel()
     {
         _bootHistoryLine = new LineSeries<double>
@@ -414,12 +448,44 @@ public sealed class StartupViewModel : ObservableObject
             },
         };
 
+        // #768: worst-offender task-duration chart - a ColumnSeries, same "discrete/ranked reads
+        // better as bars" reasoning StabilityViewModel's Reliability History chart already uses.
+        _worstTaskDurationsColumn = new ColumnSeries<double>
+        {
+            Values = WorstTaskDurationsMs,
+            Fill = new SolidColorPaint(SKColors.OrangeRed.WithAlpha(200)),
+            Stroke = null,
+            MaxBarWidth = 24,
+        };
+        WorstTaskDurationsSeries = new ISeries[] { _worstTaskDurationsColumn };
+        WorstTaskDurationsXAxes = new[]
+        {
+            new Axis
+            {
+                Labels = Array.Empty<string>(),
+                LabelsRotation = -15,
+                LabelsPaint = new SolidColorPaint(new SKColor(0x9A, 0x9A, 0xA2)),
+                SeparatorsPaint = null,
+            },
+        };
+        WorstTaskDurationsYAxes = new[]
+        {
+            new Axis
+            {
+                MinLimit = 0,
+                Labeler = v => $"{v / 1000.0:0.#}s",
+                LabelsPaint = new SolidColorPaint(new SKColor(0x9A, 0x9A, 0xA2)),
+                SeparatorsPaint = new SolidColorPaint(new SKColor(0x33, 0x33, 0x3A, 160)) { StrokeThickness = 1 },
+            },
+        };
+
         RefreshCommand = new RelayCommand(_ => Refresh());
         ToggleEnabledCommand = new RelayCommand(param => Toggle(param as StartupItem ?? SelectedItem));
 
         LoadScheduledTasksCommand = new AsyncRelayCommand(LoadScheduledTasksAsync);
         ToggleScheduledTaskCommand = new AsyncRelayCommand(param => ToggleScheduledTaskAsync(param as ScheduledTaskRow ?? SelectedScheduledTask));
         CheckLogonDelayCommand = new AsyncRelayCommand(CheckLogonDelayAsync, () => SelectedScheduledTask is not null);
+        DecodeLastResultCommand = new AsyncRelayCommand(DecodeLastResultAsync, () => SelectedScheduledTask is not null);
 
         LoadBrowserExtensionsCommand = new AsyncRelayCommand(LoadBrowserExtensionsAsync);
         LoadShellExtensionsCommand = new AsyncRelayCommand(LoadShellExtensionsAsync);
@@ -459,6 +525,10 @@ public sealed class StartupViewModel : ObservableObject
         EnableWinReCommand = new AsyncRelayCommand(EnableWinReAsync, () => WinReStatus?.Enabled == false);
         MeasureRecoveryFreeSpaceCommand = new AsyncRelayCommand(MeasureRecoveryFreeSpaceAsync, () => PartitionLayout?.Recovery is not null);
 
+        // #764-768: Task failures / run-duration history.
+        EnableTaskFailureLogCommand = new AsyncRelayCommand(EnableTaskFailureLogAsync, () => !IsTaskSchedulerLogEnabled);
+        LoadTaskFailuresCommand = new AsyncRelayCommand(LoadTaskFailuresAsync);
+
         Refresh();
         LoadBootPerformance();
         LoadSignInDiagnostics();
@@ -467,6 +537,12 @@ public sealed class StartupViewModel : ObservableObject
         LoadSystemPartitions();
         LoadAutostartAudits();
         _ = CheckPendingCaptureWorkflowsAsync();
+
+        // #764: a cheap, no-shell-out check (EventLogConfiguration.IsEnabled) so the "enable
+        // Task Scheduler operational log" prompt reflects real state as soon as this tab opens,
+        // without loading the (potentially expensive) failure/duration event scans up front.
+        IsTaskSchedulerLogEnabled = EventLogService.IsTaskSchedulerOperationalLogEnabled();
+        EnableTaskFailureLogCommand.RaiseCanExecuteChanged();
     }
 
     private async Task LoadBrowserExtensionsAsync()
@@ -515,6 +591,11 @@ public sealed class StartupViewModel : ObservableObject
         BootHistoryYAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
         GroupPolicyProcessingYAxes[0].LabelsPaint = new SolidColorPaint(textSk);
         GroupPolicyProcessingYAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
+
+        // #768: worst-offender task-duration chart.
+        WorstTaskDurationsXAxes[0].LabelsPaint = new SolidColorPaint(textSk);
+        WorstTaskDurationsYAxes[0].LabelsPaint = new SolidColorPaint(textSk);
+        WorstTaskDurationsYAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
     }
 
     private void LoadBootPerformance()
@@ -1256,6 +1337,25 @@ public sealed class StartupViewModel : ObservableObject
         try
         {
             var tasks = await ScheduledTaskService.ListAsync();
+
+            // #765/#766: known-code decode (a dictionary lookup) and missing-target resolution (a
+            // bounded-timeout File.Exists check) are both cheap enough to run for every row up
+            // front, unlike the logon-delay/trigger-summary XML fetch below which stays on-demand
+            // per selected row. Runs off the UI thread with bounded concurrency, the same shape
+            // #757's bulk recovery-action audit uses - these rows aren't in ScheduledTasks yet
+            // (nothing is bound to them), so setting their properties from a background thread here
+            // is safe.
+            await Task.Run(() =>
+            {
+                Parallel.ForEach(tasks, new ParallelOptions { MaxDegreeOfParallelism = 8 }, t =>
+                {
+                    t.LastResultDecodedText = ScheduledTaskService.DecodeKnownLastResult(t.LastResult) ?? string.Empty;
+                    var (missing, reason) = ScheduledTaskService.EvaluateTarget(t.TaskToRun);
+                    t.HasMissingTarget = missing;
+                    t.MissingTargetReason = reason;
+                });
+            });
+
             ScheduledTasks.Clear();
             foreach (var t in tasks) ScheduledTasks.Add(t);
         }
@@ -1267,6 +1367,71 @@ public sealed class StartupViewModel : ObservableObject
         {
             IsLoadingScheduledTasks = false;
         }
+    }
+
+    /// <summary>#765: certutil fallback decode for the selected task's LastResult, when it isn't one
+    /// of the small known-codes table (already auto-populated by LoadScheduledTasksAsync).</summary>
+    private async Task DecodeLastResultAsync()
+    {
+        var target = SelectedScheduledTask;
+        if (target is null) return;
+        target.LastResultDecodedText = await ScheduledTaskService.DecodeLastResultAsync(target.LastResult);
+    }
+
+    /// <summary>#764: `wevtutil sl "Microsoft-Windows-TaskScheduler/Operational" /e:true` - confirmed
+    /// first (CLAUDE.md's "mutating actions require confirmation with the exact command shown"),
+    /// never enabled silently. Once enabled, immediately loads whatever failure history already
+    /// exists in the channel (there may be none yet - a freshly-enabled channel only captures events
+    /// going forward).</summary>
+    private async Task EnableTaskFailureLogAsync()
+    {
+        var confirm = MessageBox.Show(
+            "This will run:\n\nwevtutil sl \"Microsoft-Windows-TaskScheduler/Operational\" /e:true\n\n" +
+            "This turns on a normally-disabled Windows event log channel that records Task Scheduler " +
+            "failures and per-run timing going forward. It does not run automatically - continue?",
+            "Enable Task Scheduler operational log",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        var (success, error) = await EventLogService.EnableTaskSchedulerOperationalLogAsync();
+        IsTaskSchedulerLogEnabled = EventLogService.IsTaskSchedulerOperationalLogEnabled();
+        EnableTaskFailureLogCommand.RaiseCanExecuteChanged();
+
+        StatusMessage = success
+            ? "Task Scheduler operational log enabled. Failures and run durations will be tracked going forward."
+            : $"Couldn't enable the Task Scheduler operational log: {error}";
+
+        if (success) await LoadTaskFailuresAsync();
+    }
+
+    /// <summary>#764/#768: mines the Task Scheduler operational channel for failure events and pairs
+    /// start/completion events into per-run durations, ranking the worst offenders into the chart
+    /// under the grid - one Task.Run covers both, the "share the reader" note this domain's design
+    /// asks for (both reads use the same EventLogQuery-based channel access).</summary>
+    private async Task LoadTaskFailuresAsync()
+    {
+        TaskFailuresStatus = "Scanning the Task Scheduler operational log…";
+        var (failures, durations) = await Task.Run(() =>
+            (_eventLog.ReadTaskFailureEvents(), _eventLog.ReadTaskRunDurations()));
+
+        TaskFailures.Clear();
+        foreach (var f in failures) TaskFailures.Add(f);
+
+        var worst = durations
+            .GroupBy(d => d.TaskName, StringComparer.OrdinalIgnoreCase)
+            .Select(g => new { TaskName = g.Key, MaxMs = g.Max(d => d.DurationMs) })
+            .OrderByDescending(g => g.MaxMs)
+            .Take(10)
+            .ToList();
+
+        WorstTaskDurationsMs.Clear();
+        foreach (var w in worst) WorstTaskDurationsMs.Add(w.MaxMs);
+        WorstTaskDurationsXAxes[0].Labels = worst.Select(w => w.TaskName.Length > 24 ? w.TaskName[^24..] : w.TaskName).ToArray();
+
+        TaskFailuresStatus = IsTaskSchedulerLogEnabled
+            ? $"Found {failures.Count} task failure event(s) and {durations.Count} timed run(s) in the last 30 days."
+            : "The Task Scheduler operational log is disabled, so there's no history to read yet - enable it above.";
     }
 
     private async Task ToggleScheduledTaskAsync(ScheduledTaskRow? task)
@@ -1293,9 +1458,10 @@ public sealed class StartupViewModel : ObservableObject
 
         try
         {
-            var (delayText, runModeText) = await ScheduledTaskService.ReadLogonTriggerInfoAsync(target.Name);
+            var (delayText, runModeText, triggerSummaryText) = await ScheduledTaskService.ReadLogonTriggerInfoAsync(target.Name);
             target.DelayText = delayText;
             target.RunModeText = runModeText;
+            target.TriggerSummaryText = triggerSummaryText; // #767
         }
         catch (Exception ex)
         {
