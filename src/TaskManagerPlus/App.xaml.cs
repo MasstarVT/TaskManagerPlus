@@ -14,9 +14,23 @@ public partial class App : Application
     /// CLI path (#77) can skip showing any UI at all rather than flashing a window open and
     /// immediately closing it.
     /// </summary>
-    protected override void OnStartup(StartupEventArgs e)
+    // async void is otherwise avoided in this app, but OnStartup is a framework-invoked,
+    // event-handler-shaped entry point (like a button click) with no caller waiting on its
+    // return - the same reasoning that makes AsyncRelayCommand.Execute itself async void.
+    // CliDumpService.DumpSnapshotAsync's awaits resume on WPF's DispatcherSynchronizationContext,
+    // which starts pumping messages as soon as this method returns at its first await, so this
+    // does not block/deadlock the way a synchronous `.GetAwaiter().GetResult()` call here would.
+    protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+
+        // App-wide safety net: this app has no logging framework, so an unhandled exception on
+        // the UI thread otherwise hard-crashes the whole process with no chance to save work
+        // (e.g. an in-progress log/snapshot). Surfacing it via MessageBox and marking e.Handled
+        // keeps the app alive - the same "quick, honest, no fabricated recovery" spirit every
+        // other graceful-degradation path in this app already follows, just for the one failure
+        // mode none of those per-feature try/catches can catch.
+        DispatcherUnhandledException += OnDispatcherUnhandledException;
 
         // Round 12, #87: must run before any service touches a settings file - AppPaths.Initialize
         // decides once, for the whole process, whether persisted state lives under %AppData% or a
@@ -29,7 +43,7 @@ public partial class App : Application
             string outputPath = e.Args[dumpIndex + 1];
             try
             {
-                CliDumpService.DumpSnapshot(outputPath);
+                await CliDumpService.DumpSnapshotAsync(outputPath);
             }
             catch (Exception ex)
             {
@@ -51,6 +65,32 @@ public partial class App : Application
         if (tabIndex >= 0 && tabIndex + 1 < e.Args.Length)
         {
             window.SelectTabByName(e.Args[tabIndex + 1]);
+        }
+    }
+
+    /// <summary>Last-resort net for an exception that escaped every per-handler try/catch below
+    /// it (AsyncRelayCommand.Execute's own handlers now catch their own failures - see
+    /// Common/RelayCommand.cs's remarks - but a synchronous binding/layout/timer-tick exception
+    /// can still reach here). MessageBox.Show is the same plain, dependency-free reporting
+    /// mechanism the rest of this app already leans on (SaveFileDialog, toasts, etc.) - there's no
+    /// existing logging framework to route this through instead.</summary>
+    private void OnDispatcherUnhandledException(object sender, System.Windows.Threading.DispatcherUnhandledExceptionEventArgs e)
+    {
+        try
+        {
+            MessageBox.Show(
+                $"An unexpected error occurred and has been suppressed so the app can keep running:\n\n{e.Exception.Message}",
+                "Task Manager Plus - Unexpected Error",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+        }
+        catch
+        {
+            // Even the error dialog itself failing shouldn't take the app down.
+        }
+        finally
+        {
+            e.Handled = true;
         }
     }
 }

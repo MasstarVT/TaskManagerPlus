@@ -227,14 +227,14 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>Loads SelectedService's recovery-actions text (#71) on demand - see
-    /// ServiceControlService.ReadFailureActionsText for why this shells to sc.exe rather than
+    /// ServiceControlService.ReadFailureActionsTextAsync for why this shells to sc.exe rather than
     /// every tick.</summary>
     private async Task LoadFailureActionsAsync()
     {
         var target = SelectedService;
         if (target is null) return;
 
-        target.FailureActionsText = await Task.Run(() => ServiceControlService.ReadFailureActionsText(target.ServiceName));
+        target.FailureActionsText = await ServiceControlService.ReadFailureActionsTextAsync(target.ServiceName);
     }
 
     /// <summary>Round 7 #15: (re)samples the driver sub-view - only ever called while ShowDrivers

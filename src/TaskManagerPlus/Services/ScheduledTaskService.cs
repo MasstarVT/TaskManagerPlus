@@ -19,12 +19,12 @@ public static class ScheduledTaskService
     /// <summary>Enumerates every registered task. Can take a couple of seconds on a system with
     /// hundreds of tasks - callers should treat this as an explicit, on-demand action (a "Load
     /// scheduled tasks" button), not something to run on a tick.</summary>
-    public static List<ScheduledTaskRow> List()
+    public static async Task<List<ScheduledTaskRow>> ListAsync()
     {
         var rows = new List<ScheduledTaskRow>();
         try
         {
-            string output = RunCaptured("schtasks.exe", "/query /fo csv /v").Output;
+            string output = (await RunCapturedAsync("schtasks.exe", "/query /fo csv /v")).Output;
             var lines = SplitCsvLines(output);
             if (lines.Count < 2) return rows;
 
@@ -70,11 +70,11 @@ public static class ScheduledTaskService
 
     private static string At(List<string> fields, int index) => index >= 0 && index < fields.Count ? fields[index] : string.Empty;
 
-    public static (bool Success, string? Error) SetEnabled(string taskName, bool enabled)
+    public static async Task<(bool Success, string? Error)> SetEnabledAsync(string taskName, bool enabled)
     {
         try
         {
-            var (output, exitCode) = RunCaptured("schtasks.exe", $"/change /tn \"{taskName}\" /{(enabled ? "enable" : "disable")}");
+            var (output, exitCode) = await RunCapturedAsync("schtasks.exe", $"/change /tn \"{taskName}\" /{(enabled ? "enable" : "disable")}");
             return exitCode == 0 ? (true, null) : (false, output.Trim());
         }
         catch (Exception ex)
@@ -95,11 +95,11 @@ public static class ScheduledTaskService
     /// together from one on-demand XML fetch per task (like Processes' module list or Services'
     /// recovery actions) rather than fetched for every row up front.
     /// </summary>
-    public static (string DelayText, string RunModeText) ReadLogonTriggerInfo(string taskName)
+    public static async Task<(string DelayText, string RunModeText)> ReadLogonTriggerInfoAsync(string taskName)
     {
         try
         {
-            string xml = RunCaptured("schtasks.exe", $"/query /tn \"{taskName}\" /xml").Output;
+            string xml = (await RunCapturedAsync("schtasks.exe", $"/query /tn \"{taskName}\" /xml")).Output;
 
             var delayMatch = Regex.Match(xml, @"<LogonTrigger>.*?<Delay>(P[^<]+)</Delay>", RegexOptions.Singleline);
             string delayText = delayMatch.Success
@@ -149,7 +149,21 @@ public static class ScheduledTaskService
 
     private static int ParseGroup(Group g) => g.Success && int.TryParse(g.Value, out int v) ? v : 0;
 
-    private static (string Output, int ExitCode) RunCaptured(string exe, string args)
+    /// <summary>
+    /// Shells out and captures combined stdout+stderr, bounded by a real timeout - the same
+    /// concurrent-read/bounded-wait/kill-on-timeout pattern TracerouteService.RunAsync already
+    /// established. The previous version read both streams synchronously to completion *before*
+    /// waiting for exit at all (the classic .NET Process redirection deadlock: both streams' OS
+    /// pipe buffers are small and fixed-size, so a child that fills one while nothing drains it
+    /// blocks forever, and the parent blocks reading right alongside it), then read
+    /// `proc.WaitForExit(10000)`'s bool result without checking it - so a process that legitimately
+    /// ran past 10s made the later `proc.ExitCode` read throw InvalidOperationException ("Process
+    /// must exit before requested information can be determined"), which every caller here
+    /// (List/SetEnabled/ReadLogonTriggerInfo) would have seen as an unexpected exception rather
+    /// than a clean "no output" result. A timed-out run now returns ExitCode: null instead, so
+    /// callers treat it exactly like any other non-zero/empty result already handled below.
+    /// </summary>
+    private static async Task<(string Output, int? ExitCode)> RunCapturedAsync(string exe, string args, int timeoutMs = 10000)
     {
         var psi = new ProcessStartInfo(exe, args)
         {
@@ -159,8 +173,22 @@ public static class ScheduledTaskService
             CreateNoWindow = true,
         };
         using var proc = Process.Start(psi) ?? throw new InvalidOperationException($"couldn't start {exe}");
-        string output = proc.StandardOutput.ReadToEnd() + proc.StandardError.ReadToEnd();
-        proc.WaitForExit(10000);
+
+        var outputTask = proc.StandardOutput.ReadToEndAsync();
+        var errorTask = proc.StandardError.ReadToEndAsync();
+
+        using var cts = new CancellationTokenSource(timeoutMs);
+        try
+        {
+            await proc.WaitForExitAsync(cts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            try { proc.Kill(); } catch { /* best-effort */ }
+            return ("(command timed out)", null);
+        }
+
+        string output = (await outputTask) + (await errorTask);
         return (output, proc.ExitCode);
     }
 

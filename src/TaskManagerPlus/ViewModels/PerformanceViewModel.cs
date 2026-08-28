@@ -17,6 +17,7 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
 
     private readonly HardwareMonitorService _hardware = new();
     private readonly DispatcherTimer _timer;
+    private bool _isRefreshing;
 
     // Topology is static (doesn't change at runtime), so it's queried once here rather than
     // per tick, and kept out of the per-tick HardwareSnapshot DTO.
@@ -520,6 +521,20 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
     }
 
     private async Task RefreshAsync()
+    {
+        if (_isRefreshing) return;
+        _isRefreshing = true;
+        try
+        {
+            await RefreshCoreAsync();
+        }
+        finally
+        {
+            _isRefreshing = false;
+        }
+    }
+
+    private async Task RefreshCoreAsync()
     {
         HardwareSnapshot snapshot;
         try

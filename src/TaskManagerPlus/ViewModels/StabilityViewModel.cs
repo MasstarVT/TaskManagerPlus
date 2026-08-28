@@ -30,6 +30,13 @@ public sealed class StabilityViewModel : ObservableObject
     private bool _isLoading;
     public bool IsLoading { get => _isLoading; private set => SetProperty(ref _isLoading, value); }
 
+    /// <summary>Set when RefreshAsync's event-log query fails outright (e.g. denied access to a
+    /// log) - empty/null the rest of the time. Mirrors the "...failed: {message}" convention this
+    /// app's other on-demand actions already use rather than letting the exception propagate
+    /// uncaught out of an async void command handler.</summary>
+    private string? _refreshErrorText;
+    public string? RefreshErrorText { get => _refreshErrorText; private set => SetProperty(ref _refreshErrorText, value); }
+
     private bool _wasLastShutdownUnexpected;
     public bool WasLastShutdownUnexpected { get => _wasLastShutdownUnexpected; private set => SetProperty(ref _wasLastShutdownUnexpected, value); }
 
@@ -128,6 +135,11 @@ public sealed class StabilityViewModel : ObservableObject
         {
             var snapshot = await Task.Run(() => _service.Query());
             Apply(snapshot);
+            RefreshErrorText = null;
+        }
+        catch (Exception ex)
+        {
+            RefreshErrorText = $"Couldn't refresh stability data: {ex.Message}";
         }
         finally
         {

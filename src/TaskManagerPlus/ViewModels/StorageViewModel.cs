@@ -164,9 +164,14 @@ public sealed class StorageViewModel : ObservableObject
         row.StatusText = "Analyzing (this can take a while on a large drive)...";
         try
         {
-            var (success, percent, message) = await Task.Run(() => DiskFragmentationService.Analyze(row.DriveLetter));
+            var (success, percent, message) = await DiskFragmentationService.Analyze(row.DriveLetter);
             row.StatusText = message;
             row.IsWarning = success && percent is { } p && p >= 10;
+        }
+        catch (Exception ex)
+        {
+            row.StatusText = $"Failed: {ex.Message}";
+            row.IsWarning = false;
         }
         finally
         {
@@ -245,6 +250,10 @@ public sealed class StorageViewModel : ObservableObject
         {
             var result = await StorageThroughputService.RunTestAsync(drive);
             ThroughputResultText = result.Message;
+        }
+        catch (Exception ex)
+        {
+            ThroughputResultText = $"Test failed: {ex.Message}";
         }
         finally
         {

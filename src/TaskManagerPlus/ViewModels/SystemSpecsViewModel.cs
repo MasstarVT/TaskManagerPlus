@@ -71,6 +71,13 @@ public sealed class SystemSpecsViewModel : ObservableObject
     private bool _isLoading;
     public bool IsLoading { get => _isLoading; private set => SetProperty(ref _isLoading, value); }
 
+    /// <summary>Set when RefreshAsync's WMI/registry inventory query fails outright - empty/null
+    /// the rest of the time. Mirrors the "...failed: {message}" convention this app's other
+    /// on-demand actions already use rather than letting the exception propagate uncaught out of
+    /// an async void command handler.</summary>
+    private string? _refreshErrorText;
+    public string? RefreshErrorText { get => _refreshErrorText; private set => SetProperty(ref _refreshErrorText, value); }
+
     private string _osName = string.Empty;
     public string OsName { get => _osName; private set => SetProperty(ref _osName, value); }
 
@@ -179,11 +186,16 @@ public sealed class SystemSpecsViewModel : ObservableObject
         IsLoading = true;
         try
         {
-            var specs = await Task.Run(() => _service.Query());
+            var specs = await _service.QueryAsync();
             var (uptimeMonth, uptimeYear) = await Task.Run(() => BootPerformanceService.ComputeLongestUptimeRecords());
             Apply(specs);
             LongestUptimeThisMonthText = uptimeMonth is { } m ? FormatUptime(m) : "Not enough boot history yet";
             LongestUptimeThisYearText = uptimeYear is { } y ? FormatUptime(y) : "Not enough boot history yet";
+            RefreshErrorText = null;
+        }
+        catch (Exception ex)
+        {
+            RefreshErrorText = $"Couldn't refresh system specs: {ex.Message}";
         }
         finally
         {

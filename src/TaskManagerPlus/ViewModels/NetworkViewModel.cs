@@ -230,7 +230,7 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
             HistoryThisMonth.Clear();
             foreach (var e in monthTotals.Take(8)) HistoryThisMonth.Add(e);
 
-            Wifi = await Task.Run(WifiDiagnosticsService.ReadCurrentWifi);
+            Wifi = await WifiDiagnosticsService.ReadCurrentWifiAsync();
         }
         catch
         {
@@ -270,6 +270,10 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         {
             TracerouteOutput = await TracerouteService.RunAsync(TracerouteHost);
         }
+        catch (Exception ex)
+        {
+            TracerouteOutput = $"Traceroute failed: {ex.Message}";
+        }
         finally
         {
             IsTracerouting = false;
@@ -288,6 +292,10 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
             var result = await NetworkDiagnosticsService.RunJitterTestAsync(JitterTestHost);
             JitterTestResultText = result.Message;
         }
+        catch (Exception ex)
+        {
+            JitterTestResultText = $"Test failed: {ex.Message}";
+        }
         finally
         {
             IsJitterTesting = false;
@@ -299,11 +307,18 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
     private async Task LookupPublicIpAsync()
     {
         PublicIpStatusText = "Looking up...";
-        var info = await PublicIpLookupService.LookupAsync();
-        PublicIpStatusText = info is null
-            ? "Lookup failed (no internet, or the lookup service is unreachable)"
-            : string.Join("  •  ", new[] { info.Ip, info.Isp, string.Join(", ", new[] { info.City, info.Region, info.Country }.Where(s => !string.IsNullOrWhiteSpace(s))) }
-                .Where(s => !string.IsNullOrWhiteSpace(s)));
+        try
+        {
+            var info = await PublicIpLookupService.LookupAsync();
+            PublicIpStatusText = info is null
+                ? "Lookup failed (no internet, or the lookup service is unreachable)"
+                : string.Join("  •  ", new[] { info.Ip, info.Isp, string.Join(", ", new[] { info.City, info.Region, info.Country }.Where(s => !string.IsNullOrWhiteSpace(s))) }
+                    .Where(s => !string.IsNullOrWhiteSpace(s)));
+        }
+        catch (Exception ex)
+        {
+            PublicIpStatusText = $"Lookup failed: {ex.Message}";
+        }
     }
 
     public void Dispose() => _timer.Stop();
