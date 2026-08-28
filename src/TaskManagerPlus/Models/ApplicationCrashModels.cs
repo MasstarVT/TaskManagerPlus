@@ -61,6 +61,13 @@ public sealed record ApplicationCrashEvent
     /// ApplicationCrashService.LoadInjectionSurfaces. Null when the module isn't foreign, or is
     /// foreign but doesn't match any known surface.</summary>
     public string? InjectionSurfaceNote { get; init; }
+
+    /// <summary>Item 69: true when this crash's own timestamp falls within a few minutes of a
+    /// Kernel-Power sleep/resume event (42/107/187) - generalizes item 33's original 0x9F-bugcheck-
+    /// only sleep/resume cross-reference to every crash/hang row on this tab. See
+    /// EventLogService.ReadSleepResumeEventTimes; computed once at parse time (same reasoning as
+    /// ExceptionCodeText above - models don't call into services).</summary>
+    public bool HappenedDuringSleepResume { get; init; }
 }
 
 /// <summary>Round 17, item 52: ApplicationCrashEvent rows grouped by executable name (case-
@@ -122,6 +129,11 @@ public sealed class ApplicationHangEvent
     /// signature - the closest thing WER has to a "hang signature". Null when no matching report
     /// was found.</summary>
     public string? HangSignature { get; init; }
+
+    /// <summary>Item 69: same sleep/resume cross-reference as ApplicationCrashEvent's own field -
+    /// true when this hang's own timestamp falls within a few minutes of a Kernel-Power sleep/
+    /// resume event (42/107/187).</summary>
+    public bool HappenedDuringSleepResume { get; init; }
 }
 
 /// <summary>

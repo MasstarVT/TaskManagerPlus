@@ -76,6 +76,9 @@ public sealed class EventLogService
         var bugChecks = ReadBugCheckRecords()
             .Select(b => EnrichBugCheckRecord(b, sleepResumeEvents, wheaErrors))
             .ToList();
+        // Round 17 chunk 64-70, item 68: read before ShutdownTimeline below (not after, like every
+        // prior round) so ReadShutdownTimeline can cross-reference each dirty boot against these
+        // same classified Kernel-Power 41 records instead of re-querying the provider itself.
         var unexpectedShutdowns = ReadUnexpectedShutdowns();
 
         return new StabilitySnapshot
@@ -93,7 +96,7 @@ public sealed class EventLogService
             LatestBugCheck = bugChecks.FirstOrDefault(),
             LastShutdownCause = unexpectedShutdowns.OrderByDescending(u => u.TimeCreated).FirstOrDefault()?.Cause,
             UnexpectedShutdowns = unexpectedShutdowns,
-            ShutdownTimeline = ReadShutdownTimeline(),
+            ShutdownTimeline = ReadShutdownTimeline(unexpectedShutdowns),
             DumpFailures = ReadDumpFailures(),
             WheaErrors = wheaErrors,
             ReliabilityMetrics = ReadReliabilityMetrics(),
@@ -118,17 +121,26 @@ public sealed class EventLogService
     // treated as "the" hardware-error record that likely caused it.
     private const double WheaJoinWindowMinutes = 10;
 
-    /// <summary>Items 28-37 (parameter decode) + 33 (sleep/resume) + 36 (WHEA join): attaches a
+    /// <summary>Items 28-37 (parameter decode) + 33/69 (sleep/resume) + 36 (WHEA join): attaches a
     /// BugcheckDecodedInfo plus the two timestamp-based joins to one already-read BugCheckRecord.
     /// BugCheckRecord's properties are all init-only, so this returns a new instance rather than
     /// mutating - cheap, since there are at most a few dozen records in the lookback window.</summary>
     private static BugCheckRecord EnrichBugCheckRecord(BugCheckRecord record, List<DateTime> sleepResumeEvents, List<WheaErrorEvent> wheaErrors)
     {
-        if (!BugcheckHex.TryParseCode(record.StopCode, out var code))
-            return record with { Decoded = BugcheckDecoder.Decode(record.StopCode, record.Parameters) };
+        // Item 69: the sleep/resume join applies to every stop code now (item 33 originally gated
+        // this to 0x9F/DRIVER_POWER_STATE_FAILURE only - see HappenedDuringSleepResume's own
+        // remarks on BugCheckRecord/MinidumpInfo for why item 69 widened it), so this is computed
+        // before the "can't even parse the code" early-return below rather than after it.
+        bool nearSleepResume = sleepResumeEvents.Any(t => Math.Abs((t - record.TimeCreated).TotalMinutes) <= SleepResumeJoinWindowMinutes);
 
-        bool nearSleepResume = code == 0x0000009F &&
-            sleepResumeEvents.Any(t => Math.Abs((t - record.TimeCreated).TotalMinutes) <= SleepResumeJoinWindowMinutes);
+        if (!BugcheckHex.TryParseCode(record.StopCode, out var code))
+        {
+            return record with
+            {
+                Decoded = BugcheckDecoder.Decode(record.StopCode, record.Parameters),
+                HappenedDuringSleepResume = nearSleepResume,
+            };
+        }
 
         string? wheaJoin = null;
         if (code == 0x00000124)
@@ -846,8 +858,12 @@ public sealed class EventLogService
     /// any boot not preceded by a matching clean-shutdown marker as dirty (item 6) - catching a
     /// dirty boot even when Kernel-Power 41 itself was never logged (e.g. the power was held past
     /// the point the OS could log anything at all).
+    ///
+    /// Round 17 chunk 64-70, item 68: each dirty boot found below is additionally checked against
+    /// DetectFreezeWithoutCrash, using the already-classified unexpectedShutdowns list Query()
+    /// read just before calling this method - no second Kernel-Power 41 query.
     /// </summary>
-    private static List<ShutdownTimelineEntry> ReadShutdownTimeline()
+    private static List<ShutdownTimelineEntry> ReadShutdownTimeline(List<UnexpectedShutdownRecord> unexpectedShutdowns)
     {
         var entries = new List<ShutdownTimelineEntry>();
         long maxAgeMs = LookbackDays * 24L * 60 * 60 * 1000;
@@ -977,16 +993,130 @@ public sealed class EventLogService
         foreach (var boot in boots)
         {
             DateTime? precedingShutdown = remainingShutdowns.Where(s => s < boot).Cast<DateTime?>().OrderByDescending(s => s).FirstOrDefault();
+            bool isDirty = precedingShutdown is null;
+
+            // Item 68: only a dirty boot can possibly be a "freeze without crash" - a clean boot
+            // already had a matching shutdown marker, so there's nothing to explain.
+            string? freezeLabel = null;
+            List<string> freezeContext = new();
+            if (isDirty)
+                (freezeLabel, freezeContext) = DetectFreezeWithoutCrash(boot, unexpectedShutdowns);
+
             entries.Add(new ShutdownTimelineEntry
             {
                 TimeCreated = boot,
                 Kind = "Boot",
-                IsDirtyBoot = precedingShutdown is null,
+                IsDirtyBoot = isDirty,
+                FreezeWithoutCrashLabel = freezeLabel,
+                EventsBeforeSilence = freezeContext,
             });
             if (precedingShutdown is { } used) remainingShutdowns.Remove(used);
         }
 
         return entries.OrderByDescending(e => e.TimeCreated).Take(150).ToList();
+    }
+
+    // Item 68: how close a Kernel-Power 41 event's own timestamp has to be to a dirty boot to be
+    // treated as "the" record explaining it - a little wider than the ±5-minute window
+    // WasLastShutdownUnexpected uses for the same K-P41-to-boot correlation, since Kernel-General
+    // 12's boot marker and Kernel-Power 41 aren't always logged in the very same minute.
+    private const double FreezeJoinWindowMinutes = 10;
+
+    // Item 68: how close a minidump file's own last-write time has to be to the Kernel-Power 41
+    // timestamp to count as "a dump WAS written for this crash" - if nothing matches within this
+    // window, the boot is treated as dump-less.
+    private const double FreezeDumpJoinWindowHours = 6;
+
+    // Item 68: how many System-log events to show as "what was happening right before the
+    // silence" context for a detected freeze.
+    private const int FreezeContextEventCount = 6;
+
+    /// <summary>
+    /// Item 68: labels a dirty boot as "freeze without crash" (a true hard hang or sudden power
+    /// loss, not a bugcheck Windows itself ever got to record) when three conditions all hold: the
+    /// nearest Kernel-Power 41 event recorded no bugcheck code, no minidump file was written near
+    /// that time, and - by virtue of this being a dirty boot in the first place - event-log
+    /// activity simply stopped rather than recording any clean-shutdown marker. "Quick flag, not a
+    /// verdict" per CLAUDE.md: the last few events before the silence are returned as context so
+    /// the label can be sanity-checked rather than trusted blindly.
+    /// </summary>
+    private static (string? Label, List<string> Context) DetectFreezeWithoutCrash(DateTime bootTime, List<UnexpectedShutdownRecord> unexpectedShutdowns)
+    {
+        var nearest = unexpectedShutdowns
+            .Where(u => Math.Abs((u.TimeCreated - bootTime).TotalMinutes) <= FreezeJoinWindowMinutes)
+            .OrderBy(u => Math.Abs((u.TimeCreated - bootTime).TotalMinutes))
+            .FirstOrDefault();
+
+        // No Kernel-Power 41 at all near this boot, or it carried a real bugcheck code (a genuine
+        // BSOD, already fully explained by the Minidumps/BugCheckRecord cards elsewhere on this
+        // tab) - not what item 68 is looking for.
+        if (nearest is null || nearest.BugcheckCode is not null)
+            return (null, new List<string>());
+
+        bool hasNearbyDump = false;
+        try
+        {
+            if (Directory.Exists(MinidumpParserService.MinidumpFolder))
+            {
+                hasNearbyDump = Directory.GetFiles(MinidumpParserService.MinidumpFolder, "*.dmp")
+                    .Any(f => Math.Abs((File.GetLastWriteTime(f) - nearest.TimeCreated).TotalHours) <= FreezeDumpJoinWindowHours);
+            }
+        }
+        catch
+        {
+            // Can't enumerate the dump folder - degrade to "no dump found" (per CLAUDE.md, a
+            // missed dump-file check shouldn't block a label that's already "quick flag" territory).
+        }
+        if (hasNearbyDump) return (null, new List<string>());
+
+        string label = nearest.Cause switch
+        {
+            ShutdownCause.HardHang => "Freeze without crash — looks like a true hard hang: no bugcheck and no dump file were recorded before the system went silent.",
+            ShutdownCause.PowerLoss => "Freeze without crash — looks like a sudden loss of power: no bugcheck and no dump file were recorded before the system went silent.",
+            ShutdownCause.PowerButtonHeld => "Freeze without crash — the power button was held to recover from an unresponsive system: no bugcheck or dump file was recorded.",
+            _ => "Freeze without crash: no bugcheck and no dump file were recorded before the system went silent.",
+        };
+
+        return (label, ReadEventsBeforeSilence(nearest.TimeCreated));
+    }
+
+    /// <summary>Item 68: the last handful of System-log events recorded at or before beforeTime -
+    /// context for DetectFreezeWithoutCrash's label. A bounded, on-demand scan (this whole tab is
+    /// queried on demand, not polled - see StabilityViewModel's own remarks) run only for boots
+    /// already flagged as a probable freeze, so it stays cheap even though it isn't filtered by
+    /// provider/event ID the way every other read in this file is.</summary>
+    private static List<string> ReadEventsBeforeSilence(DateTime beforeTime)
+    {
+        var result = new List<string>();
+        try
+        {
+            var query = new EventLogQuery("System", PathType.LogName, "*") { ReverseDirection = true };
+            using var reader = new EventLogReader(query);
+            int scanned = 0;
+            const int maxScan = 500; // bounded - newest-first, so this only walks forward from "now"
+                                      // until it passes beforeTime, not the whole log.
+            while (result.Count < FreezeContextEventCount && scanned < maxScan && reader.ReadEvent() is { } record)
+            {
+                using (record)
+                {
+                    scanned++;
+                    var t = record.TimeCreated;
+                    if (t is null || t.Value > beforeTime) continue; // still newer than the freeze marker itself
+
+                    string message;
+                    try { message = record.FormatDescription() ?? string.Empty; }
+                    catch { message = string.Empty; }
+
+                    string summary = string.IsNullOrWhiteSpace(message) ? $"Event {record.Id}" : Truncate(message, 150);
+                    result.Add($"{t:g}  [{record.ProviderName}] {summary}");
+                }
+            }
+        }
+        catch
+        {
+            // Provider/log unavailable - no "last events before the silence" context available.
+        }
+        return result;
     }
 
     // ---------------------------------------------------------------------------------------
@@ -1499,6 +1629,10 @@ public sealed class EventLogService
     public List<ApplicationCrashEvent> ReadApplicationCrashEvents(int lookbackDays)
     {
         var result = new List<ApplicationCrashEvent>();
+        // Item 69: read once up front and join per-event below - the same sleep/resume cross-
+        // reference item 33 originally built for 0x9F bugchecks only, generalized to every crash/
+        // hang row on this tab (see ApplicationCrashEvent.HappenedDuringSleepResume's remarks).
+        var sleepResumeEvents = ReadSleepResumeEventTimes();
         try
         {
             long maxAgeMs = lookbackDays * 24L * 60 * 60 * 1000;
@@ -1549,9 +1683,12 @@ public sealed class EventLogService
                         try { message = record.FormatDescription() ?? string.Empty; }
                         catch { message = string.Empty; }
 
+                        var timeCreated = record.TimeCreated ?? DateTime.MinValue;
                         result.Add(new ApplicationCrashEvent
                         {
-                            TimeCreated = record.TimeCreated ?? DateTime.MinValue,
+                            TimeCreated = timeCreated,
+                            HappenedDuringSleepResume = sleepResumeEvents.Any(t =>
+                                Math.Abs((t - timeCreated).TotalMinutes) <= SleepResumeJoinWindowMinutes),
                             AppName = appName,
                             AppVersion = appVersion,
                             AppTimeStamp = appTimeStamp,
@@ -1603,6 +1740,8 @@ public sealed class EventLogService
     public List<ApplicationHangEvent> ReadApplicationHangEvents(int lookbackDays)
     {
         var result = new List<ApplicationHangEvent>();
+        // Item 69: same sleep/resume cross-reference as ReadApplicationCrashEvents above.
+        var sleepResumeEvents = ReadSleepResumeEventTimes();
         try
         {
             long maxAgeMs = lookbackDays * 24L * 60 * 60 * 1000;
@@ -1638,9 +1777,12 @@ public sealed class EventLogService
                         string? path = AppHangPathRegex.Match(message) is { Success: true } pathm ? pathm.Groups[1].Value.Trim() : null;
                         string? reportId = AppHangReportIdRegex.Match(message) is { Success: true } rm ? rm.Groups[1].Value.Trim() : null;
 
+                        var timeCreated = record.TimeCreated ?? DateTime.MinValue;
                         result.Add(new ApplicationHangEvent
                         {
-                            TimeCreated = record.TimeCreated ?? DateTime.MinValue,
+                            TimeCreated = timeCreated,
+                            HappenedDuringSleepResume = sleepResumeEvents.Any(t =>
+                                Math.Abs((t - timeCreated).TotalMinutes) <= SleepResumeJoinWindowMinutes),
                             ProcessName = processName,
                             Version = version,
                             ProcessId = pid,

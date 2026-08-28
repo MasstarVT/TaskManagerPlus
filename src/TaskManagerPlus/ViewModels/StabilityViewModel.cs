@@ -278,6 +278,32 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
     public RelayCommand SaveSilentExitConfigCommand { get; }
     public RelayCommand ClearSilentExitConfigCommand { get; }
 
+    // ---------------------------------------------------------------------------------------
+    // Round 17 chunk 64-70, item 70: forced-crash toggles (CrashOnCtrlScroll, NMICrashDump) -
+    // lives in the same "Capture settings" card as LocalDumps/SilentProcessExit above (all three
+    // configure a registry-level crash-capture mechanism), clearly labelled since these two
+    // actually bluescreen the machine on demand rather than just improving diagnostics for a
+    // crash that's already happened.
+    // ---------------------------------------------------------------------------------------
+
+    /// <summary>Plain-English read-out of both toggles' current registry state, rebuilt on demand
+    /// (a cheap registry read, no caching needed) rather than stored - see ForcedCrashService.</summary>
+    public string ForcedCrashConfigText => BuildForcedCrashConfigText();
+
+    private string _forcedCrashStatusText = string.Empty;
+    public string ForcedCrashStatusText { get => _forcedCrashStatusText; private set => SetProperty(ref _forcedCrashStatusText, value); }
+
+    public RelayCommand RefreshForcedCrashStatusCommand { get; }
+    public RelayCommand EnableCrashOnCtrlScrollCommand { get; }
+    public RelayCommand DisableCrashOnCtrlScrollCommand { get; }
+    public RelayCommand EnableNmiCrashDumpCommand { get; }
+    public RelayCommand DisableNmiCrashDumpCommand { get; }
+
+    // Round 17 chunk 64-70, item 66: persisted per-executable hang history - see
+    // HangHistoryService. Shown on this same "Application hangs" card (item 53's own card) rather
+    // than a new one, per this chunk's own instruction.
+    public ObservableCollection<HangHistoryEntry> HangHistory { get; } = new();
+
     // Item 62: postmortem debugger + Image File Execution Options hijack audit - a plain
     // registry read, refreshed alongside everything else in RefreshAsync (no separate button;
     // see CLAUDE.md's "on-demand vs. polled" note - this is cheap, not an expensive scan).
@@ -553,6 +579,57 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
             SilentExitStatusText = ok ? "SilentProcessExit configuration removed." : "Couldn't remove the registry value(s).";
         });
 
+        // Item 70: forced-crash toggles - each Enable is gated behind an explicit warning
+        // confirmation (the same MessageBox-confirm pattern PurgeWerReportsCommand above already
+        // uses for a different, but similarly consequential, destructive action); Disable needs no
+        // confirmation since it only ever turns a toggle back off.
+        RefreshForcedCrashStatusCommand = new RelayCommand(() => OnPropertyChanged(nameof(ForcedCrashConfigText)));
+
+        EnableCrashOnCtrlScrollCommand = new RelayCommand(() =>
+        {
+            var confirm = System.Windows.MessageBox.Show(
+                "This makes pressing Ctrl+ScrollLock twice deliberately crash (bluescreen) this machine, so a hard hang with no dump today can be captured on demand instead.\n\n" +
+                "Writes to HKLM\\...\\kbdhid\\Parameters and HKLM\\...\\i8042prt\\Parameters and only takes effect after a reboot. Continue?",
+                "Enable keyboard-initiated crash",
+                System.Windows.MessageBoxButton.YesNo,
+                System.Windows.MessageBoxImage.Warning);
+            if (confirm != System.Windows.MessageBoxResult.Yes) return;
+
+            bool ok = ForcedCrashService.SetCrashOnCtrlScroll(true);
+            ForcedCrashStatusText = ok
+                ? "Enabled. Reboot for it to take effect - Ctrl+ScrollLock×2 will then bluescreen this machine on demand."
+                : "Couldn't write the registry value(s).";
+            OnPropertyChanged(nameof(ForcedCrashConfigText));
+        });
+
+        DisableCrashOnCtrlScrollCommand = new RelayCommand(() =>
+        {
+            bool ok = ForcedCrashService.SetCrashOnCtrlScroll(false);
+            ForcedCrashStatusText = ok ? "Disabled." : "Couldn't write the registry value(s).";
+            OnPropertyChanged(nameof(ForcedCrashConfigText));
+        });
+
+        EnableNmiCrashDumpCommand = new RelayCommand(() =>
+        {
+            var confirm = System.Windows.MessageBox.Show(
+                "This tells Windows to bugcheck (and write a dump) when it receives a hardware NMI signal, instead of just logging it - only relevant on hardware that can actually issue an NMI (e.g. a server's NMI button/switch). Continue?",
+                "Enable NMI crash dump",
+                System.Windows.MessageBoxButton.YesNo,
+                System.Windows.MessageBoxImage.Warning);
+            if (confirm != System.Windows.MessageBoxResult.Yes) return;
+
+            bool ok = ForcedCrashService.SetNmiCrashDump(true);
+            ForcedCrashStatusText = ok ? "Enabled." : "Couldn't write the registry value.";
+            OnPropertyChanged(nameof(ForcedCrashConfigText));
+        });
+
+        DisableNmiCrashDumpCommand = new RelayCommand(() =>
+        {
+            bool ok = ForcedCrashService.SetNmiCrashDump(false);
+            ForcedCrashStatusText = ok ? "Disabled." : "Couldn't write the registry value.";
+            OnPropertyChanged(nameof(ForcedCrashConfigText));
+        });
+
         // Round 17, item 59: jump from a restart-loop warning row to the matching Services-tab
         // entry - see JumpToServiceRequested's own remarks.
         JumpToServiceCommand = new RelayCommand(param =>
@@ -659,6 +736,26 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
     /// three always agree on what "the current target" means.</summary>
     private string? NormalizedLocalDumpsTarget()
         => string.IsNullOrWhiteSpace(LocalDumpsTargetExe) ? null : LocalDumpsTargetExe.Trim();
+
+    /// <summary>Item 70: plain-English read-out of both forced-crash toggles' current registry
+    /// state - a mismatch between the two CrashOnCtrlScroll keys (set under one driver but not the
+    /// other) is called out explicitly rather than folded into a flat yes/no, since which key
+    /// actually matters depends on hardware this app can't reliably detect.</summary>
+    private static string BuildForcedCrashConfigText()
+    {
+        static string Describe(bool? v) => v switch { true => "Enabled", false => "Disabled", null => "Not set" };
+
+        var (kbdhid, i8042) = ForcedCrashService.ReadCrashOnCtrlScrollStatus();
+        string ctrlScroll = (kbdhid, i8042) switch
+        {
+            (true, true) => "Enabled",
+            (null, null) => "Not configured (Windows default: off)",
+            (false, false) => "Disabled",
+            _ => $"Partially configured (kbdhid: {Describe(kbdhid)}, i8042prt: {Describe(i8042)}) - set both the same way for this to reliably work",
+        };
+
+        return $"Ctrl+ScrollLock crash: {ctrlScroll} · NMI crash dump: {Describe(ForcedCrashService.ReadNmiCrashDumpEnabled())}";
+    }
 
     /// <summary>Repaints chart axis text/gridlines to match the active theme family - see
     /// PerformanceViewModel.ApplyAxisTheme's remarks.</summary>
@@ -938,6 +1035,11 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
         public List<ServiceFailureEvent> ServiceFailures { get; init; } = new();
         public List<ServiceRestartLoopWarning> ServiceRestartLoops { get; init; } = new();
         public PostmortemDebuggerInfo PostmortemDebugger { get; init; } = new();
+
+        // Item 66: persisted per-executable hang history - a local JSON read (HangHistoryService),
+        // not an event-log query, but grouped into this same bundle so it refreshes on the same
+        // cadence as everything else on this card rather than needing its own load path.
+        public List<HangHistoryEntry> HangHistory { get; init; } = new();
     }
 
     private CrashForensicsBundle BuildCrashForensicsBundle(List<WerReport> werHangReports)
@@ -970,6 +1072,12 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
         // alongside everything else here rather than needing its own button.
         var postmortem = PostmortemDebuggerService.Read();
 
+        // Item 66: persisted hang history, most frequent offender first.
+        var hangHistory = HangHistoryService.Load().Entries
+            .OrderByDescending(h => h.HangCount)
+            .ThenByDescending(h => h.LastHangTime)
+            .ToList();
+
         return new CrashForensicsBundle
         {
             Crashes = crashes,
@@ -980,6 +1088,7 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
             ServiceFailures = serviceFailures,
             ServiceRestartLoops = restartLoops,
             PostmortemDebugger = postmortem,
+            HangHistory = hangHistory,
         };
     }
 
@@ -1007,6 +1116,9 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
         foreach (var w in bundle.ServiceRestartLoops) ServiceRestartLoopWarnings.Add(w);
 
         PostmortemDebugger = bundle.PostmortemDebugger;
+
+        HangHistory.Clear();
+        foreach (var h in bundle.HangHistory) HangHistory.Add(h);
     }
 
     /// <summary>Item 55: clusters the already-parsed managed-exception list by (ExceptionType, top

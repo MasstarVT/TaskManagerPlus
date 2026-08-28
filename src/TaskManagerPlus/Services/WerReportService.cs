@@ -287,6 +287,10 @@ public static class WerReportService
                 Message = h.Message,
                 HangType = match.EventType,
                 HangSignature = match.EffectiveBucketKey,
+                // Item 69: preserve the sleep/resume flag EventLogService.ReadApplicationHangEvents
+                // already computed on h - this constructor copy would otherwise silently reset it
+                // to false for every hang that finds a WER match.
+                HappenedDuringSleepResume = h.HappenedDuringSleepResume,
             });
         }
         return result;

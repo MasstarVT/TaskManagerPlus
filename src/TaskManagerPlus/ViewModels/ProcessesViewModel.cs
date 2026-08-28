@@ -71,6 +71,7 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
                 SelectedProcessHandleTypes.Clear();
                 SelectedProcessHostedServices.Clear();
                 FileLockResults.Clear();
+                WaitChainResults.Clear();
                 LoadAffinityForSelection();
             }
         }
@@ -158,6 +159,23 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
     public RelayCommand EndProcessTreeCommand { get; }
     public RelayCommand RefreshNowCommand { get; }
 
+    /// <summary>Item 64: indented-list-of-strings render of the last Analyse-wait-chain result for
+    /// SelectedProcess - plain strings (not a structured node type) since the whole chain is
+    /// always shown as-is, the same "flat display list, populated on demand" shape
+    /// SelectedProcessHandleTypes above already uses.</summary>
+    public ObservableCollection<string> WaitChainResults { get; } = new();
+    public AsyncRelayCommand AnalyzeWaitChainCommand { get; }
+
+    /// <summary>Item 65: on-demand mini/full dump of SelectedProcess - see ProcessDumpService.</summary>
+    public RelayCommand CreateMiniDumpCommand { get; }
+    public RelayCommand CreateFullDumpCommand { get; }
+
+    /// <summary>Item 67: opt-in (default off) SendMessageTimeout probe against every windowed
+    /// process's main window, once per poll tick - off by default so an ordinary tick never pays
+    /// for it; see ProcessMonitorService.Sample's own remarks on the exact gating/cost tradeoff.</summary>
+    private bool _measureResponseTime;
+    public bool MeasureResponseTime { get => _measureResponseTime; set => SetProperty(ref _measureResponseTime, value); }
+
     public ProcessesViewModel()
     {
         ProcessesView = CollectionViewSource.GetDefaultView(Processes);
@@ -176,6 +194,17 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
         ResumeCommand = new RelayCommand(_ => SetSuspended(false), _ => SelectedProcess is not null);
         ApplyAffinityCommand = new RelayCommand(_ => ApplyAffinity(), _ => SelectedProcess is not null && AffinityCores.Count > 0);
         SetPriorityCommand = new RelayCommand(_ => SetPriority(), _ => SelectedProcess is not null);
+
+        // Item 64: gated to a currently-not-responding process, matching this item's own "on any
+        // not-responding process" wording - a healthy process' wait chain isn't the point of this
+        // feature (and would just show it running, nothing to analyse).
+        AnalyzeWaitChainCommand = new AsyncRelayCommand(AnalyzeWaitChainAsync,
+            () => SelectedProcess is { Status: "Not responding" });
+
+        // Item 65: available for any selected process, hung or not - Task Manager's own "Create
+        // dump file" isn't limited to not-responding processes either.
+        CreateMiniDumpCommand = new RelayCommand(_ => CreateProcessDump(ProcessDumpService.DumpKind.Mini), _ => SelectedProcess is not null);
+        CreateFullDumpCommand = new RelayCommand(_ => CreateProcessDump(ProcessDumpService.DumpKind.Full), _ => SelectedProcess is not null);
 
         // Round 12, #100: configurable poll interval - see PollIntervalSettingsService's remarks.
         _timer = new DispatcherTimer(DispatcherPriority.Background)
@@ -232,7 +261,7 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
         _isRefreshing = true;
         try
         {
-            var latest = await Task.Run(() => _monitor.Sample());
+            var latest = await Task.Run(() => _monitor.Sample(MeasureResponseTime));
             MergeInto(latest);
             ProcessCount = Processes.Count;
 
@@ -274,7 +303,18 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
                 existing.PagedPoolBytes = fresh.PagedPoolBytes;
                 existing.DiskBytesPerSec = fresh.DiskBytesPerSec;
                 existing.Status = fresh.Status;
+
+                // Round 17 chunk 64-70, item 66: a hang episode just ended (this row was hung last
+                // tick and isn't now) - record its peak duration/count for this executable.
+                // NotRespondingSeconds is monotonic while hung and resets to 0 the instant Windows
+                // reports the process responsive again (see ProcessMonitorService.Sample), so the
+                // *previous* tick's value (still on `existing` here, not yet overwritten) is
+                // exactly that episode's peak.
+                if (existing.NotRespondingSeconds > 0 && fresh.NotRespondingSeconds == 0)
+                    HangHistoryService.RecordHang(existing.Name, existing.NotRespondingSeconds);
+
                 existing.NotRespondingSeconds = fresh.NotRespondingSeconds;
+                existing.ResponseTimeMs = fresh.ResponseTimeMs;
                 existing.ThreadCount = fresh.ThreadCount;
                 existing.HandleCount = fresh.HandleCount;
                 existing.SignatureStatus = fresh.SignatureStatus;
@@ -310,6 +350,12 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
                 if (_exitRecorded.Add(existing.Pid))
                     AddRecentlyExited(existing.Pid, existing.Name, null);
                 UntrackProcess(existing.Pid);
+
+                // Item 66: the other half of "record a completed hang episode" - a process that
+                // exits while still flagged Not responding never gets the "recovered" transition
+                // above, so this is the only place that hang episode is ever seen ending.
+                if (existing.NotRespondingSeconds > 0)
+                    HangHistoryService.RecordHang(existing.Name, existing.NotRespondingSeconds);
 
                 Processes.RemoveAt(i);
             }
@@ -518,6 +564,76 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
         }
         foreach (var (typeName, count) in counts)
             SelectedProcessHandleTypes.Add($"{typeName}: {count}");
+    }
+
+    /// <summary>Item 64: Wait Chain Traversal analysis for SelectedProcess - one indented section
+    /// per thread the API returned a chain for, prefixed with a loud "DEADLOCK CYCLE DETECTED"
+    /// marker when GetThreadWaitChain itself flagged that thread's chain as a cycle. See
+    /// WaitChainAnalysisService for the actual native call and its own timeout handling.</summary>
+    private async Task AnalyzeWaitChainAsync()
+    {
+        var target = SelectedProcess;
+        if (target is null) return;
+        int pid = target.Pid;
+
+        WaitChainResults.Clear();
+        WaitChainResults.Add("Analysing wait chain…");
+
+        var result = await Task.Run(() => WaitChainAnalysisService.Analyze(pid));
+
+        // The selection (or the whole app) may have moved on while this ran in the background.
+        if (SelectedProcess?.Pid != pid) return;
+
+        WaitChainResults.Clear();
+        if (result.ErrorMessage is not null)
+        {
+            WaitChainResults.Add(result.ErrorMessage);
+            return;
+        }
+
+        foreach (var chain in result.Chains)
+        {
+            WaitChainResults.Add(chain.IsDeadlockCycle
+                ? $"Thread {chain.ThreadId} — DEADLOCK CYCLE DETECTED:"
+                : $"Thread {chain.ThreadId}:");
+            for (int i = 0; i < chain.Nodes.Count; i++)
+                WaitChainResults.Add($"{new string(' ', (i + 1) * 2)}→ {chain.Nodes[i]}");
+        }
+    }
+
+    /// <summary>Item 65: writes a mini or full dump of SelectedProcess to a user-chosen file - see
+    /// ProcessDumpService for the actual MiniDumpWriteDump call. Runs via Task.Run (a Full dump of
+    /// a large process can take a while) and reports the outcome through StatusMessage, the same
+    /// convention every other process-control action on this view model already uses.</summary>
+    private void CreateProcessDump(ProcessDumpService.DumpKind kind)
+    {
+        var target = SelectedProcess;
+        if (target is null) return;
+
+        var dlg = new Microsoft.Win32.SaveFileDialog
+        {
+            FileName = $"{target.Name}_{target.Pid}_{kind}.dmp",
+            Filter = "Dump files (*.dmp)|*.dmp|All files (*.*)|*.*",
+        };
+        if (dlg.ShowDialog() != true) return;
+
+        string path = dlg.FileName;
+        int pid = target.Pid;
+        string name = target.Name;
+        string kindText = kind == ProcessDumpService.DumpKind.Full ? "full" : "mini";
+
+        StatusMessage = $"Writing {kindText} dump for {name} (PID {pid})…";
+
+        _ = Task.Run(() => ProcessDumpService.WriteDump(pid, path, kind)).ContinueWith(t =>
+        {
+            Application.Current?.Dispatcher.InvokeAsync(() =>
+            {
+                var (success, error) = t.Result;
+                StatusMessage = success
+                    ? $"Wrote {kindText} dump for {name} to {path}."
+                    : $"Couldn't write dump for {name}: {error}";
+            });
+        });
     }
 
     /// <summary>Round 7 #17: true only for a process actually named svchost - the reverse-lookup

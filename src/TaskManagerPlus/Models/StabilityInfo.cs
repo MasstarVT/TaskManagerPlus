@@ -52,10 +52,12 @@ public sealed class MinidumpInfo
     /// old nearby-timestamp fallback found no bugcheck code at all for this dump).</summary>
     public BugcheckDecodedInfo? Decoded { get; init; }
 
-    /// <summary>Round 15, item 33: true when this dump's own bugcheck was DRIVER_POWER_STATE_
-    /// FAILURE (0x9F) AND a Kernel-Power sleep/resume event (42/107/187) was found within a few
-    /// minutes of the crash time - see EventLogService's sleep/resume cross-reference. Always
-    /// false for every other stop code.</summary>
+    /// <summary>Round 15, item 33 (generalized by item 69): true when a Kernel-Power sleep/resume
+    /// event (42/107/187) was found within a few minutes of this dump's own crash time - see
+    /// EventLogService.ReadSleepResumeEventTimes. Originally gated to DRIVER_POWER_STATE_FAILURE
+    /// (0x9F) only; item 69 widened the join to every stop code, since a crash of any kind that
+    /// happens to coincide with a sleep/resume transition is worth the same "occurred during
+    /// resume" flag, not just the one bugcheck code that's classically caused by it.</summary>
     public bool HappenedDuringSleepResume { get; init; }
 
     /// <summary>Round 15, item 36: for a WHEA_UNCORRECTABLE_ERROR (0x124) bugcheck, the nearest
@@ -98,9 +100,10 @@ public sealed record BugCheckRecord
     /// themselves.</summary>
     public BugcheckDecodedInfo? Decoded { get; init; }
 
-    /// <summary>Round 15, item 33: true only for a DRIVER_POWER_STATE_FAILURE (0x9F) record whose
+    /// <summary>Round 15, item 33 (generalized by item 69): true when this record's own
     /// TimeCreated falls within a few minutes of a Kernel-Power sleep/resume event (42/107/187) -
-    /// see EventLogService.ReadSleepResumeEventTimes.</summary>
+    /// see EventLogService.ReadSleepResumeEventTimes. No longer gated to 0x9F - see MinidumpInfo's
+    /// own remarks on the same field for why item 69 widened this.</summary>
     public bool HappenedDuringSleepResume { get; init; }
 
     /// <summary>Round 15, item 36: for a WHEA_UNCORRECTABLE_ERROR (0x124) record, the nearest
@@ -168,6 +171,21 @@ public sealed class ShutdownTimelineEntry
     public string? User { get; init; }
     public string? Reason { get; init; }
     public bool IsDirtyBoot { get; init; }
+
+    /// <summary>Item 68: set only on a dirty boot ("Boot" entry with IsDirtyBoot true) that also
+    /// matches the "freeze without crash" pattern - the nearest Kernel-Power 41 recorded no
+    /// bugcheck code, and no minidump file was written near that time. Distinguishes a true hard
+    /// hang or sudden power loss (Windows itself never got to bugcheck) from an ordinary dirty
+    /// boot, where a real BugCheckRecord/MinidumpInfo elsewhere on this tab already explains what
+    /// happened. Null on every other entry (not a freeze, or not even a dirty boot). See
+    /// EventLogService.DetectFreezeWithoutCrash.</summary>
+    public string? FreezeWithoutCrashLabel { get; init; }
+
+    /// <summary>Item 68: the last handful of System-log events recorded before the silence leading
+    /// up to this boot - context for FreezeWithoutCrashLabel so the label can be sanity-checked
+    /// rather than trusted blindly ("quick flag, not a verdict" per CLAUDE.md). Empty unless
+    /// FreezeWithoutCrashLabel is set.</summary>
+    public List<string> EventsBeforeSilence { get; init; } = new();
 }
 
 /// <summary>Round 13, item 7: a volmgr 161/162 "dump creation failed" System-log event - explains

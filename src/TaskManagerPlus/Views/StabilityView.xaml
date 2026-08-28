@@ -993,6 +993,36 @@
                         <Button Content="Remove" Command="{Binding ClearSilentExitConfigCommand}" Padding="10,4" />
                     </StackPanel>
                     <TextBlock Text="{Binding SilentExitStatusText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" />
+
+                    <!-- Round 17 chunk 64-70, item 70: forced-crash toggles - for a machine that
+                         hard-hangs with no dump at all, turning an undiagnosable freeze into a
+                         real one on demand beats never getting a dump. Clearly labelled advanced/
+                         destructive, matching PurgeWerReportsCommand's own confirmation pattern. -->
+                    <Separator Margin="0,12,0,12" Opacity="0.3" />
+                    <TextBlock Text="Advanced: force a crash on demand" Style="{StaticResource ColorRowLabel}" Margin="0,0,0,4" FontWeight="SemiBold" />
+                    <TextBlock Text="For a machine that hard-hangs with no dump at all, Windows offers two keyboard/hardware-initiated ways to deliberately bluescreen it instead, turning an undiagnosable freeze into a real dump the next time it happens."
+                               Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" />
+
+                    <Border Background="{DynamicResource DangerMutedBrush}" CornerRadius="6" Padding="10,8" Margin="0,0,0,10">
+                        <TextBlock Text="Enabling either toggle below means Ctrl+ScrollLock×2 (or a hardware NMI signal) will deliberately bluescreen this machine - a real, disruptive crash, not a simulation. Only enable one if you actually intend to reproduce a freeze this way."
+                                   Foreground="{DynamicResource DangerBrush}" FontSize="11.5" FontWeight="SemiBold" TextWrapping="Wrap" />
+                    </Border>
+
+                    <TextBlock Text="{Binding ForcedCrashConfigText}" Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" />
+
+                    <TextBlock Text="Ctrl+ScrollLock×2 crash (CrashOnCtrlScroll)" Style="{StaticResource ColorRowLabel}" Margin="0,0,0,4" />
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                        <Button Content="Enable" Command="{Binding EnableCrashOnCtrlScrollCommand}" Style="{StaticResource DangerButton}" Padding="10,4" Margin="0,0,8,0" />
+                        <Button Content="Disable" Command="{Binding DisableCrashOnCtrlScrollCommand}" Padding="10,4" />
+                    </StackPanel>
+
+                    <TextBlock Text="NMI crash dump (NMICrashDump)" Style="{StaticResource ColorRowLabel}" Margin="0,0,0,4" />
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                        <Button Content="Enable" Command="{Binding EnableNmiCrashDumpCommand}" Style="{StaticResource DangerButton}" Padding="10,4" Margin="0,0,8,0" />
+                        <Button Content="Disable" Command="{Binding DisableNmiCrashDumpCommand}" Padding="10,4" Margin="0,0,8,0" />
+                        <Button Content="Refresh status" Command="{Binding RefreshForcedCrashStatusCommand}" Padding="10,4" />
+                    </StackPanel>
+                    <TextBlock Text="{Binding ForcedCrashStatusText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" />
                 </StackPanel>
             </Border>
 
@@ -1065,14 +1095,21 @@
                 </Border.Style>
                 <StackPanel>
                     <TextBlock Text="Shutdown &amp; restart timeline" Style="{StaticResource CardTitle}" />
-                    <TextBlock Text="Who/what initiated each shutdown or restart, plus boots not preceded by a clean shutdown marker (flagged Dirty)."
+                    <TextBlock Text="Who/what initiated each shutdown or restart, plus boots not preceded by a clean shutdown marker (flagged Dirty). A dirty boot with no bugcheck and no dump file is further flagged Freeze - select the row for the last events logged before the silence."
                                Style="{StaticResource SubStat}" Margin="0,-4,0,8" TextWrapping="Wrap" />
-                    <DataGrid ItemsSource="{Binding ShutdownTimeline}" Height="220" IsReadOnly="True">
+                    <DataGrid ItemsSource="{Binding ShutdownTimeline}" Height="220" IsReadOnly="True"
+                              RowDetailsVisibilityMode="Collapsed">
                         <DataGrid.RowStyle>
                             <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
                                 <Style.Triggers>
                                     <DataTrigger Binding="{Binding IsDirtyBoot}" Value="True">
                                         <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                    </DataTrigger>
+                                    <!-- Item 68: auto-expand row details for a detected freeze - too
+                                         important a finding to require the user to notice and click
+                                         a normally-empty row first. -->
+                                    <DataTrigger Binding="{Binding FreezeWithoutCrashLabel, Converter={StaticResource NullToVisibilityConverter}}" Value="Visible">
+                                        <Setter Property="DetailsVisibility" Value="Visible" />
                                     </DataTrigger>
                                 </Style.Triggers>
                             </Style>
@@ -1091,7 +1128,35 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
+                            <!-- Item 68 -->
+                            <DataGridTemplateColumn Header="Freeze" Width="65">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="Freeze" FontWeight="SemiBold" Foreground="{DynamicResource WarningBrush}"
+                                                   Visibility="{Binding FreezeWithoutCrashLabel, Converter={StaticResource NullToVisibilityConverter}}" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
                         </DataGrid.Columns>
+                        <DataGrid.RowDetailsTemplate>
+                            <DataTemplate>
+                                <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,8" Margin="0,2,0,6"
+                                        Visibility="{Binding FreezeWithoutCrashLabel, Converter={StaticResource NullToVisibilityConverter}}">
+                                    <StackPanel>
+                                        <TextBlock Text="{Binding FreezeWithoutCrashLabel}" FontWeight="SemiBold" TextWrapping="Wrap"
+                                                   Foreground="{DynamicResource WarningBrush}" />
+                                        <TextBlock Text="Last events logged before the system went silent:" Style="{StaticResource SubStat}" Margin="0,6,0,2" />
+                                        <ItemsControl ItemsSource="{Binding EventsBeforeSilence}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding}" FontSize="11" FontFamily="Consolas" TextTrimming="CharacterEllipsis" Margin="0,0,0,2" />
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </DataGrid.RowDetailsTemplate>
                     </DataGrid>
                 </StackPanel>
             </Border>
@@ -1278,6 +1343,28 @@
                             <DataGridTextColumn Header="Reason (exception code)" Binding="{Binding ExceptionCodeText}" Width="1.6*" />
                             <DataGridTextColumn Header="Offset" Binding="{Binding Offset}" Width="90" />
                             <DataGridTextColumn Header="PID" Binding="{Binding ProcessId}" Width="60" />
+                            <!-- Item 69: generalizes item 33's original 0x9F-only sleep/resume
+                                 cross-reference to every crash row. -->
+                            <DataGridTemplateColumn Header="Sleep/resume?" Width="100">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="10" Padding="6,2" HorizontalAlignment="Left">
+                                            <Border.Style>
+                                                <Style TargetType="Border">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding HappenedDuringSleepResume}" Value="True">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Border.Style>
+                                            <TextBlock Text="Near sleep/resume" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource WarningBrush}"
+                                                       ToolTip="A Kernel-Power sleep/resume event (42/107/187) was recorded within a few minutes of this crash." />
+                                        </Border>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
                             <DataGridTemplateColumn Header="Foreign module?" Width="1.6*">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
@@ -1309,15 +1396,20 @@
 
             <!-- Round 17, item 53: Application Hang (1002) events, paired with the matching WER
                  AppHang report (item 46) for hang type/signature - a separate fault class from a
-                 crash, so its own card rather than mixed into the grid above. Collapsed when
-                 empty. -->
+                 crash, so its own card rather than mixed into the grid above. Round 17 chunk
+                 64-70, item 66's persisted hang-history leaderboard also lives here (this card),
+                 so the Border only collapses when BOTH are empty. -->
             <Border Margin="0,0,0,16">
                 <Border.Style>
                     <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
                         <Style.Triggers>
-                            <DataTrigger Binding="{Binding ApplicationHangs.Count}" Value="0">
+                            <MultiDataTrigger>
+                                <MultiDataTrigger.Conditions>
+                                    <Condition Binding="{Binding ApplicationHangs.Count}" Value="0" />
+                                    <Condition Binding="{Binding HangHistory.Count}" Value="0" />
+                                </MultiDataTrigger.Conditions>
                                 <Setter Property="Visibility" Value="Collapsed" />
-                            </DataTrigger>
+                            </MultiDataTrigger>
                         </Style.Triggers>
                     </Style>
                 </Border.Style>
@@ -1325,6 +1417,49 @@
                     <TextBlock Text="Application hangs" Style="{StaticResource CardTitle}" />
                     <TextBlock Text="Application Hang (1002) events - hang type/signature come from the matching WER AppHang report (a far more reliable source than that event's own undocumented layout)."
                                Style="{StaticResource SubStat}" Margin="0,-4,0,8" TextWrapping="Wrap" />
+
+                    <!-- Item 66: all-time hang history per executable, persisted to
+                         hang-history.json so it survives across app restarts - the live
+                         NotRespondingSeconds this tab already tracks, kept once a hang episode
+                         ends instead of discarded every tick. Collapsed when nothing recorded yet. -->
+                    <StackPanel Margin="0,0,0,10">
+                        <StackPanel.Style>
+                            <Style TargetType="StackPanel">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding HangHistory.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </StackPanel.Style>
+                        <TextBlock Text="Hang history (all-time, per executable)" Style="{StaticResource ColorRowLabel}" Margin="0,0,0,6" />
+                        <ItemsControl ItemsSource="{Binding HangHistory}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Margin="0,0,0,6">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Grid.Column="0">
+                                            <TextBlock Text="{Binding ExecutableName}" FontSize="12.5" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Style="{StaticResource SubStat}">
+                                                <Run Text="Peak " /><Run Text="{Binding PeakDurationSeconds, Mode=OneWay}" /><Run Text="s" />
+                                                <Run Text=" · last " /><Run Text="{Binding LastHangTime, StringFormat={}{0:g}, Mode=OneWay}" />
+                                            </TextBlock>
+                                        </StackPanel>
+                                        <Border Grid.Column="1" Background="{DynamicResource DangerMutedBrush}" CornerRadius="10" Padding="8,2" VerticalAlignment="Center">
+                                            <TextBlock Foreground="{DynamicResource DangerBrush}" FontSize="11.5" FontWeight="SemiBold">
+                                                <Run Text="{Binding HangCount, Mode=OneWay}" /><Run Text="×" />
+                                            </TextBlock>
+                                        </Border>
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+
                     <DataGrid ItemsSource="{Binding ApplicationHangs}" Height="200" IsReadOnly="True">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="Time" Binding="{Binding TimeCreated, StringFormat={}{0:g}}" Width="150" />
@@ -1333,6 +1468,26 @@
                             <DataGridTextColumn Header="PID" Binding="{Binding ProcessId}" Width="90" />
                             <DataGridTextColumn Header="Hang type" Binding="{Binding HangType, TargetNullValue='Unknown'}" Width="1.4*" />
                             <DataGridTextColumn Header="Hang signature" Binding="{Binding HangSignature, TargetNullValue='Unknown'}" Width="1.4*" />
+                            <!-- Item 69 -->
+                            <DataGridTemplateColumn Header="Sleep/resume?" Width="100">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="10" Padding="6,2" HorizontalAlignment="Left">
+                                            <Border.Style>
+                                                <Style TargetType="Border">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding HappenedDuringSleepResume}" Value="True">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Border.Style>
+                                            <TextBlock Text="Near sleep/resume" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource WarningBrush}" />
+                                        </Border>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
                         </DataGrid.Columns>
                     </DataGrid>
                 </StackPanel>

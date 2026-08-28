@@ -162,4 +162,15 @@ public sealed class ProcessRow : ObservableObject
     /// count in this app.</summary>
     private int _crashCount30d;
     public int CrashCount30d { get => _crashCount30d; set => SetProperty(ref _crashCount30d, value); }
+
+    /// <summary>Item 67: measured UI responsiveness in milliseconds - SendMessageTimeout(WM_NULL,
+    /// SMTO_ABORTIFHUNG) against this process's main window, turning the binary "Not responding"
+    /// status into an actual number so a sluggish-but-not-yet-hung app shows up before Windows
+    /// itself would ever flag it. Null (not "0") whenever no measurement is available: the process
+    /// has no window, ProcessesViewModel.MeasureResponseTime is off (the default - see its own
+    /// remarks on why this is opt-in), or the probe itself timed out (SMTO_ABORTIFHUNG aborted -
+    /// effectively "at least this slow", not a real duration). See
+    /// ProcessControlService.MeasureUiResponseTimeMs.</summary>
+    private int? _responseTimeMs;
+    public int? ResponseTimeMs { get => _responseTimeMs; set => SetProperty(ref _responseTimeMs, value); }
 }
