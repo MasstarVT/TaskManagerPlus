@@ -133,6 +133,100 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
     public ObservableCollection<WheaErrorEvent> WheaErrors { get; } = new();
     public ObservableCollection<WheaSummaryRow> WheaSummary { get; } = new();
 
+    // ---------------------------------------------------------------------------------------
+    // Round 16, items 38-49: WER (Windows Error Reporting) archive/queue scanning - a crash
+    // record source entirely separate from the event log above, and not subject to its 30-day
+    // rollover (item 48) - see WerReportService.
+    // ---------------------------------------------------------------------------------------
+
+    // Item 39: bucket-grouped crashes (excludes hangs) - the primary grouped view of the card.
+    public ObservableCollection<WerBucketRowViewModel> WerCrashBuckets { get; } = new();
+
+    // Item 46: AppHang_XProcB1/AppHangB1/AppHangTransient reports, split into their own flat
+    // section rather than counted alongside real crashes anywhere on this card.
+    public ObservableCollection<WerReportRowViewModel> WerHangReports { get; } = new();
+
+    // Every WerReportRowViewModel currently shown (shared by WerCrashBuckets' Reports and
+    // WerHangReports - a report can only be in one or the other, but this app also needs one flat
+    // list to subscribe to for item 49's live selected-count and to unsubscribe from on refresh).
+    private readonly List<WerReportRowViewModel> _allWerReportRows = new();
+
+    private bool _showWerHangs;
+
+    /// <summary>Item 46: toggles which of WerCrashBuckets/WerHangReports the card shows - two
+    /// buttons rather than a literal inner TabControl, since Dark.xaml's TabControl style is a
+    /// TMOG-style top icon+label strip applied to every TabControl in the app (implicit, not
+    /// keyed), not a style meant for a small in-card switcher.</summary>
+    public bool ShowWerHangs { get => _showWerHangs; set => SetProperty(ref _showWerHangs, value); }
+
+    public RelayCommand ShowWerCrashesCommand { get; }
+    public RelayCommand ShowWerHangsCommand { get; }
+
+    /// <summary>Item 49: how many WER report rows are currently selected, across both the
+    /// crash-bucket and hang views - for the later support-bundle export chunk (#100) to build on;
+    /// this chunk only surfaces the count.</summary>
+    public int SelectedWerReportCount => _allWerReportRows.Count(r => r.IsSelected);
+
+    /// <summary>Item 49: same idea for the Dump analysis (binary parse) card's rows.</summary>
+    public int SelectedDumpCount => DumpRows.Count(r => r.IsSelected);
+
+    // Items 41/44: "is Windows even collecting crash data" status + plain-English consent/prompt
+    // read-out - always shown; the warning strip below only appears when WerStatus.LooksDisabled.
+    private WerCollectionStatus? _werStatus;
+    public WerCollectionStatus? WerStatus { get => _werStatus; private set => SetProperty(ref _werStatus, value); }
+
+    private string _werCollectionSummaryText = string.Empty;
+    public string WerCollectionSummaryText { get => _werCollectionSummaryText; private set => SetProperty(ref _werCollectionSummaryText, value); }
+
+    private string _werConsentSummaryText = string.Empty;
+    public string WerConsentSummaryText { get => _werConsentSummaryText; private set => SetProperty(ref _werConsentSummaryText, value); }
+
+    private string _werStatusActionText = string.Empty;
+    public string WerStatusActionText { get => _werStatusActionText; private set => SetProperty(ref _werStatusActionText, value); }
+
+    public RelayCommand EnableWerCommand { get; }
+
+    // Item 43: queue/archive size + explicit, warned purge action.
+    private WerQueueSizeInfo? _werQueueSize;
+    public WerQueueSizeInfo? WerQueueSize { get => _werQueueSize; private set => SetProperty(ref _werQueueSize, value); }
+
+    private string _werPurgeStatusText = string.Empty;
+    public string WerPurgeStatusText { get => _werPurgeStatusText; private set => SetProperty(ref _werPurgeStatusText, value); }
+
+    public RelayCommand PurgeWerReportsCommand { get; }
+
+    // Item 42: LocalDumps "Capture settings" - global by default (blank target), or for one
+    // named executable.
+    private string _localDumpsTargetExe = string.Empty;
+    public string LocalDumpsTargetExe { get => _localDumpsTargetExe; set => SetProperty(ref _localDumpsTargetExe, value); }
+
+    private string _localDumpsFolder = @"%LOCALAPPDATA%\CrashDumps";
+    public string LocalDumpsFolder { get => _localDumpsFolder; set => SetProperty(ref _localDumpsFolder, value); }
+
+    private int _localDumpsCount = 10;
+    public int LocalDumpsCount { get => _localDumpsCount; set => SetProperty(ref _localDumpsCount, value); }
+
+    // 0 = Custom, 1 = Mini, 2 = Full - matches LocalDumpsConfig.DumpType and the Capture settings
+    // ComboBox's item order 1:1, so the XAML can bind SelectedIndex directly with no converter.
+    private int _localDumpsType = 1;
+    public int LocalDumpsType { get => _localDumpsType; set => SetProperty(ref _localDumpsType, value); }
+
+    private string _localDumpsStatusText = string.Empty;
+    public string LocalDumpsStatusText { get => _localDumpsStatusText; private set => SetProperty(ref _localDumpsStatusText, value); }
+
+    public RelayCommand LoadLocalDumpsConfigCommand { get; }
+    public RelayCommand SaveLocalDumpsConfigCommand { get; }
+    public RelayCommand ClearLocalDumpsConfigCommand { get; }
+
+    // Item 48: WER-archive-derived long-horizon crash history - not capped at 30 days like the
+    // Reliability History chart above, since these folders aren't subject to log rollover.
+    private const int WerHistoryDays = 90;
+    public ObservableCollection<double> WerHistoryCounts { get; } = new();
+    private readonly ColumnSeries<double> _werHistoryColumns;
+    public ISeries[] WerHistorySeries { get; }
+    public Axis[] WerHistoryXAxes { get; }
+    public Axis[] WerHistoryYAxes { get; }
+
     private bool _isLoading;
     public bool IsLoading { get => _isLoading; private set => SetProperty(ref _isLoading, value); }
 
@@ -299,6 +393,69 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
         _dumpWatcher.NewDumpDetected += OnNewDumpDetected;
         _dumpWatcher.Start();
 
+        // Round 16, item 46: crashes/hangs toggle.
+        ShowWerCrashesCommand = new RelayCommand(() => ShowWerHangs = false);
+        ShowWerHangsCommand = new RelayCommand(() => ShowWerHangs = true);
+
+        // Round 16, item 41: re-enable WER collection - the only mutating action this card offers
+        // by default (see WerReportService.EnableWer's remarks on exactly what it does and doesn't
+        // touch).
+        EnableWerCommand = new RelayCommand(() =>
+        {
+            bool ok = WerReportService.EnableWer();
+            WerStatusActionText = ok
+                ? "Windows Error Reporting re-enabled. Refresh to see updated status."
+                : "Couldn't write the registry value.";
+            if (ok) _ = RefreshAsync();
+        });
+
+        // Round 16, item 43: explicit, warned purge - MessageBox confirmation, the same pattern
+        // ProcessesViewModel.EndSelected already uses for a destructive action.
+        PurgeWerReportsCommand = new RelayCommand(() =>
+        {
+            var confirm = System.Windows.MessageBox.Show(
+                "Permanently delete every WER report folder this app found (machine and per-user, archive and queue)?\nThis destroys crash history and cannot be undone.",
+                "Purge WER reports",
+                System.Windows.MessageBoxButton.YesNo,
+                System.Windows.MessageBoxImage.Warning);
+            if (confirm != System.Windows.MessageBoxResult.Yes) return;
+
+            int deleted = WerReportService.PurgeAll();
+            WerPurgeStatusText = $"Deleted {deleted} report folder(s).";
+            _ = RefreshAsync();
+        });
+
+        // Round 16, item 42: LocalDumps capture-settings load/save/clear.
+        LoadLocalDumpsConfigCommand = new RelayCommand(() =>
+        {
+            var cfg = WerReportService.ReadLocalDumpsConfig(NormalizedLocalDumpsTarget());
+            if (cfg.Exists)
+            {
+                LocalDumpsFolder = cfg.DumpFolder ?? LocalDumpsFolder;
+                LocalDumpsCount = cfg.DumpCount ?? LocalDumpsCount;
+                LocalDumpsType = cfg.DumpType ?? LocalDumpsType;
+                LocalDumpsStatusText = $"Loaded existing configuration: {cfg.DumpTypeText}.";
+            }
+            else
+            {
+                LocalDumpsStatusText = "No LocalDumps configuration found for this target yet - showing the fields above as-is.";
+            }
+        });
+
+        SaveLocalDumpsConfigCommand = new RelayCommand(() =>
+        {
+            bool ok = WerReportService.WriteLocalDumpsConfig(NormalizedLocalDumpsTarget(), LocalDumpsFolder, LocalDumpsCount, LocalDumpsType);
+            LocalDumpsStatusText = ok
+                ? $"Saved. Windows will now write a dump to {LocalDumpsFolder} the next time {(NormalizedLocalDumpsTarget() ?? "any app")} crashes."
+                : "Couldn't write the registry value.";
+        });
+
+        ClearLocalDumpsConfigCommand = new RelayCommand(() =>
+        {
+            bool ok = WerReportService.ClearLocalDumpsConfig(NormalizedLocalDumpsTarget());
+            LocalDumpsStatusText = ok ? "Override removed." : "Couldn't remove the registry value(s).";
+        });
+
         _dailyEventColumns = new ColumnSeries<double>
         {
             Values = DailyEventCounts,
@@ -354,8 +511,49 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
             },
         };
 
+        // Round 16, item 48: WER-archive-derived long-horizon crash history - same ColumnSeries
+        // approach as the Reliability History chart above, minus the second Microsoft-index line
+        // (there's no equivalent long-horizon Microsoft series to overlay here).
+        _werHistoryColumns = new ColumnSeries<double>
+        {
+            Values = WerHistoryCounts,
+            Fill = new SolidColorPaint(SKColors.OrangeRed.WithAlpha(200)),
+            Stroke = null,
+            MaxBarWidth = 8,
+        };
+        WerHistorySeries = new ISeries[] { _werHistoryColumns };
+        WerHistoryXAxes = new[]
+        {
+            new Axis
+            {
+                Labels = Array.Empty<string>(),
+                LabelsRotation = 0,
+                MinStep = 1,
+                ForceStepToMin = true,
+                LabelsPaint = new SolidColorPaint(AxisTextColor),
+                SeparatorsPaint = null,
+            },
+        };
+        WerHistoryYAxes = new[]
+        {
+            new Axis
+            {
+                MinLimit = 0,
+                MinStep = 1,
+                Labeler = v => $"{v:0}",
+                LabelsPaint = new SolidColorPaint(AxisTextColor),
+                SeparatorsPaint = new SolidColorPaint(AxisSeparatorColor) { StrokeThickness = 1 },
+            },
+        };
+
         _ = RefreshAsync();
     }
+
+    /// <summary>Item 42: null (global default) for a blank/whitespace-only target executable
+    /// textbox, else the trimmed exe name - shared by the Load/Save/Clear commands above so all
+    /// three always agree on what "the current target" means.</summary>
+    private string? NormalizedLocalDumpsTarget()
+        => string.IsNullOrWhiteSpace(LocalDumpsTargetExe) ? null : LocalDumpsTargetExe.Trim();
 
     /// <summary>Repaints chart axis text/gridlines to match the active theme family - see
     /// PerformanceViewModel.ApplyAxisTheme's remarks.</summary>
@@ -367,6 +565,9 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
         DailyEventYAxes[0].LabelsPaint = new SolidColorPaint(textSk);
         DailyEventYAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
         DailyEventYAxes[1].LabelsPaint = new SolidColorPaint(textSk);
+        WerHistoryXAxes[0].LabelsPaint = new SolidColorPaint(textSk);
+        WerHistoryYAxes[0].LabelsPaint = new SolidColorPaint(textSk);
+        WerHistoryYAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
     }
 
     private async Task RefreshAsync()
@@ -382,6 +583,12 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
             // here doesn't blank out anything Apply() already populated.
             var bundle = await Task.Run(BuildDumpAnalysisBundle);
             ApplyDumpAnalysis(bundle);
+
+            // Round 16, items 38-49: WER archive/queue scan - independent of both reads above
+            // (its own file-system/registry sources), computed on a background thread and applied
+            // separately, same shape as the dump-analysis bundle just above.
+            var werBundle = await Task.Run(BuildWerBundle);
+            ApplyWerBundle(werBundle);
 
             RefreshErrorText = null;
         }
@@ -452,9 +659,19 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
     {
         Debugger = bundle.Debugger;
 
+        // Round 16, item 49: unsubscribe the outgoing rows' IsSelected notifications before
+        // clearing, so SelectedDumpCount doesn't keep listening to rows this refresh is about to
+        // discard.
+        foreach (var old in DumpRows) old.PropertyChanged -= OnDumpRowPropertyChanged;
+
         DumpRows.Clear();
         for (int i = 0; i < bundle.ParsedDumps.Count; i++)
-            DumpRows.Add(new DumpRowViewModel(bundle.ParsedDumps[i], bundle.Debugger, bundle.DecodedInfos[i]));
+        {
+            var row = new DumpRowViewModel(bundle.ParsedDumps[i], bundle.Debugger, bundle.DecodedInfos[i]);
+            row.PropertyChanged += OnDumpRowPropertyChanged;
+            DumpRows.Add(row);
+        }
+        OnPropertyChanged(nameof(SelectedDumpCount));
 
         MemoryDump = bundle.MemoryDump;
         MemoryDumpRow = bundle.MemoryDump.Exists && bundle.MemoryDump.Parsed is not null
@@ -472,6 +689,119 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
 
         Housekeeping = bundle.Housekeeping;
         MinidumpsCountInput = bundle.Housekeeping.MinidumpsCountRegistryValue ?? 50;
+    }
+
+    private void OnDumpRowPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(DumpRowViewModel.IsSelected))
+            OnPropertyChanged(nameof(SelectedDumpCount));
+    }
+
+    /// <summary>Round 16, items 38-49: everything computed off the UI thread for the "Error
+    /// reports" card - kept as one plain data bundle, same shape as DumpAnalysisBundle above, so
+    /// ApplyWerBundle can do the actual UI-thread collection updates in one place.</summary>
+    private sealed class WerBundle
+    {
+        public List<WerBucketGroup> CrashBuckets { get; init; } = new();
+        public List<WerReport> HangReports { get; init; } = new();
+        public WerCollectionStatus Status { get; init; } = new();
+        public WerQueueSizeInfo QueueSize { get; init; } = new();
+        public List<WerDailyCount> History { get; init; } = new();
+    }
+
+    private WerBundle BuildWerBundle()
+    {
+        var reports = WerReportService.ScanAll();
+
+        // Item 47: join to the Application-log event 1000 (Application Error) - a longer lookback
+        // than EventLogService.LookbackDays' default 30 days, since item 48's WER-archive history
+        // commonly reaches back further than that.
+        var appEvents = _service.ReadApplicationErrorEvents(WerHistoryDays);
+        reports = WerReportService.JoinApplicationErrorEvents(reports, appEvents);
+
+        var crashes = reports.Where(r => !r.IsHang).ToList();
+        var hangs = reports.Where(r => r.IsHang).OrderByDescending(r => r.ReportTimestamp).ToList();
+
+        return new WerBundle
+        {
+            CrashBuckets = WerReportService.GroupByBucket(crashes),
+            HangReports = hangs,
+            Status = WerReportService.ReadCollectionStatus(),
+            QueueSize = WerReportService.ReadQueueSize(),
+            History = WerReportService.BuildLongHorizonHistory(reports, WerHistoryDays),
+        };
+    }
+
+    private void ApplyWerBundle(WerBundle bundle)
+    {
+        // Item 49: unsubscribe every outgoing row before rebuilding, same reason as
+        // ApplyDumpAnalysis's DumpRows loop above.
+        foreach (var old in _allWerReportRows) old.PropertyChanged -= OnWerReportRowPropertyChanged;
+        _allWerReportRows.Clear();
+
+        WerCrashBuckets.Clear();
+        foreach (var bucket in bundle.CrashBuckets)
+        {
+            var rows = bucket.Reports.Select(r => new WerReportRowViewModel(r)).ToList();
+            foreach (var row in rows)
+            {
+                row.PropertyChanged += OnWerReportRowPropertyChanged;
+                _allWerReportRows.Add(row);
+            }
+            WerCrashBuckets.Add(new WerBucketRowViewModel(bucket, rows));
+        }
+
+        WerHangReports.Clear();
+        foreach (var report in bundle.HangReports)
+        {
+            var row = new WerReportRowViewModel(report);
+            row.PropertyChanged += OnWerReportRowPropertyChanged;
+            _allWerReportRows.Add(row);
+            WerHangReports.Add(row);
+        }
+        OnPropertyChanged(nameof(SelectedWerReportCount));
+
+        WerStatus = bundle.Status;
+        WerCollectionSummaryText = BuildWerCollectionSummaryText(bundle.Status);
+        WerConsentSummaryText = BuildWerConsentSummaryText(bundle.Status);
+
+        WerQueueSize = bundle.QueueSize;
+
+        WerHistoryCounts.Clear();
+        foreach (var d in bundle.History) WerHistoryCounts.Add(d.Count);
+        WerHistoryXAxes[0].Labels = bundle.History
+            .Select((d, i) => i % 10 == 0 ? d.Date.ToString("M/d") : string.Empty)
+            .ToArray();
+    }
+
+    private void OnWerReportRowPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(WerReportRowViewModel.IsSelected))
+            OnPropertyChanged(nameof(SelectedWerReportCount));
+    }
+
+    /// <summary>Items 41: plain-English summary of whether WER is even collecting crash data at
+    /// all - separate from item 44's consent/prompt summary below since these two groups of
+    /// registry values gate genuinely different things (whether a report is captured locally, vs.
+    /// whether/how it's sent and whether a dialog appears).</summary>
+    private static string BuildWerCollectionSummaryText(WerCollectionStatus status)
+    {
+        string disabled = status.Disabled switch { true => "Yes", false => "No", null => "Not set (enabled)" };
+        string dontSend = status.DontSendAdditionalData switch { true => "Yes", false => "No", null => "Not set" };
+        return $"Collection disabled: {disabled} · Don't send additional data: {dontSend} · WerSvc: {status.ServiceStatusText}" +
+            (status.ServiceLooksBlocked ? " (start type: Disabled)" : string.Empty);
+    }
+
+    /// <summary>Item 44: plain-English DefaultConsent/DontShowUI read-out.</summary>
+    private static string BuildWerConsentSummaryText(WerCollectionStatus status)
+    {
+        string dontShowUi = status.DontShowUi switch
+        {
+            true => "Yes (reports are sent silently, no crash dialog)",
+            false => "No (the crash dialog is shown)",
+            null => "Not set (Windows default applies)",
+        };
+        return $"Default consent: {status.DefaultConsentText} · Don't show UI: {dontShowUi}";
     }
 
     /// <summary>Round 14, item 27: fired on the FileSystemWatcher's own background thread -

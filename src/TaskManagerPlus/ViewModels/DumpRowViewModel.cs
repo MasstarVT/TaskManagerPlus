@@ -37,6 +37,22 @@ public sealed class DumpRowViewModel : ObservableObject
     public string ContentsText => Parsed.StreamKinds.Count > 0 ? string.Join(", ", Parsed.StreamKinds) : "(no stream directory - classic kernel/complete dump format)";
     public string ModuleCountText => Parsed.Modules.Count == 1 ? "1 module" : $"{Parsed.Modules.Count} modules";
 
+    private bool _isSelected;
+
+    /// <summary>Round 16, item 49: multi-select state for the later support-bundle export chunk
+    /// (#100) - this chunk only wires the selection state itself, not the export.</summary>
+    public bool IsSelected { get => _isSelected; set => SetProperty(ref _isSelected, value); }
+
+    private string? _actionStatusText;
+    public string? ActionStatusText { get => _actionStatusText; private set => SetProperty(ref _actionStatusText, value); }
+
+    /// <summary>Round 16, item 45: puts the bugcheck code, raw parameters and OS build on the
+    /// clipboard as one line - the same "Copy crash signature" action the Error reports card's
+    /// WER rows carry (WerReportRowViewModel), reusing WerReportService's shared text builder so
+    /// a bugcheck copies in the same shape regardless of which card it came from.</summary>
+    public RelayCommand CopySignatureCommand { get; }
+    public RelayCommand OpenWebSearchCommand { get; }
+
     /// <summary>Item 15: whichever of IncompleteReason (a header-level truncation/corruption
     /// check failed) or ParseError (a partial stream-directory-walk failure that didn't trip the
     /// header-level check, or an outright unreadable/unrecognized file) applies - the two are
@@ -79,5 +95,35 @@ public sealed class DumpRowViewModel : ObservableObject
         OpenInWinDbgCommand = new RelayCommand(
             () => DebuggerToolsService.TryOpenInWinDbg(debugger, Parsed.FilePath),
             () => debugger.AnyFound);
+
+        CopySignatureCommand = new RelayCommand(() =>
+        {
+            try
+            {
+                var text = WerReportService.BuildCrashSignatureText(Parsed.BugcheckCode, Parsed.BugcheckParameters);
+                System.Windows.Clipboard.SetText(text);
+                ActionStatusText = "Copied to clipboard.";
+            }
+            catch (Exception ex)
+            {
+                ActionStatusText = $"Couldn't copy: {ex.Message}";
+            }
+        });
+
+        OpenWebSearchCommand = new RelayCommand(() =>
+        {
+            try
+            {
+                string query = Uri.EscapeDataString($"{Parsed.BugcheckCode} {BugcheckCodeLookup.Describe(Parsed.BugcheckCode)} bsod");
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo($"https://www.bing.com/search?q={query}")
+                {
+                    UseShellExecute = true,
+                });
+            }
+            catch (Exception ex)
+            {
+                ActionStatusText = $"Couldn't open browser: {ex.Message}";
+            }
+        }, () => !string.IsNullOrEmpty(Parsed.BugcheckCode));
     }
 }

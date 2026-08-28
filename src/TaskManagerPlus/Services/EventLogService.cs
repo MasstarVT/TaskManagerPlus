@@ -1475,4 +1475,71 @@ public sealed class EventLogService
         }
         return result;
     }
+
+    // ---------------------------------------------------------------------------------------
+    // Round 16, item 47: Application-log event 1000 (Application Error) - joined to a WER report
+    // by app/module name (see WerReportService.JoinApplicationErrorEvents). A caller-supplied
+    // lookback rather than the fixed LookbackDays constant every other read in this file uses,
+    // since WER archive folders (item 48) commonly outlive the 30-day window everything else on
+    // this tab is capped to, and this read exists specifically to join against those.
+    // ---------------------------------------------------------------------------------------
+
+    /// <summary>Item 47: reads the "Application Error" provider's event 1000 - the standard
+    /// documented insertion-string order (faulting app name/version/timestamp, faulting module
+    /// name/version/timestamp, exception code, fault offset, ...) is read positionally, defensively
+    /// bounds-checked like every other legacy-provider parse in this file, since it isn't a
+    /// formally versioned per-Windows-release contract either.</summary>
+    public List<AppErrorEventInfo> ReadApplicationErrorEvents(int lookbackDays)
+    {
+        var result = new List<AppErrorEventInfo>();
+        try
+        {
+            long maxAgeMs = lookbackDays * 24L * 60 * 60 * 1000;
+            var query = new EventLogQuery("Application", PathType.LogName,
+                $"*[System[Provider[@Name='Application Error'] and (EventID=1000) and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]")
+            {
+                ReverseDirection = true,
+            };
+
+            using var reader = new EventLogReader(query);
+            int count = 0;
+            const int maxEvents = 500;
+            while (count < maxEvents && reader.ReadEvent() is { } record)
+            {
+                using (record)
+                {
+                    count++;
+                    try
+                    {
+                        var props = record.Properties;
+                        string? appName = props.Count > 0 ? props[0].Value as string : null;
+                        string? modName = props.Count > 3 ? props[3].Value as string : null;
+                        string? offset = props.Count > 7 ? props[7].Value as string ?? props[7].Value?.ToString() : null;
+                        string? reportId = props.Count > 12 ? props[12].Value as string : null;
+
+                        string message;
+                        try { message = record.FormatDescription() ?? string.Empty; }
+                        catch { message = string.Empty; }
+
+                        result.Add(new AppErrorEventInfo
+                        {
+                            TimeCreated = record.TimeCreated ?? DateTime.MinValue,
+                            AppName = string.IsNullOrWhiteSpace(appName) ? null : appName,
+                            ModName = string.IsNullOrWhiteSpace(modName) ? null : modName,
+                            Offset = string.IsNullOrWhiteSpace(offset) ? null : offset,
+                            ReportId = string.IsNullOrWhiteSpace(reportId) ? null : reportId,
+                            Message = Truncate(message, 300),
+                        });
+                    }
+                    catch { /* one malformed record shouldn't stop the rest of the scan */ }
+                }
+            }
+        }
+        catch
+        {
+            // Provider/log unavailable - degrade to "no Application Error events available for
+            // the WER join" (item 47's join just falls back to showing each report on its own).
+        }
+        return result;
+    }
 }
