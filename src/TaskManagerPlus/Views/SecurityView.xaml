@@ -1,0 +1,234 @@
+<UserControl x:Class="TaskManagerPlus.Views.SecurityView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:TaskManagerPlus.ViewModels"
+             d:DataContext="{d:DesignInstance Type=vm:SecurityViewModel}"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d">
+    <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16">
+        <StackPanel>
+
+            <!-- #801/#804: header - plain statement that everything on this tab is a quick flag
+                 for a human to judge, never a claim of certainty about malware. -->
+            <Grid Margin="0,0,0,4">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0">
+                    <TextBlock Text="Security" FontSize="16" FontWeight="SemiBold" />
+                    <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}"
+                               Text="Every item below is a quick flag for a human to judge, not a verdict that something is malicious. Persistence locations, unusual signatures, and unexpected configuration are common on a perfectly clean machine too - use this to spot what's worth a closer look, not as an automatic diagnosis." />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top" Margin="12,0,0,0">
+                    <CheckBox Content="Redact when exporting" VerticalAlignment="Center" Margin="0,0,10,0"
+                              IsChecked="{Binding RedactReport}"
+                              ToolTip="Blanks usernames, machine name, and serial-like strings in the exported report." />
+                    <Button Content="Export report..." Command="{Binding ExportReportCommand}" />
+                </StackPanel>
+            </Grid>
+
+            <TextBlock Text="{Binding StatusMessage}" Margin="0,8,0,12"
+                       TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" />
+
+            <!-- #802/#803/#804: Persistence section - AutorunsService's RunOnce/RunOnceEx/
+                 RunServices/RunServicesOnce/policy Run keys, Winlogon shell chain, Winlogon
+                 Notify, AppInit_DLLs, AppCertDlls, all in one sortable/filterable grid. -->
+            <Border BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,1,0,0" Padding="0,16,0,0">
+                <StackPanel>
+                    <Grid Margin="0,0,0,12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" VerticalAlignment="Center"
+                                   Text="Persistence - places apps and DLLs can make themselves run automatically, beyond the plain Run key already shown on the Startup tab."
+                                   Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" />
+                        <Button Grid.Column="1" Margin="0,0,8,0" Content="Save baseline"
+                                Command="{Binding SaveBaselineCommand}" />
+                        <Button Grid.Column="2" Margin="0,0,8,0" Content="Compare to baseline"
+                                Command="{Binding CompareToBaselineCommand}" />
+                        <Button Grid.Column="3" Style="{StaticResource PrimaryButton}" Command="{Binding ScanAutorunsCommand}">
+                            <TextBlock>
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="Scan" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsScanning}" Value="True">
+                                                <Setter Property="Text" Value="Scanning..." />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Button>
+                    </Grid>
+
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="2*" />
+                            <ColumnDefinition Width="12" />
+                            <ColumnDefinition Width="1*" MinWidth="260" />
+                        </Grid.ColumnDefinitions>
+
+                        <!-- Left: the persistence entries themselves. -->
+                        <DataGrid Grid.Column="0" Height="360" IsReadOnly="True"
+                                  ItemsSource="{Binding AutorunEntries}"
+                                  SelectedItem="{Binding SelectedAutorunEntry}">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Category" Binding="{Binding Category}" Width="1.4*" />
+                                <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="1.4*" />
+                                <DataGridTextColumn Header="Path" Binding="{Binding ResolvedPath}" Width="2.4*" />
+                                <DataGridTextColumn Header="Publisher" Binding="{Binding Publisher}" Width="1*" />
+                                <DataGridTemplateColumn Header="Signature" Width="90" SortMemberPath="SignatureStatus">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{Binding SignatureStatus}" VerticalAlignment="Center">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding SignatureStatus}" Value="Unsigned">
+                                                                <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTextColumn Header="Location" Binding="{Binding Location}" Width="2.6*" />
+                                <DataGridCheckBoxColumn Header="Enabled" Binding="{Binding Enabled}" Width="70" />
+                            </DataGrid.Columns>
+                        </DataGrid>
+
+                        <!-- Right: findings detail pane (#804). -->
+                        <Border Grid.Column="2" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="12">
+                            <DockPanel LastChildFill="True">
+                                <TextBlock DockPanel.Dock="Top" Text="Findings" Style="{StaticResource CardTitle}" Margin="0,0,0,8" />
+
+                                <StackPanel DockPanel.Dock="Bottom" Margin="0,10,0,0">
+                                    <StackPanel.Style>
+                                        <Style TargetType="StackPanel">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding SelectedFinding}" Value="{x:Null}">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </StackPanel.Style>
+                                    <Border BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,1,0,0" Padding="0,10,0,0">
+                                        <StackPanel>
+                                            <TextBlock Text="{Binding SelectedFinding.Title}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                            <TextBlock Margin="0,4,0,0" Text="{Binding SelectedFinding.Severity, StringFormat=Severity: {0}}" Foreground="{DynamicResource WarningBrush}" />
+                                            <TextBlock Margin="0,6,0,0" Text="{Binding SelectedFinding.Reason}" TextWrapping="Wrap" />
+                                            <TextBlock Margin="0,6,0,0" FontFamily="Consolas" FontSize="11.5"
+                                                       Text="{Binding SelectedFinding.Path}" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                            <TextBlock Margin="0,6,0,0" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}"
+                                                       Text="{Binding SelectedFinding.WhatDisablingDoes, StringFormat=What disabling this does: {0}}" />
+                                        </StackPanel>
+                                    </Border>
+                                </StackPanel>
+
+                                <ListBox ItemsSource="{Binding Findings}" SelectedItem="{Binding SelectedFinding}"
+                                         Background="Transparent" BorderThickness="0" MaxHeight="220">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Margin="0,3">
+                                                <TextBlock TextWrapping="Wrap" FontSize="12.5">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock">
+                                                            <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding Severity}" Value="High">
+                                                                    <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                                </DataTrigger>
+                                                                <DataTrigger Binding="{Binding Severity}" Value="Medium">
+                                                                    <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                    <Run Text="{Binding Severity, Mode=OneWay}" FontWeight="SemiBold" />
+                                                    <Run Text=" - " />
+                                                    <Run Text="{Binding Title, Mode=OneWay}" />
+                                                </TextBlock>
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                            </DockPanel>
+                        </Border>
+                    </Grid>
+
+                    <!-- Row-level actions for the selected persistence entry. -->
+                    <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                        <Button Content="Copy registry path" Command="{Binding CopyRegistryPathCommand}" CommandParameter="{Binding SelectedAutorunEntry}" Margin="0,0,8,0" />
+                        <Button Content="Open containing folder" Command="{Binding OpenContainingFolderCommand}" CommandParameter="{Binding SelectedAutorunEntry}" />
+                    </StackPanel>
+
+                    <!-- #803: baseline diff - hidden until a compare has actually produced rows. -->
+                    <StackPanel Margin="0,16,0,0">
+                        <StackPanel.Style>
+                            <Style TargetType="StackPanel">
+                                <Style.Triggers>
+                                    <MultiDataTrigger>
+                                        <MultiDataTrigger.Conditions>
+                                            <Condition Binding="{Binding BaselineAdded.Count}" Value="0" />
+                                            <Condition Binding="{Binding BaselineRemoved.Count}" Value="0" />
+                                            <Condition Binding="{Binding BaselineChanged.Count}" Value="0" />
+                                        </MultiDataTrigger.Conditions>
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </MultiDataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </StackPanel.Style>
+                        <TextBlock Text="Changes since baseline" Style="{StaticResource CardTitle}" Margin="0,0,0,8" />
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                                <TextBlock Text="{Binding BaselineAdded.Count, StringFormat=Added ({0})}" Foreground="{DynamicResource SuccessBrush}" Margin="0,0,0,4" />
+                                <ItemsControl ItemsSource="{Binding BaselineAdded}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{Binding Name}" FontSize="12" TextWrapping="Wrap" ToolTip="{Binding Location}" />
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Margin="0,0,8,0">
+                                <TextBlock Text="{Binding BaselineRemoved.Count, StringFormat=Removed ({0})}" Foreground="{DynamicResource DangerBrush}" Margin="0,0,0,4" />
+                                <ItemsControl ItemsSource="{Binding BaselineRemoved}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{Binding Name}" FontSize="12" TextWrapping="Wrap" ToolTip="{Binding Location}" />
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Text="{Binding BaselineChanged.Count, StringFormat=Changed ({0})}" Foreground="{DynamicResource WarningBrush}" Margin="0,0,0,4" />
+                                <ItemsControl ItemsSource="{Binding BaselineChanged}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{Binding Name}" FontSize="12" TextWrapping="Wrap" ToolTip="{Binding Location}" />
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                        </Grid>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>
