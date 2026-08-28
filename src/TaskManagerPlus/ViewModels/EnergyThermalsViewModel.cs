@@ -221,11 +221,91 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
     private string _powerPlanStatusText = string.Empty;
     public string PowerPlanStatusText { get => _powerPlanStatusText; private set => SetProperty(ref _powerPlanStatusText, value); }
 
+    // ================================================================================
+    // #660-#664: Power plans and processor power management - extends the power-plan card above.
+    // ================================================================================
+
+    // ---- #660: powercfg /energy 60-second diagnostic scan -----------------------------------
+    public ObservableCollection<PowerEfficiencyFinding> PowerEfficiencyFindings { get; } = new();
+
+    private string _powerEfficiencyStatusText = "Not run yet - this takes about 60 seconds.";
+    public string PowerEfficiencyStatusText { get => _powerEfficiencyStatusText; private set => SetProperty(ref _powerEfficiencyStatusText, value); }
+
+    private bool _isPowerEfficiencyScanRunning;
+    public bool IsPowerEfficiencyScanRunning { get => _isPowerEfficiencyScanRunning; private set => SetProperty(ref _isPowerEfficiencyScanRunning, value); }
+
+    public AsyncRelayCommand RunPowerEfficiencyScanCommand { get; }
+
+    // ---- #661: active-plan setting diff against Balanced defaults ---------------------------
+    public ObservableCollection<PowerPlanSettingDiff> PowerPlanSettingDiffs { get; } = new();
+
+    private string _powerPlanDiffStatusText = string.Empty;
+    public string PowerPlanDiffStatusText { get => _powerPlanDiffStatusText; private set => SetProperty(ref _powerPlanDiffStatusText, value); }
+
+    public AsyncRelayCommand LoadPowerPlanDiffCommand { get; }
+
+    // ---- #662: hidden high-impact settings, paired AC | DC ----------------------------------
+    public ObservableCollection<HiddenPowerSettingRow> HiddenPowerSettings { get; } = new();
+
+    private string _hiddenPowerSettingsStatusText = string.Empty;
+    public string HiddenPowerSettingsStatusText { get => _hiddenPowerSettingsStatusText; private set => SetProperty(ref _hiddenPowerSettingsStatusText, value); }
+
+    public AsyncRelayCommand LoadHiddenPowerSettingsCommand { get; }
+
+    // ---- #663: passive-cooling-policy flag + one-click fix -----------------------------------
+    private bool _passiveCoolingOnAcDetected;
+    public bool PassiveCoolingOnAcDetected { get => _passiveCoolingOnAcDetected; private set => SetProperty(ref _passiveCoolingOnAcDetected, value); }
+
+    private string _passiveCoolingFixStatusText = string.Empty;
+    public string PassiveCoolingFixStatusText { get => _passiveCoolingFixStatusText; private set => SetProperty(ref _passiveCoolingFixStatusText, value); }
+
+    public AsyncRelayCommand FixPassiveCoolingCommand { get; }
+
+    // ---- #664: power-plan change history ------------------------------------------------------
+    // Detected by comparing the active scheme GUID between polls of the tick timer, throttled to
+    // PowerPlanCheckInterval (same "let the tick fire often, do the heavier work every N minutes"
+    // shape PowerHistoryAppendInterval/CoolingFlushInterval already establish in this file) -
+    // powercfg /list is a real subprocess call, so this still isn't a per-tick read, just a
+    // periodic one, consistent with CLAUDE.md's on-demand-vs-polled convention.
+    private static readonly TimeSpan PowerPlanCheckInterval = TimeSpan.FromMinutes(2);
+    private DateTime _lastPowerPlanCheck = DateTime.MinValue;
+    private string? _lastKnownActivePlanGuid;
+    private string _lastKnownActivePlanName = string.Empty;
+
+    public ObservableCollection<PowerPlanChangeEvent> PowerPlanChangeHistory { get; } = new();
+
+    // ---- #665-#669: USB power and over-current - extends the USB card below. ------------------
+
     // Round 12, #92: per-USB-device selective-suspend status - on-demand (can be a couple dozen
     // devices, each looked up by a best-effort prefix match; see UsbPowerService's remarks for
     // why SelectiveSuspendEnabled is "Unknown" far more often than a hard true/false).
     public ObservableCollection<UsbDevicePowerInfo> UsbDevices { get; } = new();
     public AsyncRelayCommand LoadUsbDevicesCommand { get; }
+
+    // ---- #665/#667: USB over-current/port-reset events + per-device re-enumeration counts -----
+    public ObservableCollection<UsbPowerEvent> UsbOverCurrentEvents { get; } = new();
+
+    private string _usbEventsStatusText = string.Empty;
+    public string UsbEventsStatusText { get => _usbEventsStatusText; private set => SetProperty(ref _usbEventsStatusText, value); }
+
+    public AsyncRelayCommand LoadUsbEventsCommand { get; }
+
+    // ---- #666: USB hub inventory + system-wide port-occupancy proxy ---------------------------
+    public ObservableCollection<UsbHubPowerInfo> UsbHubs { get; } = new();
+
+    private string _usbHubStatusText = string.Empty;
+    public string UsbHubStatusText { get => _usbHubStatusText; private set => SetProperty(ref _usbHubStatusText, value); }
+
+    // ---- #668: selective-suspend risk fix actions ----------------------------------------------
+    public AsyncRelayCommand ToggleUsbDeviceSuspendCommand { get; }
+    public AsyncRelayCommand DisablePlanUsbSuspendCommand { get; }
+
+    private string _usbFixStatusText = string.Empty;
+    public string UsbFixStatusText { get => _usbFixStatusText; private set => SetProperty(ref _usbFixStatusText, value); }
+
+    // ---- #669: USB-C/Thunderbolt PD negotiation readout (UCSI, hidden when absent) -------------
+    public ObservableCollection<UsbPdConnectorInfo> UsbPdConnectors { get; } = new();
+    public bool HasUsbPdConnectors => UsbPdConnectors.Count > 0;
 
     private double? _cpuPackageTempC;
     public double? CpuPackageTempC { get => _cpuPackageTempC; private set => SetProperty(ref _cpuPackageTempC, value); }
@@ -900,6 +980,21 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         LoadPowerInfoCommand = new AsyncRelayCommand(_ => LoadPowerInfoAsync());
         SetPowerPlanCommand = new AsyncRelayCommand(SetPowerPlanAsync);
         LoadUsbDevicesCommand = new AsyncRelayCommand(_ => LoadUsbDevicesAsync());
+
+        // #660-#664: power-plan-card extensions - every one a real subprocess call, gated behind
+        // its own button (the #664 change-history detector is the one exception, folded into the
+        // existing tick timer but throttled to PowerPlanCheckInterval - see its remarks).
+        RunPowerEfficiencyScanCommand = new AsyncRelayCommand(_ => RunPowerEfficiencyScanAsync());
+        LoadPowerPlanDiffCommand = new AsyncRelayCommand(_ => LoadPowerPlanDiffAsync());
+        LoadHiddenPowerSettingsCommand = new AsyncRelayCommand(_ => LoadHiddenPowerSettingsAsync());
+        FixPassiveCoolingCommand = new AsyncRelayCommand(_ => FixPassiveCoolingAsync());
+        PowerPlanChangeHistory.Clear();
+        foreach (var e in PowerPlanHistoryService.Load()) PowerPlanChangeHistory.Add(e);
+
+        // #665-#669: USB-card extensions - all on-demand (event-log scans and WMI reads).
+        LoadUsbEventsCommand = new AsyncRelayCommand(_ => LoadUsbEventsAsync());
+        ToggleUsbDeviceSuspendCommand = new AsyncRelayCommand(ToggleUsbDeviceSuspendAsync);
+        DisablePlanUsbSuspendCommand = new AsyncRelayCommand(_ => DisablePlanUsbSuspendAsync());
         LoadFirmwareEventsCommand = new AsyncRelayCommand(_ => LoadFirmwareEventsAsync());
         LoadPsuInfoCommand = new AsyncRelayCommand(_ => LoadPsuInfoAsync());
         SavePsuWattageCommand = new RelayCommand(_ => SavePsuWattage());
@@ -1290,6 +1385,17 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
 
         SleepStateSupportText = await PowerPlanService.ReadSleepStateSupportAsync();
         PowerPlanStatusText = plans.Count == 0 ? "Couldn't read power plans (powercfg unavailable)." : string.Empty;
+
+        // #664: keep the change-history baseline in sync with whatever this app itself most
+        // recently observed/caused (including a user-initiated SetPowerPlanCommand switch, which
+        // also calls this method) - only a change this app DIDN'T see coming (the periodic check
+        // below finding a different GUID than this one) is worth logging as "my settings keep
+        // reverting" material.
+        if (plans.FirstOrDefault(p => p.IsActive) is { } active)
+        {
+            _lastKnownActivePlanGuid = active.Guid;
+            _lastKnownActivePlanName = active.Name;
+        }
     }
 
     /// <summary>Round 12, #90: switches the active power plan via powercfg /setactive - same
@@ -1307,12 +1413,200 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
     /// remarks for why this can take a moment and often reports "Unknown" per device. Unlike
     /// PowerPlanService, UsbPowerService does synchronous WMI work (ManagementObjectSearcher), so
     /// this still needs an explicit Task.Run to keep it off the UI thread (same pattern as
-    /// StorageViewModel.CheckFragmentationAsync).</summary>
+    /// StorageViewModel.CheckFragmentationAsync). Also reloads #666's hub inventory and #669's PD
+    /// connector readout - both cheap enough WMI work to ride along with the device list rather
+    /// than needing their own buttons.</summary>
     private async Task LoadUsbDevicesAsync()
     {
         var devices = await Task.Run(() => UsbPowerService.ReadUsbSelectiveSuspend());
+        ApplyUsbReenumerationCounts(devices);
         UsbDevices.Clear();
         foreach (var d in devices) UsbDevices.Add(d);
+
+        var (hubs, _, hubStatus) = await UsbHubPowerService.ReadHubPowerInfoAsync();
+        UsbHubs.Clear();
+        foreach (var h in hubs) UsbHubs.Add(h);
+        UsbHubStatusText = hubStatus;
+
+        var pdConnectors = await UsbPdService.ReadPdConnectorsAsync();
+        UsbPdConnectors.Clear();
+        foreach (var c in pdConnectors) UsbPdConnectors.Add(c);
+        OnPropertyChanged(nameof(HasUsbPdConnectors));
+    }
+
+    // #667: cached from the most recent LoadUsbEventsCommand run, so a later LoadUsbDevicesCommand
+    // refresh (e.g. after a #668 fix action) keeps showing the same re-enumeration counts instead
+    // of resetting them to "not scanned" - null until the event scan has run at least once this
+    // session.
+    private Dictionary<string, int>? _usbReenumCountsByNormalizedInstance;
+
+    private void ApplyUsbReenumerationCounts(List<UsbDevicePowerInfo> devices)
+    {
+        if (_usbReenumCountsByNormalizedInstance is not { } counts) return;
+        foreach (var d in devices) d.ReenumerationCount = UsbPowerService.FindReenumerationCount(d.DeviceId, counts);
+    }
+
+    /// <summary>#665/#667: on-demand USB over-current/port-reset event scan plus per-device
+    /// re-enumeration counts, joined onto whatever's currently in UsbDevices - see
+    /// UsbEventLogService's remarks for why this is a keyword scan rather than a fixed-EventID
+    /// one.</summary>
+    private async Task LoadUsbEventsAsync()
+    {
+        UsbEventsStatusText = "Scanning event logs (last 14 days)...";
+
+        var overCurrentTask = Task.Run(() => UsbEventLogService.ReadOverCurrentEvents());
+        var reenumTask = Task.Run(() => UsbEventLogService.ReadReenumerationEvents());
+        await Task.WhenAll(overCurrentTask, reenumTask);
+
+        var overCurrent = overCurrentTask.Result;
+        UsbOverCurrentEvents.Clear();
+        foreach (var e in overCurrent.Take(50)) UsbOverCurrentEvents.Add(e);
+
+        var (_, counts) = reenumTask.Result;
+        _usbReenumCountsByNormalizedInstance = counts;
+
+        // UsbDevicePowerInfo isn't INotifyPropertyChanged (see its remarks), so mutating
+        // ReenumerationCount on the existing instances wouldn't refresh the bound grid on its own -
+        // rebuild the collection's contents in place instead, the same "clear + re-add" refresh
+        // every other on-demand list in this app already uses.
+        var refreshedDevices = UsbDevices.ToList();
+        ApplyUsbReenumerationCounts(refreshedDevices);
+        UsbDevices.Clear();
+        foreach (var d in refreshedDevices) UsbDevices.Add(d);
+
+        UsbEventsStatusText = overCurrent.Count == 0 && counts.Count == 0
+            ? "No over-current, port-reset-failure, or re-enumeration events found in the last 14 days."
+            : $"{overCurrent.Count} over-current/port-reset event(s); {counts.Values.Sum()} re-enumeration event(s) across {counts.Count} device instance(s).";
+    }
+
+    /// <summary>#668: per-device selective-suspend toggle - flips both device-power-policy
+    /// registry values via UsbPowerService.SetSelectiveSuspendEnabled, then reloads the device
+    /// list so the grid reflects the actual result rather than assuming success.</summary>
+    private async Task ToggleUsbDeviceSuspendAsync(object? param)
+    {
+        if (param is not UsbDevicePowerInfo device) return;
+
+        bool target = device.SelectiveSuspendEnabled != true; // Unknown or false -> enable; true -> disable
+        var (success, error) = await Task.Run(() => UsbPowerService.SetSelectiveSuspendEnabled(device.DeviceId, target));
+        UsbFixStatusText = success
+            ? $"{device.Name}: selective suspend {(target ? "enabled" : "disabled")}. Unplug/replug (or restart) the device for it to take full effect."
+            : $"Couldn't change selective suspend for {device.Name}: {error}";
+        if (success) await LoadUsbDevicesAsync();
+    }
+
+    /// <summary>#668's plan-level shortcut: disables USB selective suspend for the whole active
+    /// power plan on AC via `powercfg /setacvalueindex` on the well-known USB subgroup - the
+    /// fastest fix when several devices in a suspend-fragile class are all flagged at once, rather
+    /// than toggling each one individually.</summary>
+    private async Task DisablePlanUsbSuspendAsync()
+    {
+        var (success, error) = await PowerPlanService.SetAcValueIndexAsync(
+            "SCHEME_CURRENT", PowerPlanService.UsbSubgroupGuid, PowerPlanService.UsbSelectiveSuspendSettingGuid, 0);
+        UsbFixStatusText = success
+            ? "USB selective suspend disabled for the active power plan (AC)."
+            : $"Couldn't change the plan-level USB selective-suspend setting: {error}";
+    }
+
+    // ================================================================================
+    // #660-#664: power-plan-card extensions
+    // ================================================================================
+
+    /// <summary>#660: the 60-second `powercfg /energy` scan - see PowerEfficiencyService's remarks
+    /// for why parsing is best-effort. IsPowerEfficiencyScanRunning drives the button's own
+    /// "running" label in XAML separately from AsyncRelayCommand's built-in re-entrancy guard,
+    /// since an operation this long is worth an explicit in-progress state, not just a disabled
+    /// button.</summary>
+    private async Task RunPowerEfficiencyScanAsync()
+    {
+        IsPowerEfficiencyScanRunning = true;
+        try
+        {
+            var progress = new Progress<string>(s => PowerEfficiencyStatusText = s);
+            var (findings, status, _) = await PowerEfficiencyService.RunScanAsync(progress);
+            PowerEfficiencyFindings.Clear();
+            foreach (var f in findings) PowerEfficiencyFindings.Add(f);
+            PowerEfficiencyStatusText = status;
+        }
+        finally
+        {
+            IsPowerEfficiencyScanRunning = false;
+        }
+    }
+
+    /// <summary>#661: active-plan-vs-Balanced-defaults setting diff - needs the active scheme's
+    /// GUID, loading power info first if LoadPowerInfoCommand hasn't run yet this session.</summary>
+    private async Task LoadPowerPlanDiffAsync()
+    {
+        if (PowerPlans.Count == 0) await LoadPowerInfoAsync();
+        string? activeGuid = PowerPlans.FirstOrDefault(p => p.IsActive)?.Guid;
+        if (activeGuid is null)
+        {
+            PowerPlanDiffStatusText = "Couldn't determine the active power plan.";
+            return;
+        }
+
+        var (diffs, status) = await PowerPlanService.ReadPlanSettingDiffAsync(activeGuid);
+        PowerPlanSettingDiffs.Clear();
+        foreach (var d in diffs) PowerPlanSettingDiffs.Add(d);
+        PowerPlanDiffStatusText = status;
+    }
+
+    /// <summary>#662/#663: hidden high-impact AC|DC settings - the passive-cooling flag piggybacks
+    /// on this same `/qh` read rather than needing a fourth shell-out just for one setting.</summary>
+    private async Task LoadHiddenPowerSettingsAsync()
+    {
+        var rows = await PowerPlanService.ReadHiddenPowerSettingsAsync();
+        HiddenPowerSettings.Clear();
+        foreach (var r in rows) HiddenPowerSettings.Add(r);
+        HiddenPowerSettingsStatusText = rows.Count == 0 ? "Couldn't read hidden power settings (powercfg /qh unavailable)." : string.Empty;
+
+        var cooling = rows.FirstOrDefault(r => r.SettingName == "System cooling policy");
+        PassiveCoolingOnAcDetected = cooling is not null && cooling.AcValueText == "Passive";
+    }
+
+    /// <summary>#663: one-click fix for the passive-cooling-on-AC flag above.</summary>
+    private async Task FixPassiveCoolingAsync()
+    {
+        var (success, error) = await PowerPlanService.SetAcValueIndexAsync(
+            "SCHEME_CURRENT", PowerPlanService.SubProcessorGuid, PowerPlanService.SystemCoolingPolicyGuid, 0);
+        PassiveCoolingFixStatusText = success
+            ? "System cooling policy set to Active on AC."
+            : $"Couldn't change system cooling policy: {error}";
+        if (success) await LoadHiddenPowerSettingsAsync();
+    }
+
+    /// <summary>#664: watches for the active power-scheme GUID changing since the last check,
+    /// throttled to PowerPlanCheckInterval (see the property block's remarks). The very first
+    /// check just establishes/confirms a baseline - LoadPowerInfoAsync already sets one at startup
+    /// (and after any switch this app itself initiates), so this only ever logs a change this app
+    /// didn't already know about.</summary>
+    private async Task CheckPowerPlanChangeIfDueAsync()
+    {
+        var now = DateTime.Now;
+        if (now - _lastPowerPlanCheck < PowerPlanCheckInterval) return;
+        _lastPowerPlanCheck = now;
+
+        List<PowerPlanInfo> plans;
+        try { plans = await PowerPlanService.ListPowerPlansAsync(); }
+        catch { return; }
+
+        var active = plans.FirstOrDefault(p => p.IsActive);
+        if (active is null) return;
+
+        if (_lastKnownActivePlanGuid is not null && !string.Equals(_lastKnownActivePlanGuid, active.Guid, StringComparison.OrdinalIgnoreCase))
+        {
+            var updated = PowerPlanHistoryService.Append(new PowerPlanChangeEvent
+            {
+                Timestamp = now,
+                FromPlanName = _lastKnownActivePlanName,
+                ToPlanName = active.Name,
+            });
+            PowerPlanChangeHistory.Clear();
+            foreach (var e in updated) PowerPlanChangeHistory.Add(e);
+        }
+
+        _lastKnownActivePlanGuid = active.Guid;
+        _lastKnownActivePlanName = active.Name;
     }
 
     private static ObservableCollection<double> NewHistory()
@@ -1670,6 +1964,10 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         // PowerHistoryLogService's remarks for why this is a periodic append rather than a
         // per-tick write.
         AppendPowerHistorySampleIfDue(CpuPackageTempC, TotalPackagePowerW, GpuPowerDrawW, BatteryChargePercent);
+
+        // #664: active-scheme-change watch, throttled to PowerPlanCheckInterval internally - see
+        // its remarks for why this is safe to call every tick.
+        await CheckPowerPlanChangeIfDueAsync();
     }
 
     private static string DescribeReasonClass(ThrottleReasonClass c) => c switch

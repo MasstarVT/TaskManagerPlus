@@ -126,6 +126,197 @@ public static class PowerPlanService
             ? value : null;
     }
 
+    // Well-known, publicly documented powercfg subgroup/setting GUIDs (the "Processor power
+    // management" subgroup and two of its individual settings, plus the USB subgroup and its
+    // selective-suspend setting) - unlike this file's other undocumented text-parse formats,
+    // these specific GUIDs are a stable part of Windows' power-setting schema and are widely
+    // relied on in Microsoft's own and third-party deployment scripts.
+    public const string SubProcessorGuid = "54533251-82be-4824-96c1-47b60b740d00";
+    public const string SystemCoolingPolicyGuid = "94d3a615-a899-4ac5-ae2b-e4d8f634367f";
+    public const string UsbSubgroupGuid = "2a737441-1930-4402-8d77-b2bebba308a3";
+    public const string UsbSelectiveSuspendSettingGuid = "48e6b7a6-50f5-4782-a5d4-53bb8f07e226";
+
+    /// <summary>#661: parses `powercfg /q &lt;scheme&gt;` (every subgroup/setting visible in the
+    /// Control Panel Power Options UI - deliberately not `/qh`'s hidden settings, which #662
+    /// already covers separately) for both the active scheme and the built-in SCHEME_BALANCED
+    /// defaults, then returns only the settings whose AC and/or DC index actually differs between
+    /// the two. "Differs from Balanced" is a reasonable, well-known reference point for
+    /// troubleshooting even when the active scheme isn't literally derived from Balanced - the
+    /// same idea a diff-against-a-known-baseline tool uses for any config file.</summary>
+    public static async Task<(List<PowerPlanSettingDiff> Diffs, string StatusText)> ReadPlanSettingDiffAsync(string activeSchemeGuid)
+    {
+        string activeOutput, balancedOutput;
+        try
+        {
+            var activeTask = RunCapturedAsync("powercfg.exe", $"/q {activeSchemeGuid}", 15000);
+            var balancedTask = RunCapturedAsync("powercfg.exe", "/q SCHEME_BALANCED", 15000);
+            await Task.WhenAll(activeTask, balancedTask);
+            activeOutput = activeTask.Result.Output;
+            balancedOutput = balancedTask.Result.Output;
+        }
+        catch (Exception ex)
+        {
+            return (new List<PowerPlanSettingDiff>(), $"Couldn't read power plan settings: {ex.Message}");
+        }
+
+        var activeSettings = ParsePlanQueryOutput(activeOutput);
+        if (activeSettings.Count == 0)
+            return (new List<PowerPlanSettingDiff>(), "Couldn't read the active scheme's settings (powercfg /q returned nothing recognizable).");
+
+        var balancedByKey = new Dictionary<(string Subgroup, string Setting), (string? AcHex, string? DcHex)>();
+        foreach (var s in ParsePlanQueryOutput(balancedOutput))
+            balancedByKey[(s.SubgroupName, s.SettingName)] = (s.AcHex, s.DcHex);
+
+        var diffs = new List<PowerPlanSettingDiff>();
+        foreach (var s in activeSettings)
+        {
+            if (!balancedByKey.TryGetValue((s.SubgroupName, s.SettingName), out var def)) continue;
+
+            bool acDiffers = !string.Equals(s.AcHex, def.AcHex, StringComparison.OrdinalIgnoreCase);
+            bool dcDiffers = !string.Equals(s.DcHex, def.DcHex, StringComparison.OrdinalIgnoreCase);
+            if (!acDiffers && !dcDiffers) continue;
+
+            diffs.Add(new PowerPlanSettingDiff
+            {
+                SubgroupName = s.SubgroupName,
+                SettingName = s.SettingName,
+                ActiveAcText = s.AcHex ?? "Unknown",
+                ActiveDcText = s.DcHex ?? "Unknown",
+                DefaultAcText = def.AcHex ?? "Unknown",
+                DefaultDcText = def.DcHex ?? "Unknown",
+                AcDiffers = acDiffers,
+                DcDiffers = dcDiffers,
+            });
+        }
+
+        diffs = diffs.OrderBy(d => d.SubgroupName, StringComparer.OrdinalIgnoreCase).ThenBy(d => d.SettingName, StringComparer.OrdinalIgnoreCase).ToList();
+        string status = diffs.Count == 0
+            ? "No settings differ from the Balanced defaults."
+            : $"{diffs.Count} setting(s) differ from Balanced defaults.";
+        return (diffs, status);
+    }
+
+    /// <summary>Parses one `powercfg /q` report into a flat (subgroup, setting, AC hex, DC hex)
+    /// list - each setting's enclosing subgroup is whichever "Subgroup GUID: ... (Name)" line most
+    /// recently preceded it, the same nearest-preceding-header technique BootPerformanceService's
+    /// own adaptive event-field scan uses for a different undocumented source. AC/DC values are
+    /// kept as raw "0xNNNNNNNN" text (not parsed to int) since not every setting is a simple
+    /// percent - some are opaque bitmasks or GUID selections.</summary>
+    private static List<(string SubgroupName, string SettingName, string? AcHex, string? DcHex)> ParsePlanQueryOutput(string output)
+    {
+        var result = new List<(string, string, string?, string?)>();
+        var subgroupMatches = Regex.Matches(output, @"Subgroup GUID:\s*[0-9a-fA-F-]{36}\s*\(([^)]*)\)", RegexOptions.IgnoreCase)
+            .Cast<Match>().OrderBy(m => m.Index).ToList();
+        var settingMatches = Regex.Matches(output, @"Power Setting GUID:\s*[0-9a-fA-F-]{36}\s*\(([^)]*)\)", RegexOptions.IgnoreCase)
+            .Cast<Match>().OrderBy(m => m.Index).ToList();
+
+        for (int i = 0; i < settingMatches.Count; i++)
+        {
+            var m = settingMatches[i];
+            int blockEnd = i + 1 < settingMatches.Count ? settingMatches[i + 1].Index : output.Length;
+            string block = output[m.Index..blockEnd];
+
+            string subgroupName = subgroupMatches.LastOrDefault(sg => sg.Index <= m.Index)?.Groups[1].Value.Trim() ?? string.Empty;
+            string settingName = m.Groups[1].Value.Trim();
+
+            var acMatch = Regex.Match(block, @"Current AC Power Setting Index:\s*0x([0-9A-Fa-f]+)", RegexOptions.IgnoreCase);
+            var dcMatch = Regex.Match(block, @"Current DC Power Setting Index:\s*0x([0-9A-Fa-f]+)", RegexOptions.IgnoreCase);
+
+            result.Add((subgroupName, settingName,
+                acMatch.Success ? "0x" + acMatch.Groups[1].Value : null,
+                dcMatch.Success ? "0x" + dcMatch.Groups[1].Value : null));
+        }
+        return result;
+    }
+
+    /// <summary>#662: the small set of commonly-hidden-from-the-Control-Panel-UI settings this
+    /// round surfaces, each with a fixed, hand-written plain-English explanation - powercfg's own
+    /// setting descriptions are themselves indirect string resource references
+    /// (<c>@%SystemRoot%\system32\...,-NNNN</c>) this app doesn't resolve, so these are written
+    /// once here rather than sourced from Windows.</summary>
+    private static readonly (string FriendlyName, string DisplayName, string Explanation)[] HiddenSettingsCatalog =
+    {
+        ("Processor performance boost mode", "Processor performance boost mode",
+            "Controls whether, and how aggressively, the CPU is allowed to boost above its base clock. \"Disabled\" means it never boosts at all; \"Aggressive\" favors performance over efficiency."),
+        ("Processor performance core parking min cores", "Core parking — minimum cores",
+            "The minimum percentage of logical processors Windows keeps unparked (available) at all times. Too low can hurt burst responsiveness; too high wastes idle power."),
+        ("Processor performance core parking max cores", "Core parking — maximum cores",
+            "The maximum percentage of logical processors Windows will ever unpark. Set below 100%, this silently caps how many cores can ever be active at once — a common cause of \"more cores than the app shows using.\""),
+        ("Minimum processor state", "Minimum processor state (PROCTHROTTLEMIN)",
+            "The floor on CPU clock speed as a percent of maximum, even when idle. A low value on battery saves power; a very low value on AC can make the system feel sluggish coming out of idle."),
+        ("Maximum processor state", "Maximum processor state (PROCTHROTTLEMAX)",
+            "The ceiling on CPU clock speed as a percent of maximum. Set below 100% on AC, this silently caps performance even while plugged in — a classic, invisible \"why is my desktop slow\" cause."),
+        ("System cooling policy", "System cooling policy",
+            "Active cooling ramps fans up to hold clock speed; Passive throttles the CPU down first and only ramps fans as a last resort. Passive while on AC power (a plugged-in desktop) is a classic cause of \"slow but cool.\""),
+    };
+
+    public static async Task<List<HiddenPowerSettingRow>> ReadHiddenPowerSettingsAsync()
+    {
+        string output;
+        try { output = (await RunCapturedAsync("powercfg.exe", "/qh", 15000)).Output; }
+        catch { return new List<HiddenPowerSettingRow>(); }
+
+        var rows = new List<HiddenPowerSettingRow>();
+        foreach (var (friendlyName, displayName, explanation) in HiddenSettingsCatalog)
+        {
+            int? acRaw = ExtractSettingPercent(output, friendlyName, ac: true);
+            int? dcRaw = ExtractSettingPercent(output, friendlyName, ac: false);
+            if (acRaw is null && dcRaw is null) continue; // not exposed on this Windows build/scheme at all
+
+            rows.Add(new HiddenPowerSettingRow
+            {
+                SettingName = displayName,
+                Explanation = explanation,
+                AcValueText = DescribeHiddenSettingValue(friendlyName, acRaw),
+                DcValueText = DescribeHiddenSettingValue(friendlyName, dcRaw),
+                ValuesDiffer = acRaw != dcRaw,
+            });
+        }
+        return rows;
+    }
+
+    private static string DescribeHiddenSettingValue(string friendlyName, int? raw)
+    {
+        if (raw is not { } v) return "Unknown";
+        return friendlyName switch
+        {
+            "Processor performance boost mode" => v switch
+            {
+                0 => "Disabled",
+                1 => "Enabled",
+                2 => "Aggressive",
+                3 => "Efficient Enabled",
+                4 => "Efficient Aggressive",
+                5 => "Aggressive At Guaranteed",
+                6 => "Efficient Aggressive At Guaranteed",
+                _ => $"{v} (unrecognized)",
+            },
+            "System cooling policy" => v switch { 0 => "Active", 1 => "Passive", _ => $"{v} (unrecognized)" },
+            _ => $"{v}%",
+        };
+    }
+
+    /// <summary>#663/#668: `powercfg /setacvalueindex` for one AC-side setting, followed by
+    /// `/setactive` on the same scheme - `/setacvalueindex` alone only stages the change,
+    /// powercfg's own documented guidance is to re-activate the scheme to force it to take effect
+    /// immediately (the same two-step SetPowerPlanAsync's own `/setactive` call already performs
+    /// for a full plan switch).</summary>
+    public static async Task<(bool Success, string? Error)> SetAcValueIndexAsync(string schemeGuid, string subgroupGuid, string settingGuid, int value)
+    {
+        try
+        {
+            var (output, exitCode) = await RunCapturedAsync("powercfg.exe", $"/setacvalueindex {schemeGuid} {subgroupGuid} {settingGuid} {value}", 15000);
+            if (exitCode != 0) return (false, output.Trim());
+
+            var (activateOutput, activateExit) = await RunCapturedAsync("powercfg.exe", $"/setactive {schemeGuid}", 15000);
+            return activateExit == 0 ? (true, null) : (false, activateOutput.Trim());
+        }
+        catch (Exception ex)
+        {
+            return (false, ex.Message);
+        }
+    }
+
     /// <summary>
     /// Shells out and captures combined stdout+stderr, bounded by a real timeout - the same
     /// concurrent-read/bounded-wait/kill-on-timeout pattern TracerouteService.RunAsync already

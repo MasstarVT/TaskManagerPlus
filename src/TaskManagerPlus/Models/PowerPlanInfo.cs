@@ -17,4 +17,22 @@ public sealed class UsbDevicePowerInfo
     public string Name { get; init; } = string.Empty;
     public string DeviceId { get; init; } = string.Empty;
     public bool? SelectiveSuspendEnabled { get; init; }
+
+    /// <summary>#668: the device-class hint UsbPowerService.ClassifyRisk derived from this
+    /// device's WMI ClassGuid (e.g. "USB audio interface/DAC", "HID input", "External storage") -
+    /// empty when the device isn't one of the classes known to break under selective suspend.</summary>
+    public string RiskClass { get; init; } = string.Empty;
+
+    /// <summary>#668: true when this device belongs to a RiskClass AND selective suspend is
+    /// currently enabled for it - "quick flag, not a verdict" (plenty of devices in these classes
+    /// suspend fine; this only means it's worth checking if something in that class is
+    /// misbehaving). Never true while SelectiveSuspendEnabled is Unknown.</summary>
+    public bool IsSuspendRisk => RiskClass.Length > 0 && SelectiveSuspendEnabled == true;
+
+    /// <summary>#667: count of surprise-removal/re-arrival event-log records
+    /// UsbEventLogService.ReadReenumerationCountsAsync matched to this device's PNPDeviceID over
+    /// the lookback window - set after the fact by EnergyThermalsViewModel once both the device
+    /// list and the event scan have loaded (mutable, not init-only, for exactly that reason). -1
+    /// means "not scanned yet" (distinct from a confirmed 0).</summary>
+    public int ReenumerationCount { get; set; } = -1;
 }

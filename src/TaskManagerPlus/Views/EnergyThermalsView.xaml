@@ -817,6 +817,248 @@
                         <Run Text="Sleep state: " />
                         <Run Text="{Binding SleepStateSupportText, Mode=OneWay}" FontSize="12.5" />
                     </TextBlock>
+
+                    <!-- #664: power-plan change history - a change this app didn't itself cause
+                         (vendor utility/game silently calling powercfg /setactive) shows up here
+                         with a timestamp. -->
+                    <ItemsControl ItemsSource="{Binding PowerPlanChangeHistory}" Margin="0,10,0,0">
+                        <ItemsControl.Style>
+                            <Style TargetType="ItemsControl">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding PowerPlanChangeHistory.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </ItemsControl.Style>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4" TextWrapping="Wrap">
+                                    <Run Text="{Binding Timestamp, StringFormat={}{0:g}}" />
+                                    <Run Text=" — plan changed from " />
+                                    <Run Text="{Binding FromPlanName, Mode=OneWay}" />
+                                    <Run Text=" to " />
+                                    <Run Text="{Binding ToPlanName, Mode=OneWay}" />
+                                </TextBlock>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #661: active-plan setting diff against Balanced defaults. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Settings changed from Balanced" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Compare to defaults" Command="{Binding LoadPowerPlanDiffCommand}" />
+                    </Grid>
+                    <TextBlock Text="Only settings that actually differ from the built-in Balanced scheme's own defaults are listed - the rest are unchanged and not worth reviewing."
+                               Style="{StaticResource SubStat}" Margin="0,-2,0,8" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding PowerPlanDiffStatusText}" Margin="0,0,0,8" TextWrapping="Wrap">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding PowerPlanDiffStatusText}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <DataGrid ItemsSource="{Binding PowerPlanSettingDiffs}" IsReadOnly="True" MaxHeight="260">
+                        <DataGrid.Style>
+                            <Style TargetType="DataGrid">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding PowerPlanSettingDiffs.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </DataGrid.Style>
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Subgroup" Binding="{Binding SubgroupName}" Width="140" />
+                            <DataGridTextColumn Header="Setting" Binding="{Binding SettingName}" Width="*" />
+                            <DataGridTextColumn Header="Active AC" Binding="{Binding ActiveAcText}" Width="90" />
+                            <DataGridTextColumn Header="Active DC" Binding="{Binding ActiveDcText}" Width="90" />
+                            <DataGridTextColumn Header="Balanced AC" Binding="{Binding DefaultAcText}" Width="90" />
+                            <DataGridTextColumn Header="Balanced DC" Binding="{Binding DefaultDcText}" Width="90" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- #662: hidden high-impact settings, paired AC | DC, plus #663's passive-cooling
+                 flag + fix (piggybacked on the same read). -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Hidden power settings" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Check hidden settings" Command="{Binding LoadHiddenPowerSettingsCommand}" />
+                    </Grid>
+                    <TextBlock Text="Settings the Control Panel Power Options UI hides by default, paired AC next to DC - a 'fast plugged in, crawls on battery' complaint is almost always a DC-side value that's only visible side by side like this."
+                               Style="{StaticResource SubStat}" Margin="0,-2,0,8" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding HiddenPowerSettingsStatusText}" Margin="0,0,0,8" TextWrapping="Wrap">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding HiddenPowerSettingsStatusText}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
+                    <!-- #663: passive-cooling-on-AC warning banner + one-click fix - same
+                         Background=BgElevatedBrush/BorderBrush=WarningBrush banner style the
+                         dead-fan/fan-hunting flags above already establish. -->
+                    <Border Background="{DynamicResource BgElevatedBrush}" BorderBrush="{DynamicResource WarningBrush}"
+                            BorderThickness="1" CornerRadius="8" Padding="14,10" Margin="0,0,0,10">
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding PassiveCoolingOnAcDetected}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" FontSize="12.5" VerticalAlignment="Center"
+                                       Text="System cooling policy is Passive on AC (quick flag, not a verdict) - this throttles the CPU instead of ramping fans, a classic cause of 'inexplicably slow but cool.' Some quiet-focused builds set this on purpose." />
+                            <Button Grid.Column="1" Content="Set to Active" Margin="10,0,0,0" Command="{Binding FixPassiveCoolingCommand}" />
+                        </Grid>
+                    </Border>
+                    <TextBlock Text="{Binding PassiveCoolingFixStatusText}" Margin="0,-6,0,8" TextWrapping="Wrap">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding PassiveCoolingFixStatusText}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
+                    <ItemsControl ItemsSource="{Binding HiddenPowerSettings}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Margin="0,0,0,8" Padding="0,0,0,8" BorderThickness="0,0,0,1" BorderBrush="{DynamicResource BorderSubtleBrush}">
+                                    <StackPanel>
+                                        <TextBlock Text="{Binding SettingName}" FontSize="12.5" FontWeight="SemiBold" />
+                                        <TextBlock Text="{Binding Explanation}" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,2,0,4" />
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock FontSize="12">
+                                                <Run Text="AC: " Foreground="{DynamicResource TextSecondaryBrush}" />
+                                                <Run Text="{Binding AcValueText, Mode=OneWay}" FontWeight="SemiBold" />
+                                            </TextBlock>
+                                            <TextBlock FontSize="12" Margin="16,0,0,0">
+                                                <Run Text="DC: " Foreground="{DynamicResource TextSecondaryBrush}" />
+                                                <Run Text="{Binding DcValueText, Mode=OneWay}" FontWeight="SemiBold" />
+                                            </TextBlock>
+                                            <TextBlock Text="differs" FontSize="11" Margin="10,0,0,0" Foreground="{DynamicResource WarningBrush}" VerticalAlignment="Center">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding ValuesDiffer}" Value="True">
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #660: powercfg /energy 60-second diagnostic scan. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Power efficiency scan" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Command="{Binding RunPowerEfficiencyScanCommand}">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                    <Setter Property="Content" Value="Run scan (~60s)" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsPowerEfficiencyScanRunning}" Value="True">
+                                            <Setter Property="Content" Value="Running…" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                    </Grid>
+                    <TextBlock Text="Runs Windows' own 60-second energy-efficiency diagnostic (powercfg /energy) and lists its Errors/Warnings/Information findings - devices blocking sleep, USB selective suspend disabled, processor power-management problems, and more."
+                               Style="{StaticResource SubStat}" Margin="0,-2,0,8" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding PowerEfficiencyStatusText}" Margin="0,0,0,8" TextWrapping="Wrap" Style="{StaticResource SubStat}" />
+                    <DataGrid ItemsSource="{Binding PowerEfficiencyFindings}" IsReadOnly="True" MaxHeight="300">
+                        <DataGrid.Style>
+                            <Style TargetType="DataGrid">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding PowerEfficiencyFindings.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </DataGrid.Style>
+                        <DataGrid.Columns>
+                            <DataGridTemplateColumn Header="Severity" Width="90">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding Severity}" FontWeight="SemiBold" Margin="4,0" VerticalAlignment="Center">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding Severity}" Value="Error">
+                                                            <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding Severity}" Value="Warning">
+                                                            <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTextColumn Header="Finding" Binding="{Binding Title}" Width="2*" />
+                            <DataGridTextColumn Header="Detail" Binding="{Binding Detail}" Width="3*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
                 </StackPanel>
             </Border>
 
@@ -833,17 +1075,61 @@
                         <Button Grid.Column="1" Content="Load USB devices" Command="{Binding LoadUsbDevicesCommand}" />
                     </Grid>
                     <TextBlock Text="Best-effort per-device read - Windows exposes no simple public API for this, so most devices on most systems will honestly show 'Unknown' rather than a guess."
-                               Style="{StaticResource SubStat}" Margin="0,-2,0,10" TextWrapping="Wrap" />
+                               Style="{StaticResource SubStat}" Margin="0,-2,0,4" TextWrapping="Wrap" />
+
+                    <!-- #668: plan-level shortcut - the fastest fix when several flagged devices
+                         all need the same change at once. -->
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="{Binding UsbFixStatusText}" TextWrapping="Wrap" VerticalAlignment="Center">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding UsbFixStatusText}" Value="">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                        <Button Grid.Column="1" Content="Disable plan-level USB suspend (AC)" FontSize="11" Padding="8,3"
+                                Command="{Binding DisablePlanUsbSuspendCommand}" />
+                    </Grid>
+
                     <ItemsControl ItemsSource="{Binding UsbDevices}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <Grid Margin="0,0,0,4">
+                                <Grid Margin="0,0,0,8">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0" Text="{Binding Name}" FontSize="12" TextTrimming="CharacterEllipsis" />
-                                    <TextBlock Grid.Column="1" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="8,0,0,0">
+                                    <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding Name}" FontSize="12" TextTrimming="CharacterEllipsis" />
+                                        <!-- #668: "quick flag, not a verdict" - a device in a
+                                             suspend-fragile class (USB audio/DAC, HID input,
+                                             external storage) with suspend currently enabled. -->
+                                        <TextBlock FontSize="10.5" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" Margin="0,2,0,0">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsSuspendRisk}" Value="True">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                            <Run Text="Suspend risk (quick flag, not a verdict): " /><Run Text="{Binding RiskClass, Mode=OneWay}" />
+                                        </TextBlock>
+                                    </StackPanel>
+                                    <TextBlock Grid.Column="1" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="8,0,0,0" VerticalAlignment="Center">
                                         <TextBlock.Style>
                                             <Style TargetType="TextBlock">
                                                 <Setter Property="Text" Value="Unknown" />
@@ -858,7 +1144,139 @@
                                             </Style>
                                         </TextBlock.Style>
                                     </TextBlock>
+                                    <!-- #667: re-enumeration count - hidden until LoadUsbEventsCommand
+                                         has actually run (ReenumerationCount's -1 default). -->
+                                    <TextBlock Grid.Column="2" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="8,0,0,0" VerticalAlignment="Center">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding ReenumerationCount}" Value="-1">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                        <Run Text="{Binding ReenumerationCount, Mode=OneWay}" /><Run Text=" re-enum" />
+                                    </TextBlock>
+                                    <Button Grid.Column="3" Content="Toggle suspend" FontSize="10.5" Padding="6,2" Margin="8,0,0,0"
+                                            Command="{Binding DataContext.ToggleUsbDeviceSuspendCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                            CommandParameter="{Binding}" />
                                 </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #665/#667: USB over-current/port-reset events + re-enumeration scan. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="USB power events" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Scan event logs" Command="{Binding LoadUsbEventsCommand}" />
+                    </Grid>
+                    <TextBlock Text="Over-current and port-reset-failure records ('a USB device has exceeded the power limits of its hub port') plus the re-enumeration count shown per device above - keyword-matched, since Windows doesn't publish stable event IDs for these across drivers/builds."
+                               Style="{StaticResource SubStat}" Margin="0,-2,0,8" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding UsbEventsStatusText}" Margin="0,0,0,8" TextWrapping="Wrap" Style="{StaticResource SubStat}" />
+                    <ItemsControl ItemsSource="{Binding UsbOverCurrentEvents}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock FontSize="11.5" TextWrapping="Wrap" Margin="0,0,0,6">
+                                    <Run Text="{Binding TimeCreated, StringFormat={}{0:g}}" FontWeight="SemiBold" />
+                                    <Run Text=" — " />
+                                    <Run Text="{Binding Message, Mode=OneWay}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                </TextBlock>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #666: USB hub inventory + system-wide port-occupancy proxy. -->
+            <Border Margin="0,16,0,0">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding UsbHubs.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="USB hubs" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Windows doesn't publish a documented per-port milliamp budget/draw figure without deeper hardware interop this app avoids - shown instead is real hub port-count inventory plus a system-wide devices-vs-ports proxy for the same over-subscription risk."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,8" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding UsbHubStatusText}" Margin="0,0,0,8" TextWrapping="Wrap" Style="{StaticResource SubStat}" />
+                    <ItemsControl ItemsSource="{Binding UsbHubs}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="{Binding HubName}" FontSize="12" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Grid.Column="1" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="8,0,0,0">
+                                        <Run Text="{Binding PortCount, TargetNullValue=?, Mode=OneWay}" /><Run Text=" ports" />
+                                    </TextBlock>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #669: USB-C/Thunderbolt PD negotiation (UCSI) - hidden entirely when this
+                 platform doesn't publish a UCSI WMI class, the common desktop case. -->
+            <Border Margin="0,16,0,0">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding HasUsbPdConnectors}" Value="False">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="USB-C power delivery (UCSI)" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Reported exactly as this system's UCSI class publishes it - Windows has no stable, versioned property contract for UCSI, so this is a raw dump rather than a guessed Voltage/Current mapping."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,8" TextWrapping="Wrap" />
+                    <ItemsControl ItemsSource="{Binding UsbPdConnectors}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Margin="0,0,0,8" Padding="0,0,0,8" BorderThickness="0,0,0,1" BorderBrush="{DynamicResource BorderSubtleBrush}">
+                                    <StackPanel>
+                                        <TextBlock Text="{Binding ClassName}" FontSize="12" FontWeight="SemiBold" />
+                                        <TextBlock Text="{Binding SummaryText}" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,2,0,4">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding SummaryText}" Value="">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                        <ItemsControl ItemsSource="{Binding Properties}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" FontFamily="Consolas">
+                                                        <Run Text="{Binding Name, Mode=OneWay}" /><Run Text=": " /><Run Text="{Binding Value, Mode=OneWay}" />
+                                                    </TextBlock>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </StackPanel>
+                                </Border>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
