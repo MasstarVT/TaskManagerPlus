@@ -15,52 +15,56 @@
         <!-- #468: sub-tab strip - this tab's second top-level view (the device tree) is distinct
              from the driver-inventory grid below, so a simple two-button strip switches between
              them rather than restructuring either view. -->
-        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="16,12,16,0">
-            <Button Content="Driver inventory" Padding="10,4" Command="{Binding ShowDriverInventoryViewCommand}">
+        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="16,12,16,4">
+            <Button Content="Driver inventory" Command="{Binding ShowDriverInventoryViewCommand}">
                 <Button.Style>
-                    <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                    <Style TargetType="Button" BasedOn="{StaticResource SectionChipButton}">
                         <Style.Triggers>
                             <DataTrigger Binding="{Binding IsDeviceTreeViewActive}" Value="False">
                                 <Setter Property="Background" Value="{DynamicResource AccentBrush}" />
-                                <Setter Property="Foreground" Value="White" />
+                                <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+                                <Setter Property="Foreground" Value="{DynamicResource AccentForegroundBrush}" />
                             </DataTrigger>
                         </Style.Triggers>
                     </Style>
                 </Button.Style>
             </Button>
-            <Button Content="Device tree" Padding="10,4" Margin="8,0,0,0" Command="{Binding ShowDeviceTreeViewCommand}">
+            <Button Content="Device tree" Margin="8,0,0,0" Command="{Binding ShowDeviceTreeViewCommand}">
                 <Button.Style>
-                    <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                    <Style TargetType="Button" BasedOn="{StaticResource SectionChipButton}">
                         <Style.Triggers>
                             <DataTrigger Binding="{Binding IsDeviceTreeViewActive}" Value="True">
                                 <Setter Property="Background" Value="{DynamicResource AccentBrush}" />
-                                <Setter Property="Foreground" Value="White" />
+                                <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+                                <Setter Property="Foreground" Value="{DynamicResource AccentForegroundBrush}" />
                             </DataTrigger>
                         </Style.Triggers>
                     </Style>
                 </Button.Style>
             </Button>
             <!-- #479: this tab's third top-level view. -->
-            <Button Content="Driver store" Padding="10,4" Margin="8,0,0,0" Command="{Binding ShowDriverStoreViewCommand}">
+            <Button Content="Driver store" Margin="8,0,0,0" Command="{Binding ShowDriverStoreViewCommand}">
                 <Button.Style>
-                    <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                    <Style TargetType="Button" BasedOn="{StaticResource SectionChipButton}">
                         <Style.Triggers>
                             <DataTrigger Binding="{Binding IsDriverStoreViewActive}" Value="True">
                                 <Setter Property="Background" Value="{DynamicResource AccentBrush}" />
-                                <Setter Property="Foreground" Value="White" />
+                                <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+                                <Setter Property="Foreground" Value="{DynamicResource AccentForegroundBrush}" />
                             </DataTrigger>
                         </Style.Triggers>
                     </Style>
                 </Button.Style>
             </Button>
             <!-- #493-496: this tab's FOURTH top-level view. -->
-            <Button Content="Filter drivers" Padding="10,4" Margin="8,0,0,0" Command="{Binding ShowFilterDriversViewCommand}">
+            <Button Content="Filter drivers" Margin="8,0,0,0" Command="{Binding ShowFilterDriversViewCommand}">
                 <Button.Style>
-                    <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                    <Style TargetType="Button" BasedOn="{StaticResource SectionChipButton}">
                         <Style.Triggers>
                             <DataTrigger Binding="{Binding IsFilterDriversViewActive}" Value="True">
                                 <Setter Property="Background" Value="{DynamicResource AccentBrush}" />
-                                <Setter Property="Foreground" Value="White" />
+                                <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+                                <Setter Property="Foreground" Value="{DynamicResource AccentForegroundBrush}" />
                             </DataTrigger>
                         </Style.Triggers>
                     </Style>

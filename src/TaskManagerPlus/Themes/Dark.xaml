@@ -582,6 +582,41 @@
         </Setter>
     </Style>
 
+    <!-- Devices & Drivers switched sections with plain Buttons and an IsXxxViewActive bool per
+         section long before the chip bar existed (see DevicesDriversViewModel). Rather than
+         rewrite that into TabItems, this style makes those buttons render as the same chip, so
+         the one tab that navigates differently at least does not also look different. The caller
+         still supplies its own DataTrigger for the active state - only the resting look is here. -->
+    <Style x:Key="SectionChipButton" TargetType="{x:Type Button}" BasedOn="{StaticResource {x:Type Button}}">
+        <Setter Property="FontSize" Value="{StaticResource FontBody}" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+        <Setter Property="Background" Value="{DynamicResource BgPanelBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush2}" />
+        <Setter Property="Padding" Value="14,6" />
+        <Setter Property="Margin" Value="0,0,8,0" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="{x:Type Button}">
+                    <Border x:Name="chip" CornerRadius="14" Padding="{TemplateBinding Padding}"
+                            Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" RecognizesAccessKey="True" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="chip" Property="Background" Value="{DynamicResource BgHoverBrush}" />
+                            <Setter TargetName="chip" Property="BorderBrush" Value="{DynamicResource TextTertiaryBrush}" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="chip" Property="Opacity" Value="0.38" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
     <!-- ============================= DataGrid ============================= -->
     <Style TargetType="{x:Type DataGrid}">
         <Setter Property="Background" Value="{DynamicResource BgBrush}" />

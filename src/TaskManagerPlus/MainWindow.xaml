@@ -204,9 +204,11 @@
                      SelectTabByName in the code-behind was made recursive to match, and it
                      selects the whole ancestor path, so those callers did not have to change.
 
-                     A group with one leaf (Overview, Security) hosts its view directly rather
-                     than rendering a second-level row with a single item in it. -->
-                <TabItem Header="Overview">
+                     A group with one leaf (Summary, Security) hosts its view directly rather
+                     than rendering a second-level row with a single item in it, and takes that leaf's own
+                     name so the name stays addressable - calling this group "Overview" silently broke
+                     the tab flag Summary and the Devices tab's jump to the snapshot UI. -->
+                <TabItem Header="Summary">
                     <TabItem.Tag>
                         <Viewbox Width="16" Height="16">
                             <Canvas Width="16" Height="16">
