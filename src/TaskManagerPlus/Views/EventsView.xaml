@@ -3,6 +3,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="clr-namespace:TaskManagerPlus.ViewModels"
              xmlns:models="clr-namespace:TaskManagerPlus.Models"
+             xmlns:views="clr-namespace:TaskManagerPlus.Views"
              d:DataContext="{d:DesignInstance Type=vm:EventsViewModel}"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
@@ -213,7 +214,13 @@
 
                         <!-- #113: provider catalog toggle (panel itself overlays the three-pane area below) -->
                         <WrapPanel Margin="0,0,0,10">
-                            <ToggleButton Content="Provider catalog" IsChecked="{Binding IsProviderCatalogOpen}" Padding="8,3" />
+                            <ToggleButton Content="Provider catalog" IsChecked="{Binding IsProviderCatalogOpen}" Padding="8,3" Margin="0,0,8,0"
+                                           ToolTip="Event Providers - message/level/keyword metadata for building human-readable event descriptions (#113)." />
+                            <!-- #146-153: ETW session/autologger/provider inspection and WPR capture workflows - a
+                                 separate overlay from the one above. Deliberately named "ETW Providers" wherever
+                                 provider catalogs appear inside it, to stay distinct from #113's "Event Providers". -->
+                            <ToggleButton Content="ETW trace capture" IsChecked="{Binding Etw.IsPanelOpen}" Padding="8,3"
+                                           ToolTip="ETW session inspector, autologgers, ETW provider &quot;who's listening&quot;, and WPR capture workflows (#146-153)." />
                         </WrapPanel>
 
                         <!-- #109: import Event Viewer's own custom views / export a saved filter back to one -->
@@ -1032,6 +1039,23 @@
                         </DataGrid>
                     </Grid>
                 </Grid>
+            </Border>
+
+            <!-- #146-153: ETW trace capture overlay - same "spans every column, sits on top of the
+                 three panes below" shape as the Provider Catalog overlay just above, reached via the
+                 "ETW trace capture" toggle in the filter bar's "More tools" expander. -->
+            <Border Grid.Column="0" Grid.ColumnSpan="5" Panel.ZIndex="11">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding Etw.IsPanelOpen}" Value="True">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <views:EtwCapturePanel DataContext="{Binding Etw}" />
             </Border>
         </Grid>
     </Grid>

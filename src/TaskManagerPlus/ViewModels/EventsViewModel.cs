@@ -41,6 +41,14 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
     // ResolveKbAction's remarks for what else was searched for and not found.
     private readonly ServicesViewModel _services;
 
+    /// <summary>#146-153: ETW session/autologger/provider inspection and WPR capture workflows -
+    /// composed as a sub-ViewModel (the first one in this file) rather than folded onto
+    /// EventsViewModel's own already-large property surface, the same way MainViewModel composes
+    /// each tab's ViewModel, just one level deeper. Reached from a toggleable overlay panel on the
+    /// Events tab (EtwCapturePanel.xaml), the same pattern #113's Provider Catalog panel already
+    /// established.</summary>
+    public EtwCaptureViewModel Etw { get; } = new();
+
     public ObservableCollection<EventChannelNode> ChannelTree { get; } = new();
     public ObservableCollection<EventRecordRow> Events { get; } = new();
     public ObservableCollection<SavedEventFilter> SavedFilters { get; } = new();
@@ -1621,5 +1629,6 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
         _statusCodeCts?.Dispose();
         _anomalyScanCts?.Cancel();
         _anomalyScanCts?.Dispose();
+        Etw.Dispose();
     }
 }
