@@ -3,6 +3,12 @@ using System.Text.RegularExpressions;
 
 namespace TaskManagerPlus.Services;
 
+/// <summary>One parsed hop out of a `tracert -d` run (#516) - <see cref="Ip"/> is null when the
+/// hop timed out ("Request timed out." in tracert's own output), kept as a distinct hop rather
+/// than dropped so a baseline diff can tell "this hop still doesn't reply" apart from "this hop
+/// disappeared".</summary>
+public sealed record TracerouteHop(int HopNumber, string? Ip);
+
 /// <summary>
 /// On-demand traceroute (round 9, #49) to a user-entered host. Shells out to tracert.exe rather
 /// than re-implementing ICMP TTL-stepping from scratch - the same "known Windows tool, not raw
@@ -13,6 +19,40 @@ namespace TaskManagerPlus.Services;
 public static class TracerouteService
 {
     private static readonly Regex ValidHostRegex = new(@"^[A-Za-z0-9][A-Za-z0-9.\-:]*$", RegexOptions.Compiled);
+
+    // Matches a leading hop number (tracert -d's numeric-only lines) and, separately, an IPv4 or
+    // bare IPv6 address at the end of the line - tracert -d's own three timing columns sit
+    // between the two, so this doesn't try to parse them.
+    private static readonly Regex HopNumberRegex = new(@"^\s*(\d{1,2})\s", RegexOptions.Compiled);
+    private static readonly Regex TrailingAddressRegex = new(@"(\d{1,3}(?:\.\d{1,3}){3}|[0-9A-Fa-f]{1,4}(?::[0-9A-Fa-f]{0,4}){2,7})\s*$", RegexOptions.Compiled);
+
+    /// <summary>#516: parses a completed tracert -d run's raw text output into structured hops,
+    /// for TracerouteBaselineService's save/diff to work against instead of the raw text. Only
+    /// meaningful for -d (numeric) output, which is all RunAsync ever produces - a reverse-DNS
+    /// hostname column would need different parsing this app doesn't request.</summary>
+    public static List<TracerouteHop> ParseHops(string tracerouteOutput)
+    {
+        var hops = new List<TracerouteHop>();
+        if (string.IsNullOrWhiteSpace(tracerouteOutput)) return hops;
+
+        foreach (var rawLine in tracerouteOutput.Split('\n'))
+        {
+            string line = rawLine.TrimEnd('\r').Trim();
+            var hopMatch = HopNumberRegex.Match(line);
+            if (!hopMatch.Success) continue;
+            int hopNumber = int.Parse(hopMatch.Groups[1].Value);
+
+            if (line.Contains("Request timed out", StringComparison.OrdinalIgnoreCase))
+            {
+                hops.Add(new TracerouteHop(hopNumber, null));
+                continue;
+            }
+
+            var addressMatch = TrailingAddressRegex.Match(line);
+            hops.Add(new TracerouteHop(hopNumber, addressMatch.Success ? addressMatch.Value : null));
+        }
+        return hops;
+    }
 
     public static async Task<string> RunAsync(string host, CancellationToken cancellationToken = default)
     {
