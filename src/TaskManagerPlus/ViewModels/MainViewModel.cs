@@ -18,6 +18,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public StabilityViewModel Stability { get; } = new();
     public SummaryViewModel Summary { get; }
 
+    // #101-108: full Event Viewer replacement tab - see EventsViewModel's remarks. Constructed in
+    // the body (not a field initializer) since it needs Processes' already-live collection for
+    // #106's PID -> process-name lookup.
+    public EventsViewModel Events { get; }
+
     // Thin wrappers over the shared Performance sampler (see CpuViewModel's remarks) - the
     // CPU/Memory/Storage/Network tabs are split views of one underlying data source, not four
     // independent pollers.
@@ -202,6 +207,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Logging = new LoggingViewModel(Performance, EnergyThermals);
         Summary = new SummaryViewModel(Performance, Processes, Services, EnergyThermals, SystemSpecs, Network, Stability);
         Search = new GlobalSearchViewModel(Processes, Services, Startup, SystemSpecs);
+        Events = new EventsViewModel(Processes);
 
         RemoteMonitor = new RemoteMonitorService(BuildRemoteMetricsSnapshot) { RequiredToken = _remoteMonitorSettings.Token };
         ToggleRemoteMonitorCommand = new RelayCommand(_ => IsRemoteMonitorEnabled = !IsRemoteMonitorEnabled);
@@ -367,6 +373,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Gpu.Dispose();
         Logging.Dispose();
         Summary.Dispose();
+        Events.Dispose();
         _miniDashboard?.Close();
         RemoteMonitor.Dispose();
         Hotkey.Dispose();

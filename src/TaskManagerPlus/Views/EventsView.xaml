@@ -1,0 +1,361 @@
+<UserControl x:Class="TaskManagerPlus.Views.EventsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:TaskManagerPlus.ViewModels"
+             xmlns:models="clr-namespace:TaskManagerPlus.Models"
+             d:DataContext="{d:DesignInstance Type=vm:EventsViewModel}"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d">
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- #104: visual XPath filter builder - level checkboxes, provider/event-ID/user free-text
+             filters, a lookback window, and the generated query shown in an editable box so a
+             power user can hand-edit it before Load runs. -->
+        <Border Grid.Row="0" Style="{StaticResource CardStyle}" Margin="0,0,0,10" Padding="12,10">
+            <StackPanel>
+                <WrapPanel>
+                    <TextBlock Text="Level:" VerticalAlignment="Center" Margin="0,0,6,0" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5" />
+                    <CheckBox Content="Critical" IsChecked="{Binding LevelCritical}" Margin="0,0,10,0" />
+                    <CheckBox Content="Error" IsChecked="{Binding LevelError}" Margin="0,0,10,0" />
+                    <CheckBox Content="Warning" IsChecked="{Binding LevelWarning}" Margin="0,0,10,0" />
+                    <CheckBox Content="Information" IsChecked="{Binding LevelInformation}" Margin="0,0,10,0" />
+                    <CheckBox Content="Verbose" IsChecked="{Binding LevelVerbose}" Margin="0,0,18,0" />
+
+                    <TextBlock Text="Providers:" VerticalAlignment="Center" Margin="0,0,6,0" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5" />
+                    <TextBox Text="{Binding ProviderFilterText, UpdateSourceTrigger=PropertyChanged}" Width="160" Margin="0,0,18,0"
+                              ToolTip="Comma-separated provider names" />
+
+                    <TextBlock Text="Event IDs:" VerticalAlignment="Center" Margin="0,0,6,0" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5" />
+                    <TextBox Text="{Binding EventIdsText, UpdateSourceTrigger=PropertyChanged}" Width="130" Margin="0,0,18,0"
+                              ToolTip="e.g. 1000, 4624, 7000-7010" />
+
+                    <TextBlock Text="Lookback (days):" VerticalAlignment="Center" Margin="0,0,6,0" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5" />
+                    <TextBox Text="{Binding LookbackDays, UpdateSourceTrigger=PropertyChanged}" Width="50" Margin="0,0,18,0" />
+
+                    <TextBlock Text="User SID:" VerticalAlignment="Center" Margin="0,0,6,0" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5" />
+                    <TextBox Text="{Binding UserSidText, UpdateSourceTrigger=PropertyChanged}" Width="140" Margin="0,0,18,0" />
+
+                    <TextBlock Text="Keyword:" VerticalAlignment="Center" Margin="0,0,6,0" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5" />
+                    <TextBox Text="{Binding KeywordText, UpdateSourceTrigger=PropertyChanged}" Width="140"
+                              ToolTip="Client-side match against each event's description text" />
+                </WrapPanel>
+
+                <Grid Margin="0,10,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBox Grid.Column="0" Text="{Binding RawXPathText, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,8,0"
+                              FontFamily="Consolas" FontSize="11.5" VerticalAlignment="Center"
+                              ToolTip="The XPath query actually used by Load / Follow - edit directly for power-user queries." />
+                    <Button Grid.Column="1" Content="Build query" Command="{Binding BuildXPathCommand}" Padding="10,4" Margin="0,0,8,0" />
+                    <Button Grid.Column="2" Content="Load" Command="{Binding LoadCommand}" Padding="14,4" Margin="0,0,8,0" />
+                    <ToggleButton Grid.Column="3" Content="Follow" IsChecked="{Binding IsFollowing}" Padding="10,4"
+                                   ToolTip="Live-tail the selected channel - new matching events are pushed into the grid as they're written." />
+                </Grid>
+
+                <!-- #108: saved filter presets, including the built-in ones (Crash triage / Storage
+                     errors / Service failures / Boot problems). -->
+                <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                    <TextBlock Text="Saved filters:" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5" />
+                    <ItemsControl ItemsSource="{Binding SavedFilters}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate DataType="{x:Type models:SavedEventFilter}">
+                                <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="10" Margin="0,0,6,0" Padding="8,3">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Button Content="{Binding Name}" FontSize="11.5" Padding="0"
+                                                 Background="Transparent" BorderThickness="0"
+                                                 Command="{Binding DataContext.ApplyFilterCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                 CommandParameter="{Binding}" />
+                                        <Button Content=" ✕" FontSize="10.5" Padding="0" Margin="4,0,0,0"
+                                                 Background="Transparent" BorderThickness="0" Foreground="{DynamicResource TextSecondaryBrush}"
+                                                 Command="{Binding DataContext.DeleteFilterCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                 CommandParameter="{Binding}" ToolTip="Delete this saved filter" />
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBox Text="{Binding NewFilterName, UpdateSourceTrigger=PropertyChanged}" Width="140" Margin="10,0,8,0" />
+                    <Button Content="Save current as filter" Command="{Binding SaveFilterCommand}" Padding="8,3" />
+                </StackPanel>
+
+                <TextBlock Text="{Binding StatusText}" Margin="0,8,0,0" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding StatusText, Converter={StaticResource NullToVisibilityConverter}}" Value="Visible">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+            </StackPanel>
+        </Border>
+
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="260" />
+                <ColumnDefinition Width="6" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="6" />
+                <ColumnDefinition Width="340" />
+            </Grid.ColumnDefinitions>
+
+            <!-- #102: left channel tree, grouped into Windows Logs / Applications and Services /
+                 Analytic-Debug, each node annotated with record count + last-write time. -->
+            <Border Grid.Column="0" Style="{StaticResource CardStyle}" Padding="0">
+                <DockPanel>
+                    <Grid DockPanel.Dock="Top" Margin="12,10,12,6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Channels" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" FontSize="13" />
+                        <Button Grid.Column="1" Content="Refresh" Command="{Binding RefreshChannelsCommand}" Padding="8,3" FontSize="11" />
+                    </Grid>
+                    <TreeView x:Name="ChannelTreeView" ItemsSource="{Binding ChannelTree}"
+                              SelectedItemChanged="ChannelTreeView_SelectedItemChanged"
+                              BorderThickness="0" Background="Transparent" Margin="4,0,4,4">
+                        <TreeView.ItemContainerStyle>
+                            <Style TargetType="TreeViewItem" BasedOn="{StaticResource {x:Type TreeViewItem}}">
+                                <Setter Property="IsExpanded" Value="{Binding IsGroup}" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsAccessible}" Value="False">
+                                        <Setter Property="Foreground" Value="{DynamicResource TextTertiaryBrush}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TreeView.ItemContainerStyle>
+                        <TreeView.ItemTemplate>
+                            <HierarchicalDataTemplate ItemsSource="{Binding Children}">
+                                <StackPanel Orientation="Horizontal" Margin="0,1">
+                                    <TextBlock Text="{Binding DisplayName}" FontSize="12" TextTrimming="CharacterEllipsis" MaxWidth="160" />
+                                    <TextBlock Text=" (no access)" FontSize="10.5" Foreground="{DynamicResource DangerBrush}">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsAccessible}" Value="False">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                    <TextBlock Text="{Binding RecordCount, StringFormat=' ({0})'}" FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding RecordCount, Converter={StaticResource NullToVisibilityConverter}}" Value="Visible">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </StackPanel>
+                            </HierarchicalDataTemplate>
+                        </TreeView.ItemTemplate>
+                    </TreeView>
+                </DockPanel>
+            </Border>
+
+            <GridSplitter Grid.Column="1" HorizontalAlignment="Stretch" Background="Transparent" />
+
+            <!-- #103: virtualized, paged event grid - ~500 records per page, appended as the user
+                 scrolls/clicks "Load more" rather than reading a whole (possibly 100MB) channel
+                 up front. -->
+            <Border Grid.Column="2" Style="{StaticResource CardStyle}" Padding="0" Margin="0">
+                <DockPanel>
+                    <Grid DockPanel.Dock="Bottom" Margin="12,6,12,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="{Binding Events.Count, StringFormat='{}{0} event(s) in view'}"
+                                    VerticalAlignment="Center" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        <Button Grid.Column="1" Content="Load more" Command="{Binding LoadMoreCommand}" Padding="10,4">
+                            <Button.Style>
+                                <Style TargetType="Button">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding HasMore}" Value="True">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                    </Grid>
+                    <DataGrid ItemsSource="{Binding Events}" SelectedItem="{Binding SelectedEvent}"
+                               Margin="4,10,4,0"
+                               VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
+                               EnableRowVirtualization="True" ScrollViewer.CanContentScroll="True">
+                        <DataGrid.RowStyle>
+                            <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+                                <Setter Property="ToolTip" Value="{Binding Message}" />
+                            </Style>
+                        </DataGrid.RowStyle>
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Time" Binding="{Binding TimeCreated, StringFormat={}{0:g}}" Width="140" />
+                            <DataGridTemplateColumn Header="Level" Width="80" SortMemberPath="Level">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding Level}" VerticalAlignment="Center">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding Level}" Value="Critical">
+                                                            <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding Level}" Value="Error">
+                                                            <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding Level}" Value="Warning">
+                                                            <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTextColumn Header="Provider" Binding="{Binding ProviderName}" Width="2*" />
+                            <DataGridTextColumn Header="Event ID" Binding="{Binding EventId}" Width="70" />
+                            <DataGridTextColumn Header="Task/Opcode" Width="1.4*">
+                                <DataGridTextColumn.Binding>
+                                    <MultiBinding StringFormat="{}{0} / {1}">
+                                        <Binding Path="Task" />
+                                        <Binding Path="Opcode" />
+                                    </MultiBinding>
+                                </DataGridTextColumn.Binding>
+                            </DataGridTextColumn>
+                            <DataGridTextColumn Header="Record ID" Binding="{Binding RecordId}" Width="80" />
+                            <DataGridTextColumn Header="PID" Binding="{Binding ProcessId}" Width="60" />
+                            <DataGridTextColumn Header="User" Binding="{Binding UserSid}" Width="1.2*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </DockPanel>
+            </Border>
+
+            <GridSplitter Grid.Column="3" HorizontalAlignment="Stretch" Background="Transparent" />
+
+            <!-- #105/#106: friendly detail (description + property grid, resolved user account and
+                 running-process name) with a toggle to the full raw record XML. -->
+            <Border Grid.Column="4" Style="{StaticResource CardStyle}">
+                <DockPanel>
+                    <Grid DockPanel.Dock="Top" Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Event detail" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" FontSize="13" />
+                        <CheckBox Grid.Column="1" Content="Raw XML" IsChecked="{Binding ShowRawXml}" VerticalAlignment="Center" />
+                    </Grid>
+
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <StackPanel>
+                            <StackPanel Visibility="{Binding SelectedEvent, Converter={StaticResource NullToVisibilityConverter}}">
+
+                                <StackPanel>
+                                    <StackPanel.Style>
+                                        <Style TargetType="StackPanel">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding ShowRawXml}" Value="True">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </StackPanel.Style>
+
+                                    <TextBlock Text="{Binding SelectedEvent.ProviderName}" FontWeight="SemiBold" FontSize="13" TextWrapping="Wrap" />
+                                    <TextBlock Style="{StaticResource SubStat}" Margin="0,2,0,10">
+                                        <Run Text="Event " /><Run Text="{Binding SelectedEvent.EventId, Mode=OneWay}" />
+                                        <Run Text=" · " /><Run Text="{Binding SelectedEvent.TimeCreated, StringFormat={}{0:g}, Mode=OneWay}" />
+                                    </TextBlock>
+                                    <TextBlock Text="{Binding SelectedEvent.Message}" TextWrapping="Wrap" FontSize="12" Margin="0,0,0,12" />
+                                    <TextBlock Text="Provider message file not registered - see the raw XML for full detail." TextWrapping="Wrap"
+                                                Foreground="{DynamicResource WarningBrush}" FontSize="11" Margin="0,-8,0,12">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding SelectedEvent.Message}" Value="">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+
+                                    <TextBlock Text="Properties" Style="{StaticResource CardTitle}" FontSize="12" />
+                                    <ItemsControl ItemsSource="{Binding DetailProperties}" Margin="0,4,0,0">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate DataType="{x:Type models:EventPropertyDisplay}">
+                                                <Grid Margin="0,0,0,4">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="90" />
+                                                        <ColumnDefinition Width="*" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Grid.Column="0" Text="{Binding Name}" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                                    <TextBlock Grid.Column="1" Text="{Binding Value}" FontSize="11" TextWrapping="Wrap" />
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+
+                                <TextBox Text="{Binding SelectedEvent.RawXml, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap"
+                                          FontFamily="Consolas" FontSize="10.5" BorderThickness="0" Background="Transparent"
+                                          VerticalScrollBarVisibility="Disabled" AcceptsReturn="True">
+                                    <TextBox.Style>
+                                        <Style TargetType="TextBox">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding ShowRawXml}" Value="True">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBox.Style>
+                                </TextBox>
+                            </StackPanel>
+
+                            <TextBlock Text="Select an event to see its detail.">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding SelectedEvent, Converter={StaticResource NullToVisibilityConverter}}" Value="Visible">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </StackPanel>
+                    </ScrollViewer>
+                </DockPanel>
+            </Border>
+        </Grid>
+    </Grid>
+</UserControl>

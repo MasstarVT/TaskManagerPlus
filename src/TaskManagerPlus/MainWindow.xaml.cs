@@ -31,6 +31,19 @@ public partial class MainWindow : Window
         PreviewKeyDown += MainWindow_PreviewKeyDown;
     }
 
+    /// <summary>#107: stops the Events tab's live-tail "Follow" subscription whenever the tab
+    /// strip's selection moves away from it - a live EventLogWatcher has no reason to keep
+    /// pushing rows into a grid nobody's looking at, and this is the one place that reliably knows
+    /// when that happens regardless of how the user navigated away (tab click, Ctrl+1..9, --tab).
+    /// Ignores selection-changed events bubbling up from nested controls (e.g. this app's own
+    /// TabControl-based settings sub-navigation) by checking the event's OriginalSource.</summary>
+    private void MainTabControl_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!ReferenceEquals(e.OriginalSource, MainTabControl)) return;
+        if (MainTabControl.SelectedItem is not TabItem selected || !string.Equals(selected.Header as string, "Events", StringComparison.OrdinalIgnoreCase))
+            _viewModel.Events.OnTabDeactivated();
+    }
+
     /// <summary>Round 12, #84: selects a tab by header text (case-insensitive) - used by the
     /// `--tab &lt;name&gt;` launch flag from App.xaml.cs. Matches the same way Ctrl+1..9 already
     /// does (by header text, not a hardcoded index), so it keeps working if tabs are ever
