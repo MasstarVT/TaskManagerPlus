@@ -288,12 +288,24 @@ public sealed class StartupViewModel : ObservableObject
         // #18: signed/unsigned trust badge, reusing SignatureCheckService's shared per-path cache
         // (extracted from ProcessMonitorService in Round 2) rather than a duplicate check - also
         // off the UI thread, since a first-time signature check reads the file from disk.
+        // #837: publisher/self-signed piggyback on this same per-item background pass.
         _ = Task.Run(() =>
         {
-            var statuses = items.ToDictionary(item => item, item => SignatureCheckService.GetStatus(StartupManagerService.ExtractPath(item.Command)));
+            var results = items.ToDictionary(item => item, item =>
+            {
+                var path = StartupManagerService.ExtractPath(item.Command);
+                var status = SignatureCheckService.GetStatus(path);
+                var signer = SignatureCheckService.GetSignerInfo(path);
+                return (status, publisher: signer.SubjectCn ?? signer.IssuerCn ?? "Unknown", signer.SelfSigned);
+            });
             System.Windows.Application.Current?.Dispatcher.Invoke(() =>
             {
-                foreach (var (item, status) in statuses) item.SignatureStatus = status;
+                foreach (var (item, result) in results)
+                {
+                    item.SignatureStatus = result.status;
+                    item.Publisher = result.publisher;
+                    item.IsSelfSigned = result.SelfSigned;
+                }
             });
         });
     }

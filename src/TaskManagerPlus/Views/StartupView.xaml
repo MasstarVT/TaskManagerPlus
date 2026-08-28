@@ -37,6 +37,29 @@
                     <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="2*" />
                     <DataGridTextColumn Header="Source" Binding="{Binding SourceDescription}" Width="1.5*" />
                     <DataGridTextColumn Header="Command" Binding="{Binding Command}" Width="3*" />
+                    <!-- #837: signing certificate's subject CN (falls back to issuer CN, then
+                         "Unknown"); self-signed called out separately. -->
+                    <DataGridTemplateColumn Header="Publisher" Width="140" SortMemberPath="Publisher">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <TextBlock VerticalAlignment="Center" TextTrimming="CharacterEllipsis">
+                                    <Run Text="{Binding Publisher, Mode=OneWay}" />
+                                    <Run Text=" (self-signed)" Foreground="{DynamicResource WarningBrush}" FontSize="11">
+                                        <Run.Style>
+                                            <Style TargetType="Run">
+                                                <Setter Property="Text" Value="" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsSelfSigned}" Value="True">
+                                                        <Setter Property="Text" Value=" (self-signed)" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Run.Style>
+                                    </Run>
+                                </TextBlock>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
                     <!-- #18: signed/unsigned trust badge, reusing SignatureCheckService's shared
                          per-file-path cache (extracted from ProcessMonitorService in Round 2). -->
                     <DataGridTemplateColumn Header="Signature" Width="90" SortMemberPath="SignatureStatus">

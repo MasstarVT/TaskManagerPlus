@@ -62,13 +62,20 @@ public static class ShellExtensionService
 
             var (resolvedName, dllPath) = ResolveClsid(clsid);
             bool dllExists = !string.IsNullOrWhiteSpace(dllPath) && File.Exists(dllPath);
+            // #837: real publisher extraction (was hardcoded "Unknown" pre-#836/#837).
+            string publisher = "Unknown";
+            if (dllExists)
+            {
+                var signer = SignatureCheckService.GetSignerInfo(dllPath);
+                publisher = signer.SubjectCn ?? signer.IssuerCn ?? "Unknown";
+            }
             result.Add(new ShellExtensionInfo
             {
                 Name = string.IsNullOrWhiteSpace(resolvedName) ? registeredName : resolvedName,
                 Category = category,
                 Clsid = clsid,
                 DllPath = dllPath,
-                Publisher = "Unknown",
+                Publisher = publisher,
                 SignatureStatus = dllExists ? SignatureCheckService.GetStatus(dllPath) : "Unknown",
                 IsApproved = approved.Contains(clsid),
             });

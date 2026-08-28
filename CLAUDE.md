@@ -207,10 +207,16 @@ per file:
   as real.
 - **"Quick flag, not a verdict."** Several heuristics are explicitly
   documented (in code comments and in the UI) as informational only, not
-  authoritative: process signature checks only see embedded Authenticode
-  signatures (not catalog signing), high-privilege/duplicate-instance/
-  memory-leak/thermal-throttle/power-limit flags are pattern-matches on
-  otherwise-ambiguous data, AV/mitigation-status reads use undocumented
+  authoritative: `SignatureCheckService` (Round 14, #836) runs a real
+  `WinVerifyTrust` chain-and-catalog check (both embedded and catalog
+  signatures, with a `CryptCATAdminEnumCatalogFromHash`-based catalog
+  lookup — see its remarks for that check's own known limitation:
+  hash-membership in *some* system catalog, not a full
+  `WTD_CHOICE_CATALOG` re-verification), but revocation checking is off by
+  default (never in a per-tick poll path) and only ever run on-demand with
+  a hard timeout; high-privilege/duplicate-instance/memory-leak/
+  thermal-throttle/power-limit/process-trust-name flags are pattern-matches
+  on otherwise-ambiguous data, AV/mitigation-status reads use undocumented
   bitmask/registry conventions, and outdated-driver/BIOS-age checks are
   "worth a manual check," not a confirmed update available.
 - **Settings persistence**: every persisted setting is a small JSON file

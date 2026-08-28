@@ -43,6 +43,7 @@
                             <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" VerticalAlignment="Center"
                                    Text="Persistence - places apps and DLLs can make themselves run automatically, beyond the plain Run key already shown on the Startup tab."
@@ -51,7 +52,24 @@
                                 Command="{Binding SaveBaselineCommand}" />
                         <Button Grid.Column="2" Margin="0,0,8,0" Content="Compare to baseline"
                                 Command="{Binding CompareToBaselineCommand}" />
-                        <Button Grid.Column="3" Style="{StaticResource PrimaryButton}" Command="{Binding ScanAutorunsCommand}">
+                        <!-- #845: separate on-demand pass - see AutorunsService.CheckWritePermissions's
+                             remarks on why this spawns icacls per path and isn't part of the main Scan. -->
+                        <Button Grid.Column="3" Margin="0,0,8,0" Command="{Binding CheckWritePermissionsCommand}"
+                                ToolTip="Shells out to icacls.exe for every persistence target and its containing folder - can take a while on a system with many entries.">
+                            <TextBlock>
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="Check write permissions" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsCheckingWritePermissions}" Value="True">
+                                                <Setter Property="Text" Value="Checking..." />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Button>
+                        <Button Grid.Column="4" Style="{StaticResource PrimaryButton}" Command="{Binding ScanAutorunsCommand}">
                             <TextBlock>
                                 <TextBlock.Style>
                                     <Style TargetType="TextBlock">
@@ -166,10 +184,115 @@
                     </Grid>
 
                     <!-- Row-level actions for the selected persistence entry. -->
-                    <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
-                        <Button Content="Copy registry path" Command="{Binding CopyRegistryPathCommand}" CommandParameter="{Binding SelectedAutorunEntry}" Margin="0,0,8,0" />
-                        <Button Content="Open containing folder" Command="{Binding OpenContainingFolderCommand}" CommandParameter="{Binding SelectedAutorunEntry}" />
-                    </StackPanel>
+                    <WrapPanel Margin="0,10,0,0">
+                        <Button Content="Copy registry path" Command="{Binding CopyRegistryPathCommand}" CommandParameter="{Binding SelectedAutorunEntry}" Margin="0,0,8,8" />
+                        <Button Content="Open containing folder" Command="{Binding OpenContainingFolderCommand}" CommandParameter="{Binding SelectedAutorunEntry}" Margin="0,0,8,8" />
+                        <!-- #841: on-demand hashing - computed only on click, never during a scan. -->
+                        <Button Command="{Binding HashSelectedCommand}" CommandParameter="{Binding SelectedAutorunEntry}" Margin="0,0,8,8">
+                            <TextBlock>
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="Hash" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsHashing}" Value="True">
+                                                <Setter Property="Text" Value="Hashing..." />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Button>
+                        <!-- #841: hashes every current finding's related file in one pass. -->
+                        <Button Content="Hash all flagged items" Command="{Binding HashAllFlaggedCommand}" Margin="0,0,8,8" />
+                        <!-- #843: Mark of the Web / Zone.Identifier for the selected entry. -->
+                        <Button Content="Check Mark of the Web" Command="{Binding CheckMarkOfTheWebCommand}" CommandParameter="{Binding SelectedAutorunEntry}" Margin="0,0,8,8" />
+                        <!-- #838: on-demand, offline-tolerant revocation check - makes an online
+                             call, so it's a separate explicit click, not part of the main Scan. -->
+                        <Button Command="{Binding CheckRevocationCommand}" CommandParameter="{Binding SelectedAutorunEntry}" Margin="0,0,8,8"
+                                ToolTip="Makes an online revocation check for the selected entry's certificate - not run automatically during Scan.">
+                            <TextBlock>
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="Check revocation" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsCheckingRevocation}" Value="True">
+                                                <Setter Property="Text" Value="Checking..." />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Button>
+                    </WrapPanel>
+
+                    <!-- #841/#842: hash result - collapsed until a hash has actually been computed. -->
+                    <Border Margin="0,4,0,0" Padding="10,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding HashResultSha256}" Value="{x:Null}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                        <StackPanel>
+                            <TextBlock FontSize="11.5" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" Text="{Binding HashResultPath}" Margin="0,0,0,4" />
+                            <TextBlock FontFamily="Consolas" FontSize="11.5" TextWrapping="Wrap">
+                                <Run Text="SHA-256: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding HashResultSha256, Mode=OneWay}" />
+                            </TextBlock>
+                            <TextBlock FontFamily="Consolas" FontSize="11.5" TextWrapping="Wrap" Margin="0,2,0,0">
+                                <Run Text="SHA-1: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding HashResultSha1, Mode=OneWay}" />
+                            </TextBlock>
+                            <TextBlock FontFamily="Consolas" FontSize="11.5" TextWrapping="Wrap" Margin="0,2,0,0">
+                                <Run Text="MD5: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding HashResultMd5, Mode=OneWay}" />
+                            </TextBlock>
+                            <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                <Button Content="Copy" Command="{Binding CopyHashResultCommand}" Margin="0,0,8,0" />
+                                <!-- #842: opens a browser search for the already-computed hash only
+                                     on explicit click - never uploads the file, never auto-contacts anything. -->
+                                <Button Content="Look up this hash" Command="{Binding LookUpHashCommand}"
+                                        ToolTip="Opens a VirusTotal hash search in your default browser - only the hash is sent, and only when you click this." />
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- #841: "hash all flagged items" result block. -->
+                    <Border Margin="0,4,0,0" Padding="10,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding HashAllFlaggedResult}" Value="{x:Null}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                        <StackPanel>
+                            <TextBlock Text="Hash all flagged items - result" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                            <ScrollViewer MaxHeight="140" VerticalScrollBarVisibility="Auto">
+                                <TextBlock FontFamily="Consolas" FontSize="11" TextWrapping="Wrap" Text="{Binding HashAllFlaggedResult}" />
+                            </ScrollViewer>
+                            <Button Content="Copy" Command="{Binding CopyHashAllFlaggedCommand}" HorizontalAlignment="Left" Margin="0,8,0,0" />
+                        </StackPanel>
+                    </Border>
+
+                    <!-- #843: Mark of the Web result. -->
+                    <Border Margin="0,4,0,0" Padding="10,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding MotwResultText}" Value="{x:Null}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                        <StackPanel>
+                            <TextBlock Text="Mark of the Web" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                            <TextBlock FontSize="12" TextWrapping="Wrap" Text="{Binding MotwResultText}" />
+                        </StackPanel>
+                    </Border>
 
                     <!-- #803: baseline diff - hidden until a compare has actually produced rows. -->
                     <StackPanel Margin="0,16,0,0">

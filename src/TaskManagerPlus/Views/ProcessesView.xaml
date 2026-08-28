@@ -266,6 +266,51 @@
                         </DataTemplate>
                     </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>
+                <!-- #837: signing certificate's subject CN (falls back to issuer CN, then
+                     "Unknown") - self-signed certs are called out separately since a self-signed
+                     "Microsoft"-looking name would otherwise look legitimate at a glance. -->
+                <DataGridTemplateColumn Header="Publisher" Width="140" SortMemberPath="Publisher">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <TextBlock VerticalAlignment="Center" TextTrimming="CharacterEllipsis">
+                                <Run Text="{Binding Publisher, Mode=OneWay}" />
+                                <Run Text=" (self-signed)" Foreground="{DynamicResource WarningBrush}" FontSize="11">
+                                    <Run.Style>
+                                        <Style TargetType="Run">
+                                            <Setter Property="Text" Value="" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsSelfSigned}" Value="True">
+                                                    <Setter Property="Text" Value=" (self-signed)" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Run.Style>
+                                </Run>
+                            </TextBlock>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <!-- #840: expected-Microsoft-binary / near-miss-name flag - same "collapsed
+                     unless set" badge pattern as the "Mem trend" possible-leak column above. -->
+                <DataGridTemplateColumn Header="Trust" Width="90" SortMemberPath="TrustWarning">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="Check this" Foreground="{DynamicResource DangerBrush}" FontSize="11" FontWeight="SemiBold"
+                                       VerticalAlignment="Center" ToolTip="{Binding TrustWarning}">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding TrustWarning}" Value="{x:Null}">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
                 <DataGridTextColumn Header="User" Binding="{Binding User}" Width="140" />
                 <!-- #52: parent process, so an orphaned/unexpectedly-spawned process (e.g. a
                      process masquerading as a child of explorer.exe) stands out. -->

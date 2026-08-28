@@ -16,8 +16,12 @@ namespace TaskManagerPlus.Services;
 /// Every category method is wrapped in its own try/catch and degrades to contributing nothing on
 /// failure (a denied key, an absent policy, ...) - the same "never fabricate" rule as every other
 /// registry sweep in this app (see ShellExtensionService, StartupManagerService). Signature status
-/// reuses SignatureCheckService's shared per-path cache rather than duplicating that check.
-/// Publisher is left "Unknown" for this chunk - see AutorunEntry's remarks.
+/// and publisher both reuse SignatureCheckService's shared per-path cache (see GetPublisher/
+/// BuildEntry) rather than duplicating that check - #837 replaced the earlier "Publisher is always
+/// Unknown" placeholder with real GetSignerInfo lookups. #838/#839 add a further findings-only pass
+/// (AddFileTrustFindings, run once at the end of Scan) for certificate problems and a signing-time/
+/// file-time anomaly; #845 adds a separate, explicitly NOT-automatic write-permission check
+/// (CheckWritePermissions) since it shells out to icacls per path.
 /// </summary>
 public static class AutorunsService
 {
@@ -75,6 +79,7 @@ public static class AutorunsService
         AddOfficeAddinItems(entries, findings);
         AddProvisionedAppxPackageItems(entries);
         AddShortcutTamperingItems(entries, findings);
+        AddFileTrustFindings(entries, findings);
 
         return entries
             .OrderBy(e => e.Category, StringComparer.OrdinalIgnoreCase)
@@ -328,7 +333,7 @@ public static class AutorunsService
                     Name = System.IO.Path.GetFileName(dllPath),
                     RawCommand = dlls,
                     ResolvedPath = dllPath,
-                    Publisher = "Unknown",
+                    Publisher = GetPublisher(dllPath),
                     SignatureStatus = SignatureCheckService.GetStatus(dllPath),
                     Location = location,
                     Enabled = loadAppInit,
@@ -375,7 +380,7 @@ public static class AutorunsService
                     Name = displayName,
                     RawCommand = dllPath,
                     ResolvedPath = dllPath,
-                    Publisher = "Unknown",
+                    Publisher = GetPublisher(dllPath),
                     SignatureStatus = SignatureCheckService.GetStatus(dllPath),
                     Location = location,
                     Enabled = true,
@@ -558,7 +563,7 @@ public static class AutorunsService
                         Name = exeName,
                         RawCommand = onDiskPath,
                         ResolvedPath = onDiskPath,
-                        Publisher = "Unknown",
+                        Publisher = GetPublisher(onDiskPath),
                         SignatureStatus = status,
                         Location = onDiskPath,
                         Enabled = true,
@@ -665,7 +670,7 @@ public static class AutorunsService
                 Name = System.IO.Path.GetFileName(source),
                 RawCommand = $"{source} -> ({action})",
                 ResolvedPath = source,
-                Publisher = "Unknown",
+                Publisher = GetPublisher(source),
                 SignatureStatus = "Unknown",
                 Location = entryLocation,
                 Enabled = true,
@@ -706,7 +711,7 @@ public static class AutorunsService
                         Name = "DllDirectory",
                         RawCommand = dllDirectory,
                         ResolvedPath = expanded,
-                        Publisher = "Unknown",
+                        Publisher = GetPublisher(expanded),
                         SignatureStatus = "Unknown",
                         Location = loc,
                         Enabled = true,
@@ -739,7 +744,7 @@ public static class AutorunsService
                     Name = valueName,
                     RawCommand = dllFileName,
                     ResolvedPath = System.IO.Path.Combine(Environment.SystemDirectory, dllFileName),
-                    Publisher = "Unknown",
+                    Publisher = GetPublisher(System.IO.Path.Combine(Environment.SystemDirectory, dllFileName)),
                     SignatureStatus = "Unknown",
                     Location = entryLocation,
                     Enabled = true,
@@ -1040,7 +1045,7 @@ public static class AutorunsService
             Name = name,
             RawCommand = rawDriver,
             ResolvedPath = resolvedPath,
-            Publisher = "Unknown",
+            Publisher = GetPublisher(resolvedPath),
             SignatureStatus = status,
             Location = location,
             Enabled = true,
@@ -1086,7 +1091,7 @@ public static class AutorunsService
                     Name = valueName,
                     RawCommand = dllPath,
                     ResolvedPath = resolved,
-                    Publisher = "Unknown",
+                    Publisher = GetPublisher(resolved),
                     SignatureStatus = status,
                     Location = entryLocation,
                     Enabled = true,
@@ -1157,7 +1162,7 @@ public static class AutorunsService
                     Name = System.IO.Path.GetFileName(dllPath),
                     RawCommand = dllPath,
                     ResolvedPath = dllPath,
-                    Publisher = "Unknown",
+                    Publisher = GetPublisher(dllPath),
                     SignatureStatus = status,
                     Location = location,
                     Enabled = true,
@@ -1221,7 +1226,7 @@ public static class AutorunsService
                     Name = name,
                     RawCommand = raw,
                     ResolvedPath = resolvedPath,
-                    Publisher = "Unknown",
+                    Publisher = GetPublisher(resolvedPath),
                     SignatureStatus = status,
                     Location = location,
                     Enabled = true,
@@ -1409,7 +1414,7 @@ public static class AutorunsService
                         Name = serviceName,
                         RawCommand = $"{startFriendly} start ({(type == 1 ? "kernel driver" : "file system driver")}), {imagePath}",
                         ResolvedPath = resolved,
-                        Publisher = "Unknown",
+                        Publisher = GetPublisher(resolved),
                         SignatureStatus = status,
                         Location = location,
                         Enabled = startValue != 4,
@@ -1500,7 +1505,7 @@ public static class AutorunsService
                             Name = serviceName,
                             RawCommand = imagePath,
                             ResolvedPath = expandedExePath,
-                            Publisher = "Unknown",
+                            Publisher = GetPublisher(expandedExePath),
                             SignatureStatus = "Unknown",
                             Location = location,
                             Enabled = true,
@@ -1547,7 +1552,7 @@ public static class AutorunsService
             Name = serviceName,
             RawCommand = imagePath,
             ResolvedPath = pathPortion,
-            Publisher = "Unknown",
+            Publisher = GetPublisher(pathPortion),
             SignatureStatus = "Unknown",
             Location = location,
             Enabled = true,
@@ -1584,7 +1589,7 @@ public static class AutorunsService
                 Name = serviceName,
                 RawCommand = serviceDll,
                 ResolvedPath = expanded,
-                Publisher = "Unknown",
+                Publisher = GetPublisher(expanded),
                 SignatureStatus = System.IO.File.Exists(expanded) ? SignatureCheckService.GetStatus(expanded) : "Unknown",
                 Location = location,
                 Enabled = true,
@@ -1965,7 +1970,7 @@ public static class AutorunsService
                 Name = System.IO.Path.GetFileName(filePath),
                 RawCommand = content.Trim(),
                 ResolvedPath = filePath,
-                Publisher = "Unknown",
+                Publisher = GetPublisher(filePath),
                 SignatureStatus = "Unknown",
                 Location = filePath,
                 Enabled = true,
@@ -2058,7 +2063,7 @@ public static class AutorunsService
             Name = displayName,
             RawCommand = clsid,
             ResolvedPath = dllPath,
-            Publisher = "Unknown",
+            Publisher = GetPublisher(dllPath),
             SignatureStatus = status,
             Location = location,
             Enabled = true,
@@ -2161,7 +2166,7 @@ public static class AutorunsService
                         Name = clsid,
                         RawCommand = dllPath ?? string.Empty,
                         ResolvedPath = expandedDll,
-                        Publisher = "Unknown",
+                        Publisher = GetPublisher(expandedDll),
                         SignatureStatus = !string.IsNullOrWhiteSpace(expandedDll) && System.IO.File.Exists(expandedDll) ? SignatureCheckService.GetStatus(expandedDll) : "Unknown",
                         Location = location,
                         Enabled = true,
@@ -2253,7 +2258,7 @@ public static class AutorunsService
                     Name = valueName,
                     RawCommand = clsid,
                     ResolvedPath = dllPath,
-                    Publisher = "Unknown",
+                    Publisher = GetPublisher(dllPath),
                     SignatureStatus = status,
                     Location = entryLocation,
                     Enabled = true,
@@ -2295,7 +2300,7 @@ public static class AutorunsService
                 Name = progId,
                 RawCommand = raw,
                 ResolvedPath = StartupManagerService.ExtractPath(raw),
-                Publisher = "Unknown",
+                Publisher = GetPublisher(StartupManagerService.ExtractPath(raw)),
                 SignatureStatus = "Unknown",
                 Location = location,
                 Enabled = true,
@@ -2440,7 +2445,7 @@ public static class AutorunsService
             Name = name,
             RawCommand = rawCommand,
             ResolvedPath = resolvedPath,
-            Publisher = "Unknown",
+            Publisher = GetPublisher(resolvedPath),
             SignatureStatus = status,
             Location = location,
             Enabled = true,
@@ -2574,7 +2579,7 @@ public static class AutorunsService
                     Name = display,
                     RawCommand = string.Join(", ", rawParts),
                     ResolvedPath = local ?? string.Empty,
-                    Publisher = "Unknown",
+                    Publisher = GetPublisher(local ?? string.Empty),
                     SignatureStatus = "Unknown",
                     Location = location,
                     Enabled = true,
@@ -2718,7 +2723,7 @@ public static class AutorunsService
                         Name = $"{appName}: {displayName}",
                         RawCommand = $"LoadBehavior: {loadBehaviorText}",
                         ResolvedPath = dllPath,
-                        Publisher = "Unknown",
+                        Publisher = GetPublisher(dllPath),
                         SignatureStatus = status,
                         Location = entryLocation,
                         Enabled = loadBehaviorText != "Disabled",
@@ -2964,7 +2969,7 @@ public static class AutorunsService
             Name = System.IO.Path.GetFileNameWithoutExtension(lnkPath),
             RawCommand = string.IsNullOrWhiteSpace(arguments) ? target : $"{target} {arguments}",
             ResolvedPath = lnkPath,
-            Publisher = "Unknown",
+            Publisher = GetPublisher(lnkPath),
             SignatureStatus = status,
             Location = lnkPath,
             Enabled = true,
@@ -3073,6 +3078,210 @@ public static class AutorunsService
     private static bool ReadDwordAsBool(RegistryKey key, string valueName)
         => key.GetValue(valueName) is int i && i != 0;
 
+    /// <summary>#837: real publisher extraction, replacing the "Unknown" placeholder every
+    /// AutorunEntry builder in this file used before #836/#837 - reuses SignatureCheckService's
+    /// shared per-path cache (GetSignerInfo), so this costs nothing extra beyond the
+    /// SignatureStatus check every builder already runs. Falls back to the issuer CN (then
+    /// "Unknown") when a catalog-signed file has no subject CN to read - see GetSignerInfo's
+    /// remarks on that limitation.</summary>
+    private static string GetPublisher(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return "Unknown";
+        var (subjectCn, issuerCn, _, _, _) = SignatureCheckService.GetSignerInfo(path);
+        return subjectCn ?? issuerCn ?? "Unknown";
+    }
+
+    // #845: weak-ACL / plantable-path check for autorun targets. Deliberately NOT part of the main
+    // Scan() above - this spawns an icacls.exe process per distinct file/folder path (two per
+    // entry: the target file and its containing directory), which is real per-process overhead
+    // across potentially a few hundred entries. Exposed as a separate on-demand pass
+    // (SecurityViewModel wires this to its own "Check write permissions" button), the same
+    // "expensive, so make it explicit" discipline this app already uses for Scheduled Tasks/
+    // browser extensions/shell extensions and the #818 netsh Winsock catalog walk.
+    private static readonly string[] WeakAclPrincipals = { "Users", "Authenticated Users", "Everyone", @"BUILTIN\Users" };
+
+    public static List<SecurityFinding> CheckWritePermissions(IEnumerable<AutorunEntry> entries)
+    {
+        var findings = new List<SecurityFinding>();
+        var checkedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var entry in entries)
+        {
+            var path = entry.ResolvedPath;
+            if (string.IsNullOrWhiteSpace(path)) continue;
+
+            try
+            {
+                if (!System.IO.File.Exists(path)) continue;
+
+                CheckOnePathAcl(findings, entry, path, "file", checkedPaths);
+
+                var dir = System.IO.Path.GetDirectoryName(path);
+                if (!string.IsNullOrWhiteSpace(dir) && System.IO.Directory.Exists(dir))
+                    CheckOnePathAcl(findings, entry, dir, "containing folder", checkedPaths);
+            }
+            catch
+            {
+                // One bad path (denied, race with deletion, ...) shouldn't stop the rest.
+            }
+        }
+
+        return findings;
+    }
+
+    /// <summary>Shells out to icacls.exe for one path and looks for a write-capable grant to a
+    /// broad, low-privilege principal. Deliberately loose/over-inclusive: a plain case-insensitive
+    /// substring match on the principal name (not a parsed SID), and any of (W)/(F)/(M) anywhere on
+    /// that line counts as "write" (icacls's own grant-flag shorthand, e.g.
+    /// "BUILTIN\Users:(OI)(CI)(W)") - being a little over-inclusive here is safer than missing a
+    /// real finding, per #845's own guidance.</summary>
+    private static void CheckOnePathAcl(List<SecurityFinding> findings, AutorunEntry entry, string path, string pathKind, HashSet<string> checkedPaths)
+    {
+        if (!checkedPaths.Add(path)) return; // several entries can share a containing folder
+
+        string output;
+        try
+        {
+            output = RunCapturedSync("icacls.exe", $"\"{path}\"", TimeSpan.FromSeconds(10));
+        }
+        catch
+        {
+            return; // couldn't run icacls for this path - skip it, don't fail the whole pass
+        }
+        if (string.IsNullOrWhiteSpace(output)) return;
+
+        foreach (var rawLine in output.Split('\n'))
+        {
+            var line = rawLine.TrimEnd('\r').Trim();
+            if (line.Length == 0) continue;
+
+            bool mentionsWeakPrincipal = WeakAclPrincipals.Any(p => line.Contains(p, StringComparison.OrdinalIgnoreCase));
+            if (!mentionsWeakPrincipal) continue;
+
+            bool hasWriteGrant = line.Contains("(W)", StringComparison.OrdinalIgnoreCase)
+                || line.Contains("(F)", StringComparison.OrdinalIgnoreCase)
+                || line.Contains("(M)", StringComparison.OrdinalIgnoreCase);
+            if (!hasWriteGrant) continue;
+
+            findings.Add(new SecurityFinding
+            {
+                Severity = FindingSeverity.High,
+                Title = $"Writable {pathKind} for a persistence target: {entry.Name}",
+                Reason = $"icacls reports a write-capable permission for a broad group on \"{path}\" ({line}). A boot-start/autorun target (or its containing folder) that any ordinary user can overwrite is a real, actionable finding - anyone who can write here can replace what actually runs. This match is deliberately loose/over-inclusive (any (W)/(F)/(M) grant to Users/Authenticated Users/Everyone/BUILTIN\\Users, matched by a plain substring on the principal name) - always confirm with icacls yourself before acting.",
+                Path = path,
+                WhatDisablingDoes = "Tighten this path's ACL (remove the write grant for the broad group) if you don't have a specific reason for it to be writable by ordinary users.",
+                RelatedEntry = entry,
+            });
+        }
+    }
+
+    // #838/#839: certificate problem flags + signing-time-vs-file-time anomaly, run once over
+    // every entry this scan produced that resolved to an existing file. Reuses
+    // SignatureCheckService's cache (every entry above already triggered a GetStatus/GetPublisher
+    // lookup for the same path), so this adds no new disk/native work - just re-reads the already-
+    // cached richer SignatureResult per distinct path. Deliberately does NOT run revocation
+    // checking here (SignatureCheckService.TryCheckRevocation, available separately) - that can
+    // make a network call, and doing it once per persistence entry during what's meant to be a
+    // fast on-demand scan would violate this app's "network calls are gated behind their own
+    // explicit action" convention (the same reason #845's icacls sweep is its own separate button
+    // rather than folded into this same Scan). What IS surfaced here - an untrusted/broken chain,
+    // an expired certificate, a SHA-1-signed file, and an on-disk timestamp older than the cert's
+    // own validity start - all come from the WinVerifyTrust check every entry already ran with no
+    // extra network round-trip.
+    private static void AddFileTrustFindings(List<AutorunEntry> entries, List<SecurityFinding> findings)
+    {
+        var seenPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var entry in entries)
+        {
+            var path = entry.ResolvedPath;
+            if (string.IsNullOrWhiteSpace(path) || !seenPaths.Add(path)) continue;
+
+            bool exists;
+            DateTime? createdUtc = null, modifiedUtc = null;
+            try
+            {
+                exists = System.IO.File.Exists(path);
+                if (exists)
+                {
+                    createdUtc = System.IO.File.GetCreationTimeUtc(path);
+                    modifiedUtc = System.IO.File.GetLastWriteTimeUtc(path);
+                }
+            }
+            catch
+            {
+                continue; // denied/transient - skip this file's trust findings, not the whole pass
+            }
+            if (!exists) continue;
+
+            var result = SignatureCheckService.GetResult(path);
+
+            switch (result.Verification)
+            {
+                case SignatureVerification.Expired:
+                    findings.Add(new SecurityFinding
+                    {
+                        Severity = FindingSeverity.Medium,
+                        Title = $"Expired signing certificate: {entry.Name}",
+                        Reason = $"\"{path}\" is signed, but the certificate's validity window has passed" +
+                                 (result.ValidTo is { } vt ? $" (expired {vt:d})." : ".") +
+                                 " This only checks whether the leaf certificate itself is past its NotAfter date - it does not attempt to verify a valid RFC3161 timestamp countersignature, which can keep an otherwise-expired signature legitimately trusted. Quick flag, not a verdict.",
+                        Path = path,
+                        WhatDisablingDoes = "No action implied by this app alone - an expired cert on a legitimate, simply-outdated tool is common and not itself malicious. Worth a manual check if you don't recognize the file.",
+                        RelatedEntry = entry,
+                    });
+                    break;
+
+                case SignatureVerification.UntrustedChain:
+                    findings.Add(new SecurityFinding
+                    {
+                        Severity = FindingSeverity.High,
+                        Title = $"Untrusted signing chain: {entry.Name}",
+                        Reason = $"\"{path}\" carries a signature, but WinVerifyTrust couldn't build a trusted chain for it (untrusted root, or a broken chain link) - this is a stronger signal than plain \"unsigned\", since something actively doesn't check out rather than simply having nothing to check. Quick flag, not a verdict - a private/internal CA not trusted on this machine can also produce this.",
+                        Path = path,
+                        WhatDisablingDoes = "Compare against a known-good copy of this file if you don't recognize it or its publisher.",
+                        RelatedEntry = entry,
+                    });
+                    break;
+            }
+
+            if (result.IsSha1Signature)
+            {
+                findings.Add(new SecurityFinding
+                {
+                    Severity = FindingSeverity.Low,
+                    Title = $"SHA-1 signed: {entry.Name}",
+                    Reason = $"\"{path}\"'s certificate was signed using SHA-1, a weak hash algorithm deprecated for Authenticode signing. Common on older-but-legitimate software; not itself a sign of tampering. Quick flag, not a verdict.",
+                    Path = path,
+                    WhatDisablingDoes = "No action implied - worth checking for an updated, SHA-256-signed release of the same software if one exists.",
+                    RelatedEntry = entry,
+                });
+            }
+
+            // #839: signing-time vs. file-time anomaly - approximates "signing time" as the
+            // leaf certificate's NotBefore (ValidFrom), since extracting the actual RFC3161
+            // countersignature timestamp needs a deeper WINTRUST_DATA/CERT_CHAIN_CONTEXT walk
+            // than this chunk takes on - noted here, not just in the finding text, per #839's own
+            // guidance on this approximation.
+            if (result.ValidFrom is { } validFrom && createdUtc is { } created && modifiedUtc is { } modified)
+            {
+                var earliestOnDisk = created < modified ? created : modified;
+                if (earliestOnDisk < validFrom.AddDays(-1)) // a day of slack for clock/timezone noise
+                {
+                    findings.Add(new SecurityFinding
+                    {
+                        Severity = FindingSeverity.Low,
+                        Title = $"File predates its own certificate: {entry.Name}",
+                        Reason = $"\"{path}\" has an on-disk timestamp ({earliestOnDisk:g} UTC) earlier than its certificate's validity start ({validFrom:g} UTC). This approximates \"signing time\" as the certificate's NotBefore date, not the file's actual Authenticode countersignature timestamp - a quick flag only, shown for this file's detail, not a verdict. Ordinary file-copy/extraction operations routinely produce an earlier-looking on-disk timestamp too.",
+                        Path = path,
+                        WhatDisablingDoes = "No action implied - worth a manual check if the file's origin is otherwise unclear.",
+                        RelatedEntry = entry,
+                    });
+                }
+            }
+        }
+    }
+
     /// <summary>Builds an AutorunEntry from a raw registry command string, resolving a bare path
     /// via StartupManagerService.ExtractPath (shared with the Startup tab's own parsing) and the
     /// signature status via SignatureCheckService's shared per-path cache.</summary>
@@ -3085,7 +3294,7 @@ public static class AutorunsService
             Name = name,
             RawCommand = rawCommand,
             ResolvedPath = path,
-            Publisher = "Unknown",
+            Publisher = GetPublisher(path),
             SignatureStatus = SignatureCheckService.GetStatus(path),
             Location = location,
             Enabled = true,

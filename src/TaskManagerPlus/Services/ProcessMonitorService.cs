@@ -161,10 +161,21 @@ public sealed class ProcessMonitorService : IDisposable
 
                 double cpuPercentClamped = Math.Round(Math.Min(cpuPercent, 100.0 * _logicalProcessors), 1);
 
+                // #837: publisher (subject CN, falling back to issuer CN) - piggybacks on the
+                // same cached SignatureCheckService lookup SignatureStatus below already performs,
+                // so this costs nothing extra beyond the first check of a given file path.
+                string processName = SafeName(proc);
+                var signer = SignatureCheckService.GetSignerInfo(filePath);
+                string publisher = signer.SubjectCn ?? signer.IssuerCn ?? "Unknown";
+
+                // #840: expected-Microsoft-binary / near-miss-name check - see
+                // ProcessTrustService's remarks on why this stays cheap for a per-tick poll.
+                string? trustWarning = ProcessTrustService.Evaluate(processName, filePath);
+
                 rows.Add(new ProcessRow
                 {
                     Pid = pid,
-                    Name = SafeName(proc),
+                    Name = processName,
                     CpuPercent = cpuPercentClamped,
                     MemoryBytes = memoryBytes,
                     PrivateBytes = privateBytes,
@@ -181,6 +192,9 @@ public sealed class ProcessMonitorService : IDisposable
                     FilePath = filePath,
                     CommandLine = GetCommandLineCached(pid),
                     SignatureStatus = SignatureCheckService.GetStatus(filePath),
+                    Publisher = publisher,
+                    IsSelfSigned = signer.SelfSigned,
+                    TrustWarning = trustWarning,
                     IsHighPrivilege = HighPrivilegeAccounts.Contains(owner, StringComparer.OrdinalIgnoreCase),
                     ParentPid = GetParentPidCached(pid),
                     IsLeakSuspect = ComputeLeakSuspect(pid, memoryBytes),

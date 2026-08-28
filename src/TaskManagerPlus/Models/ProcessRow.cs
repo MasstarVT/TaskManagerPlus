@@ -69,6 +69,27 @@ public sealed class ProcessRow : ObservableObject
     private string _signatureStatus = "Unknown";
     public string SignatureStatus { get => _signatureStatus; set => SetProperty(ref _signatureStatus, value); }
 
+    /// <summary>#837: signing certificate's subject CN (falling back to issuer CN, then
+    /// "Unknown") - see SignatureCheckService.GetSignerInfo. Populated from the same cached
+    /// per-path lookup SignatureStatus already triggers, so this costs nothing extra.</summary>
+    private string _publisher = "Unknown";
+    public string Publisher { get => _publisher; set => SetProperty(ref _publisher, value); }
+
+    /// <summary>#837: true when the signing certificate's subject and issuer are the same (a
+    /// self-signed cert) - worth calling out since a self-signed "Microsoft"-looking publisher
+    /// name would otherwise look legitimate at a glance.</summary>
+    private bool _isSelfSigned;
+    public bool IsSelfSigned { get => _isSelfSigned; set => SetProperty(ref _isSelfSigned, value); }
+
+    /// <summary>#840: set only for the handful of well-known Windows system process names
+    /// (svchost, lsass, csrss, ...) when the running image is somewhere other than
+    /// System32/SysWOW64 or isn't Microsoft-signed, OR for a near-miss name that looks like a
+    /// typo-squat of one of those names (e.g. "scvhost", "svch0st") - see
+    /// ProcessTrustService.EvaluateProcessTrust. Null means "nothing to flag" (not evaluated, or
+    /// evaluated and clean). "Quick flag, not a verdict" - see ProcessTrustService's remarks.</summary>
+    private string? _trustWarning;
+    public string? TrustWarning { get => _trustWarning; set => SetProperty(ref _trustWarning, value); }
+
     /// <summary>True when User is SYSTEM/LOCAL SERVICE/NETWORK SERVICE/an Administrators-group
     /// account - i.e. running with more privilege than an ordinary signed-in user, worth calling
     /// out when auditing for something unexpected among running processes.</summary>

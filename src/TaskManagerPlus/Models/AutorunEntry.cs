@@ -29,14 +29,16 @@ public sealed class AutorunEntry
     /// couldn't be resolved to a file path.</summary>
     public string ResolvedPath { get; init; } = string.Empty;
 
-    /// <summary>Certificate subject CN, when cheaply available. "Unknown" here is expected and
-    /// normal for this chunk - item 837 upgrades publisher extraction app-wide; stubbing it here
-    /// avoids duplicating that work ahead of time.</summary>
+    /// <summary>#837: certificate subject CN (falling back to issuer CN, then "Unknown"), via
+    /// SignatureCheckService.GetSignerInfo - see AutorunsService.GetPublisher. "Unknown" here means
+    /// either no resolvable path (most non-file-backed locations - registry values with no
+    /// executable/DLL target) or a signature check that couldn't determine a signer.</summary>
     public string Publisher { get; init; } = "Unknown";
 
-    /// <summary>"Signed" / "Unsigned" / "Unknown" - see SignatureCheckService's remarks on what
-    /// this can and can't see (embedded Authenticode only; no chain/revocation/catalog check).
-    /// A quick flag, not a verdict.</summary>
+    /// <summary>"Signed" / "Unsigned" / "Unknown" - the backward-compatible string form of
+    /// SignatureCheckService's richer SignatureVerification enum (#836: now a real WinVerifyTrust
+    /// chain-and-catalog check, not just an embedded-signature-only read). A quick flag, not a
+    /// verdict - see SignatureCheckService's remarks for exactly what is and isn't verified.</summary>
     public string SignatureStatus { get; init; } = "Unknown";
 
     /// <summary>Where this entry lives - a "HIVE\key\value" registry path for every location this
