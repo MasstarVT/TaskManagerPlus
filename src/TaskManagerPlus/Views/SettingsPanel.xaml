@@ -278,6 +278,21 @@
                     <TextBlock Text="days" VerticalAlignment="Center" Margin="6,0,0,0" Style="{StaticResource SubStat}" />
                 </StackPanel>
 
+                <TextBlock Text="PERFORMANCE BASELINES" FontSize="10.5" FontWeight="Bold" Foreground="{DynamicResource TextTertiaryBrush}"
+                           Margin="0,0,0,14" />
+                <!-- #952: opt-in automatic weekly baseline capture (WinSAT scores, boot duration,
+                     idle CPU/RAM/disk-latency) - only fires once this PC has been idle for a few
+                     minutes. Same toggle also lives in the Troubleshoot tab's Baselines section. -->
+                <CheckBox Content="Capture a performance baseline automatically about once a week, while idle"
+                          IsChecked="{Binding DataContext.Troubleshoot.Baselines.AutoCaptureEnabled, RelativeSource={RelativeSource AncestorType=Window}}" Margin="0,0,0,6" />
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                    <TextBlock Text="Keep the most recent" VerticalAlignment="Center" Margin="0,0,6,0" Style="{StaticResource SubStat}" />
+                    <TextBox Width="50" Text="{Binding DataContext.Troubleshoot.Baselines.MaxBaselinesKept, RelativeSource={RelativeSource AncestorType=Window}, UpdateSourceTrigger=LostFocus}" />
+                    <TextBlock Text="baselines" VerticalAlignment="Center" Margin="6,0,0,0" Style="{StaticResource SubStat}" />
+                </StackPanel>
+                <TextBlock Text="{Binding DataContext.Troubleshoot.Baselines.AutoCaptureStatusText, RelativeSource={RelativeSource AncestorType=Window}}"
+                           Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,22" />
+
                 <TextBlock Text="REMOTE MONITORING" FontSize="10.5" FontWeight="Bold" Foreground="{DynamicResource TextTertiaryBrush}"
                            Margin="0,0,0,14" />
                 <!-- #101: read-only metrics endpoint for a second device on the LAN - see

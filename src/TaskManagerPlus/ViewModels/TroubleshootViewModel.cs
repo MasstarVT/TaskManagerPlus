@@ -41,7 +41,7 @@ namespace TaskManagerPlus.ViewModels;
 /// which can reopen a saved run read-only (<see cref="OpenSavedRunCommand"/>) or re-run the same
 /// symptom fresh (<see cref="RerunSavedCommand"/>).
 /// </summary>
-public sealed class TroubleshootViewModel : ObservableObject
+public sealed class TroubleshootViewModel : ObservableObject, IDisposable
 {
     private readonly PerformanceViewModel _performance;
     private readonly ProcessesViewModel _processes;
@@ -51,6 +51,10 @@ public sealed class TroubleshootViewModel : ObservableObject
     // #938-949: the Timeline panel - a sibling "page" of this tab, reached from the landing page's
     // "Timeline" button the same way "Past runs" already is (see ShowLanding/ShowPastRuns below).
     public TimelineViewModel Timeline { get; }
+
+    // #950-958: the Baselines panel - a third sibling "page", same shape as Timeline above (see
+    // ShowBaselines/IsShowingBaselines).
+    public BaselineViewModel Baselines { get; }
 
     public ObservableCollection<SymptomCard> Symptoms { get; } = new();
 
@@ -70,6 +74,7 @@ public sealed class TroubleshootViewModel : ObservableObject
                 OnPropertyChanged(nameof(ShowLanding));
                 OnPropertyChanged(nameof(ShowPastRuns));
                 OnPropertyChanged(nameof(ShowTimeline));
+                OnPropertyChanged(nameof(ShowBaselines));
             }
         }
     }
@@ -103,14 +108,32 @@ public sealed class TroubleshootViewModel : ObservableObject
         }
     }
 
+    // #950-958: landing page <-> Baselines panel, mirroring IsShowingTimeline above.
+    private bool _isShowingBaselines;
+    public bool IsShowingBaselines
+    {
+        get => _isShowingBaselines;
+        private set
+        {
+            if (SetProperty(ref _isShowingBaselines, value))
+            {
+                OnPropertyChanged(nameof(ShowLanding));
+                OnPropertyChanged(nameof(ShowBaselines));
+            }
+        }
+    }
+
     /// <summary>True for the symptom-card landing grid.</summary>
-    public bool ShowLanding => SelectedRun is null && !IsShowingPastRuns && !IsShowingTimeline;
+    public bool ShowLanding => SelectedRun is null && !IsShowingPastRuns && !IsShowingTimeline && !IsShowingBaselines;
 
     /// <summary>True for the "Past runs" list.</summary>
     public bool ShowPastRuns => SelectedRun is null && IsShowingPastRuns;
 
     /// <summary>True for the Timeline panel.</summary>
     public bool ShowTimeline => SelectedRun is null && IsShowingTimeline;
+
+    /// <summary>True for the Baselines panel.</summary>
+    public bool ShowBaselines => SelectedRun is null && IsShowingBaselines;
 
     public bool IsRunning { get => _isRunning; private set => SetProperty(ref _isRunning, value); }
 
@@ -126,11 +149,17 @@ public sealed class TroubleshootViewModel : ObservableObject
     public RelayCommand ShowTimelineCommand { get; }
     public RelayCommand HideTimelineCommand { get; }
 
-    public TroubleshootViewModel(PerformanceViewModel performance, ProcessesViewModel processes, LoggingViewModel logging)
+    // #950-958: landing page <-> Baselines panel, mirroring ShowTimelineCommand/HideTimelineCommand.
+    public RelayCommand ShowBaselinesCommand { get; }
+    public RelayCommand HideBaselinesCommand { get; }
+
+    public TroubleshootViewModel(PerformanceViewModel performance, ProcessesViewModel processes, LoggingViewModel logging,
+        EnergyThermalsViewModel energyThermals, SystemSpecsViewModel systemSpecs, ServicesViewModel services, RulesEngineService rulesEngine)
     {
         _performance = performance;
         _processes = processes;
         Timeline = new TimelineViewModel(logging);
+        Baselines = new BaselineViewModel(performance, energyThermals, systemSpecs, services, processes, rulesEngine);
 
         RegisterBranch("slow", "My PC is slow right now", "Checks CPU/RAM/disk load, top offenders, and background maintenance work.", BuildSlowPcSteps, BuildSlowPcVerdict);
         RegisterBranch("crash", "It crashes or blue-screens", "Checks crash events, minidumps, reliability records, hardware errors, and recent driver installs.", BuildCrashSteps, BuildCrashVerdict);
@@ -158,6 +187,8 @@ public sealed class TroubleshootViewModel : ObservableObject
 
         ShowTimelineCommand = new RelayCommand(_ => IsShowingTimeline = true, _ => !IsRunning && SelectedRun is null);
         HideTimelineCommand = new RelayCommand(_ => IsShowingTimeline = false);
+        ShowBaselinesCommand = new RelayCommand(_ => IsShowingBaselines = true, _ => !IsRunning && SelectedRun is null);
+        HideBaselinesCommand = new RelayCommand(_ => IsShowingBaselines = false);
         OpenSavedRunCommand = new RelayCommand(param =>
         {
             if (param is not TroubleshootRunRecord record) return;
@@ -963,4 +994,6 @@ public sealed class TroubleshootViewModel : ObservableObject
             return "No device currently reports a Device Manager problem, but " + power.ResultText;
         return "No device currently reports a problem in Device Manager, and USB root hub power settings look fine.";
     }
+
+    public void Dispose() => Baselines.Dispose();
 }

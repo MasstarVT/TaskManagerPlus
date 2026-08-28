@@ -166,6 +166,10 @@
                              events, service failures, perf spikes, and user notes. -->
                         <Button Content="Timeline" Padding="10,4" Margin="0,0,8,0" VerticalAlignment="Center"
                                 Command="{Binding ShowTimelineCommand}" />
+                        <!-- #950-958: opt-in performance-baseline capture/trend/regression/
+                             before-after-change tracking. -->
+                        <Button Content="Baselines" Padding="10,4" Margin="0,0,8,0" VerticalAlignment="Center"
+                                Command="{Binding ShowBaselinesCommand}" />
                         <!-- #915: reopen a saved run's transcript, or re-run its symptom fresh. -->
                         <Button Content="Past runs" Padding="10,4" VerticalAlignment="Center"
                                 Command="{Binding ShowPastRunsCommand}" />
@@ -217,6 +221,11 @@
              nested in a second one. -->
         <views:TimelineView DataContext="{Binding Timeline}"
                              Visibility="{Binding DataContext.ShowTimeline, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource BoolToVisibilityConverter}}" />
+
+        <!-- #950-958: the Baselines panel - visible only when explicitly opened from the landing
+             page. -->
+        <views:BaselineView DataContext="{Binding Baselines}"
+                             Visibility="{Binding DataContext.ShowBaselines, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource BoolToVisibilityConverter}}" />
 
         <!-- Run view - ordered step list plus a verdict card. Visible only once a run exists. -->
         <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16"

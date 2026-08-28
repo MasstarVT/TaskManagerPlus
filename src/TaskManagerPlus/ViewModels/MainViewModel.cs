@@ -221,7 +221,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Summary = new SummaryViewModel(Performance, Processes, Services, EnergyThermals, SystemSpecs, Network, Stability, RulesEngine);
         RulesEditor = new RulesEditorViewModel(RulesEngine, Performance, EnergyThermals, SystemSpecs, Services, Processes);
         Search = new GlobalSearchViewModel(Processes, Services, Startup, SystemSpecs);
-        Troubleshoot = new TroubleshootViewModel(Performance, Processes, Logging);
+        Troubleshoot = new TroubleshootViewModel(Performance, Processes, Logging, EnergyThermals, SystemSpecs, Services, RulesEngine);
 
         // #943: edge-triggered thermal/throttle event logging for the Timeline panel - a
         // PropertyChanged subscription on the already-constructed Cpu/EnergyThermals view-models,
@@ -260,6 +260,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         ApplyAxisThemeToLogging();
         Theme.ThemeModeChanged += ApplyAxisThemeToLogging;
+
+        ApplyAxisThemeToBaselines();
+        Theme.ThemeModeChanged += ApplyAxisThemeToBaselines;
     }
 
     private void ApplyThemeToPerformance()
@@ -310,6 +313,14 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Color TextOf(string key) => (resources[key] as SolidColorBrush)?.Color ?? Colors.Gray;
 
         Logging.ApplyAxisTheme(TextOf("TextSecondaryBrush"), TextOf("BorderBrush2"));
+    }
+
+    private void ApplyAxisThemeToBaselines()
+    {
+        var resources = Application.Current.Resources;
+        Color TextOf(string key) => (resources[key] as SolidColorBrush)?.Color ?? Colors.Gray;
+
+        Troubleshoot.Baselines.ApplyAxisTheme(TextOf("TextSecondaryBrush"), TextOf("BorderBrush2"));
     }
 
     private RemoteMetricsSnapshot BuildRemoteMetricsSnapshot() => new()
@@ -384,6 +395,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Theme.ThemeModeChanged -= ApplyAxisThemeToStability;
         Theme.ThemeModeChanged -= ApplyAxisThemeToStartup;
         Theme.ThemeModeChanged -= ApplyAxisThemeToLogging;
+        Theme.ThemeModeChanged -= ApplyAxisThemeToBaselines;
         Processes.Dispose();
         Performance.Dispose();
         Services.Dispose();
@@ -395,6 +407,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Summary.Dispose();
         RulesEditor.Dispose();
         RulesEngine.Dispose();
+        Troubleshoot.Dispose();
         _miniDashboard?.Close();
         RemoteMonitor.Dispose();
         Hotkey.Dispose();

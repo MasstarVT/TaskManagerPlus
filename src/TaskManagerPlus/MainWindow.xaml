@@ -30,6 +30,7 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
         <!-- Header -->
@@ -367,8 +368,41 @@
             </views:SettingsPanel>
         </Grid>
 
+        <!-- #955: persistent "change in progress" banner, visible on every tab (not just the
+             Troubleshoot tab's Baselines section where the change window itself is started/
+             finished) - a small conditional row here was easy given the existing fixed 3-row
+             Grid, so this is the "real, app-wide visibility" option CLAUDE.md's own instructions
+             for this feature preferred over confining it to one tab. -->
+        <Border Grid.Row="2" Background="{DynamicResource AccentMutedBrush}" BorderBrush="{DynamicResource AccentBrush}" BorderThickness="0,0,0,1">
+            <Border.Style>
+                <Style TargetType="Border">
+                    <Setter Property="Visibility" Value="Collapsed" />
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding Troubleshoot.Baselines.IsChangeWindowOpen}" Value="True">
+                            <Setter Property="Visibility" Value="Visible" />
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </Border.Style>
+            <Grid Margin="20,7">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" FontSize="11.5" Foreground="{DynamicResource AccentBrush}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis">
+                    <Run Text="Change in progress: " FontWeight="SemiBold" />
+                    <Run Text="{Binding Troubleshoot.Baselines.ActiveChangeLabel, Mode=OneWay}" />
+                    <Run Text=" (started " />
+                    <Run Text="{Binding Troubleshoot.Baselines.ChangeStartedAt, StringFormat={}{0:t}, Mode=OneWay}" />
+                    <Run Text=")" />
+                </TextBlock>
+                <Button Grid.Column="1" Content="Finish change" Padding="10,4" Cursor="Hand"
+                        Command="{Binding Troubleshoot.Baselines.FinishChangeCommand}" />
+            </Grid>
+        </Border>
+
         <!-- Footer status bar -->
-        <Border Grid.Row="2" Background="{DynamicResource BgPanelBrush}" BorderBrush="{DynamicResource BorderBrush2}" BorderThickness="0,1,0,0">
+        <Border Grid.Row="3" Background="{DynamicResource BgPanelBrush}" BorderBrush="{DynamicResource BorderBrush2}" BorderThickness="0,1,0,0">
             <Grid Margin="20,7">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
