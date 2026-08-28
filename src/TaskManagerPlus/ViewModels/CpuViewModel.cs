@@ -1,6 +1,10 @@
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.Windows.Threading;
+using LiveChartsCore;
+using LiveChartsCore.SkiaSharpView;
+using LiveChartsCore.SkiaSharpView.Painting;
+using SkiaSharp;
 using TaskManagerPlus.Common;
 using TaskManagerPlus.Models;
 using TaskManagerPlus.Services;
@@ -12,6 +16,15 @@ public sealed class CoreGroup
 {
     public int NumaNode { get; init; }
     public IReadOnlyList<CoreUsage> Cores { get; init; } = Array.Empty<CoreUsage>();
+}
+
+/// <summary>#630: one NUMA node's average effective-vs-requested frequency gap (percentage
+/// points), aggregated from its member cores' CoreUsage.FrequencyGapPoints. Null when none of the
+/// group's cores reported a gap this tick.</summary>
+public sealed class CoreGroupFrequencyGap
+{
+    public int NumaNode { get; init; }
+    public double? GapPoints { get; init; }
 }
 
 /// <summary>
@@ -45,7 +58,18 @@ public sealed class CpuViewModel : ObservableObject, IDisposable
     private const int SustainedTicksRequired = 3;
     private int _deepIdleLatencyStreak;
 
+    // #629: clock-stretching microbenchmark - its own slow timer (not the 2s throttle tick), since
+    // it briefly pins the whole process to one core (see ClockStretchService's remarks).
+    private readonly DispatcherTimer _clockStretchTimer;
+    private bool _clockStretchInFlight;
+
     public PerformanceViewModel Performance { get; }
+
+    /// <summary>#608/#603: exposes the shared EnergyThermalsViewModel instance so CpuView.xaml can
+    /// bind directly to its thermal-headroom/thermal-zone/firmware-event properties (e.g.
+    /// EnergyThermals.CpuThermalHeadroomC) without new cross-ViewModel plumbing - the same
+    /// "expose the composed instance as a public property" shape Performance above already uses.</summary>
+    public EnergyThermalsViewModel EnergyThermals => _energyThermals;
 
     /// <summary>Round 8 #25/#28/#29/#30: static CPU identification readouts (microcode,
     /// mitigation override status, instruction-set support, cache sizes) - queried once in the
@@ -91,16 +115,133 @@ public sealed class CpuViewModel : ObservableObject, IDisposable
     private string _powerLimitText = string.Empty;
     public string PowerLimitText { get => _powerLimitText; private set => SetProperty(ref _powerLimitText, value); }
 
+    // #628: refines IsPowerLimited above from a bare "at ceiling" flag into "clamped at the
+    // ceiling for N minutes" - tracks how long IsPowerLimited has been continuously true and folds
+    // that duration into PowerLimitText itself once it's been sustained for at least a minute
+    // (a one-tick blip shouldn't read the same as a real, sustained clamp).
+    private DateTime? _powerClampStartedAt;
+
+    // ---- #627: PL1/PL2/tau inference from a package-power dwell histogram ----------------------
+    // Built only from samples taken while under sustained load (CPU >= 70%) - Intel-style PL1/PL2
+    // configurations produce two distinct plateaus in that histogram (a high short-duration
+    // ceiling settling to a lower sustained one). Explicitly reported as "inferred, not read from
+    // MSRs" - the real registers need a kernel driver this app deliberately does not ship.
+    private const double SustainedLoadPercentThreshold = 70.0;
+    private const double PowerBucketWidthW = 1.0;
+    private const int PowerHistogramWindowMinutes = 20;
+    private DateTime? _powerHistogramLoadStartedAt;
+    private readonly List<(DateTime Time, double PowerW)> _powerHistogramSamples = new();
+    private readonly Dictionary<int, int> _powerHistogramBuckets = new();
+
+    public ObservableCollection<TurboHistogramBucket> PowerDwellHistogram { get; } = new();
+
+    private double? _inferredPl2W;
+    public double? InferredPl2W { get => _inferredPl2W; private set => SetProperty(ref _inferredPl2W, value); }
+
+    private double? _inferredPl1W;
+    public double? InferredPl1W { get => _inferredPl1W; private set => SetProperty(ref _inferredPl1W, value); }
+
+    private double? _inferredTauSeconds;
+    public double? InferredTauSeconds { get => _inferredTauSeconds; private set => SetProperty(ref _inferredTauSeconds, value); }
+
+    private string _powerPlateauText = "Not enough sustained-load samples yet to infer PL1/PL2 plateaus.";
+    public string PowerPlateauText { get => _powerPlateauText; private set => SetProperty(ref _powerPlateauText, value); }
+
+    // ---- #629: clock-stretching detector ----------------------------------------------------------
+    // Compares a tiny fixed-work microbenchmark's achieved ops/sec (ClockStretchService) against
+    // the reported effective clock - clock stretching (common under AMD electrical limits and on
+    // some laptops) shows a normal reported frequency with reduced real throughput, a discrepancy
+    // nothing else in this app can see.
+    private double _bestOpsPerMhz;
+    private int _lowClockStretchStreak;
+
+    private double? _clockStretchPercent;
+    public double? ClockStretchPercent { get => _clockStretchPercent; private set => SetProperty(ref _clockStretchPercent, value); }
+
+    private string _clockStretchText = "Not measured yet this session.";
+    public string ClockStretchText { get => _clockStretchText; private set => SetProperty(ref _clockStretchText, value); }
+
+    private bool _clockStretchDetected;
+    public bool ClockStretchDetected { get => _clockStretchDetected; private set => SetProperty(ref _clockStretchDetected, value); }
+
+    // ---- #630: effective- vs. requested-frequency gap, per core group ----------------------------
+    // Performance.CpuFrequencyGapPercent/CpuFrequencyGapHistory carry the session-wide aggregate
+    // and trend chart; this adds the per-NUMA-node breakdown on top of the same CoreGroups this
+    // view-model already builds for the per-core grid.
+    public ObservableCollection<CoreGroupFrequencyGap> FrequencyGapByGroup { get; } = new();
+
+    // ---- #631: core parking and frequency-floor misconfiguration checklist -----------------------
+    public ObservableCollection<string> ProcessorPowerChecklist { get; } = new();
+    public AsyncRelayCommand LoadProcessorPowerSettingsCommand { get; }
+    private ProcessorPowerSettings _processorPowerSettings = new();
+
+    private string _processorPowerSettingsStatusText = "Not checked yet - click \"Check power settings\" (runs powercfg /qh).";
+    public string ProcessorPowerSettingsStatusText { get => _processorPowerSettingsStatusText; private set => SetProperty(ref _processorPowerSettingsStatusText, value); }
+
+    // ---- #634: boost residency relative to rated clocks ------------------------------------------
+    // Reuses Performance.TurboHistogram's existing "Below base" bucket (CpuVsBasePercent < 0)
+    // rather than a second histogram - this adds the rated-clock reference readout and the
+    // heat-correlation interpretation that bucket alone doesn't carry: long dwell below base
+    // without heat is a power-plan/firmware limit, long dwell below base with heat confirms
+    // thermal throttling.
+    private long _belowBaseSamples;
+    private long _belowBaseHotSamples;
+
+    private string _boostResidencyText = "Not enough samples yet this session.";
+    public string BoostResidencyText { get => _boostResidencyText; private set => SetProperty(ref _boostResidencyText, value); }
+
+    // ---- #635: silicon-behavior snapshot for before/after comparison ------------------------------
+    public ObservableCollection<SiliconSnapshot> SiliconSnapshots { get; } = new();
+    public RelayCommand SnapshotCurrentBehaviorCommand { get; }
+
+    private string _siliconSnapshotStatusText = string.Empty;
+    public string SiliconSnapshotStatusText { get => _siliconSnapshotStatusText; private set => SetProperty(ref _siliconSnapshotStatusText, value); }
+
     /// <summary>
-    /// #84: throttle reason breakdown - a single "Thermal" / "Power" / "None" readout combining
-    /// IsThrottling and IsPowerLimited above into the one question they're both really answering
-    /// ("why is this CPU running below base clock right now, if it is"). Not a third, independent
-    /// signal - LibreHardwareMonitorLib exposes no CPU "limit reason" API on most consumer
-    /// hardware (that's the vendor-proprietary MSR data HWiNFO reads directly, the same gap
-    /// IsThrottling/IsPowerLimited's own remarks document), so this is exactly as reliable as
-    /// those two heuristics, just presented as one readout instead of two separate flags.
+    /// #84/#603: throttle-reason breakdown - now a full Thermal/Power/Firmware/Core-parked/None
+    /// classification (ThrottleClassificationService.Classify, shared with
+    /// EnergyThermalsViewModel's own episode tracking, #604) rather than just the two-way
+    /// Thermal/Power/None readout this was before. Still exactly as reliable as before for the
+    /// Thermal/Power/Core-parked cases - this app has no access to the vendor-proprietary "limit
+    /// reason" MSR data HWiNFO reads directly - except Firmware, which is corroborated by an
+    /// authoritative Windows event (#602) rather than a pattern match.
     /// </summary>
-    public string ThrottleReason => IsThrottling ? "Thermal" : IsPowerLimited ? "Power" : "None";
+    private ThrottleReasonClass _currentThrottleClass = ThrottleReasonClass.None;
+    public ThrottleReasonClass CurrentThrottleClass { get => _currentThrottleClass; private set => SetProperty(ref _currentThrottleClass, value); }
+
+    public string ThrottleReason => CurrentThrottleClass switch
+    {
+        ThrottleReasonClass.Thermal => "Thermal",
+        ThrottleReasonClass.Power => "Power",
+        ThrottleReasonClass.Firmware => "Firmware",
+        ThrottleReasonClass.CoreParked => "Core-parked",
+        _ => "None",
+    };
+
+    // #603: dwell time per reason class, accumulated across the session on this view-model's own
+    // 2s timer, presented as a single stacked bar ("what is actually holding my clocks back")
+    // rather than just the instantaneous flags above.
+    private readonly Dictionary<ThrottleReasonClass, double> _dwellSeconds = new()
+    {
+        [ThrottleReasonClass.None] = 0,
+        [ThrottleReasonClass.Thermal] = 0,
+        [ThrottleReasonClass.Power] = 0,
+        [ThrottleReasonClass.Firmware] = 0,
+        [ThrottleReasonClass.CoreParked] = 0,
+    };
+    private DateTime _lastDwellTick = DateTime.Now;
+
+    public ObservableCollection<double> NoneDwellShare { get; } = new() { 100 };
+    public ObservableCollection<double> ThermalDwellShare { get; } = new() { 0 };
+    public ObservableCollection<double> PowerDwellShare { get; } = new() { 0 };
+    public ObservableCollection<double> FirmwareDwellShare { get; } = new() { 0 };
+    public ObservableCollection<double> CoreParkedDwellShare { get; } = new() { 0 };
+    public ISeries[] ThrottleDwellSeries { get; }
+    public Axis[] ThrottleDwellXAxes { get; }
+    public Axis[] ThrottleDwellYAxes { get; }
+
+    private static readonly SKColor AxisTextColor = new(0x9A, 0x9A, 0xA2);
+    private static readonly SKColor AxisSeparatorColor = new(0x33, 0x33, 0x3A, 160);
 
     /// <summary>
     /// #233: extends the existing C-state residency display (#83) with a heuristic flag - when the
@@ -171,9 +312,36 @@ public sealed class CpuViewModel : ObservableObject, IDisposable
         performance.Cores.CollectionChanged += OnCoresCollectionChanged;
         RebuildGroups();
 
+        // #603: single-category stacked bar - one "Session" column, five stacked segments (one
+        // per reason class) sized by that class's share of dwell time so far. StackedColumnSeries
+        // instances sharing no explicit StackGroup stack together by default.
+        ThrottleDwellXAxes = new[]
+        {
+            new Axis { Labels = new[] { "Session" }, LabelsPaint = new SolidColorPaint(AxisTextColor), SeparatorsPaint = null },
+        };
+        ThrottleDwellYAxes = new[]
+        {
+            new Axis
+            {
+                MinLimit = 0, MaxLimit = 100,
+                Labeler = v => $"{v:0}%",
+                LabelsPaint = new SolidColorPaint(AxisTextColor),
+                SeparatorsPaint = new SolidColorPaint(AxisSeparatorColor) { StrokeThickness = 1 },
+            },
+        };
+        ThrottleDwellSeries = new ISeries[]
+        {
+            new StackedColumnSeries<double> { Values = NoneDwellShare, Name = "None", Fill = new SolidColorPaint(SKColors.Gray.WithAlpha(130)), Stroke = null, MaxBarWidth = 70 },
+            new StackedColumnSeries<double> { Values = ThermalDwellShare, Name = "Thermal", Fill = new SolidColorPaint(SKColors.OrangeRed), Stroke = null, MaxBarWidth = 70 },
+            new StackedColumnSeries<double> { Values = PowerDwellShare, Name = "Power", Fill = new SolidColorPaint(SKColors.Goldenrod), Stroke = null, MaxBarWidth = 70 },
+            new StackedColumnSeries<double> { Values = FirmwareDwellShare, Name = "Firmware", Fill = new SolidColorPaint(SKColors.MediumPurple), Stroke = null, MaxBarWidth = 70 },
+            new StackedColumnSeries<double> { Values = CoreParkedDwellShare, Name = "Core-parked", Fill = new SolidColorPaint(SKColors.DeepSkyBlue), Stroke = null, MaxBarWidth = 70 },
+        };
+
         _throttleTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(2) };
         _throttleTimer.Tick += (_, _) => { RefreshThrottleStatus(); RefreshDeepIdleLatencyFlag(); _ = RefreshCoreAffinityAsync(); _ = RefreshHybridMisplacementFlagAsync(); };
         _throttleTimer.Start();
+        _lastDwellTick = DateTime.Now;
         RefreshThrottleStatus();
         RefreshDeepIdleLatencyFlag();
 
@@ -184,6 +352,23 @@ public sealed class CpuViewModel : ObservableObject, IDisposable
             var features = CpuFeatureService.Read();
             System.Windows.Application.Current?.Dispatcher.Invoke(() => Features = features);
         });
+
+        // #629: a slow, infrequent timer (not the 2s throttle tick) - the microbenchmark briefly
+        // pins the whole process to one core (see ClockStretchService's remarks), so it can't run
+        // as often as the rest of this view-model's per-tick work without being disruptive.
+        _clockStretchTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(45) };
+        _clockStretchTimer.Tick += (_, _) => _ = RunClockStretchBenchmarkAsync();
+        _clockStretchTimer.Start();
+
+        // #631: live "cores parked under load" line populates immediately; the powercfg-derived
+        // lines fill in once the user clicks "Check power settings" below.
+        LoadProcessorPowerSettingsCommand = new AsyncRelayCommand(LoadProcessorPowerSettingsAsync);
+        RebuildProcessorPowerChecklist();
+
+        // #635: whatever was captured in earlier sessions, newest first.
+        foreach (var s in SiliconSnapshotService.Load().OrderByDescending(s => s.Timestamp))
+            SiliconSnapshots.Add(s);
+        SnapshotCurrentBehaviorCommand = new RelayCommand(CaptureSiliconSnapshot);
     }
 
     /// <summary>#24: samples the current top-few CPU processes' threads' ideal processors and
@@ -333,21 +518,66 @@ public sealed class CpuViewModel : ObservableObject, IDisposable
             ? $"{temp:0}°C and {Performance.CpuVsBasePercent:0}% vs. base clock under load"
             : string.Empty;
 
-        // #35: pinned at (within 3%) its own session-high power draw, below base clock, under
+        // #35/#628: pinned at (within 2%) its own session-high power draw, below base clock, under
         // load, but NOT also reading hot - the "power ceiling, not thermal ceiling" signature.
         var power = _energyThermals.TotalPackagePowerW;
         var powerMax = _energyThermals.PowerSessionMaxW;
-        bool atPowerCeiling = power is { } p && powerMax is { } max && max > 0 && p >= max * 0.97;
+        bool atPowerCeiling = power is { } p && powerMax is { } max && max > 0 && p >= max * 0.98;
         IsPowerLimited = !IsThrottling && !hot && highLoad && belowBase && atPowerCeiling;
-        PowerLimitText = IsPowerLimited
-            ? $"{power:0.#} W (session high {powerMax:0.#} W) and {Performance.CpuVsBasePercent:0}% vs. base clock under load"
-            : string.Empty;
+
+        // #628: refines the flag above from a bare "at ceiling" instant into "clamped at the
+        // ceiling for N minutes" once it's been continuously true for a while - a one-tick blip
+        // shouldn't read the same as a sustained clamp.
+        if (IsPowerLimited)
+        {
+            _powerClampStartedAt ??= DateTime.Now;
+            var clampDwell = DateTime.Now - _powerClampStartedAt.Value;
+            PowerLimitText = clampDwell.TotalSeconds >= 60
+                ? $"{power:0.#} W (session high {powerMax:0.#} W) and {Performance.CpuVsBasePercent:0}% vs. base clock under load - clamped at the power ceiling for {FormatClampDuration(clampDwell)}"
+                : $"{power:0.#} W (session high {powerMax:0.#} W) and {Performance.CpuVsBasePercent:0}% vs. base clock under load";
+        }
+        else
+        {
+            _powerClampStartedAt = null;
+            PowerLimitText = string.Empty;
+        }
+
+        // #627: PL1/PL2/tau inference from a sustained-load power dwell histogram.
+        TrackPowerDwellHistogram();
+
+        // #630: per-NUMA-node effective-vs-requested frequency gap breakdown.
+        RefreshFrequencyGapGroups();
+
+        // #631: keeps the live "cores parked under load" line current every tick without needing
+        // a powercfg re-check.
+        RebuildProcessorPowerChecklist();
+
+        // #634: rated-clock reference + heat-correlation interpretation for the existing
+        // turbo-boost histogram's "Below base" bucket.
+        UpdateBoostResidencyText();
+
+        // #603: full reason-class verdict, using the shared classifier so this agrees with
+        // EnergyThermalsViewModel's own episode-tracking classification (#604/#601/#602) - pulls
+        // in the thermal-zone throttle% (#601) and firmware-limit-active snapshot (#602)
+        // EnergyThermalsViewModel already owns, plus this view-model's own Performance reference
+        // for parked-core count.
+        var zoneThrottlePercents = _energyThermals.ThermalZones.Where(z => z.ThrottlePercent.HasValue).Select(z => z.ThrottlePercent!.Value).ToList();
+        double? maxZoneThrottle = zoneThrottlePercents.Count > 0 ? zoneThrottlePercents.Max() : null;
+        CurrentThrottleClass = ThrottleClassificationService.Classify(
+            temp, Performance.CpuCurrentPercent, Performance.CpuVsBasePercent,
+            power, powerMax, Performance.ParkedCoreCount, Performance.Cores.Count,
+            maxZoneThrottle, _energyThermals.FirmwareLimitActive);
+
+        // #603: accumulate dwell time per class since this view-model was constructed.
+        var now = DateTime.Now;
+        double elapsed = Math.Max(0, (now - _lastDwellTick).TotalSeconds);
+        _lastDwellTick = now;
+        _dwellSeconds[CurrentThrottleClass] += elapsed;
+        UpdateDwellShares();
 
         OnPropertyChanged(nameof(ThrottleReason));
     }
 
-    /// <summary>#233: see DeepIdleExitLatencySuspected's remarks. Runs on the same 2s
-    /// _throttleTimer cadence as RefreshThrottleStatus above.</summary>
     private void RefreshDeepIdleLatencyFlag()
     {
         bool eligible = Performance.CStatesAvailable
@@ -362,6 +592,312 @@ public sealed class CpuViewModel : ObservableObject, IDisposable
             ? $"Deep idle exit may be adding latency: {Performance.CpuC3Percent:0}% C3 residency alongside a {_responsiveness.HighestDpcUs:0} µs worst DPC — try testing with minimum processor state at 100% to rule this out. Quick flag, not a verdict."
             : string.Empty;
     }
+
+    /// <summary>#603: recomputes each reason class's share of total dwell time (0-100) and pushes
+    /// the new values into the stacked-bar series' backing collections.</summary>
+    private void UpdateDwellShares()
+    {
+        double total = _dwellSeconds.Values.Sum();
+        if (total <= 0) return;
+
+        NoneDwellShare[0] = Math.Round(_dwellSeconds[ThrottleReasonClass.None] / total * 100, 1);
+        ThermalDwellShare[0] = Math.Round(_dwellSeconds[ThrottleReasonClass.Thermal] / total * 100, 1);
+        PowerDwellShare[0] = Math.Round(_dwellSeconds[ThrottleReasonClass.Power] / total * 100, 1);
+        FirmwareDwellShare[0] = Math.Round(_dwellSeconds[ThrottleReasonClass.Firmware] / total * 100, 1);
+        CoreParkedDwellShare[0] = Math.Round(_dwellSeconds[ThrottleReasonClass.CoreParked] / total * 100, 1);
+    }
+
+    private static string FormatClampDuration(TimeSpan span) =>
+        span.TotalHours >= 1 ? $"{(int)span.TotalHours}h {span.Minutes}m" : $"{(int)span.TotalMinutes}m {span.Seconds}s";
+
+    // ================================================================================
+    // #627: PL1/PL2/tau inference from a package-power dwell histogram
+    // ================================================================================
+
+    /// <summary>Accumulates one bucketed power sample per tick while under sustained load (CPU
+    /// &gt;= 70%), then re-infers the PL1/PL2 plateaus from the accumulated histogram. See the
+    /// property block's remarks for why this is explicitly labeled "inferred, not read from MSRs".</summary>
+    private void TrackPowerDwellHistogram()
+    {
+        bool sustained = Performance.CpuCurrentPercent >= SustainedLoadPercentThreshold;
+        if (!sustained)
+        {
+            _powerHistogramLoadStartedAt = null;
+            return;
+        }
+        _powerHistogramLoadStartedAt ??= DateTime.Now;
+
+        if (_energyThermals.TotalPackagePowerW is not { } p || p <= 0) return;
+
+        var now = DateTime.Now;
+        _powerHistogramSamples.Add((now, p));
+        var cutoff = now.AddMinutes(-PowerHistogramWindowMinutes);
+        _powerHistogramSamples.RemoveAll(s => s.Time < cutoff);
+
+        int bucket = (int)Math.Round(p / PowerBucketWidthW);
+        _powerHistogramBuckets[bucket] = _powerHistogramBuckets.GetValueOrDefault(bucket) + 1;
+
+        RefreshPowerPlateauInference();
+    }
+
+    /// <summary>Infers PL1 (the single most-populated bucket - the sustained/steady-state draw)
+    /// and PL2 (the highest-power bucket that's both meaningfully populated and meaningfully above
+    /// PL1 - a genuine second plateau, not noise around the same steady-state value), plus tau (how
+    /// long the most recent sustained-load run took to settle from PL2 down to within 5% of
+    /// PL1).</summary>
+    private void RefreshPowerPlateauInference()
+    {
+        int totalSamples = _powerHistogramBuckets.Values.Sum();
+        if (totalSamples < 30 || _powerHistogramBuckets.Count < 2)
+        {
+            PowerPlateauText = "Not enough sustained-load samples yet to infer PL1/PL2 plateaus.";
+            InferredPl1W = null;
+            InferredPl2W = null;
+            InferredTauSeconds = null;
+            RebuildPowerHistogramChart();
+            return;
+        }
+
+        var pl1Bucket = _powerHistogramBuckets.OrderByDescending(kv => kv.Value).First();
+        double pl1 = pl1Bucket.Key * PowerBucketWidthW;
+
+        var pl2Candidate = _powerHistogramBuckets
+            .Where(kv => kv.Value >= Math.Max(3, totalSamples * 0.03) && kv.Key * PowerBucketWidthW >= pl1 * 1.05)
+            .OrderByDescending(kv => kv.Key)
+            .FirstOrDefault();
+
+        InferredPl1W = pl1;
+
+        if (pl2Candidate.Value == 0)
+        {
+            InferredPl2W = null;
+            InferredTauSeconds = null;
+            PowerPlateauText = $"No distinct short-duration ceiling observed - sustained draw has settled around {pl1:0.#} W (inferred, not read from MSRs).";
+            RebuildPowerHistogramChart();
+            return;
+        }
+
+        double pl2 = pl2Candidate.Key * PowerBucketWidthW;
+        InferredPl2W = pl2;
+
+        double? tau = null;
+        if (_powerHistogramLoadStartedAt is { } loadStart)
+        {
+            var runSamples = _powerHistogramSamples.Where(s => s.Time >= loadStart).OrderBy(s => s.Time).ToList();
+            var settleSample = runSamples.FirstOrDefault(s => s.PowerW <= pl1 * 1.05);
+            if (settleSample.Time != default) tau = (settleSample.Time - loadStart).TotalSeconds;
+        }
+        InferredTauSeconds = tau;
+
+        PowerPlateauText = tau is { } t
+            ? $"Inferred PL2 {pl2:0.#} W settling to PL1 {pl1:0.#} W over about {t:0} s (tau) - inferred from observed behavior, not read from MSRs (the real registers need a kernel driver this app deliberately does not ship)."
+            : $"Inferred PL2 {pl2:0.#} W, PL1 {pl1:0.#} W - inferred from observed behavior, not read from MSRs (the real registers need a kernel driver this app deliberately does not ship).";
+
+        RebuildPowerHistogramChart();
+    }
+
+    /// <summary>Rebuilds the displayed histogram bar list from the accumulated bucket counts,
+    /// capped to the 20 most-visited power levels (in watt-wide buckets) so a machine whose power
+    /// wanders continuously across a wide range doesn't produce an unbounded list.</summary>
+    private void RebuildPowerHistogramChart()
+    {
+        int total = _powerHistogramBuckets.Values.Sum();
+        PowerDwellHistogram.Clear();
+        if (total == 0) return;
+
+        foreach (var kv in _powerHistogramBuckets.OrderByDescending(kv => kv.Value).Take(20).OrderBy(kv => kv.Key))
+        {
+            PowerDwellHistogram.Add(new TurboHistogramBucket
+            {
+                Label = $"{kv.Key * PowerBucketWidthW:0}W",
+                Percent = Math.Round(kv.Value / (double)total * 100.0, 1),
+            });
+        }
+    }
+
+    // ================================================================================
+    // #629: clock-stretching detector
+    // ================================================================================
+
+    /// <summary>Runs the fixed-work microbenchmark off the UI thread and compares its achieved
+    /// ops/sec (normalized by reported effective MHz) against the best such reading seen this
+    /// session. Guarded against overlap the same way RefreshCoreAffinityAsync is.</summary>
+    private async Task RunClockStretchBenchmarkAsync()
+    {
+        if (_clockStretchInFlight) return;
+        _clockStretchInFlight = true;
+        try
+        {
+            double mhzBefore = Performance.CpuCurrentClockGhz * 1000.0;
+            double? opsPerSec = await Task.Run(() => ClockStretchService.RunMicrobenchmarkOpsPerSecond());
+            double mhzAfter = Performance.CpuCurrentClockGhz * 1000.0;
+            double reportedMhz = (mhzBefore + mhzAfter) / 2.0;
+
+            if (opsPerSec is not { } ops || reportedMhz <= 0)
+            {
+                ClockStretchText = "Couldn't measure this pass (benchmark or clock reading unavailable).";
+                return;
+            }
+
+            double opsPerMhz = ops / reportedMhz;
+            _bestOpsPerMhz = Math.Max(_bestOpsPerMhz, opsPerMhz);
+            double percent = _bestOpsPerMhz > 0 ? Math.Round(opsPerMhz / _bestOpsPerMhz * 100.0, 0) : 100;
+            ClockStretchPercent = percent;
+
+            _lowClockStretchStreak = percent < 85 ? _lowClockStretchStreak + 1 : 0;
+            ClockStretchDetected = _lowClockStretchStreak >= 2;
+
+            ClockStretchText = ClockStretchDetected
+                ? $"Effective work per MHz: {percent:0}% of this session's best - sustained below baseline, consistent with clock stretching (common under AMD electrical limits or on some laptops). Quick flag - a background scheduler collision on the pinned core can also lower this reading."
+                : $"Effective work per MHz: {percent:0}% of this session's best.";
+        }
+        finally
+        {
+            _clockStretchInFlight = false;
+        }
+    }
+
+    // ================================================================================
+    // #630: effective- vs. requested-frequency gap, per core group
+    // ================================================================================
+
+    private void RefreshFrequencyGapGroups()
+    {
+        FrequencyGapByGroup.Clear();
+        if (!Performance.CpuFrequencyGapAvailable) return;
+
+        foreach (var group in CoreGroups)
+        {
+            var values = group.Cores.Where(c => c.FrequencyGapPoints.HasValue).Select(c => c.FrequencyGapPoints!.Value).ToList();
+            FrequencyGapByGroup.Add(new CoreGroupFrequencyGap
+            {
+                NumaNode = group.NumaNode,
+                GapPoints = values.Count > 0 ? Math.Round(values.Average(), 1) : null,
+            });
+        }
+    }
+
+    // ================================================================================
+    // #631: core parking and frequency-floor misconfiguration checklist
+    // ================================================================================
+
+    /// <summary>On-demand `powercfg /qh` read - see PowerPlanService.ReadProcessorPowerSettingsAsync's
+    /// remarks.</summary>
+    private async Task LoadProcessorPowerSettingsAsync()
+    {
+        ProcessorPowerSettingsStatusText = "Checking...";
+        _processorPowerSettings = await PowerPlanService.ReadProcessorPowerSettingsAsync();
+        RebuildProcessorPowerChecklist();
+        ProcessorPowerSettingsStatusText = string.Empty;
+    }
+
+    /// <summary>Rebuilds the checklist from whatever's known right now - the live "cores parked
+    /// under load" line (always current, called every 2s tick) plus whatever powercfg-derived
+    /// lines are available (Unknown/omitted until the user checks power settings at least once).</summary>
+    private void RebuildProcessorPowerChecklist()
+    {
+        ProcessorPowerChecklist.Clear();
+
+        bool parkedUnderLoad = Performance.ParkedCoreCount > 0 && Performance.CpuCurrentPercent >= 60;
+        ProcessorPowerChecklist.Add(parkedUnderLoad
+            ? $"⚠ {Performance.ParkedCoreCount} core(s) are parked right now while overall CPU load is {Performance.CpuCurrentPercent:0}% - Windows may be leaving performance on the table under this load."
+            : Performance.ParkedCoreCount > 0
+                ? $"{Performance.ParkedCoreCount} core(s) currently parked (normal at low load - power saving)."
+                : "No cores currently parked.");
+
+        var settings = _processorPowerSettings;
+        if (settings.MinProcessorStateAcPercent is { } minAc)
+        {
+            ProcessorPowerChecklist.Add(minAc >= 90
+                ? $"⚠ Minimum processor state (plugged in) is {minAc}% - the CPU is being held near full clock even at idle, which runs a laptop hot and burns power for no benefit at idle."
+                : $"Minimum processor state (plugged in): {minAc}%.");
+        }
+        if (settings.MinProcessorStateDcPercent is { } minDc)
+        {
+            ProcessorPowerChecklist.Add(minDc >= 90
+                ? $"⚠ Minimum processor state (on battery) is {minDc}% - same idle-heat/battery-drain concern as above, but on battery."
+                : $"Minimum processor state (on battery): {minDc}%.");
+        }
+        if (settings.MaxProcessorStateAcPercent is { } maxAc)
+        {
+            ProcessorPowerChecklist.Add(maxAc < 100
+                ? $"⚠ Maximum processor state (plugged in) is capped at {maxAc}% - the CPU can never reach its full rated clock on this plan."
+                : $"Maximum processor state (plugged in): {maxAc}%.");
+        }
+        if (settings.CoreParkingMinCoresAcPercent is { } parkMinAc)
+        {
+            int approxCores = (int)Math.Round(Performance.Cores.Count * parkMinAc / 100.0);
+            ProcessorPowerChecklist.Add($"Core-parking minimum cores (plugged in): {parkMinAc}% (~{approxCores} of {Performance.Cores.Count} logical cores always kept unparked).");
+        }
+    }
+
+    // ================================================================================
+    // #634: boost residency relative to rated clocks
+    // ================================================================================
+
+    /// <summary>See the property's remarks above - reuses Performance.TurboHistogram's existing
+    /// "Below base" bucket rather than a second histogram.</summary>
+    private void UpdateBoostResidencyText()
+    {
+        if (Performance.CpuBaseClockGhz <= 0) return;
+
+        if (Performance.CpuVsBasePercent < 0)
+        {
+            _belowBaseSamples++;
+            if (_energyThermals.CpuPackageTempC is { } t && t >= 80) _belowBaseHotSamples++;
+        }
+
+        double belowBasePercent = Performance.TurboHistogram.Count > 0 ? Performance.TurboHistogram[0].Percent : 0;
+        if (_belowBaseSamples < 5 || belowBasePercent < 2)
+        {
+            BoostResidencyText = $"Rated base clock: {Performance.CpuBaseClockGhz:0.00} GHz.";
+            return;
+        }
+
+        double hotShare = _belowBaseSamples > 0 ? _belowBaseHotSamples / (double)_belowBaseSamples * 100.0 : 0;
+        string cause = hotShare >= 50
+            ? "mostly while running hot - consistent with thermal throttling"
+            : "mostly without running hot - consistent with a power-plan or firmware limit rather than heat";
+        BoostResidencyText = $"Rated base clock: {Performance.CpuBaseClockGhz:0.00} GHz. {belowBasePercent:0.#}% of this session was spent below it, {cause}.";
+    }
+
+    // ================================================================================
+    // #635: silicon-behavior snapshot for before/after comparison
+    // ================================================================================
+
+    private void CaptureSiliconSnapshot()
+    {
+        double totalDwell = _dwellSeconds.Values.Sum();
+        double throttledDwell = _dwellSeconds[ThrottleReasonClass.Thermal] + _dwellSeconds[ThrottleReasonClass.Power] +
+            _dwellSeconds[ThrottleReasonClass.Firmware] + _dwellSeconds[ThrottleReasonClass.CoreParked];
+
+        var snapshot = new SiliconSnapshot
+        {
+            Timestamp = DateTime.Now,
+            ClockGhz = Performance.CpuCurrentClockGhz > 0 ? Performance.CpuCurrentClockGhz : null,
+            VcoreV = _energyThermals.VcoreLoadPoints.Count > 0 ? _energyThermals.VcoreLoadPoints[^1].Y : null,
+            PackagePowerW = _energyThermals.TotalPackagePowerW,
+            TempC = _energyThermals.CpuPackageTempC,
+            ThrottlePercent = totalDwell > 0 ? Math.Round(throttledDwell / totalDwell * 100.0, 1) : null,
+        };
+
+        SiliconSnapshotService.Append(snapshot);
+        SiliconSnapshots.Insert(0, snapshot);
+        SiliconSnapshotStatusText = $"Captured snapshot at {snapshot.Timestamp:t}.";
+    }
+
+    /// <summary>Repaints the dwell-breakdown chart's axis text/gridlines to match the active theme
+    /// family - see PerformanceViewModel.ApplyAxisTheme's remarks; same SkiaSharp-outside-WPF-
+    /// resources gap.</summary>
+    public void ApplyAxisTheme(System.Windows.Media.Color text, System.Windows.Media.Color separator)
+    {
+        var textSk = new SKColor(text.R, text.G, text.B);
+        var sepSk = new SKColor(separator.R, separator.G, separator.B, separator.A);
+        ThrottleDwellXAxes[0].LabelsPaint = new SolidColorPaint(textSk);
+        ThrottleDwellYAxes[0].LabelsPaint = new SolidColorPaint(textSk);
+        ThrottleDwellYAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
+    }
+
 
     private void OnCoresCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
@@ -382,5 +918,9 @@ public sealed class CpuViewModel : ObservableObject, IDisposable
             CoreGroups.Add(new CoreGroup { NumaNode = group.Key, Cores = group.OrderBy(c => c.Index).ToList() });
     }
 
-    public void Dispose() => _throttleTimer.Stop();
+    public void Dispose()
+    {
+        _throttleTimer.Stop();
+        _clockStretchTimer.Stop();
+    }
 }

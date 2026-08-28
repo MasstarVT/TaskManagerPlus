@@ -342,7 +342,6 @@ public static class ScheduledTaskService
 
     private static int ParseGroup(Group g) => g.Success && int.TryParse(g.Value, out int v) ? v : 0;
 
-    /// <summary>
     /// #831: security-lens data schtasks' own CSV/table output never exposes at all - the per-task
     /// Hidden flag, registered folder, run-as identity, and action command. `schtasks /query /xml
     /// ONE` (no /tn) dumps every registered task as ONE aggregated well-formed XML document (each
@@ -425,6 +424,7 @@ public static class ScheduledTaskService
         return result;
     }
 
+    /// <summary>
     /// #747: boot- and logon-triggered scheduled tasks, folded into the Startup tab's main grid as
     /// first-class rows. Reads one combined `schtasks /query /xml ONE` export (every registered
     /// task's XML in one shelled-out call) rather than fetching each task's individual XML - the
@@ -521,6 +521,63 @@ public static class ScheduledTaskService
             blocks.Add(combined[start..end]);
         }
         return blocks;
+    }
+
+    /// <summary>
+    /// #655: wake-enabled ("Wake the computer to run this task") scheduled tasks - the other
+    /// software wake cause shown alongside WakeTimerService's active wake timers.
+    /// `schtasks /query /xml` with no /tn exports *every* registered task as a series of
+    /// back-to-back `&lt;?xml ...?&gt;&lt;Task ...&gt;...&lt;/Task&gt;` documents, not one
+    /// well-formed document - confirmed live on a real dev machine (189 concatenated `&lt;?xml`
+    /// declarations for 189 tasks), a different quirk from the single-task
+    /// ReadLogonTriggerInfoAsync above - so this splits on that declaration boundary and parses
+    /// each fragment independently. WakeToRun is a documented, stable part of the Task Scheduler
+    /// XML schema (unlike most of what this app parses out of tool text output), also confirmed
+    /// live against a real wake-enabled task's exported XML.
+    /// </summary>
+    public static async Task<List<ScheduledTaskRow>> ListWakeEnabledAsync()
+    {
+        var result = new List<ScheduledTaskRow>();
+        try
+        {
+            string output = (await RunCapturedAsync("schtasks.exe", "/query /xml", 30000)).Output;
+            foreach (var fragment in SplitXmlDocuments(output))
+            {
+                XDocument doc;
+                try { doc = XDocument.Parse(fragment); } catch { continue; }
+
+                var settings = doc.Descendants().FirstOrDefault(e => e.Name.LocalName == "Settings");
+                bool wakeToRun = settings?.Elements().FirstOrDefault(e => e.Name.LocalName == "WakeToRun")?.Value
+                    .Equals("true", StringComparison.OrdinalIgnoreCase) ?? false;
+                if (!wakeToRun) continue;
+
+                string name = doc.Descendants().FirstOrDefault(e => e.Name.LocalName == "URI")?.Value.Trim() ?? string.Empty;
+                if (name.Length == 0) continue;
+
+                bool enabled = settings?.Elements().FirstOrDefault(e => e.Name.LocalName == "Enabled")?.Value
+                    .Equals("true", StringComparison.OrdinalIgnoreCase) ?? true;
+
+                result.Add(new ScheduledTaskRow { Name = name, Status = enabled ? "Ready" : "Disabled", IsEnabled = enabled });
+            }
+        }
+        catch
+        {
+            // schtasks unavailable/failed - empty list, same degrade-on-failure convention as ListAsync.
+        }
+        return result.OrderBy(r => r.Name, StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    private static List<string> SplitXmlDocuments(string output)
+    {
+        var docs = new List<string>();
+        int idx = output.IndexOf("<?xml", StringComparison.OrdinalIgnoreCase);
+        while (idx >= 0)
+        {
+            int next = output.IndexOf("<?xml", idx + 5, StringComparison.OrdinalIgnoreCase);
+            docs.Add(next >= 0 ? output[idx..next] : output[idx..]);
+            idx = next;
+        }
+        return docs;
     }
 
     /// <summary>

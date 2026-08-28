@@ -156,12 +156,12 @@ public sealed class SystemSpecs
     public RamHealthSummary RamHealth { get; init; } = new();
 }
 
-/// <summary>One active display (#60) - resolution/refresh rate from Win32_VideoController's current
-/// mode fields, connection type (best-effort) from the root\wmi WmiMonitorConnectionParams class -
-/// see SystemSpecsService.ReadMonitors for exactly how (and when) these two sources are paired.
-/// HDR support has no reliable enumeration source short of DXGI/IDXGIOutput6 COM interop (a
-/// materially higher risk tier than anything else this app takes on), so it's deliberately left out
-/// rather than guessed.</summary>
+/// <summary>One active display (#60/#685-689) - resolution/refresh rate from Win32_VideoController's
+/// current mode fields, connection type (best-effort) from the root\wmi WmiMonitorConnectionParams
+/// class - see SystemSpecsService.ReadMonitors for exactly how (and when) these two sources are
+/// paired, and how the #685-689 fields below are folded in. #688 (HDR) now covers what the original
+/// #60 remarks called out as needing DXGI/IDXGIOutput6 COM interop - DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO
+/// is a documented Win32 API (DisplayConfigGetDeviceInfo) that answers the same question without it.</summary>
 public sealed class MonitorInfo
 {
     public string Name { get; init; } = "Display";
@@ -169,6 +169,96 @@ public sealed class MonitorInfo
     public int HeightPx { get; init; }
     public int RefreshHz { get; init; }
     public string ConnectionType { get; init; } = "Unknown";
+
+    /// <summary>#685: raw-EDID-decoded identity (manufacturer/model/serial/manufacture date/
+    /// physical size/native timing) - see DisplayEdidService and MonitorEdidInfo's own remarks.
+    /// Null when WmiMonitorRawEEdidV1Block wasn't readable/decodable for this monitor (a common,
+    /// expected outcome on a VM/RDP session or a monitor whose EDID the driver doesn't expose).</summary>
+    public MonitorEdidInfo? Edid { get; init; }
+
+    /// <summary>#686: the highest refresh rate this monitor's EDID actually advertises at its
+    /// current/native resolution (from the preferred detailed timing descriptor and any Standard
+    /// Timing entries at the same resolution) - null when EDID is unavailable or didn't decode.
+    /// RefreshMismatch below flags "144 Hz panel running at 60 Hz" style misconfigurations.</summary>
+    public int? EdidMaxRefreshHz { get; init; }
+
+    public bool RefreshMismatch => EdidMaxRefreshHz is { } max && RefreshHz > 0 && max > RefreshHz + 3;
+
+    /// <summary>#687: set when the current mode's required link bandwidth (resolution × refresh ×
+    /// assumed bit depth) meaningfully exceeds the theoretical ceiling this app assumes for the
+    /// reported connection technology (e.g. "HDMI 2.0 caps at 18 Gbps") - a rough, clearly-caveated
+    /// estimate (see SystemSpecsService.EstimateBandwidthWarning), not a verified per-cable/per-port
+    /// capability read. Null when the mode comfortably fits, or when resolution/refresh aren't known.</summary>
+    public string? BandwidthWarningText { get; init; }
+
+    /// <summary>#688: HDR support/enabled and wide-color-gamut state, from
+    /// DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO (DisplayConfigGetDeviceInfo) - each null when this
+    /// target couldn't be matched to a QueryDisplayConfig path, or the call itself failed.</summary>
+    public bool? HdrSupported { get; init; }
+    public bool? HdrEnabled { get; init; }
+    public bool? WideColorEnabled { get; init; }
+
+    /// <summary>#689: scaling mode, DPI scale factor, and rotation, from QueryDisplayConfig's path
+    /// target info (scaling/rotation) and Shcore's GetDpiForMonitor (DPI). "Unknown"/null when the
+    /// target/monitor couldn't be resolved via either API.</summary>
+    public string ScalingModeText { get; init; } = "Unknown";
+    public double? DpiScalePercent { get; init; }
+    public string RotationText { get; init; } = "Unknown";
+}
+
+/// <summary>#685: base-block (128-byte) EDID identity, decoded from WmiMonitorRawEEdidV1Block per
+/// the VESA E-EDID 1.4 standard - see DisplayEdidService.Decode for the exact byte offsets. Every
+/// field degrades to a blank/default/null rather than a guess when the corresponding descriptor
+/// isn't present (not every monitor's EDID carries a name/serial string descriptor) or the block
+/// fails its own header/checksum sanity check.</summary>
+public sealed class MonitorEdidInfo
+{
+    /// <summary>3-letter PNP ID (e.g. "DEL", "SAM", "GSM") - resolvable to a real manufacturer name
+    /// via the same public PNP ID registry Device Manager itself uses, which this app doesn't ship
+    /// a copy of, so this is shown as the raw 3-letter code rather than guessed.</summary>
+    public string ManufacturerId { get; init; } = string.Empty;
+
+    public int ProductCode { get; init; }
+
+    /// <summary>From the descriptor block tagged 0xFC ("monitor name") - empty when this monitor's
+    /// EDID doesn't carry one (falls back to the connection-type-derived "Display N" label instead).</summary>
+    public string ModelName { get; init; } = string.Empty;
+
+    /// <summary>From the descriptor block tagged 0xFF ("monitor serial number"), when present;
+    /// otherwise the 32-bit numeric serial at EDID bytes 12-15 when that's non-zero. Empty when
+    /// neither is present.</summary>
+    public string SerialNumber { get; init; } = string.Empty;
+
+    public int ManufactureWeek { get; init; }
+    public int ManufactureYear { get; init; }
+
+    public double PhysicalWidthCm { get; init; }
+    public double PhysicalHeightCm { get; init; }
+
+    /// <summary>The preferred detailed timing descriptor's resolution/refresh - the monitor's own
+    /// "native" mode as encoded in its EDID, independent of whatever Windows is currently driving
+    /// it at.</summary>
+    public int NativeWidthPx { get; init; }
+    public int NativeHeightPx { get; init; }
+    public double NativeRefreshHz { get; init; }
+
+    /// <summary>Plain-English summary of EDID byte 24's supported-feature bits (DPMS standby/
+    /// suspend/active-off, default sRGB, preferred-timing-is-native) - informational only, not every
+    /// bit maps to something this app can act on.</summary>
+    public string FeatureBitsSummary { get; init; } = string.Empty;
+}
+
+/// <summary>#690: one display connect/disconnect or mode-change event, from either the in-app
+/// WM_DISPLAYCHANGE hook (Source = "App") or a Kernel-PnP System-log scan for monitor-arrival/
+/// removal text (Source = "Kernel-PnP") - see MainWindow.xaml.cs's WM_DISPLAYCHANGE hook and
+/// EventLogService.ReadMonitorPnpEvents respectively. Persisted via DisplayChangeHistoryService so
+/// "repeated disconnects at a regular interval" (a cable or DisplayPort link-training problem) is
+/// visible across sessions, not just the one currently running.</summary>
+public sealed class DisplayChangeEvent
+{
+    public DateTime TimeCreated { get; init; }
+    public string Source { get; init; } = string.Empty;
+    public string Description { get; init; } = string.Empty;
 }
 
 /// <summary>One entry from the Uninstall registry keys with a parsed install date (#68).</summary>

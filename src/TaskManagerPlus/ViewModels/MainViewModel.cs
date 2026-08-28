@@ -22,7 +22,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public ServicesViewModel Services { get; } = new();
     public StartupViewModel Startup { get; } = new();
     public SystemSpecsViewModel SystemSpecs { get; } = new();
-    public StabilityViewModel Stability { get; } = new();
+    // #711: now takes EnergyThermals (constructed via the parameter version of its constructor
+    // below) for thermal-throttle-vs-crash correlation - see StabilityViewModel's own remarks.
+    public StabilityViewModel Stability { get; }
 
     // #769-800: new 13th top-level tab - modeled directly on StabilityViewModel (on-demand, no
     // DispatcherTimer) since event-log scans/registry sweeps/DISM calls aren't cheap enough to
@@ -74,6 +76,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public ResponsivenessViewModel Responsiveness { get; }
 
     public LoggingViewModel Logging { get; }
+
+    // #695-#700: the Stress test panel (hosted inside the Energy & Thermals tab, see
+    // StressTestPanel.xaml) - composed here rather than inside EnergyThermalsViewModel since it
+    // needs both EnergyThermals and Gpu (TDR watch) already constructed, the same "compose after
+    // its dependencies exist" shape Summary/Logging/Search already use below.
+    public StressTestViewModel StressTest { get; }
 
     // #100: cross-tab search - see GlobalSearchViewModel's remarks.
     public GlobalSearchViewModel Search { get; }
@@ -146,10 +154,23 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     /// Composed here (not on StartupViewModel) since it replaces the same footer text that used to
     /// bind directly to Performance.Uptime - see the PropertyChanged wiring in the constructor for
     /// why this keeps ticking live even though FastStartupInfo itself is only read once per Startup
-    /// tab load/refresh.</summary>
+    /// tab load/refresh. Supersedes #659's own simpler FastStartupNoteText below for this same
+    /// footer spot (kept as an unused property here in case another card wants a plain on/off
+    /// read) since this already reconciles the exact day-count disagreement, not just a static note.</summary>
     public string FooterUptimeText => Startup.FastStartupInfo is { } fastStartup
         ? fastStartup.UptimeReconciliationText(TimeSpan.FromMilliseconds(Environment.TickCount64))
         : $"Uptime {Performance.Uptime}";
+
+    /// <summary>#659: Fast Startup ("hybrid boot") detection - a trivial one-time registry read
+    /// (HibernationService.ReadFastStartupEnabled, HiberbootEnabled under
+    /// HKLM\SYSTEM\CurrentControlSet\Control\Power), so it's read once here at construction rather
+    /// than gated behind a button. Null when the registry value isn't present at all, not assumed
+    /// off. Not wired to the footer itself (see FooterUptimeText above for why).</summary>
+    public bool? FastStartupEnabled { get; } = HibernationService.ReadFastStartupEnabled();
+
+    public string FastStartupNoteText => FastStartupEnabled == true
+        ? "Fast Startup is on - a short uptime after Shut Down can still be a hybrid resume, not a true cold boot."
+        : string.Empty;
 
     /// <summary>Round 12, #87: read-only "where is this app currently storing settings" status
     /// line for the Settings drawer - portable mode is a launch-time decision (AppPaths.Initialize,
@@ -273,6 +294,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Processes.Responsiveness = Responsiveness;
         EnergyThermals = new EnergyThermalsViewModel(Performance);
         Cpu = new CpuViewModel(Performance, EnergyThermals, Processes, Responsiveness);
+        // #633: needs EnergyThermalsViewModel for the inferred non-stock-Vcore evidence input to
+        // its combined undervolt/overclock instability flag.
+        Stability = new StabilityViewModel(EnergyThermals);
         Memory = new MemoryViewModel(Performance, Processes, LeakWatch, ProcessHistory);
         Storage = new StorageViewModel(Performance, EnergyThermals, Processes);
         // #221: Responsiveness is a field initializer (declared/constructed before this
@@ -280,8 +304,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         // here, letting Network take the same "reach a sibling ViewModel via constructor reference"
         // pattern Cpu/Storage already take for EnergyThermals.
         Network = new NetworkViewModel(Performance, Responsiveness);
-        Gpu = new GpuViewModel(Processes);
+        // #678: takes Performance too now, for the bottleneck verdict's CPU-core-saturation evidence.
+        Gpu = new GpuViewModel(Processes, EnergyThermals, Performance);
         Logging = new LoggingViewModel(Performance, EnergyThermals);
+        StressTest = new StressTestViewModel(Performance, EnergyThermals, Gpu);
         // #295: Responsiveness is a field initializer (constructed above), so it's already a real
         // instance here - Summary reads Responsiveness.SystemScore directly rather than
         // duplicating the composite-score math. #storage: likewise for the DriveHealthVerdict tile.
@@ -312,6 +338,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         ApplyAxisThemeToEnergyThermals();
         Theme.ThemeModeChanged += ApplyAxisThemeToEnergyThermals;
 
+        ApplyAxisThemeToCpu();
+        Theme.ThemeModeChanged += ApplyAxisThemeToCpu;
+
         ApplyAxisThemeToStability();
         Theme.ThemeModeChanged += ApplyAxisThemeToStability;
 
@@ -335,6 +364,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         ApplyAxisThemeToResponsiveness();
         Theme.ThemeModeChanged += ApplyAxisThemeToResponsiveness;
+
+        // #674: GPU tab's VRAM-spillover trend chart.
+        ApplyAxisThemeToGpu();
+        Theme.ThemeModeChanged += ApplyAxisThemeToGpu;
 
         // #734: keep the footer's uptime text live - Performance.Uptime ticks every second, and
         // Startup.FastStartupInfo changes once per Startup tab load/refresh, either of which
@@ -368,6 +401,25 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Color TextOf(string key) => (resources[key] as SolidColorBrush)?.Color ?? Colors.Gray;
 
         EnergyThermals.ApplyAxisTheme(TextOf("TextSecondaryBrush"), TextOf("BorderBrush2"));
+    }
+
+    /// <summary>#603: repaints CpuViewModel's own throttle-dwell stacked-bar chart axes - same
+    /// SkiaSharp-outside-WPF-resources gap as every other chart axis theme hook.</summary>
+    private void ApplyAxisThemeToCpu()
+    {
+        var resources = Application.Current.Resources;
+        Color TextOf(string key) => (resources[key] as SolidColorBrush)?.Color ?? Colors.Gray;
+
+        Cpu.ApplyAxisTheme(TextOf("TextSecondaryBrush"), TextOf("BorderBrush2"));
+    }
+
+    /// <summary>#674: repaints GpuViewModel's VRAM-spillover trend chart axes.</summary>
+    private void ApplyAxisThemeToGpu()
+    {
+        var resources = Application.Current.Resources;
+        Color TextOf(string key) => (resources[key] as SolidColorBrush)?.Color ?? Colors.Gray;
+
+        Gpu.ApplyAxisTheme(TextOf("TextSecondaryBrush"), TextOf("BorderBrush2"));
     }
 
     private void ApplyAxisThemeToStability()
@@ -488,12 +540,14 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Theme.ColorsChanged -= ApplyThemeToPerformance;
         Theme.ThemeModeChanged -= ApplyAxisThemeToPerformance;
         Theme.ThemeModeChanged -= ApplyAxisThemeToEnergyThermals;
+        Theme.ThemeModeChanged -= ApplyAxisThemeToCpu;
         Theme.ThemeModeChanged -= ApplyAxisThemeToStability;
         Theme.ThemeModeChanged -= ApplyAxisThemeToStorage;
         Stability.Refreshed -= ApplyStabilityMarkersToPerformance;
         Theme.ThemeModeChanged -= ApplyAxisThemeToStartup;
         Theme.ThemeModeChanged -= ApplyAxisThemeToLogging;
         Theme.ThemeModeChanged -= ApplyAxisThemeToResponsiveness;
+        Theme.ThemeModeChanged -= ApplyAxisThemeToGpu;
         Processes.Dispose();
         Memory.Dispose();
         Performance.Dispose();
@@ -504,6 +558,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Network.Dispose();
         Gpu.Dispose();
         Logging.Dispose();
+        StressTest.Dispose();
         Summary.Dispose();
         Stability.Dispose();
         Events.Dispose();

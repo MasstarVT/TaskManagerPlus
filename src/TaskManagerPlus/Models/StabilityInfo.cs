@@ -15,6 +15,14 @@ public sealed class StabilityEvent
     /// every Error/Critical entry is an app crash).</summary>
     public string? FaultingModule { get; init; }
 
+    /// <summary>#633: best-effort "Exception code: 0xNNNNNNNN" extraction from an Application-log
+    /// crash entry's own formatted message (the same Windows Error Reporting "Application Error"
+    /// shape FaultingModule above is pulled from) - null when the message doesn't contain that
+    /// shape. Lowercased for easy comparison against known fault codes (0xc0000005 access
+    /// violation, 0xc000001d illegal instruction) - see StabilityViewModel's undervolt/overclock
+    /// instability-hint remarks.</summary>
+    public string? ExceptionCode { get; init; }
+
     /// <summary>Bugcheck code, only ever populated for a Kernel-Power event 41 - see
     /// EventLogService.ExtractBugcheckCode for why this is best-effort (the insertion-string
     /// layout isn't a documented, versioned contract). #191: mutable (not init-only), like
@@ -349,6 +357,13 @@ public sealed class StabilitySnapshot
     public bool WasLastShutdownUnexpected { get; init; }
     public DateTime? LastUnexpectedShutdown { get; init; }
 
+    /// <summary>#625: bugcheck code (if any) tied to the most recent unexpected-shutdown event -
+    /// see EventLogService.ExtractBugcheckCode. Null both when the shutdown wasn't unexpected and
+    /// when it was but no bugcheck code could be extracted (the "clean reboot at peak draw, no
+    /// bugcheck" shape that's the classic PSU-under-load signature StabilityViewModel's
+    /// power-draw-at-reboot correlation looks for).</summary>
+    public string? LastUnexpectedShutdownBugcheckCode { get; init; }
+
     /// <summary>GPU driver timeout/reset (TDR, event 4101) count and most recent occurrence (#5)
     /// within the lookback window.</summary>
     public int TdrEventCount { get; init; }
@@ -374,6 +389,14 @@ public sealed class StabilitySnapshot
     /// bucket of RecentEvents above.</summary>
     public int LowMemoryEventCount { get; init; }
     public DateTime? LastLowMemoryEvent { get; init; }
+
+    /// <summary>#606: System-log entries matching the "a thermal zone exceeded its critical/passive
+    /// trip point" family (Kernel-Power/Kernel-Acpi/ACPI provider + a thermal-shutdown keyword in
+    /// the formatted message - matched by provider+keyword rather than a hardcoded event ID, since
+    /// IDs vary by Windows build) - see EventLogService.ReadThermalCriticalEvents. A firmware
+    /// thermal shutdown is otherwise indistinguishable in the reliability log from a PSU death, so
+    /// this is surfaced as its own explicit signal rather than folded into RecentEvents.</summary>
+    public List<StabilityEvent> ThermalCriticalEvents { get; init; } = new();
 
     /// <summary>Round 13, items 1/2/8: the most recent authoritative bugcheck record (BugCheck
     /// provider 1001, or the WER-SystemErrorReporting fallback) - null when neither source found

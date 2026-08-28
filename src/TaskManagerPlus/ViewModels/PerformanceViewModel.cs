@@ -86,16 +86,22 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
     private readonly LineSeries<double> _handleCountGlow;
     private readonly LineSeries<double> _handleCountCore;
 
+    // #630: frequency-gap trend - same glow+core pairing as every other history metric.
+    private readonly LineSeries<double> _freqGapGlow;
+    private readonly LineSeries<double> _freqGapCore;
+
     public ISeries[] CpuSeries { get; }
     public ISeries[] RamSeries { get; }
     public ISeries[] DiskSeries { get; }
     public ISeries[] NetworkSeries { get; }
     public ISeries[] CommittedSeries { get; }
     public ISeries[] HandleCountSeries { get; }
+    public ISeries[] CpuFrequencyGapSeries { get; }
     public Axis[] PercentYAxes { get; }
     public Axis[] HiddenXAxes { get; }
     public Axis[] NetworkYAxes { get; }
     public Axis[] MemoryBytesYAxes { get; }
+    public Axis[] FrequencyGapYAxes { get; }
 
     /// <summary>#425: plain-count Y axis (not bytes/percent) for the handle-count history chart.</summary>
     public Axis[] CountYAxes { get; }
@@ -174,6 +180,20 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
     private long _turboTotalSamples;
     public ObservableCollection<TurboHistogramBucket> TurboHistogram { get; } = new(
         TurboHistogramLabels.Select(l => new TurboHistogramBucket { Label = l }));
+
+    // #630: effective- vs. requested-frequency gap - see CoreUsage.FrequencyGapPoints' remarks for
+    // the per-core figure; this is the simple average of it across every core reporting one, each
+    // tick, charted the same glow+core way every other history metric on this tab is. True only
+    // when the underlying "% Processor Performance"/"% of Maximum Frequency" per-core counters
+    // were actually available (HardwareMonitorService degrades to empty arrays otherwise) - the
+    // CPU tab hides this card entirely when false rather than showing an all-zero chart.
+    private bool _cpuFrequencyGapAvailable;
+    public bool CpuFrequencyGapAvailable { get => _cpuFrequencyGapAvailable; private set => SetProperty(ref _cpuFrequencyGapAvailable, value); }
+
+    private double _cpuFrequencyGapPercent;
+    public double CpuFrequencyGapPercent { get => _cpuFrequencyGapPercent; private set => SetProperty(ref _cpuFrequencyGapPercent, value); }
+
+    public ObservableCollection<double> CpuFrequencyGapHistory { get; } = NewHistory();
 
     private double _cpuInterruptPercent;
     public double CpuInterruptPercent { get => _cpuInterruptPercent; private set => SetProperty(ref _cpuInterruptPercent, value); }
@@ -557,6 +577,17 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
                 SeparatorsPaint = AxisSeparatorPaint(),
             },
         };
+        // #630: no fixed 0-100 range - the gap is signed (usually positive: OS asking for more
+        // than delivered), in percentage points of rated max frequency, not a percent itself.
+        FrequencyGapYAxes = new[]
+        {
+            new Axis
+            {
+                Labeler = v => $"{v:0.#}pp",
+                LabelsPaint = AxisTextPaint(),
+                SeparatorsPaint = AxisSeparatorPaint(),
+            },
+        };
 
         (_cpuGlow, _cpuCore) = LineOf(CpuHistory, SKColors.DeepSkyBlue);
         (_ramGlow, _ramCore) = LineOf(RamHistory, SKColors.MediumPurple);
@@ -565,6 +596,7 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
         (_netSendGlow, _netSendCore) = LineOf(NetworkSendHistory, SKColors.OrangeRed, "Send");
         (_committedGlow, _committedCore) = LineOf(CommittedHistory, SKColors.MediumPurple);
         (_handleCountGlow, _handleCountCore) = LineOf(HandleCountHistory, SKColors.Goldenrod);
+        (_freqGapGlow, _freqGapCore) = LineOf(CpuFrequencyGapHistory, SKColors.Goldenrod);
 
         CpuSeries = new ISeries[] { _cpuGlow, _cpuCore };
         RamSeries = new ISeries[] { _ramGlow, _ramCore };
@@ -572,6 +604,7 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
         NetworkSeries = new ISeries[] { _netRecvGlow, _netRecvCore, _netSendGlow, _netSendCore };
         CommittedSeries = new ISeries[] { _committedGlow, _committedCore };
         HandleCountSeries = new ISeries[] { _handleCountGlow, _handleCountCore };
+        CpuFrequencyGapSeries = new ISeries[] { _freqGapGlow, _freqGapCore };
 
         // Round 12, #100: configurable poll interval - see PollIntervalSettingsService's remarks.
         // This one timer also drives the CPU/Memory/Storage/Network thin-wrapper tabs (per
@@ -690,6 +723,8 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
         MemoryBytesYAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
         CountYAxes[0].LabelsPaint = new SolidColorPaint(textSk);
         CountYAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
+        FrequencyGapYAxes[0].LabelsPaint = new SolidColorPaint(textSk);
+        FrequencyGapYAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
 
         LegendTextPaint = new SolidColorPaint(textSk);
         TooltipTextPaint = new SolidColorPaint(textSk);
@@ -811,7 +846,21 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
         RecomputeEventMarkerSections();
         PushHistory(HandleCountHistory, snapshot.HandleCount);
 
-        SyncCores(snapshot.CpuPerCorePercent, snapshot.CoreParkedFlags);
+        SyncCores(snapshot.CpuPerCorePercent, snapshot.CoreParkedFlags, snapshot.CpuPerCoreRequestedPercent, snapshot.CpuPerCoreDeliveredPercent);
+
+        // #630: aggregate (average across every core reporting one) requested-vs-delivered
+        // frequency gap, in percentage points of rated max - charted the same as every other
+        // history metric. Hidden entirely (CpuFrequencyGapAvailable false) when the underlying
+        // per-core counters aren't available on this Windows/CPU generation.
+        CpuFrequencyGapAvailable = snapshot.CpuPerCoreRequestedPercent.Length > 0 && snapshot.CpuPerCoreDeliveredPercent.Length > 0;
+        if (CpuFrequencyGapAvailable)
+        {
+            int n = Math.Min(snapshot.CpuPerCoreRequestedPercent.Length, snapshot.CpuPerCoreDeliveredPercent.Length);
+            double sum = 0;
+            for (int i = 0; i < n; i++) sum += snapshot.CpuPerCoreRequestedPercent[i] - snapshot.CpuPerCoreDeliveredPercent[i];
+            CpuFrequencyGapPercent = n > 0 ? Math.Round(sum / n, 1) : 0;
+            PushHistory(CpuFrequencyGapHistory, CpuFrequencyGapPercent);
+        }
 
         CpuName = string.IsNullOrWhiteSpace(snapshot.CpuName) ? "Unknown CPU" : snapshot.CpuName;
         CpuSpecs = $"{snapshot.PhysicalCores} cores, {snapshot.LogicalProcessors} logical processors  •  Base speed {snapshot.CpuBaseClockGhz:0.00} GHz";
@@ -972,9 +1021,15 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
     /// owning a new heavy timer of its own, per CLAUDE.md's guidance for this specific item.</summary>
     public event Action? Sampled;
 
-    private void SyncCores(double[] percentages, bool[] parkedFlags)
+    private void SyncCores(double[] percentages, bool[] parkedFlags, double[] requestedPercent, double[] deliveredPercent)
     {
         bool ParkedAt(int i) => i < parkedFlags.Length && parkedFlags[i];
+
+        // #630: per-core requested-vs-delivered frequency gap, in percentage points - null (not
+        // fabricated) whenever either counter is missing for that index.
+        double? GapAt(int i) => i < requestedPercent.Length && i < deliveredPercent.Length
+            ? requestedPercent[i] - deliveredPercent[i]
+            : null;
 
         if (Cores.Count != percentages.Length)
         {
@@ -1003,6 +1058,7 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
                     IsPCore = topo?.IsPCore ?? true,
                     IsParked = ParkedAt(i),
                     SiblingIndex = sibling,
+                    FrequencyGapPoints = GapAt(i),
                 });
             }
             ParkedCoreCount = parkedFlags.Count(p => p);
@@ -1013,6 +1069,7 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
         {
             Cores[i].Percent = percentages[i];
             Cores[i].IsParked = ParkedAt(i);
+            Cores[i].FrequencyGapPoints = GapAt(i);
         }
         ParkedCoreCount = parkedFlags.Count(p => p);
     }

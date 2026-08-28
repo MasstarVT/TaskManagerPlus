@@ -3,6 +3,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="clr-namespace:TaskManagerPlus.ViewModels"
              xmlns:views="clr-namespace:TaskManagerPlus.Views"
+             xmlns:lvc="clr-namespace:LiveChartsCore.SkiaSharpView.WPF;assembly=LiveChartsCore.SkiaSharpView.WPF"
              d:DataContext="{d:DesignInstance Type=vm:GpuViewModel}"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
@@ -46,6 +47,97 @@
                     </Style>
                 </TextBlock.Style>
             </TextBlock>
+
+            <!-- #678: plain-English bottleneck verdict from the engine mix, plus #681's low-
+                 clocks-under-load state - both quick flags from data this tab already samples
+                 every tick, not verified diagnoses. Hidden entirely when there's nothing to say
+                 (idle GPU, or no primary adapter identified). -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Setter Property="Visibility" Value="Visible" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding BottleneckVerdictText}" Value="">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="{Binding BottleneckVerdictText}" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="{Binding BottleneckEvidenceText}" Style="{StaticResource SubStat}" Margin="0,4,0,0" TextWrapping="Wrap" />
+
+                    <!-- #681: low-clocks-under-load state, folded into this same card since both
+                         read the primary adapter's live utilization each tick. -->
+                    <Border BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,1,0,0" Margin="0,10,0,0" Padding="0,10,0,0">
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding GpuClockStateText}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                        <StackPanel>
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="GPU core clock: " FontSize="12" FontWeight="SemiBold" />
+                                <TextBlock Text="{Binding GpuCoreClockMHz, StringFormat={}{0:0} MHz}" FontSize="12" FontWeight="SemiBold" />
+                            </StackPanel>
+                            <TextBlock Text="{Binding GpuClockStateText}" TextWrapping="Wrap" Margin="0,2,0,0">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding GpuClockStateIsWarning}" Value="True">
+                                                <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </Border>
+
+            <!-- #608: GPU thermal headroom - remaining °C before a reported throttle point, owned
+                 by EnergyThermalsViewModel (see its remarks) and exposed here via
+                 GpuViewModel.EnergyThermals. This round doesn't add a separate GPU throttle-episode
+                 detector, so unlike the CPU tab's headroom tile there's no inferred fallback -
+                 hidden whenever no GPU sensor reports a distinct ceiling/limit value. -->
+            <views:VfdMeter Title="GPU thermal headroom" Glow="False" Margin="0,0,0,16"
+                            ValueText="{Binding EnergyThermals.GpuThermalHeadroomC, StringFormat={}{0:0.#}, TargetNullValue=–}" Unit="°C"
+                            SubText="Remaining before this GPU's reported throttle point"
+                            AccentBrush="{DynamicResource AccentBrush}">
+                <views:VfdMeter.Style>
+                    <Style TargetType="views:VfdMeter">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding EnergyThermals.GpuThermalHeadroomC}" Value="{x:Null}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </views:VfdMeter.Style>
+            </views:VfdMeter>
+
+            <!-- #675: GPU memory-junction temperature - GDDR6X-only sensor, tracked separately from
+                 core/hotspot since VRAM throttling is otherwise entirely invisible in this app. Hidden
+                 whenever the sensor is absent (most cards), never inferred from the core reading. -->
+            <views:VfdMeter Title="GPU memory junction" Glow="False" Margin="0,0,0,16"
+                            ValueText="{Binding EnergyThermals.GpuMemoryJunctionTempC, StringFormat={}{0:0.#}, TargetNullValue=–}" Unit="°C"
+                            SubText="~105°C is the well-known GDDR6X throttle reference (fixed comparison point, not a per-card reported limit)"
+                            AccentBrush="{DynamicResource AccentBrush}">
+                <views:VfdMeter.Style>
+                    <Style TargetType="views:VfdMeter">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding EnergyThermals.GpuMemoryJunctionTempC}" Value="{x:Null}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </views:VfdMeter.Style>
+            </views:VfdMeter>
 
             <!-- #55/#56: installed adapters - driver version/date, best-effort WDDM version, and
                  whether it looks integrated vs. discrete. Always shows every adapter Windows knows
@@ -192,8 +284,24 @@
                 </TextBlock.Style>
             </TextBlock>
 
-            <!-- #56: "which app is using it" - re-presents the Processes tab's already-polling
-                 GPU% column, live-sorted here instead of sampled again. -->
+            <!-- #679: per-engine history chart - the exact glow+core LineOf pattern every other
+                 history chart in this app uses, one pair per tracked engine type sharing one
+                 chart/legend. An encode/decode spike (which explains a streaming stutter a single
+                 aggregate "GPU busy" number hides completely) is visible right alongside 3D load. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <TextBlock Text="Per-engine history" Style="{StaticResource CardTitle}" />
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,-2,0,10" TextWrapping="Wrap"
+                               Text="3D / Copy / Video Decode / Video Encode / Compute utilization over time, for the primary adapter." />
+                    <lvc:CartesianChart Series="{Binding EngineHistorySeries}" XAxes="{Binding EngineHistoryXAxes}" YAxes="{Binding EngineHistoryYAxes}"
+                                         Height="180" TooltipPosition="Top" LegendPosition="Bottom" Background="Transparent" />
+                </StackPanel>
+            </Border>
+
+            <!-- #56/#680: "which app is using it" - re-presents the Processes tab's already-
+                 polling GPU% column, live-sorted here instead of sampled again, split out by which
+                 engine type each process is actually using (#680) - a browser pinning video-decode
+                 is a very different problem from one pinning 3D, even at the same total GPU%. -->
             <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
                 <StackPanel>
                     <TextBlock Text="Top GPU processes" Style="{StaticResource CardTitle}" />
@@ -204,6 +312,7 @@
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <StackPanel Grid.Column="0" Margin="0,0,8,0">
                                         <TextBlock Text="{Binding Name}" FontSize="12.5" TextTrimming="CharacterEllipsis" />
@@ -211,9 +320,709 @@
                                             <Run Text="PID " /><Run Text="{Binding Pid, Mode=OneWay}" />
                                         </TextBlock>
                                     </StackPanel>
-                                    <TextBlock Grid.Column="1" Text="{Binding GpuPercent, StringFormat={}{0:0.0}%}"
+                                    <Border Grid.Column="1" Background="{DynamicResource AccentMutedBrush}" CornerRadius="10" Padding="7,2" Margin="0,0,8,0" VerticalAlignment="Center">
+                                        <Border.Style>
+                                            <Style TargetType="Border">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding TopGpuEngine}" Value="">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Border.Style>
+                                        <TextBlock Text="{Binding TopGpuEngine}" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource AccentBrush}" />
+                                    </Border>
+                                    <TextBlock Grid.Column="2" Text="{Binding GpuPercent, StringFormat={}{0:0.0}%}"
                                                FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center" />
                                 </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #671/#672: TDR registry configuration + Hardware-accelerated GPU Scheduling state -
+                 read-only, from HKLM\SYSTEM\CurrentControlSet\Control\GraphicsDrivers. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <TextBlock Text="GPU driver configuration" Style="{StaticResource CardTitle}" />
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,-2,0,10" TextWrapping="Wrap"
+                               Text="Timeout Detection and Recovery (TDR) tuning and Hardware-accelerated GPU Scheduling, read from HKLM\SYSTEM\CurrentControlSet\Control\GraphicsDrivers. Read-only - a value not present in the registry means Windows is using its own documented default." />
+
+                    <TextBlock Text="TDR timing" FontSize="12.5" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimaryBrush}" Margin="0,0,0,6" />
+
+                    <Grid Margin="0,0,0,6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="TdrLevel — recovery behavior when a TDR fires" FontSize="12" TextWrapping="Wrap" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="1" VerticalAlignment="Center" FontWeight="SemiBold" Margin="8,0,0,0" Text="{Binding TdrRegistrySettings.TdrLevel, TargetNullValue='3 (default)'}">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding TdrRegistrySettings.TdrLevelNonDefault}" Value="True">
+                                            <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </Grid>
+                    <Grid Margin="0,0,0,6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="TdrDelay — seconds before a stalled GPU is declared hung" FontSize="12" TextWrapping="Wrap" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="1" VerticalAlignment="Center" FontWeight="SemiBold" Margin="8,0,0,0" Text="{Binding TdrRegistrySettings.TdrDelaySeconds, TargetNullValue='2s (default)', StringFormat={}{0}s}">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding TdrRegistrySettings.TdrDelayNonDefault}" Value="True">
+                                            <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </Grid>
+                    <Grid Margin="0,0,0,6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="TdrDdiDelay — seconds allowed for the DDI reset itself" FontSize="12" TextWrapping="Wrap" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="1" VerticalAlignment="Center" FontWeight="SemiBold" Margin="8,0,0,0" Text="{Binding TdrRegistrySettings.TdrDdiDelaySeconds, TargetNullValue='5s (default)', StringFormat={}{0}s}">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding TdrRegistrySettings.TdrDdiDelayNonDefault}" Value="True">
+                                            <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </Grid>
+                    <Grid Margin="0,0,0,6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="TdrLimitCount — TDRs tolerated within TdrLimitTime before the driver is disabled" FontSize="12" TextWrapping="Wrap" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="1" VerticalAlignment="Center" FontWeight="SemiBold" Margin="8,0,0,0" Text="{Binding TdrRegistrySettings.TdrLimitCount, TargetNullValue='5 (default)'}">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding TdrRegistrySettings.TdrLimitCountNonDefault}" Value="True">
+                                            <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </Grid>
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="TdrLimitTime — rolling window (seconds) TdrLimitCount is measured over" FontSize="12" TextWrapping="Wrap" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="1" VerticalAlignment="Center" FontWeight="SemiBold" Margin="8,0,0,0" Text="{Binding TdrRegistrySettings.TdrLimitTimeSeconds, TargetNullValue='60s (default)', StringFormat={}{0}s}">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding TdrRegistrySettings.TdrLimitTimeNonDefault}" Value="True">
+                                            <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </Grid>
+
+                    <!-- #671: the specific, widely-copied "fix" this readout exists to surface. -->
+                    <Border Background="{DynamicResource BgElevatedBrush}" BorderBrush="{DynamicResource WarningBrush}"
+                            BorderThickness="1" CornerRadius="8" Padding="12,8" Margin="0,0,0,14">
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding TdrRegistrySettings.LooksLikeMaskingFix}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                        <TextBlock Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" FontSize="11.5"
+                                   Text="TdrDelay is raised well past its 2-second default. This is a widely-copied 'fix' for TDR crashes that actually masks a failing or overclocked GPU by giving the driver more time before Windows kills it, rather than addressing why the GPU stopped responding in the first place (quick flag, not a verdict)." />
+                    </Border>
+
+                    <TextBlock Text="Hardware-accelerated GPU Scheduling" FontSize="12.5" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimaryBrush}" Margin="0,0,0,6" />
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="HwSchMode" FontSize="12" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="1" Text="{Binding HagsInfo.StateText}" FontWeight="SemiBold" VerticalAlignment="Center" Margin="8,0,0,0" />
+                    </Grid>
+                    <TextBlock TextWrapping="Wrap" Margin="0,2,0,0"
+                               Text="Installed driver looks new enough to support HAGS (WDDM 2.7+) - quick flag from the reported WDDM version, not a verified capability query.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding HagsInfo.DriverLikelySupportsHags}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <TextBlock TextWrapping="Wrap" Margin="0,2,0,0"
+                               Text="Installed driver's reported WDDM version looks too old for HAGS (needs WDDM 2.7+) - quick flag, not a verified capability query.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding HagsInfo.DriverLikelySupportsHags}" Value="False">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- #674: VRAM pressure - committed usage vs. installed capacity, plus the shared-VRAM
+                 ("spillover from system memory") trend. Built from the "GPU Adapter Memory" perf
+                 counters GpuMonitorService already samples (Dedicated/Shared Usage, Total Committed)
+                 and this GPU's registry-reported installed VRAM size - not the true
+                 IDXGIAdapter3::QueryVideoMemoryInfo OS budget (not reachable from managed code
+                 without a DirectX interop dependency this project doesn't take on), so this card
+                 always says "Committed", never "Budget". -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <TextBlock Text="VRAM pressure" Style="{StaticResource CardTitle}" />
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,-2,0,10" TextWrapping="Wrap"
+                               Text="Total committed adapter memory vs. installed VRAM capacity, and the shared (system-memory) portion of it over time. Sustained shared-VRAM usage while the GPU isn't maxed out is the 'stutters but the GPU isn't at 100%' shape - the driver paging textures over PCIe because it's short on dedicated VRAM." />
+
+                    <ItemsControl ItemsSource="{Binding LiveAdapters}" Margin="0,0,0,4">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Margin="0,0,0,14">
+                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" Margin="0,0,0,6" />
+                                    <UniformGrid Columns="2">
+                                        <views:VfdMeter Title="Committed vs. capacity" Glow="False" Margin="0,0,4,0"
+                                                         Percent="{Binding CommittedVsCapacityPercent}"
+                                                         ValueText="{Binding TotalCommittedBytes, Converter={StaticResource BytesToReadableConverter}}"
+                                                         SubText="{Binding DedicatedVramTotalBytes, Converter={StaticResource BytesToReadableConverter}, StringFormat=of {0} installed}"
+                                                         AccentBrush="{DynamicResource AccentBrush}" />
+                                        <views:VfdMeter Title="Shared (spillover)" Glow="False" Margin="4,0,0,0"
+                                                         ValueText="{Binding SharedVramUsedBytes, Converter={StaticResource BytesToReadableConverter}}"
+                                                         SubText="Currently paged into system memory" AccentBrush="{DynamicResource WarningBrush}" />
+                                    </UniformGrid>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <TextBlock Text="Shared VRAM (spillover) trend" FontSize="12.5" FontWeight="SemiBold"
+                               Foreground="{DynamicResource TextPrimaryBrush}" Margin="0,4,0,4" />
+                    <lvc:CartesianChart Series="{Binding VramSpilloverSeries}" XAxes="{Binding VramSpilloverXAxes}" YAxes="{Binding VramSpilloverYAxes}"
+                                         Height="120" TooltipPosition="Top" LegendPosition="Hidden" Background="Transparent" Margin="0,0,0,10" />
+
+                    <TextBlock Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" FontSize="11.5" Text="{Binding VramPressureVerdictText}">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding VramPressureVerdictText}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- #670/#673/#677: GPU resets, driver timeouts (TDR), device-removed crashes, the
+                 unrecovered-reset count, driver-version correlation, and live pre-TDR hang
+                 detections - all on-demand (event-log/pnputil scan), same "button + startup load"
+                 shape as the Stability tab's WHEA card. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="GPU resets &amp; driver timeouts (TDR)" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Check GPU events" Command="{Binding LoadGpuEventHistoryCommand}" />
+                    </Grid>
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,-2,0,10" TextWrapping="Wrap"
+                               Text="Display driver timeout/reset (TDR) events and DXGI device-removed crashes, last 30 days. Naming the failing driver module is what makes a TDR actionable instead of just a count." />
+                    <TextBlock Text="{Binding GpuEventHistoryStatusText}" Margin="0,0,0,8" TextWrapping="Wrap">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding GpuEventHistoryStatusText}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
+                    <UniformGrid Columns="2" Margin="0,0,0,12">
+                        <views:VfdMeter Title="TDR events" Glow="False" Margin="0,0,6,0"
+                                        ValueText="{Binding TdrEvents.Count}" SubText="Last 30 days" AccentBrush="{DynamicResource WarningBrush}" />
+                        <views:VfdMeter Title="Unrecovered" Glow="False" Margin="6,0,0,0"
+                                        ValueText="{Binding UnrecoveredResetCount}" SubText="Followed by a 0x116/0x117 bugcheck" AccentBrush="{DynamicResource DangerBrush}" />
+                    </UniformGrid>
+
+                    <!-- #670: per-event driver module + recovery outcome. -->
+                    <TextBlock Text="TDR events" FontSize="12.5" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimaryBrush}" Margin="0,0,0,6" />
+                    <ItemsControl ItemsSource="{Binding TdrEvents}" MaxHeight="240" Margin="0,0,0,10">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                                        <TextBlock FontSize="12">
+                                            <Run Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}" />
+                                            <Run Text=" — driver " /><Run Text="{Binding DriverModule}" FontWeight="SemiBold" />
+                                        </TextBlock>
+                                        <TextBlock Style="{StaticResource SubStat}" FontSize="10.5" TextWrapping="Wrap" Text="{Binding Message}" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" VerticalAlignment="Top" HorizontalAlignment="Right">
+                                        <TextBlock Text="Recovered" FontSize="10.5" FontWeight="SemiBold" Foreground="{DynamicResource SuccessBrush}">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding Recovered}" Value="True">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                        <TextBlock Text="Not recovered" FontSize="10.5" FontWeight="SemiBold" Foreground="{DynamicResource DangerBrush}">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding Recovered}" Value="False">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </StackPanel>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="No TDR events found in the last 30 days.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding TdrEvents.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
+                    <!-- #677: DXGI device-removed application crashes. -->
+                    <TextBlock Text="DXGI device-removed crashes" FontSize="12.5" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimaryBrush}" Margin="0,14,0,6" />
+                    <ItemsControl ItemsSource="{Binding DeviceRemovedEvents}" MaxHeight="180" Margin="0,0,0,10">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Margin="0,0,0,8">
+                                    <TextBlock FontSize="12">
+                                        <Run Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}" />
+                                        <Run Text=" — " /><Run Text="{Binding ProcessName}" FontWeight="SemiBold" />
+                                    </TextBlock>
+                                    <TextBlock Style="{StaticResource SubStat}" FontSize="10.5" TextWrapping="Wrap" Text="{Binding Message}" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="No DXGI device-removed crashes found in the last 30 days.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding DeviceRemovedEvents.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
+                    <!-- #677: live pre-TDR hang detections - GPU Engine "3D" utilization frozen for
+                         several seconds while a real foreground app was running. -->
+                    <TextBlock Text="Pre-TDR hang detections" FontSize="12.5" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimaryBrush}" Margin="0,14,0,6" />
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,-2,0,8" TextWrapping="Wrap"
+                               Text="GPU Engine '3D' utilization stuck at the same reading for 5+ seconds straight while a foreground app was running - can be logged before the driver ever actually resets. Quick flag, not a verdict." />
+                    <ItemsControl ItemsSource="{Binding HangEvents}" MaxHeight="180">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Margin="0,0,0,8">
+                                    <TextBlock FontSize="12">
+                                        <Run Text="{Binding DetectedAt, StringFormat={}{0:g}, Mode=OneWay}" />
+                                        <Run Text=" — " /><Run Text="{Binding ForegroundProcessName}" FontWeight="SemiBold" />
+                                    </TextBlock>
+                                    <TextBlock Style="{StaticResource SubStat}" FontSize="10.5">
+                                        <Run Text="{Binding AdapterName}" /><Run Text=" stuck at " /><Run Text="{Binding StuckAtPercent, StringFormat={}{0:0.#}%}" />
+                                        <Run Text=" for " /><Run Text="{Binding DurationSeconds, StringFormat={}{0:0}s}" /><Run Text="+" />
+                                    </TextBlock>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="No pre-TDR hangs detected yet this session.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding HangEvents.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- #673: TDR/crash counts bucketed by the driver version staged at the time. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <TextBlock Text="Driver-version crash correlation" Style="{StaticResource CardTitle}" />
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,-2,0,10" TextWrapping="Wrap"
+                               Text="TDR and driver-crash counts bucketed by the display driver version staged at the time (from the driver store, via pnputil) - &quot;all the TDRs happened after one update&quot; is the finding this table exists to surface. Best-effort: only as detailed as the driver packages Windows has kept staged, and a single row just means every event happened under the one version currently installed." />
+                    <DataGrid ItemsSource="{Binding DriverVersionBuckets}" IsReadOnly="True" MaxHeight="220">
+                        <DataGrid.Style>
+                            <Style TargetType="DataGrid">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding DriverVersionBuckets.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </DataGrid.Style>
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Driver version" Binding="{Binding DriverVersion}" Width="*" />
+                            <DataGridTextColumn Header="Published" Binding="{Binding PublishDate, StringFormat={}{0:yyyy-MM-dd}}" Width="100" />
+                            <DataGridTextColumn Header="Current" Binding="{Binding IsCurrent}" Width="70" />
+                            <DataGridTextColumn Header="TDRs" Binding="{Binding TdrCount}" Width="60" />
+                            <DataGridTextColumn Header="Crashes" Binding="{Binding CrashCount}" Width="70" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <TextBlock Text="No driver-version history available yet - click &quot;Check GPU events&quot; above, or only one driver package is currently staged.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding DriverVersionBuckets.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- #682/#683: PCIe link speed/width per GPU/NVMe device, with per-boot drift
+                 detection, plus the active power plan's ASPM link-state setting - all from one
+                 on-demand PowerShell shell-out (PciLinkService). An x16 card running x4, or a
+                 Gen4 drive silently dropping to Gen1, is a dirty slot, a failing riser, or a dying
+                 card/drive; a link that changed since a previous boot is worth a second look even
+                 when it isn't currently below its own maximum. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="PCIe link &amp; power management" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Check PCIe links" Command="{Binding LoadPciLinkInfoCommand}" />
+                    </Grid>
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,-2,0,10" TextWrapping="Wrap"
+                               Text="Negotiated vs. maximum PCIe generation/width for GPU and NVMe devices (Get-PnpDeviceProperty), and whether the active power plan's ASPM link-state setting is on - aggressive ASPM is a known cause of NVMe dropouts and eGPU/Thunderbolt disconnects." />
+                    <TextBlock Text="{Binding PciLinkStatusText}" Margin="0,0,0,8" TextWrapping="Wrap">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding PciLinkStatusText}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
+                    <!-- #683: ASPM readout + one-click "set to Off". -->
+                    <Grid Margin="0,0,0,12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="Active plan's PCIe Link State Power Management (ASPM)" FontSize="12" VerticalAlignment="Center" />
+                            <TextBlock Text="{Binding AspmStateText}" FontWeight="SemiBold" Margin="0,2,0,0">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding AspmIsAggressive}" Value="True">
+                                                <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </StackPanel>
+                        <Button Grid.Column="1" Content="Set to Off" Command="{Binding SetAspmOffCommand}" VerticalAlignment="Center">
+                            <Button.Style>
+                                <Style TargetType="Button">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding AspmIsAggressive}" Value="True">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                    </Grid>
+
+                    <!-- #682: one row per GPU/NVMe PCIe device. -->
+                    <ItemsControl ItemsSource="{Binding PciLinks}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                            <Border Background="{DynamicResource AccentMutedBrush}" CornerRadius="3" Padding="5,1" Margin="8,0,0,0" VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding Kind}" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource AccentBrush}" />
+                                            </Border>
+                                        </StackPanel>
+                                        <TextBlock Style="{StaticResource SubStat}" FontSize="10.5" TextWrapping="Wrap" Margin="0,2,0,0">
+                                            <Run Text="Max " /><Run Text="{Binding MaxLinkText, Mode=OneWay}" />
+                                            <Run Text=" · Previous boot " /><Run Text="{Binding PreviousBootLinkText, TargetNullValue='(none recorded)', Mode=OneWay}" />
+                                        </TextBlock>
+                                        <TextBlock Foreground="{DynamicResource DangerBrush}" FontSize="10.5" FontWeight="SemiBold" Margin="0,2,0,0" Text="Link changed since a previous boot">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding ChangedSincePreviousBoot}" Value="True">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </StackPanel>
+                                    <TextBlock Grid.Column="1" Text="{Binding CurrentLinkText, Mode=OneWay}" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsBelowMax}" Value="True">
+                                                        <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <!-- #684: dedicated eGPU/Thunderbolt card - hidden entirely when no
+                         Thunderbolt-attached GPU was found. -->
+                    <Border Background="{DynamicResource BgElevatedBrush}" BorderBrush="{DynamicResource BorderBrush2}"
+                            BorderThickness="1" CornerRadius="8" Padding="12,10" Margin="0,4,0,0">
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding EgpuLink}" Value="{x:Null}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                        <StackPanel>
+                            <TextBlock Text="eGPU enclosure" FontSize="12.5" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimaryBrush}" Margin="0,0,0,4" />
+                            <TextBlock TextWrapping="Wrap" Style="{StaticResource SubStat}">
+                                <Run Text="{Binding EgpuLink.Name, Mode=OneWay}" FontWeight="SemiBold" />
+                                <Run Text=" via " /><Run Text="{Binding EgpuLink.EnclosureName, Mode=OneWay}" />
+                                <Run Text=" — negotiated " /><Run Text="{Binding EgpuLink.CurrentLinkText, Mode=OneWay}" />
+                                <Run Text=" of " /><Run Text="{Binding EgpuLink.MaxLinkText, Mode=OneWay}" /><Run Text=" max." />
+                            </TextBlock>
+                            <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource WarningBrush}" FontSize="11.5" Margin="0,4,0,0"
+                                       Text="A renegotiated/reduced link, an unplugged cable, or an enclosure power fault on a Thunderbolt GPU commonly presents to the user as 'the game just crashed' - worth checking here first." />
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </Border>
+
+            <!-- #676: nvidia-smi throttle-reason/ECC ingestion - the only authoritative GPU
+                 throttle-reason and VRAM-error source this app can read without a vendor SDK.
+                 Hidden entirely on non-NVIDIA systems (or when nvidia-smi.exe isn't in System32). -->
+            <Border Margin="0,16,0,0">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding NvidiaSmiAvailable}" Value="True">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="NVIDIA driver diagnostics (nvidia-smi)" Style="{StaticResource CardTitle}" />
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,-2,0,10" TextWrapping="Wrap"
+                               Text="Explicit driver-reported throttle reasons and ECC/retired-page counts, from nvidia-smi -q -d PERFORMANCE,ECC,POWER - the only authoritative source for either without a vendor SDK. Checked every few seconds." />
+                    <ItemsControl ItemsSource="{Binding NvidiaSmiStatuses}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Margin="0,0,0,14">
+                                    <TextBlock Text="{Binding GpuName}" FontWeight="SemiBold" Margin="0,0,0,8" />
+
+                                    <WrapPanel Margin="0,0,0,8">
+                                        <Border Background="{DynamicResource DangerMutedBrush}" CornerRadius="10" Padding="8,3" Margin="0,0,6,6">
+                                            <Border.Style>
+                                                <Style TargetType="Border">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding SwPowerCap}" Value="True">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Border.Style>
+                                            <TextBlock Text="SW power cap active" FontSize="10.5" FontWeight="SemiBold" Foreground="{DynamicResource DangerBrush}" />
+                                        </Border>
+                                        <Border Background="{DynamicResource DangerMutedBrush}" CornerRadius="10" Padding="8,3" Margin="0,0,6,6">
+                                            <Border.Style>
+                                                <Style TargetType="Border">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding HwThermalSlowdown}" Value="True">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Border.Style>
+                                            <TextBlock Text="HW thermal slowdown active" FontSize="10.5" FontWeight="SemiBold" Foreground="{DynamicResource DangerBrush}" />
+                                        </Border>
+                                        <Border Background="{DynamicResource DangerMutedBrush}" CornerRadius="10" Padding="8,3" Margin="0,0,6,6">
+                                            <Border.Style>
+                                                <Style TargetType="Border">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding HwPowerBrake}" Value="True">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Border.Style>
+                                            <TextBlock Text="HW power brake active" FontSize="10.5" FontWeight="SemiBold" Foreground="{DynamicResource DangerBrush}" />
+                                        </Border>
+                                        <Border Background="{DynamicResource AccentMutedBrush}" CornerRadius="10" Padding="8,3" Margin="0,0,6,6">
+                                            <Border.Style>
+                                                <Style TargetType="Border">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding SyncBoost}" Value="True">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Border.Style>
+                                            <TextBlock Text="Sync boost active" FontSize="10.5" FontWeight="SemiBold" Foreground="{DynamicResource AccentBrush}" />
+                                        </Border>
+                                    </WrapPanel>
+                                    <TextBlock Text="No throttle reasons currently active.">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding AnyThrottleActive}" Value="False">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+
+                                    <TextBlock TextWrapping="Wrap" Margin="0,6,0,0">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding HasEccData}" Value="True">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                        <Run Text="ECC (volatile): " />
+                                        <Run Text="{Binding EccVolatileCorrectable, Mode=OneWay}" /><Run Text=" correctable, " />
+                                        <Run Text="{Binding EccVolatileUncorrectable, Mode=OneWay}" /><Run Text=" uncorrectable" />
+                                    </TextBlock>
+                                    <TextBlock TextWrapping="Wrap" Margin="0,6,0,0" Text="No ECC memory reported on this card (expected on a consumer GPU).">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding HasEccData}" Value="False">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                    <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,2,0,0" Visibility="{Binding RemappedRows, Converter={StaticResource NullToVisibilityConverter}}">
+                                        <Run Text="Remapped memory rows: " /><Run Text="{Binding RemappedRows, Mode=OneWay}" />
+                                    </TextBlock>
+                                </StackPanel>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>

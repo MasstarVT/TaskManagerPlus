@@ -839,6 +839,16 @@ public sealed class StorageViewModel : ObservableObject
     // ================================================================================
     public ObservableCollection<string> ChkdskVolumeOptions { get; } = new();
 
+    // #682: compact PCIe link-speed/width readout for NVMe controllers - see the GPU tab's own
+    // PciLinks card for the full picture (drift detection, ASPM, eGPU); this tab just re-runs the
+    // same PciLinkService shell-out and filters to Kind == "NVMe", since #682's own note calls for
+    // showing this on both tabs rather than only the GPU one.
+    public ObservableCollection<PciLinkInfo> NvmePciLinks { get; } = new();
+    public AsyncRelayCommand LoadPciLinkInfoCommand { get; }
+
+    private string _pciLinkStatusText = "Not checked yet this session - click \"Check PCIe links\".";
+    public string PciLinkStatusText { get => _pciLinkStatusText; private set => SetProperty(ref _pciLinkStatusText, value); }
+
     private string? _selectedChkdskVolume;
     public string? SelectedChkdskVolume
     {
@@ -1429,6 +1439,8 @@ public sealed class StorageViewModel : ObservableObject
         ReadSmartDetailsCommand = new AsyncRelayCommand(ReadSmartDetailsAsync, () => SelectedSmartDisk is not null);
         ScanLargestItemsCommand = new AsyncRelayCommand(ScanLargestItemsAsync, () => !IsScanningLargestItems && Directory.Exists(LargestItemsRoot));
         RunThroughputTestCommand = new AsyncRelayCommand(RunThroughputTestAsync, () => !IsThroughputTesting && SelectedThroughputDrive is not null);
+        LoadPciLinkInfoCommand = new AsyncRelayCommand(_ => LoadPciLinkInfoAsync());
+        _ = LoadPciLinkInfoAsync();
 
         // #320/#321: separate log-page round trips, each gated on an NVMe disk actually having
         // been read via ReadSmartDetailsCommand above (ShowNvmeHealth).
@@ -1844,6 +1856,27 @@ public sealed class StorageViewModel : ObservableObject
             : "largest contiguous extent not reported by this Windows build's defrag output";
 
         row.FreeSpaceFragmentationText = $"{freePercentText}, {extentText}.";
+    }
+
+    /// <summary>#682: on-demand PCIe link-state read (shells to PowerShell via PciLinkService,
+    /// which also folds in the per-boot drift comparison) - filtered to NVMe controllers for this
+    /// tab's compact readout.</summary>
+    private async Task LoadPciLinkInfoAsync()
+    {
+        PciLinkStatusText = "Reading PCIe link state (shells out to PowerShell - can take a few seconds)...";
+        try
+        {
+            var links = await PciLinkService.ReadAllAsync();
+            NvmePciLinks.Clear();
+            foreach (var l in links.Where(l => l.Kind == "NVMe")) NvmePciLinks.Add(l);
+            PciLinkStatusText = NvmePciLinks.Count == 0
+                ? "No NVMe PCIe link data available (no NVMe controller found, or PowerShell/the PnpDevice cmdlets aren't reachable)."
+                : string.Empty;
+        }
+        catch (Exception ex)
+        {
+            PciLinkStatusText = $"PCIe link check failed: {ex.Message}";
+        }
     }
 
     private async Task ReadSmartDetailsAsync()

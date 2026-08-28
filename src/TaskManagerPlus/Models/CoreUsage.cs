@@ -31,4 +31,12 @@ public sealed class CoreUsage : ObservableObject
     /// otherwise invisible reason only some cores appear to be doing anything under light load.</summary>
     private bool _isParked;
     public bool IsParked { get => _isParked; set => SetProperty(ref _isParked, value); }
+
+    /// <summary>#630: this core's "OS requested" minus "silicon delivered" clock, in percentage
+    /// points of rated max frequency ("% Processor Performance" minus "% of Maximum Frequency") -
+    /// a persistent positive gap means the OS is asking for more than the silicon is actually
+    /// delivering. Null when either underlying perf counter wasn't available on this Windows/CPU
+    /// generation - never fabricated.</summary>
+    private double? _frequencyGapPoints;
+    public double? FrequencyGapPoints { get => _frequencyGapPoints; set => SetProperty(ref _frequencyGapPoints, value); }
 }

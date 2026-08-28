@@ -20,6 +20,13 @@ public partial class MainWindow : Window
     // rather than the constructor so ApplyNativeWindowChrome/Handle exist first; disposed on Closed.
     private Forms.NotifyIcon? _trayIcon;
 
+    // #690: WM_DISPLAYCHANGE hook - same HwndSource.AddHook pattern GlobalHotkeyService already
+    // establishes for its own single window message, just inline here rather than a dedicated
+    // service (there's nothing to register/unregister with the OS the way RegisterHotKey needs -
+    // WM_DISPLAYCHANGE is broadcast to every top-level window automatically).
+    private const int WM_DISPLAYCHANGE = 0x007E;
+    private HwndSource? _displayChangeHookSource;
+
     public MainWindow()
     {
         InitializeComponent();
@@ -36,8 +43,8 @@ public partial class MainWindow : Window
         };
 
         Closing += (_, _) => _viewModel.Summary.GenerateReportOnExitIfEnabled();
-        Closed += (_, _) => { _viewModel.Dispose(); _trayIcon?.Dispose(); };
-        SourceInitialized += (_, _) => { ApplyNativeWindowChrome(); InitializeTrayIcon(); InitializeGlobalHotkey(); };
+        Closed += (_, _) => { _viewModel.Dispose(); _trayIcon?.Dispose(); _displayChangeHookSource?.RemoveHook(DisplayChangeWndProc); };
+        SourceInitialized += (_, _) => { ApplyNativeWindowChrome(); InitializeTrayIcon(); InitializeGlobalHotkey(); InitializeDisplayChangeHook(); };
         StateChanged += MainWindow_StateChanged;
         PreviewKeyDown += MainWindow_PreviewKeyDown;
 
@@ -59,6 +66,39 @@ public partial class MainWindow : Window
         if (!ReferenceEquals(e.OriginalSource, MainTabControl)) return;
         if (MainTabControl.SelectedItem is not TabItem selected || !string.Equals(selected.Header as string, "Events", StringComparison.OrdinalIgnoreCase))
             _viewModel.Events.OnTabDeactivated();
+    }
+
+    /// <summary>#690: forwards WM_DISPLAYCHANGE (resolution/color-depth change, or a monitor
+    /// connect/disconnect that Windows resolves into a new desktop configuration) into
+    /// SystemSpecsViewModel's persisted display-change history - see its RecordDisplayChange
+    /// remarks. lParam's low/high words are the new desktop width/height in pixels (documented
+    /// WM_DISPLAYCHANGE payload), wParam is the new bit depth.</summary>
+    private void InitializeDisplayChangeHook()
+    {
+        var hwnd = new WindowInteropHelper(this).Handle;
+        if (hwnd == IntPtr.Zero) return;
+        _displayChangeHookSource = HwndSource.FromHwnd(hwnd);
+        _displayChangeHookSource?.AddHook(DisplayChangeWndProc);
+    }
+
+    private IntPtr DisplayChangeWndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+    {
+        if (msg == WM_DISPLAYCHANGE)
+        {
+            try
+            {
+                int bitsPerPixel = wParam.ToInt32();
+                long l = lParam.ToInt64();
+                int width = (int)(l & 0xFFFF);
+                int height = (int)((l >> 16) & 0xFFFF);
+                _viewModel.SystemSpecs.RecordDisplayChange($"Display configuration changed - {width}x{height} @ {bitsPerPixel}-bit color");
+            }
+            catch
+            {
+                // Best-effort - a malformed/unexpected payload just means this one event isn't logged.
+            }
+        }
+        return IntPtr.Zero;
     }
 
     /// <summary>Round 12, #84: selects a tab by header text (case-insensitive) - used by the

@@ -116,6 +116,20 @@ public sealed class ProcessRow : ObservableObject
     private double _gpuPercent;
     public double GpuPercent { get => _gpuPercent; set => SetProperty(ref _gpuPercent, value); }
 
+    /// <summary>#680: which "GPU Engine" perf-counter engine type (3D/Copy/Video Decode/Video
+    /// Encode/Compute/...) this process is most active on right now - split out of the aggregate
+    /// GpuPercent above via the same pid_..._engtype_... instance-name parse GpuMonitorService
+    /// already does for its per-adapter engine breakdown, just re-keyed by pid instead of by LUID.
+    /// Set by GpuViewModel (which owns the GPU-tab-only GpuMonitorService instance), the same
+    /// "second view over one shared collection sets a few extra fields" pattern GpuPercent itself
+    /// already establishes. Empty when this process isn't using the GPU at all right now - "3D-
+    /// bound" vs. "video-decode-bound" is a very different problem even at the same total GPU%.</summary>
+    private string _topGpuEngine = string.Empty;
+    public string TopGpuEngine { get => _topGpuEngine; set => SetProperty(ref _topGpuEngine, value); }
+
+    private double _topGpuEnginePercent;
+    public double TopGpuEnginePercent { get => _topGpuEnginePercent; set => SetProperty(ref _topGpuEnginePercent, value); }
+
     /// <summary>Round 7 #2: a best-effort "spawned together" grouping - see
     /// ProcessMonitorService.ComputeSpawnGroups for the exact heuristic (same parent pid + same
     /// executable name + start times clustered within a short window). 1 (or 0 for an unresolved

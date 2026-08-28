@@ -31,8 +31,12 @@ public sealed class GpuMonitorService : IDisposable
 {
     private const string DisplayClassGuid = "{4d36e968-e325-11ce-bfc1-08002be10318}";
 
+    // #680: pid is now captured (group 1) alongside the LUID halves (groups 2/3) and engine type
+    // (group 4) - the same instance-name parse this app already relied on for the per-adapter
+    // engine breakdown, just also keeping the pid this once so it can be re-aggregated per-process
+    // too (see ReadEngineUtilizationByLuid's remarks).
     private static readonly Regex EngineInstanceRegex = new(
-        @"^pid_\d+_luid_(0x[0-9A-Fa-f]+)_(0x[0-9A-Fa-f]+)_phys_\d+_eng_\d+_engtype_(.+)$",
+        @"^pid_(\d+)_luid_(0x[0-9A-Fa-f]+)_(0x[0-9A-Fa-f]+)_phys_\d+_eng_\d+_engtype_(.+)$",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     private static readonly Regex MemoryInstanceRegex = new(
@@ -43,6 +47,11 @@ public sealed class GpuMonitorService : IDisposable
     private readonly Dictionary<string, PerformanceCounter> _dedicatedMemCounters = new();
     private readonly Dictionary<string, PerformanceCounter> _sharedMemCounters = new();
 
+    /// <summary>#674: "\GPU Adapter Memory(*)\Total Committed" - a third counter on the same
+    /// category as Dedicated/Shared Usage above, confirmed present on this app's target Windows
+    /// builds (`Get-Counter -ListSet "GPU Adapter Memory"`). See GpuAdapterSnapshot.TotalCommittedBytes.</summary>
+    private readonly Dictionary<string, PerformanceCounter> _totalCommittedCounters = new();
+
     public IReadOnlyList<GpuAdapterIdentity> Adapters { get; }
 
     /// <summary>False when this system exposes neither Win32_VideoController rows nor the "GPU
@@ -50,6 +59,14 @@ public sealed class GpuMonitorService : IDisposable
     /// so the tab can show an "unavailable" state instead of a permanently-empty grid that looks
     /// broken.</summary>
     public bool IsAvailable { get; }
+
+    /// <summary>#680: per-process GPU engine breakdown from the most recent <see cref="Sample"/>
+    /// call, keyed by pid - each process' engines sorted descending by percent (so ".First()" is
+    /// its top engine). Set as a side effect of Sample() rather than returned separately, the same
+    /// "read once, expose via a property the caller reads afterward" shape this app already uses
+    /// for a few other GPU-tab-only reads.</summary>
+    public IReadOnlyDictionary<int, List<GpuEngineUsage>> LastPerProcessEngineUsage { get; private set; } =
+        new Dictionary<int, List<GpuEngineUsage>>();
 
     public GpuMonitorService()
     {
@@ -65,8 +82,14 @@ public sealed class GpuMonitorService : IDisposable
 
     public List<GpuAdapterSnapshot> Sample()
     {
-        var engineByLuid = ReadEngineUtilizationByLuid();
-        var (dedicatedByLuid, sharedByLuid) = ReadAdapterMemoryByLuid();
+        var (engineByLuid, engineByPid) = ReadEngineUtilizationByLuid();
+        LastPerProcessEngineUsage = engineByPid.ToDictionary(
+            kv => kv.Key,
+            kv => kv.Value
+                .Select(e => new GpuEngineUsage { EngineType = e.Key, Percent = Math.Round(Math.Clamp(e.Value, 0, 100), 1) })
+                .OrderByDescending(e => e.Percent)
+                .ToList());
+        var (dedicatedByLuid, sharedByLuid, committedByLuid) = ReadAdapterMemoryByLuid();
 
         var liveLuids = engineByLuid.Keys.Union(dedicatedByLuid.Keys).Union(sharedByLuid.Keys)
             .OrderBy(l => l, StringComparer.OrdinalIgnoreCase)
@@ -81,6 +104,7 @@ public sealed class GpuMonitorService : IDisposable
             engineByLuid.TryGetValue(luid, out var engines);
             dedicatedByLuid.TryGetValue(luid, out var dedicatedUsed);
             sharedByLuid.TryGetValue(luid, out var sharedUsed);
+            committedByLuid.TryGetValue(luid, out var committedUsed);
 
             var identity = canPairOrdinal ? Adapters[i] : null;
             var engineList = (engines ?? new Dictionary<string, double>())
@@ -99,6 +123,7 @@ public sealed class GpuMonitorService : IDisposable
                 DedicatedVramUsedBytes = dedicatedUsed,
                 DedicatedVramTotalBytes = identity?.AdapterRamBytes ?? 0,
                 SharedVramUsedBytes = sharedUsed,
+                TotalCommittedBytes = committedUsed,
                 DriverVersion = identity?.DriverVersion ?? string.Empty,
                 DriverDate = identity?.DriverDate ?? string.Empty,
                 WddmVersion = identity?.WddmVersion ?? "Unknown",
@@ -107,13 +132,19 @@ public sealed class GpuMonitorService : IDisposable
         return result;
     }
 
-    /// <summary>Sums "Utilization Percentage" per (LUID, engine type), across every process/engine
-    /// instance - a rate-style counter (PERF_100NSEC_TIMER), so a newly-seen instance is skipped for
-    /// one tick rather than reported as a false 0, the same "prime before trusting a rate counter"
-    /// rule ProcessMonitorService.ReadGpuUsageByPid already follows for the same category.</summary>
-    private Dictionary<string, Dictionary<string, double>> ReadEngineUtilizationByLuid()
+    /// <summary>Sums "Utilization Percentage" per (LUID, engine type) AND, #680, per (pid, engine
+    /// type) in the same single pass over every process/engine instance - a rate-style counter
+    /// (PERF_100NSEC_TIMER), so a newly-seen instance is skipped for one tick rather than reported
+    /// as a false 0, the same "prime before trusting a rate counter" rule
+    /// ProcessMonitorService.ReadGpuUsageByPid already follows for the same category. The per-pid
+    /// breakdown reuses this exact parsed instance-name data (the pid is now captured by
+    /// EngineInstanceRegex alongside the LUID/engine-type groups it already captured) rather than a
+    /// second counter enumeration - #680 explicitly calls for extending this aggregation, not
+    /// re-parsing.</summary>
+    private (Dictionary<string, Dictionary<string, double>> ByLuid, Dictionary<int, Dictionary<string, double>> ByPid) ReadEngineUtilizationByLuid()
     {
-        var result = new Dictionary<string, Dictionary<string, double>>(StringComparer.OrdinalIgnoreCase);
+        var byLuid = new Dictionary<string, Dictionary<string, double>>(StringComparer.OrdinalIgnoreCase);
+        var byPid = new Dictionary<int, Dictionary<string, double>>();
         try
         {
             var instances = new PerformanceCounterCategory("GPU Engine").GetInstanceNames();
@@ -128,8 +159,9 @@ public sealed class GpuMonitorService : IDisposable
             {
                 var match = EngineInstanceRegex.Match(instance);
                 if (!match.Success) continue;
-                string luid = $"{match.Groups[1].Value}_{match.Groups[2].Value}";
-                string engineType = SplitPascalCase(match.Groups[3].Value);
+                if (!int.TryParse(match.Groups[1].Value, out int pid)) continue;
+                string luid = $"{match.Groups[2].Value}_{match.Groups[3].Value}";
+                string engineType = SplitPascalCase(match.Groups[4].Value);
 
                 if (!_engineCounters.TryGetValue(instance, out var counter))
                 {
@@ -147,25 +179,34 @@ public sealed class GpuMonitorService : IDisposable
                 try { value = counter.NextValue(); }
                 catch { continue; }
 
-                if (!result.TryGetValue(luid, out var byType))
-                    result[luid] = byType = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+                if (!byLuid.TryGetValue(luid, out var byType))
+                    byLuid[luid] = byType = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
                 byType[engineType] = byType.TryGetValue(engineType, out var existing) ? existing + value : value;
+
+                // pid 0 is the "Idle"/System pseudo-process GPU Engine reports for unattributed
+                // usage - not a real process, so it's excluded from the per-process breakdown (it
+                // would otherwise show up as a phantom top "process" using the GPU).
+                if (pid <= 0) continue;
+                if (!byPid.TryGetValue(pid, out var pidByType))
+                    byPid[pid] = pidByType = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+                pidByType[engineType] = pidByType.TryGetValue(engineType, out var existingPid) ? existingPid + value : value;
             }
         }
         catch
         {
             // "GPU Engine" category missing entirely - degrade to "no live utilization data".
         }
-        return result;
+        return (byLuid, byPid);
     }
 
     /// <summary>Sums "Dedicated Usage"/"Shared Usage" per LUID - plain instantaneous byte gauges
     /// (not rates, unlike the engine counters above), so no priming is needed, the same treatment
     /// the Memory tab's Committed/Cache counters get.</summary>
-    private (Dictionary<string, long> Dedicated, Dictionary<string, long> Shared) ReadAdapterMemoryByLuid()
+    private (Dictionary<string, long> Dedicated, Dictionary<string, long> Shared, Dictionary<string, long> Committed) ReadAdapterMemoryByLuid()
     {
         var dedicated = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
         var shared = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+        var committed = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
         try
         {
             var instances = new PerformanceCounterCategory("GPU Adapter Memory").GetInstanceNames();
@@ -180,6 +221,11 @@ public sealed class GpuMonitorService : IDisposable
             {
                 _sharedMemCounters[stale].Dispose();
                 _sharedMemCounters.Remove(stale);
+            }
+            foreach (var stale in _totalCommittedCounters.Keys.Where(k => !seen.Contains(k)).ToList())
+            {
+                _totalCommittedCounters[stale].Dispose();
+                _totalCommittedCounters.Remove(stale);
             }
 
             foreach (var instance in instances)
@@ -217,13 +263,28 @@ public sealed class GpuMonitorService : IDisposable
                     }
                     catch { /* leave unset for this tick */ }
                 }
+
+                if (!_totalCommittedCounters.TryGetValue(instance, out var commCounter))
+                {
+                    try { _totalCommittedCounters[instance] = commCounter = new PerformanceCounter("GPU Adapter Memory", "Total Committed", instance, readOnly: true); }
+                    catch { commCounter = null; } // older Windows builds may not expose this counter - degrade to 0 (Committed hidden in the UI)
+                }
+                if (commCounter is not null)
+                {
+                    try
+                    {
+                        long v = (long)commCounter.NextValue();
+                        committed[luid] = committed.TryGetValue(luid, out var c) ? c + v : v;
+                    }
+                    catch { /* leave unset for this tick */ }
+                }
             }
         }
         catch
         {
             // "GPU Adapter Memory" category missing entirely - degrade to "no live VRAM data".
         }
-        return (dedicated, shared);
+        return (dedicated, shared, committed);
     }
 
     /// <summary>One-time static read (#55/#56) - Win32_VideoController for name/driver version/date,
@@ -341,5 +402,6 @@ public sealed class GpuMonitorService : IDisposable
         foreach (var c in _engineCounters.Values) c.Dispose();
         foreach (var c in _dedicatedMemCounters.Values) c.Dispose();
         foreach (var c in _sharedMemCounters.Values) c.Dispose();
+        foreach (var c in _totalCommittedCounters.Values) c.Dispose();
     }
 }

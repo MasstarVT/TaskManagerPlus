@@ -632,6 +632,179 @@
                 </StackPanel>
             </Border>
 
+            <!-- #685-689: rich per-monitor detail - raw-EDID identity, refresh-rate-vs-EDID
+                 mismatch, cable bandwidth sufficiency, HDR/advanced color, and scaling/DPI/
+                 rotation. All quick flags/estimates from best-effort sources (see MonitorInfo's
+                 and SystemSpecsService.ReadMonitors' remarks), never a guaranteed-accurate reading -
+                 collapsed entirely when there are no displays to show. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding MonitorDetails.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Display details" Style="{StaticResource CardTitle}" />
+                    <ItemsControl ItemsSource="{Binding MonitorDetails}" Margin="0,8,0,0">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Background="{DynamicResource BgElevatedBrush}" BorderBrush="{DynamicResource BorderSubtleBrush}"
+                                        BorderThickness="1" CornerRadius="8" Padding="12,10" Margin="0,0,0,10">
+                                    <StackPanel>
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                            <TextBlock Text="{Binding ConnectionType}" FontSize="10.5" Margin="8,0,0,0" VerticalAlignment="Center"
+                                                       Foreground="{DynamicResource TextTertiaryBrush}" />
+                                        </StackPanel>
+                                        <TextBlock Style="{StaticResource SubStat}" Margin="0,2,0,8">
+                                            <Run Text="{Binding WidthPx, Mode=OneWay}" />×<Run Text="{Binding HeightPx, Mode=OneWay}" />
+                                            <Run Text=" @ " /><Run Text="{Binding RefreshHz, Mode=OneWay}" /><Run Text=" Hz" />
+                                            <Run Text=" · Scaling: " /><Run Text="{Binding ScalingModeText, Mode=OneWay}" />
+                                            <Run Text=" · Rotation: " /><Run Text="{Binding RotationText, Mode=OneWay}" />
+                                            <Run Text=" · DPI: " /><Run Text="{Binding DpiScalePercent, TargetNullValue=Unknown, StringFormat={}{0:0}%, Mode=OneWay}" />
+                                        </TextBlock>
+
+                                        <!-- #686: refresh-rate-vs-EDID mismatch. -->
+                                        <TextBlock Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" FontSize="11.5" Margin="0,0,0,6">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding RefreshMismatch}" Value="True">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                            <Run Text="Running at " /><Run Text="{Binding RefreshHz, Mode=OneWay}" /><Run Text=" Hz, but this panel's EDID advertises up to " />
+                                            <Run Text="{Binding EdidMaxRefreshHz, Mode=OneWay}" /><Run Text=" Hz at this resolution - check Display settings for a higher refresh-rate option." />
+                                        </TextBlock>
+
+                                        <!-- #687: cable bandwidth sufficiency. -->
+                                        <TextBlock Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" FontSize="11.5" Margin="0,0,0,6"
+                                                   Text="{Binding BandwidthWarningText}">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding BandwidthWarningText}" Value="{x:Null}">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+
+                                        <!-- #688: HDR / advanced color state. -->
+                                        <TextBlock Margin="0,0,0,6">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding HdrSupported}" Value="{x:Null}">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                            <Run Text="HDR: " />
+                                            <Run Text="{Binding HdrSupported, Converter={StaticResource NullableBoolToYesNoConverter}}" /><Run Text=" supported" />
+                                            <Run Text=", " /><Run Text="{Binding HdrEnabled, Converter={StaticResource NullableBoolToYesNoConverter}}" /><Run Text=" enabled" />
+                                            <Run Text=" · Wide color gamut: " /><Run Text="{Binding WideColorEnabled, Converter={StaticResource NullableBoolToYesNoConverter}}" />
+                                        </TextBlock>
+
+                                        <!-- #685: raw-EDID identity panel. -->
+                                        <Expander Header="EDID details" Foreground="{DynamicResource TextSecondaryBrush}" Background="Transparent" FontSize="11.5">
+                                            <Expander.Style>
+                                                <Style TargetType="Expander">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding Edid}" Value="{x:Null}">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Expander.Style>
+                                            <StackPanel Margin="4,8,0,0" DataContext="{Binding Edid}">
+                                                <TextBlock Style="{StaticResource SubStat}">
+                                                    <Run Text="Manufacturer: " /><Run Text="{Binding ManufacturerId, Mode=OneWay}" />
+                                                    <Run Text=" · Product code: " /><Run Text="{Binding ProductCode, Mode=OneWay}" />
+                                                </TextBlock>
+                                                <TextBlock Style="{StaticResource SubStat}" Margin="0,2,0,0">
+                                                    <Run Text="Model: " /><Run Text="{Binding ModelName, TargetNullValue=Unknown, Mode=OneWay}" />
+                                                    <Run Text=" · Serial: " /><Run Text="{Binding SerialNumber, TargetNullValue=Unknown, Mode=OneWay}" />
+                                                </TextBlock>
+                                                <TextBlock Style="{StaticResource SubStat}" Margin="0,2,0,0">
+                                                    <Run Text="Manufactured: week " /><Run Text="{Binding ManufactureWeek, Mode=OneWay}" />
+                                                    <Run Text=" of " /><Run Text="{Binding ManufactureYear, Mode=OneWay}" />
+                                                </TextBlock>
+                                                <TextBlock Style="{StaticResource SubStat}" Margin="0,2,0,0">
+                                                    <Run Text="Physical size: " /><Run Text="{Binding PhysicalWidthCm, Mode=OneWay}" />×<Run Text="{Binding PhysicalHeightCm, Mode=OneWay}" /><Run Text=" cm" />
+                                                </TextBlock>
+                                                <TextBlock Style="{StaticResource SubStat}" Margin="0,2,0,0">
+                                                    <Run Text="Native (EDID preferred) timing: " /><Run Text="{Binding NativeWidthPx, Mode=OneWay}" />×<Run Text="{Binding NativeHeightPx, Mode=OneWay}" />
+                                                    <Run Text=" @ " /><Run Text="{Binding NativeRefreshHz, Mode=OneWay}" /><Run Text=" Hz" />
+                                                </TextBlock>
+                                                <TextBlock Style="{StaticResource SubStat}" Margin="0,2,0,0" TextWrapping="Wrap">
+                                                    <Run Text="Feature bits: " /><Run Text="{Binding FeatureBitsSummary, Mode=OneWay}" />
+                                                </TextBlock>
+                                            </StackPanel>
+                                        </Expander>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #690: display connect/disconnect/mode-change history - WM_DISPLAYCHANGE events
+                 recorded live in-app (Source "App") plus a Kernel-PnP System-log scan (Source
+                 "Kernel-PnP"), persisted across sessions. Repeated disconnects at a regular
+                 interval point at a cable or a DisplayPort link-training failure. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Display connect/disconnect history" Style="{StaticResource CardTitle}" />
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,-2,0,10" TextWrapping="Wrap"
+                               Text="Monitor arrival/removal and display-configuration changes, last 30 days plus anything recorded this session. Repeated disconnects at a regular interval point at a cable or a DisplayPort link-training problem." />
+                    <ItemsControl ItemsSource="{Binding DisplayChangeHistory}" MaxHeight="240">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,8,0">
+                                        <Run Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}" />
+                                        <Run Text=" — " /><Run Text="{Binding Description, Mode=OneWay}" />
+                                    </TextBlock>
+                                    <Border Grid.Column="1" Background="{DynamicResource AccentMutedBrush}" CornerRadius="3" Padding="5,1" VerticalAlignment="Top">
+                                        <TextBlock Text="{Binding Source}" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource AccentBrush}" />
+                                    </Border>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="No display connect/disconnect events recorded yet.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding DisplayChangeHistory.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
             <!-- #59: installed .NET runtime versions, from the shared-framework directory layout
                  dotnet.exe itself uses. -->
             <Border Style="{StaticResource CardStyle}">

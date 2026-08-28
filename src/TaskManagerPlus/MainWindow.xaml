@@ -461,6 +461,7 @@
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <StackPanel Grid.Column="0" Orientation="Horizontal">
                     <Border Width="7" Height="7" CornerRadius="3.5" Margin="0,0,7,0" VerticalAlignment="Center" Background="{DynamicResource SuccessBrush}" />
@@ -553,7 +554,10 @@
 
                 <!-- #734: "Uptime 3h" normally, or "Uptime 3h — but 41 days since your last full
                      restart" once Fast Startup is on and the two figures meaningfully disagree -
-                     see MainViewModel.FooterUptimeText. -->
+                     see MainViewModel.FooterUptimeText. Supersedes #659's own simpler Fast Startup
+                     footer note (MainViewModel.FastStartupNoteText, kept as an unused property in
+                     case another card still wants a plain on/off read) with a single richer,
+                     already-reconciled readout rather than showing two overlapping notes. -->
                 <TextBlock Grid.Column="5" Text="{Binding FooterUptimeText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5" VerticalAlignment="Center" />
             </Grid>
         </Border>
