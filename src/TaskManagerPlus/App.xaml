@@ -35,6 +35,7 @@
             <conv:StringNotEmptyConverter x:Key="StringNotEmptyConverter" />
             <conv:BackgroundActivityStateToBrushConverter x:Key="BackgroundActivityStateToBrushConverter" />
             <conv:ResponsivenessScoreToBrushConverter x:Key="ResponsivenessScoreToBrushConverter" />
+            <conv:StringToVisibilityConverter x:Key="StringToVisibilityConverter" />
         </ResourceDictionary>
     </Application.Resources>
 </Application>

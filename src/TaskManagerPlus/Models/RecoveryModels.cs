@@ -43,15 +43,19 @@ public sealed class BootConfigAudit
     public bool CurrentlyConfiguredForSafeMode => !string.IsNullOrEmpty(CurrentSafebootValue);
 }
 
-/// <summary>Item 98: one System Restore point, straight off the `SystemRestore` WMI class's own
-/// instance properties (root\default) - the same class RestorePointService.TryCreate already
+/// <summary>Item 98 / #398: one System Restore point, straight off the `SystemRestore` WMI class's
+/// own instance properties (root\default) - the same class RestorePointService.TryCreate already
 /// writes through. SequenceNumber is the restore point's own stable identifier (what rstrui.exe's
 /// list shows, and what an `rstrui.exe /RunAsUser` style scripted rollback would target), not a
-/// UI-only row index.</summary>
+/// UI-only row index. Shared by both RestorePointService (this file) and VssService (#398,
+/// domain 4) - two independently-built readers of the same WMI class, unified onto one model
+/// rather than kept as duplicate near-identical types. CreationTime is nullable since one of the
+/// two readers can't always parse the WMI timestamp and leaves it null rather than fabricating a
+/// time.</summary>
 public sealed class RestorePointInfo
 {
     public int SequenceNumber { get; init; }
-    public DateTime CreationTime { get; init; }
+    public DateTime? CreationTime { get; init; }
     public string Description { get; init; } = string.Empty;
     public string RestorePointTypeText { get; init; } = string.Empty;
 }

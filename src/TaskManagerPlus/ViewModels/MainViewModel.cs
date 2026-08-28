@@ -224,7 +224,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         EnergyThermals = new EnergyThermalsViewModel(Performance);
         Cpu = new CpuViewModel(Performance, EnergyThermals, Processes, Responsiveness);
         Memory = new MemoryViewModel(Performance, Processes);
-        Storage = new StorageViewModel(Performance, EnergyThermals);
+        Storage = new StorageViewModel(Performance, EnergyThermals, Processes);
         // #221: Responsiveness is a field initializer (declared/constructed before this
         // constructor body runs - see its own declaration above), so it's already a real instance
         // here, letting Network take the same "reach a sibling ViewModel via constructor reference"
@@ -234,8 +234,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Logging = new LoggingViewModel(Performance, EnergyThermals);
         // #295: Responsiveness is a field initializer (constructed above), so it's already a real
         // instance here - Summary reads Responsiveness.SystemScore directly rather than
-        // duplicating the composite-score math.
-        Summary = new SummaryViewModel(Performance, Processes, Services, EnergyThermals, SystemSpecs, Network, Stability, Responsiveness);
+        // duplicating the composite-score math. #storage: likewise for the DriveHealthVerdict tile.
+        Summary = new SummaryViewModel(Performance, Processes, Services, EnergyThermals, SystemSpecs, Network, Stability, Responsiveness, Storage);
         Search = new GlobalSearchViewModel(Processes, Services, Startup, SystemSpecs);
 
         RemoteMonitor = new RemoteMonitorService(BuildRemoteMetricsSnapshot) { RequiredToken = _remoteMonitorSettings.Token };
@@ -263,6 +263,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         ApplyAxisThemeToStability();
         Theme.ThemeModeChanged += ApplyAxisThemeToStability;
+
+        // Round 18, #371: Storage tab's event-153 retry-trend chart - same ColumnSeries theming
+        // shape as Stability's Reliability History chart above.
+        ApplyAxisThemeToStorage();
+        Theme.ThemeModeChanged += ApplyAxisThemeToStorage;
 
         ApplyAxisThemeToStartup();
         Theme.ThemeModeChanged += ApplyAxisThemeToStartup;
@@ -306,6 +311,14 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Color TextOf(string key) => (resources[key] as SolidColorBrush)?.Color ?? Colors.Gray;
 
         Stability.ApplyAxisTheme(TextOf("TextSecondaryBrush"), TextOf("BorderBrush2"));
+    }
+
+    private void ApplyAxisThemeToStorage()
+    {
+        var resources = Application.Current.Resources;
+        Color TextOf(string key) => (resources[key] as SolidColorBrush)?.Color ?? Colors.Gray;
+
+        Storage.ApplyAxisTheme(TextOf("TextSecondaryBrush"), TextOf("BorderBrush2"));
     }
 
     private void ApplyAxisThemeToStartup()
@@ -404,6 +417,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Theme.ThemeModeChanged -= ApplyAxisThemeToPerformance;
         Theme.ThemeModeChanged -= ApplyAxisThemeToEnergyThermals;
         Theme.ThemeModeChanged -= ApplyAxisThemeToStability;
+        Theme.ThemeModeChanged -= ApplyAxisThemeToStorage;
         Theme.ThemeModeChanged -= ApplyAxisThemeToStartup;
         Theme.ThemeModeChanged -= ApplyAxisThemeToLogging;
         Theme.ThemeModeChanged -= ApplyAxisThemeToResponsiveness;

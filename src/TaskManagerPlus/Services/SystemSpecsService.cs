@@ -493,7 +493,93 @@ public sealed class SystemSpecsService
         return result;
     }
 
-    private static string NormalizeForMatch(string s) => s.Replace(' ', '_').ToLowerInvariant();
+    // internal (not private): reused by SmartRawAttributeService for the same PNPDeviceID-prefix
+    // matching against MSStorageDriver_ATAPISmartData / MSStorageDriver_FailurePredictThresholds
+    // instance names (#301/#302), rather than duplicating this normalization elsewhere.
+    internal static string NormalizeForMatch(string s) => s.Replace(' ', '_').ToLowerInvariant();
+
+    /// <summary>
+    /// #324/#328: a lightweight, poll-safe per-disk failure-prediction + driver health-status read -
+    /// reuses the same MSStorageDriver_FailurePredictStatus query and PNPDeviceID-prefix pairing
+    /// ReadDisks() already uses for the System tab's one-time inventory sweep, but scoped down to
+    /// just the two fields a live watch/verdict needs (no Model/Size/MediaType/wear lookup), so it's
+    /// cheap enough for StorageViewModel to call every few PerformanceViewModel.Sampled ticks rather
+    /// than only once at startup.
+    /// </summary>
+    public static List<DiskFailureFlag> ReadDiskFailureFlags()
+    {
+        var result = new List<DiskFailureFlag>();
+        try
+        {
+            var failurePredictions = ReadFailurePredictStatus();
+            var healthByIndex = ReadPhysicalDiskHealthByIndex();
+
+            using var searcher = new ManagementObjectSearcher("SELECT Index, PNPDeviceID FROM Win32_DiskDrive");
+            foreach (ManagementObject mo in searcher.Get())
+            {
+                int diskIndex = -1;
+                try { diskIndex = System.Convert.ToInt32(mo["Index"] ?? -1); } catch { /* skip */ }
+                if (diskIndex < 0) continue;
+
+                string pnpDeviceId = (mo["PNPDeviceID"] as string ?? string.Empty).Trim();
+                bool? predictFailure = null;
+                if (pnpDeviceId.Length > 0)
+                {
+                    var needle = NormalizeForMatch(pnpDeviceId);
+                    foreach (var (instanceKey, value) in failurePredictions)
+                    {
+                        if (instanceKey.StartsWith(needle, StringComparison.Ordinal))
+                        {
+                            predictFailure = value;
+                            break;
+                        }
+                    }
+                }
+
+                result.Add(new DiskFailureFlag
+                {
+                    Index = diskIndex,
+                    PredictFailure = predictFailure,
+                    DriverHealthStatus = healthByIndex.TryGetValue(diskIndex, out var h) ? h : null,
+                });
+            }
+        }
+        catch
+        {
+            // return whatever was gathered before the failure
+        }
+        return result;
+    }
+
+    /// <summary>MSFT_PhysicalDisk.HealthStatus by disk index - same best-effort index-based pairing
+    /// ReadDiskWearByIndex already relies on (Win32_DiskDrive.Index and MSFT_PhysicalDisk.DeviceId
+    /// are both small integers assigned in enumeration order).</summary>
+    private static Dictionary<int, string> ReadPhysicalDiskHealthByIndex()
+    {
+        var result = new Dictionary<int, string>();
+        try
+        {
+            using var searcher = new ManagementObjectSearcher(
+                @"root\Microsoft\Windows\Storage", "SELECT DeviceId, HealthStatus FROM MSFT_PhysicalDisk");
+            foreach (ManagementObject mo in searcher.Get())
+            {
+                if (mo["DeviceId"] is not string deviceId || !int.TryParse(deviceId, out int index)) continue;
+                if (mo["HealthStatus"] is null) continue;
+                result[index] = Convert.ToUInt16(mo["HealthStatus"]) switch
+                {
+                    0 => "Healthy",
+                    1 => "Warning",
+                    2 => "Unhealthy",
+                    _ => "Unknown",
+                };
+            }
+        }
+        catch
+        {
+            // Namespace/class unavailable - every disk simply has no driver health status.
+        }
+        return result;
+    }
 
     /// <summary>
     /// SSD wear/life-used percentage (#65), via the Storage Management API's
@@ -612,6 +698,61 @@ public sealed class SystemSpecsService
 
     private static readonly Regex PascalCaseSplitRegex = new(@"(?<!^)(?=[A-Z])", RegexOptions.Compiled);
     private static string SplitPascalCase(string name) => PascalCaseSplitRegex.Replace(name, " ");
+
+    /// <summary>Round 13, #323: MSFT_StorageReliabilityCounter's three latency-maximum fields
+    /// (ReadLatencyMax/WriteLatencyMax/FlushLatencyMax, milliseconds) - already present in the flat
+    /// ReadSmartDetails dump above, but promoted here to their own typed read so StorageViewModel
+    /// can drive three first-class VfdMeter tiles instead of scanning the label/value list for
+    /// them. Null (never 0) when the field isn't reported by this drive/driver, same as
+    /// ReadDiskWearByIndex's Wear.</summary>
+    public static (long? ReadMs, long? WriteMs, long? FlushMs) ReadReliabilityLatencies(int diskIndex)
+    {
+        try
+        {
+            using var searcher = new ManagementObjectSearcher(
+                @"root\Microsoft\Windows\Storage",
+                $"SELECT ReadLatencyMax, WriteLatencyMax, FlushLatencyMax FROM MSFT_StorageReliabilityCounter WHERE DeviceId = '{diskIndex}'");
+            foreach (ManagementObject mo in searcher.Get())
+            {
+                long? read = mo["ReadLatencyMax"] is null ? null : Convert.ToInt64(mo["ReadLatencyMax"]);
+                long? write = mo["WriteLatencyMax"] is null ? null : Convert.ToInt64(mo["WriteLatencyMax"]);
+                long? flush = mo["FlushLatencyMax"] is null ? null : Convert.ToInt64(mo["FlushLatencyMax"]);
+                return (read, write, flush);
+            }
+        }
+        catch
+        {
+            // Namespace/class unavailable, or this driver doesn't report reliability counters.
+        }
+        return (null, null, null);
+    }
+
+    /// <summary>Round 13, #323: invokes MSFT_StorageReliabilityCounter.ResetStatistics() for one
+    /// disk - the driver's own counter-reset method (Storage Management API), not a registry/file
+    /// hack. Returns a short status message either way rather than throwing, matching every other
+    /// on-demand action's try/catch-to-status-text convention.</summary>
+    public static string ResetReliabilityCounters(int diskIndex)
+    {
+        try
+        {
+            using var searcher = new ManagementObjectSearcher(
+                @"root\Microsoft\Windows\Storage",
+                $"SELECT * FROM MSFT_StorageReliabilityCounter WHERE DeviceId = '{diskIndex}'");
+            foreach (ManagementObject mo in searcher.Get())
+            {
+                using var result = mo.InvokeMethod("ResetStatistics", null, null);
+                int returnValue = result?["ReturnValue"] is null ? 0 : Convert.ToInt32(result["ReturnValue"]);
+                return returnValue == 0
+                    ? "Reliability counters reset."
+                    : $"ResetStatistics returned code {returnValue}.";
+            }
+            return "No MSFT_StorageReliabilityCounter instance found for this disk.";
+        }
+        catch (Exception ex)
+        {
+            return $"Failed: {ex.Message}";
+        }
+    }
 
     // Publishers that are effectively OS/runtime components, not something a user "installed" in
     // the sense of "did this correlate with when my problem started" - filtered out the same way
@@ -787,6 +928,65 @@ public sealed class SystemSpecsService
             // Storage Management API namespace unavailable - "Unknown" location, not a guess.
         }
         return null;
+    }
+
+    /// <summary>
+    /// #359: every configured page file's volume, initial/maximum size, and peak usage, via
+    /// Win32_PageFileSetting (sizes; 0/0 means system-managed) joined to Win32_PageFileUsage.Name
+    /// (which page files are actually active + their PeakUsage) - extends the single-page-file #70
+    /// read above (ReadPageFileLocation, which only ever looked at whichever page file
+    /// Win32_PageFileUsage happened to list first) into the full list. The HDD-vs-faster-SSD-
+    /// elsewhere and same-disk-as-a-failing-drive flags are left false here and filled in by the
+    /// caller (StorageViewModel), which is the layer that already has both the full fixed-drive
+    /// list and the #328 health-verdict list on hand - this method only reads what WMI reports for
+    /// the page files themselves.
+    /// </summary>
+    public static List<PageFileDetailInfo> ReadPageFileDetails()
+    {
+        var results = new List<PageFileDetailInfo>();
+        try
+        {
+            var sizesByPath = new Dictionary<string, (long InitialMb, long MaximumMb)>(StringComparer.OrdinalIgnoreCase);
+            using (var settingsSearcher = new ManagementObjectSearcher("SELECT Name, InitialSize, MaximumSize FROM Win32_PageFileSetting"))
+            {
+                foreach (ManagementObject mo in settingsSearcher.Get())
+                {
+                    string name = (mo["Name"] as string ?? string.Empty).Trim();
+                    if (name.Length == 0) continue;
+                    long initial = mo["InitialSize"] is null ? 0 : Convert.ToInt64(mo["InitialSize"]);
+                    long maximum = mo["MaximumSize"] is null ? 0 : Convert.ToInt64(mo["MaximumSize"]);
+                    sizesByPath[name] = (initial, maximum);
+                }
+            }
+
+            using var usageSearcher = new ManagementObjectSearcher("SELECT Name, PeakUsage FROM Win32_PageFileUsage");
+            foreach (ManagementObject mo in usageSearcher.Get())
+            {
+                string name = (mo["Name"] as string ?? string.Empty).Trim();
+                if (name.Length < 2) continue;
+                long peakMb = mo["PeakUsage"] is null ? 0 : Convert.ToInt64(mo["PeakUsage"]);
+
+                string driveLetter = name.Substring(0, 2); // e.g. "C:"
+                string mediaType = DiskFragmentationService.GetMediaType(driveLetter.TrimEnd(':'));
+                sizesByPath.TryGetValue(name, out var sizes);
+
+                results.Add(new PageFileDetailInfo
+                {
+                    Path = name,
+                    DriveLetter = driveLetter,
+                    MediaType = mediaType,
+                    IsSystemManaged = sizes.InitialMb == 0 && sizes.MaximumMb == 0,
+                    InitialSizeMb = sizes.InitialMb,
+                    MaximumSizeMb = sizes.MaximumMb,
+                    PeakUsageMb = peakMb,
+                });
+            }
+        }
+        catch
+        {
+            // Win32_PageFileUsage/Setting unavailable - empty list, the card hides.
+        }
+        return results;
     }
 
     // MSFT_Disk itself doesn't expose a plain SSD/HDD media-type string reliably across drivers -

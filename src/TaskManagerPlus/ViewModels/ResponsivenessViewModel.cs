@@ -2559,9 +2559,9 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
         row.FragmentationStatusText = "Analyzing (this can take a while on a large drive)...";
         try
         {
-            var (success, percent, message) = await DiskFragmentationService.Analyze(row.VolumeLetter);
-            row.FragmentationStatusText = message;
-            row.IsFragmentationWarning = success && percent is { } p && p >= 10;
+            var analysis = await DiskFragmentationService.Analyze(row.VolumeLetter);
+            row.FragmentationStatusText = analysis.Message;
+            row.IsFragmentationWarning = analysis.Success && analysis.FragmentedPercent is { } p && p >= 10;
         }
         catch (Exception ex)
         {

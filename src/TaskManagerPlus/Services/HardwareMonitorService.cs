@@ -29,6 +29,24 @@ public sealed class HardwareMonitorService : IDisposable
     private readonly PerformanceCounter _diskQueueLengthCounter;
     private readonly PerformanceCounter _diskReadLatencyCounter;
     private readonly PerformanceCounter _diskWriteLatencyCounter;
+
+    // Round 18, #365/#366: "% Disk Time" is a busy-time counter that saturates and can read above
+    // 100% under a deep queue - "% Idle Time" doesn't, so 100 - idle is what Task Manager's own
+    // "Active time" actually shows. Read/write time split and Disk Transfers/sec (for deriving
+    // average bytes/transfer) are the same idea as the existing _Total counters above, just two/
+    // three more instantaneous gauges - wrapped as TryCreateCounter (not required) since, like the
+    // C-state tiers below, not every counter is guaranteed present on every Windows/driver combo.
+    private readonly PerformanceCounter? _diskIdleTimeCounter;
+    private readonly PerformanceCounter? _diskReadTimePercentCounter;
+    private readonly PerformanceCounter? _diskWriteTimePercentCounter;
+    private readonly PerformanceCounter? _diskTransfersCounter;
+
+    // Round 18, #362: one counter set per PhysicalDisk instance (not just "_Total" above), built
+    // via the exact same GetInstanceNames()-filtered-to-real-instances pattern the per-core CPU
+    // counters below use - so a single slow drive isn't averaged away by others when queue length/
+    // latency is read only from "_Total". See the nested PhysicalDiskCounterSet class below.
+    private readonly PhysicalDiskCounterSet[] _perDiskCounters;
+
     private readonly PerformanceCounter _handleCountCounter;
     private readonly PerformanceCounter _threadCountCounter;
     private readonly PerformanceCounter _processCountCounter;
@@ -140,6 +158,27 @@ public sealed class HardwareMonitorService : IDisposable
         _diskReadLatencyCounter = new PerformanceCounter("PhysicalDisk", "Avg. Disk sec/Read", "_Total", readOnly: true);
         _diskWriteLatencyCounter = new PerformanceCounter("PhysicalDisk", "Avg. Disk sec/Write", "_Total", readOnly: true);
 
+        // #365/#366
+        _diskIdleTimeCounter = TryCreateCounter("PhysicalDisk", "% Idle Time", "_Total");
+        _diskReadTimePercentCounter = TryCreateCounter("PhysicalDisk", "% Disk Read Time", "_Total");
+        _diskWriteTimePercentCounter = TryCreateCounter("PhysicalDisk", "% Disk Write Time", "_Total");
+        _diskTransfersCounter = TryCreateCounter("PhysicalDisk", "Disk Transfers/sec", "_Total");
+
+        // #362: instance names in this category look like "0 C:" (disk index, then every drive
+        // letter that disk hosts) or just "0" when no drive letter is assigned - sort numerically
+        // on the leading index rather than lexicographically, same reasoning ParseNumaCoreKey below
+        // documents for the per-core CPU counters ("0,10" before "0,2" would otherwise be wrong).
+        var diskInstances = new PerformanceCounterCategory("PhysicalDisk")
+            .GetInstanceNames()
+            .Where(n => n != "_Total")
+            .OrderBy(ParsePhysicalDiskIndex)
+            .ToArray();
+        _perDiskCounters = diskInstances
+            .Select(TryCreatePhysicalDiskCounterSet)
+            .Where(set => set is not null)
+            .Select(set => set!)
+            .ToArray();
+
         _handleCountCounter = new PerformanceCounter("Process", "Handle Count", "_Total", readOnly: true);
         _threadCountCounter = new PerformanceCounter("Process", "Thread Count", "_Total", readOnly: true);
         _processCountCounter = new PerformanceCounter("System", "Processes", readOnly: true);
@@ -199,6 +238,10 @@ public sealed class HardwareMonitorService : IDisposable
         _ = _diskQueueLengthCounter.NextValue();
         _ = _diskReadLatencyCounter.NextValue();
         _ = _diskWriteLatencyCounter.NextValue();
+        _ = _diskIdleTimeCounter?.NextValue();
+        _ = _diskReadTimePercentCounter?.NextValue();
+        _ = _diskWriteTimePercentCounter?.NextValue();
+        _ = _diskTransfersCounter?.NextValue();
         _ = _pageFileUsageCounter.NextValue();
         _ = _cpuInterruptCounter.NextValue();
         _ = _cpuDpcCounter.NextValue();
@@ -244,6 +287,24 @@ public sealed class HardwareMonitorService : IDisposable
         // "is my disk slow" actually thinks in.
         double diskReadLatencyMs = Math.Max(0, _diskReadLatencyCounter.NextValue() * 1000.0);
         double diskWriteLatencyMs = Math.Max(0, _diskWriteLatencyCounter.NextValue() * 1000.0);
+
+        // #365: corrected utilization - 100 minus idle time, rather than the saturating "% Disk
+        // Time" above. Falls back to diskPercent (not a fabricated 0/100) when the counter isn't
+        // available on this system, same "degrade to the best signal actually present" approach
+        // the C-state tiers below use.
+        bool diskIdleTimeAvailable = _diskIdleTimeCounter is not null;
+        double diskIdlePercent = diskIdleTimeAvailable ? Clamp(_diskIdleTimeCounter!.NextValue()) : 0;
+        double diskUtilizationPercent = diskIdleTimeAvailable ? Math.Clamp(100.0 - diskIdlePercent, 0, 100) : diskPercent;
+
+        // #366
+        double diskReadTimePercent = _diskReadTimePercentCounter is null ? 0 : Clamp(_diskReadTimePercentCounter.NextValue());
+        double diskWriteTimePercent = _diskWriteTimePercentCounter is null ? 0 : Clamp(_diskWriteTimePercentCounter.NextValue());
+        double diskTransfersPerSec = _diskTransfersCounter is null ? 0 : Math.Max(0, _diskTransfersCounter.NextValue());
+
+        // #362: per-instance sweep, alongside (not instead of) the _Total figures above.
+        var physicalDisks = new PhysicalDiskSample[_perDiskCounters.Length];
+        for (int i = 0; i < _perDiskCounters.Length; i++)
+            physicalDisks[i] = _perDiskCounters[i].Sample();
 
         var (bytesReceived, bytesSent) = ReadTotalNetworkBytes();
         var (netInErrors, netInDiscards, netOutErrors, netOutDiscards) = ReadNetworkErrorCounters();
@@ -303,6 +364,14 @@ public sealed class HardwareMonitorService : IDisposable
             DiskReadLatencyMs = Math.Round(diskReadLatencyMs, 1),
             DiskWriteLatencyMs = Math.Round(diskWriteLatencyMs, 1),
 
+            DiskIdleTimeAvailable = diskIdleTimeAvailable,
+            DiskIdlePercent = Math.Round(diskIdlePercent, 1),
+            DiskUtilizationPercent = Math.Round(diskUtilizationPercent, 1),
+            DiskReadTimePercent = Math.Round(diskReadTimePercent, 1),
+            DiskWriteTimePercent = Math.Round(diskWriteTimePercent, 1),
+            DiskTransfersPerSec = Math.Round(diskTransfersPerSec, 1),
+            PhysicalDisks = physicalDisks,
+
             NetworkReceiveBytesPerSec = netRecvRate,
             NetworkSendBytesPerSec = netSendRate,
             NetworkInErrors = netInErrors,
@@ -344,6 +413,111 @@ public sealed class HardwareMonitorService : IDisposable
         if (parts.Length == 2 && int.TryParse(parts[0], out int node) && int.TryParse(parts[1], out int core))
             return (node, core);
         return (0, 0);
+    }
+
+    /// <summary>#362: "PhysicalDisk" instance names look like "0 C:" or "1 D: E:" (disk index, then
+    /// every drive letter that disk hosts) - parses the leading integer for a numeric sort, same
+    /// reasoning ParseNumaCoreKey above documents for the per-core CPU counters. Unrecognized
+    /// formats sort last rather than throwing.</summary>
+    private static int ParsePhysicalDiskIndex(string instanceName)
+    {
+        var head = instanceName.Split(' ')[0];
+        return int.TryParse(head, out int index) ? index : int.MaxValue;
+    }
+
+    /// <summary>Best-effort per-disk counter-set construction - mirrors TryCreateCounter's
+    /// "degrade to not available rather than crash the whole service" approach, but for a whole
+    /// PhysicalDiskCounterSet at once: if this particular instance's counters fail to construct
+    /// (e.g. a race between GetInstanceNames() and the disk being removed), that one disk is
+    /// skipped rather than losing per-disk data for every other drive too.</summary>
+    private static PhysicalDiskCounterSet? TryCreatePhysicalDiskCounterSet(string instanceName)
+    {
+        try
+        {
+            return new PhysicalDiskCounterSet(instanceName);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>#362: one PhysicalDisk instance's counter set, mirroring the "_Total" fields above
+    /// but per physical drive - so one slow drive isn't averaged away by others when queue length/
+    /// latency is read only from "_Total". "% Idle Time" is wrapped as optional (TryCreateCounter)
+    /// like the class-level _diskIdleTimeCounter above, since it's not guaranteed present on every
+    /// Windows/driver combination.</summary>
+    private sealed class PhysicalDiskCounterSet : IDisposable
+    {
+        public string InstanceName { get; }
+
+        private readonly PerformanceCounter _time;
+        private readonly PerformanceCounter? _idleTime;
+        private readonly PerformanceCounter _read;
+        private readonly PerformanceCounter _write;
+        private readonly PerformanceCounter _queueLength;
+        private readonly PerformanceCounter _readLatency;
+        private readonly PerformanceCounter _writeLatency;
+        private readonly PerformanceCounter _transferLatency;
+
+        public PhysicalDiskCounterSet(string instanceName)
+        {
+            InstanceName = instanceName;
+            _time = new PerformanceCounter("PhysicalDisk", "% Disk Time", instanceName, readOnly: true);
+            _idleTime = TryCreateCounter("PhysicalDisk", "% Idle Time", instanceName);
+            _read = new PerformanceCounter("PhysicalDisk", "Disk Read Bytes/sec", instanceName, readOnly: true);
+            _write = new PerformanceCounter("PhysicalDisk", "Disk Write Bytes/sec", instanceName, readOnly: true);
+            _queueLength = new PerformanceCounter("PhysicalDisk", "Avg. Disk Queue Length", instanceName, readOnly: true);
+            _readLatency = new PerformanceCounter("PhysicalDisk", "Avg. Disk sec/Read", instanceName, readOnly: true);
+            _writeLatency = new PerformanceCounter("PhysicalDisk", "Avg. Disk sec/Write", instanceName, readOnly: true);
+            _transferLatency = new PerformanceCounter("PhysicalDisk", "Avg. Disk sec/Transfer", instanceName, readOnly: true);
+
+            // Rate/gauge counters return 0 on their first read - prime them now, same as the
+            // class-level counters in HardwareMonitorService's own constructor.
+            _ = _time.NextValue();
+            _ = _idleTime?.NextValue();
+            _ = _read.NextValue();
+            _ = _write.NextValue();
+            _ = _queueLength.NextValue();
+            _ = _readLatency.NextValue();
+            _ = _writeLatency.NextValue();
+            _ = _transferLatency.NextValue();
+        }
+
+        public PhysicalDiskSample Sample()
+        {
+            bool idleAvailable = _idleTime is not null;
+            double active = Clamp(_time.NextValue());
+            double idle = idleAvailable ? Clamp(_idleTime!.NextValue()) : 0;
+            double utilization = idleAvailable ? Math.Clamp(100.0 - idle, 0, 100) : active;
+
+            return new PhysicalDiskSample
+            {
+                InstanceName = InstanceName,
+                ActivePercent = Math.Round(active, 1),
+                IdleTimeAvailable = idleAvailable,
+                IdlePercent = Math.Round(idle, 1),
+                UtilizationPercent = Math.Round(utilization, 1),
+                ReadBytesPerSec = Math.Max(0, _read.NextValue()),
+                WriteBytesPerSec = Math.Max(0, _write.NextValue()),
+                QueueLength = Math.Round(Math.Max(0, _queueLength.NextValue()), 2),
+                ReadLatencyMs = Math.Round(Math.Max(0, _readLatency.NextValue() * 1000.0), 2),
+                WriteLatencyMs = Math.Round(Math.Max(0, _writeLatency.NextValue() * 1000.0), 2),
+                TransferLatencyMs = Math.Round(Math.Max(0, _transferLatency.NextValue() * 1000.0), 2),
+            };
+        }
+
+        public void Dispose()
+        {
+            _time.Dispose();
+            _idleTime?.Dispose();
+            _read.Dispose();
+            _write.Dispose();
+            _queueLength.Dispose();
+            _readLatency.Dispose();
+            _writeLatency.Dispose();
+            _transferLatency.Dispose();
+        }
     }
 
     private static (long Received, long Sent) ReadTotalNetworkBytes()
@@ -470,6 +644,11 @@ public sealed class HardwareMonitorService : IDisposable
         _diskQueueLengthCounter.Dispose();
         _diskReadLatencyCounter.Dispose();
         _diskWriteLatencyCounter.Dispose();
+        _diskIdleTimeCounter?.Dispose();
+        _diskReadTimePercentCounter?.Dispose();
+        _diskWriteTimePercentCounter?.Dispose();
+        _diskTransfersCounter?.Dispose();
+        foreach (var d in _perDiskCounters) d.Dispose();
         _handleCountCounter.Dispose();
         _threadCountCounter.Dispose();
         _processCountCounter.Dispose();

@@ -28,6 +28,7 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
     private readonly NetworkViewModel _network;
     private readonly StabilityViewModel _stability;
     private readonly ResponsivenessViewModel _responsiveness;
+    private readonly StorageViewModel _storage;
     private readonly DispatcherTimer _healthTimer;
 
     /// <summary>Round 10, #67: exposed publicly (the field above stays for this class's own
@@ -55,6 +56,19 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
 
     public ObservableCollection<HealthIssue> HealthIssues { get; } = new();
 
+    // Round 14, #328: compact mirror of the Storage tab's per-drive health-verdict list -
+    // recomputed on the same 2s health-timer tick RefreshHealthIssues already runs on, since
+    // DriveHealthVerdict is a plain mutable class (not independently observable) rather than a
+    // full ObservableObject.
+    private string _storageHealthSummaryText = "Checking...";
+    public string StorageHealthSummaryText { get => _storageHealthSummaryText; private set => SetProperty(ref _storageHealthSummaryText, value); }
+
+    private bool _storageHealthHasReplace;
+    public bool StorageHealthHasReplace { get => _storageHealthHasReplace; private set => SetProperty(ref _storageHealthHasReplace, value); }
+
+    private bool _storageHealthHasWatch;
+    public bool StorageHealthHasWatch { get => _storageHealthHasWatch; private set => SetProperty(ref _storageHealthHasWatch, value); }
+
     // Round 11, #69: hideable/reorderable dashboard tiles - see DashboardTileConfig's remarks for
     // why this is up/down reordering within a fixed two-column layout rather than freeform
     // drag-and-drop. Left/right mirror the Summary tab's existing two-column Grid (CPU/Memory
@@ -68,6 +82,7 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         ("topcpu", "Top CPU processes", false),
         ("topcpu10s", "Top CPU (10s avg)", false),
         ("disk", "Disk", false),
+        ("storagehealth", "Drive health", false),
         ("network", "Network", false),
         ("system", "System", false),
     };
@@ -92,7 +107,23 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
     public bool TempAlertEnabled { get => _alertThresholds.TempEnabled; set { _alertThresholds.TempEnabled = value; OnPropertyChanged(); PersistAlertThresholds(); } }
     public double TempAlertThreshold { get => _alertThresholds.TempC; set { _alertThresholds.TempC = value; OnPropertyChanged(); PersistAlertThresholds(); } }
 
-    private void PersistAlertThresholds() => AlertThresholdsService.Save(_alertThresholds);
+    /// <summary>Round 17, #355: re-reads alerts.json and writes only this VM's own Cpu/Memory/Temp
+    /// fields back onto it, rather than blindly overwriting the whole file with this VM's
+    /// (possibly stale) in-memory copy - StorageViewModel now also persists to the same file (its
+    /// own FreeSpace* fields), so a naive whole-object save here could otherwise clobber a
+    /// concurrent edit made through the Storage tab's own threshold controls. See
+    /// StorageViewModel.PersistAlertThresholds for its half of this same merge-on-save fix.</summary>
+    private void PersistAlertThresholds()
+    {
+        var onDisk = AlertThresholdsService.Load();
+        onDisk.CpuEnabled = _alertThresholds.CpuEnabled;
+        onDisk.CpuPercent = _alertThresholds.CpuPercent;
+        onDisk.MemoryEnabled = _alertThresholds.MemoryEnabled;
+        onDisk.MemoryPercent = _alertThresholds.MemoryPercent;
+        onDisk.TempEnabled = _alertThresholds.TempEnabled;
+        onDisk.TempC = _alertThresholds.TempC;
+        AlertThresholdsService.Save(onDisk);
+    }
 
     // #73: one-click diagnostic report bundling specs, recent stability events, a sensor
     // snapshot, and top resource consumers into a single shareable markdown file.
@@ -176,7 +207,7 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
     public SummaryViewModel(PerformanceViewModel performance, ProcessesViewModel processes,
         ServicesViewModel services, EnergyThermalsViewModel energyThermals,
         SystemSpecsViewModel systemSpecs, NetworkViewModel network, StabilityViewModel stability,
-        ResponsivenessViewModel responsiveness)
+        ResponsivenessViewModel responsiveness, StorageViewModel storage)
     {
         Performance = performance;
         Processes = processes;
@@ -186,6 +217,7 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         _network = network;
         _stability = stability;
         _responsiveness = responsiveness;
+        _storage = storage;
 
         GenerateReportCommand = new RelayCommand(_ => GenerateReport());
         GenerateHtmlReportCommand = new RelayCommand(_ => GenerateHtmlReport());
@@ -732,6 +764,43 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
                 issues.Add(new HealthIssue { Message = $"Drive health warning: {disk.Primary} ({disk.HealthText})", IsCritical = true });
         }
 
+        // Round 13, #314/#317: NVMe critical-warning bits and media-error count, mirrored from the
+        // Storage tab's on-demand NVMe health-log read (#313). Only fires once that read has
+        // actually happened for an NVMe disk (ShowNvmeHealth) - like the SMART-derived
+        // disk.IsHealthWarning rule above, this reflects the last on-demand read rather than a
+        // live poll, since the underlying IOCTL round trip isn't cheap enough for the 2s timer.
+        if (_storage.ShowNvmeHealth)
+        {
+            foreach (var warning in _storage.NvmeCriticalWarnings.Where(w => w.IsSet))
+                issues.Add(new HealthIssue { Message = $"NVMe: {warning.Label}", IsCritical = true });
+
+            if (_storage.NvmeMediaErrorsPresent)
+                issues.Add(new HealthIssue { Message = "NVMe media and data integrity errors reported", IsCritical = true });
+        }
+
+        // Round 14, #324: persistent alert for a drive that started predicting failure while the
+        // app was open - separate from the disk.IsHealthWarning rule above, which only reflects the
+        // one-time System-tab inventory sweep taken at startup.
+        foreach (var alert in _storage.DriveFailureAlerts) issues.Add(alert);
+
+        // Round 18, #373: storahci/stornvme/iaStorAC controller-reset events (storport event 129) -
+        // the classic signature of a controller/drive that stopped responding, a common cause of
+        // whole-system freezes. Reads _storage.ControllerResetEvents directly, the same "reflects
+        // whatever the last on-demand read found, empty until that read has actually happened"
+        // shape #314/#317 already use for NvmeCriticalWarnings/NvmeMediaErrorsPresent above -
+        // populated by the Storage tab's "Check now" unified event-timeline scan (#370), not a live
+        // poll (an event-log query isn't cheap enough for the 2s health timer).
+        var recentReset = _storage.ControllerResetEvents
+            .Where(e => e.TimeCreated >= DateTime.Now.AddHours(-48))
+            .OrderByDescending(e => e.TimeCreated)
+            .FirstOrDefault();
+        if (recentReset is not null)
+            issues.Add(new HealthIssue
+            {
+                Message = $"Storage controller reset detected on {recentReset.DeviceText} at {recentReset.TimeCreated:g} - possible controller/drive freeze",
+                IsCritical = true,
+            });
+
         if (_energyThermals.CpuPackageTempC is { } cpuTemp && cpuTemp >= HotCpuTempC)
             issues.Add(new HealthIssue { Message = $"CPU running hot ({cpuTemp:0}°C)", IsCritical = cpuTemp >= 100 });
 
@@ -824,6 +893,40 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         {
             HealthIssues.Clear();
             foreach (var issue in issues) HealthIssues.Add(issue);
+        }
+
+        RefreshStorageHealthTile();
+    }
+
+    /// <summary>Round 14, #328: recomputes the compact Summary-tab mirror of the Storage tab's
+    /// per-drive DriveHealthVerdict list - see StorageHealthSummaryText's remarks for why this is
+    /// pulled on a timer rather than reactively.</summary>
+    private void RefreshStorageHealthTile()
+    {
+        var verdicts = _storage.DriveHealthVerdicts;
+        if (verdicts.Count == 0)
+        {
+            StorageHealthSummaryText = "No disks detected.";
+            StorageHealthHasReplace = false;
+            StorageHealthHasWatch = false;
+            return;
+        }
+
+        int replace = verdicts.Count(v => v.Level == DriveHealthLevel.Replace);
+        int watch = verdicts.Count(v => v.Level == DriveHealthLevel.Watch);
+        StorageHealthHasReplace = replace > 0;
+        StorageHealthHasWatch = watch > 0;
+
+        if (replace == 0 && watch == 0)
+        {
+            StorageHealthSummaryText = verdicts.Count == 1 ? "Healthy" : $"All {verdicts.Count} disks healthy";
+        }
+        else
+        {
+            var parts = new List<string>();
+            if (replace > 0) parts.Add($"{replace} Replace");
+            if (watch > 0) parts.Add($"{watch} Watch");
+            StorageHealthSummaryText = $"{string.Join(", ", parts)} of {verdicts.Count} disk{(verdicts.Count == 1 ? string.Empty : "s")}";
         }
     }
 
