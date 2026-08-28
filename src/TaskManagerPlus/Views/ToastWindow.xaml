@@ -11,9 +11,9 @@
             <StackPanel Orientation="Horizontal">
                 <Border x:Name="Dot" Width="8" Height="8" CornerRadius="4" Margin="0,0,8,0" VerticalAlignment="Center"
                         Background="{DynamicResource WarningBrush}" />
-                <TextBlock x:Name="TitleTextBlock" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" />
+                <TextBlock x:Name="TitleTextBlock" FontWeight="SemiBold" FontSize="{StaticResource FontStrong}" VerticalAlignment="Center" />
             </StackPanel>
-            <TextBlock x:Name="MessageTextBlock" Margin="0,6,0,0" FontSize="12" TextWrapping="Wrap"
+            <TextBlock x:Name="MessageTextBlock" Margin="0,6,0,0" FontSize="{StaticResource FontBody}" TextWrapping="Wrap"
                        Foreground="{DynamicResource TextSecondaryBrush}" />
         </StackPanel>
     </Border>

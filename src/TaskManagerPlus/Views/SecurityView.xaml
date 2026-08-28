@@ -17,7 +17,7 @@
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <StackPanel Grid.Column="0">
-                    <TextBlock Text="Security" FontSize="16" FontWeight="SemiBold" />
+                    <TextBlock Text="Security" FontSize="{StaticResource FontTitle}" FontWeight="SemiBold" />
                     <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}"
                                Text="Every item below is a quick flag for a human to judge, not a verdict that something is malicious. Persistence locations, unusual signatures, and unexpected configuration are common on a perfectly clean machine too - use this to spot what's worth a closer look, not as an automatic diagnosis." />
                 </StackPanel>
@@ -144,7 +144,7 @@
                                             <TextBlock Text="{Binding SelectedFinding.Title}" FontWeight="SemiBold" TextWrapping="Wrap" />
                                             <TextBlock Margin="0,4,0,0" Text="{Binding SelectedFinding.Severity, StringFormat=Severity: {0}}" Foreground="{DynamicResource WarningBrush}" />
                                             <TextBlock Margin="0,6,0,0" Text="{Binding SelectedFinding.Reason}" TextWrapping="Wrap" />
-                                            <TextBlock Margin="0,6,0,0" FontFamily="Consolas" FontSize="11.5"
+                                            <TextBlock Margin="0,6,0,0" FontFamily="Consolas" FontSize="{StaticResource FontBody}"
                                                        Text="{Binding SelectedFinding.Path}" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" />
                                             <TextBlock Margin="0,6,0,0" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}"
                                                        Text="{Binding SelectedFinding.WhatDisablingDoes, StringFormat=What disabling this does: {0}}" />
@@ -157,7 +157,7 @@
                                     <ListBox.ItemTemplate>
                                         <DataTemplate>
                                             <StackPanel Margin="0,3">
-                                                <TextBlock TextWrapping="Wrap" FontSize="12.5">
+                                                <TextBlock TextWrapping="Wrap" FontSize="{StaticResource FontStrong}">
                                                     <TextBlock.Style>
                                                         <Style TargetType="TextBlock">
                                                             <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
@@ -242,14 +242,14 @@
                             </Style>
                         </Border.Style>
                         <StackPanel>
-                            <TextBlock FontSize="11.5" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" Text="{Binding HashResultPath}" Margin="0,0,0,4" />
-                            <TextBlock FontFamily="Consolas" FontSize="11.5" TextWrapping="Wrap">
+                            <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" Text="{Binding HashResultPath}" Margin="0,0,0,4" />
+                            <TextBlock FontFamily="Consolas" FontSize="{StaticResource FontBody}" TextWrapping="Wrap">
                                 <Run Text="SHA-256: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding HashResultSha256, Mode=OneWay}" />
                             </TextBlock>
-                            <TextBlock FontFamily="Consolas" FontSize="11.5" TextWrapping="Wrap" Margin="0,2,0,0">
+                            <TextBlock FontFamily="Consolas" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,2,0,0">
                                 <Run Text="SHA-1: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding HashResultSha1, Mode=OneWay}" />
                             </TextBlock>
-                            <TextBlock FontFamily="Consolas" FontSize="11.5" TextWrapping="Wrap" Margin="0,2,0,0">
+                            <TextBlock FontFamily="Consolas" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,2,0,0">
                                 <Run Text="MD5: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding HashResultMd5, Mode=OneWay}" />
                             </TextBlock>
                             <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
@@ -276,7 +276,7 @@
                         <StackPanel>
                             <TextBlock Text="Hash all flagged items - result" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
                             <ScrollViewer MaxHeight="140" VerticalScrollBarVisibility="Auto">
-                                <TextBlock FontFamily="Consolas" FontSize="11" TextWrapping="Wrap" Text="{Binding HashAllFlaggedResult}" />
+                                <TextBlock FontFamily="Consolas" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Text="{Binding HashAllFlaggedResult}" />
                             </ScrollViewer>
                             <Button Content="Copy" Command="{Binding CopyHashAllFlaggedCommand}" HorizontalAlignment="Left" Margin="0,8,0,0" />
                         </StackPanel>
@@ -295,7 +295,7 @@
                         </Border.Style>
                         <StackPanel>
                             <TextBlock Text="Mark of the Web" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
-                            <TextBlock FontSize="12" TextWrapping="Wrap" Text="{Binding MotwResultText}" />
+                            <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Text="{Binding MotwResultText}" />
                         </StackPanel>
                     </Border>
 
@@ -327,7 +327,7 @@
                                 <ItemsControl ItemsSource="{Binding BaselineAdded}">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
-                                            <TextBlock Text="{Binding Name}" FontSize="12" TextWrapping="Wrap" ToolTip="{Binding Location}" />
+                                            <TextBlock Text="{Binding Name}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" ToolTip="{Binding Location}" />
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
                                 </ItemsControl>
@@ -337,7 +337,7 @@
                                 <ItemsControl ItemsSource="{Binding BaselineRemoved}">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
-                                            <TextBlock Text="{Binding Name}" FontSize="12" TextWrapping="Wrap" ToolTip="{Binding Location}" />
+                                            <TextBlock Text="{Binding Name}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" ToolTip="{Binding Location}" />
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
                                 </ItemsControl>
@@ -347,7 +347,7 @@
                                 <ItemsControl ItemsSource="{Binding BaselineChanged}">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
-                                            <TextBlock Text="{Binding Name}" FontSize="12" TextWrapping="Wrap" ToolTip="{Binding Location}" />
+                                            <TextBlock Text="{Binding Name}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" ToolTip="{Binding Location}" />
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
                                 </ItemsControl>
@@ -362,7 +362,7 @@
                  own section rather than folding into the Persistence grid above. -->
             <Border BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,1,0,0" Padding="0,16,0,0" Margin="0,16,0,0">
                 <StackPanel>
-                    <TextBlock Text="Process activity" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,4" />
+                    <TextBlock Text="Process activity" FontSize="{StaticResource FontSection}" FontWeight="SemiBold" Margin="0,0,0,4" />
                     <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,12"
                                Text="Two short, on-demand scans - a list to eyeball, not an alert. Legitimate holders/activity (antivirus, EDR, Defender, other system processes, in-house or open-source tools) are common and expected." />
 
@@ -492,7 +492,7 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <StackPanel Grid.Column="0">
-                            <TextBlock Text="Protection status" FontSize="14" FontWeight="SemiBold" />
+                            <TextBlock Text="Protection status" FontSize="{StaticResource FontSection}" FontWeight="SemiBold" />
                             <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}"
                                        Text="Windows Defender's own state, signature freshness, exclusions, Tamper Protection, Attack Surface Reduction rules, and third-party antivirus cross-checks - all on-demand, all read-only unless you explicitly click Restore/Purge/Scan below." />
                         </StackPanel>
@@ -524,7 +524,7 @@
                                 <Run Text="{Binding TamperProtection.State, Mode=OneWay}" FontWeight="SemiBold" />
                                 <Run Text=" (source: " /><Run Text="{Binding TamperProtection.SourceText, Mode=OneWay}" /><Run Text=")" />
                             </TextBlock>
-                            <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}"
+                            <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}"
                                        Text="{Binding TamperProtection.DisclaimerText}" />
                         </StackPanel>
                     </Border>
@@ -534,7 +534,7 @@
                             Visibility="{Binding DefenderStatus, Converter={StaticResource NullToVisibilityConverter}}">
                         <StackPanel>
                             <TextBlock Text="Windows Defender status" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
-                            <TextBlock Margin="0,0,0,8" FontSize="14" FontWeight="SemiBold" TextWrapping="Wrap">
+                            <TextBlock Margin="0,0,0,8" FontSize="{StaticResource FontSection}" FontWeight="SemiBold" TextWrapping="Wrap">
                                 <Run Text="Running mode: " /><Run Text="{Binding DefenderStatus.AmRunningMode, Mode=OneWay}" />
                             </TextBlock>
                             <UniformGrid Columns="3" Rows="2">
@@ -575,7 +575,7 @@
                                 <TextBlock Margin="0,0,8,4"><Run Text="Sample submission: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding FeatureToggles.SubmitSamplesConsentText, Mode=OneWay}" /></TextBlock>
                                 <TextBlock Margin="0,0,8,4"><Run Text="Cloud block level: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding FeatureToggles.CloudBlockLevelText, Mode=OneWay}" /></TextBlock>
                             </UniformGrid>
-                            <TextBlock Margin="0,6,0,0" TextWrapping="Wrap" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}">
+                            <TextBlock Margin="0,6,0,0" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}">
                                 <Run Text="Controlled folder access allowed apps: " />
                                 <Run Text="{Binding FeatureToggles.ControlledFolderAllowedApps, Converter={StaticResource StringListJoinConverter}, Mode=OneWay}" />
                             </TextBlock>
@@ -603,7 +603,7 @@
                             <DataGridTemplateColumn Header="Risk" Width="220">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
-                                        <TextBlock Text="{Binding RiskReason}" TextWrapping="Wrap" FontSize="11.5">
+                                        <TextBlock Text="{Binding RiskReason}" TextWrapping="Wrap" FontSize="{StaticResource FontBody}">
                                             <TextBlock.Style>
                                                 <Style TargetType="TextBlock">
                                                     <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
@@ -655,7 +655,7 @@
                     <ListBox ItemsSource="{Binding AsrEventTimeline}" MaxHeight="140" Margin="0,0,0,16" Background="Transparent" BorderThickness="0">
                         <ListBox.ItemTemplate>
                             <DataTemplate>
-                                <TextBlock FontSize="12" TextWrapping="Wrap">
+                                <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap">
                                     <Run Text="{Binding Time, Mode=OneWay, StringFormat=g}" Foreground="{DynamicResource TextSecondaryBrush}" />
                                     <Run Text=" - " /><Run Text="{Binding EventType, Mode=OneWay}" FontWeight="SemiBold" />
                                     <Run Text=" - " /><Run Text="{Binding Summary, Mode=OneWay}" />
@@ -692,7 +692,7 @@
                     <ListBox ItemsSource="{Binding ScanHistoryTimeline}" MaxHeight="160" Margin="0,0,0,16" Background="Transparent" BorderThickness="0">
                         <ListBox.ItemTemplate>
                             <DataTemplate>
-                                <TextBlock FontSize="12" TextWrapping="Wrap">
+                                <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap">
                                     <Run Text="{Binding Time, Mode=OneWay, StringFormat=g}" Foreground="{DynamicResource TextSecondaryBrush}" />
                                     <Run Text=" - " /><Run Text="{Binding EventType, Mode=OneWay}" FontWeight="SemiBold" />
                                 </TextBlock>
@@ -737,7 +737,7 @@
                     <ListBox ItemsSource="{Binding ThreatEventTimeline}" MaxHeight="140" Margin="0,0,0,16" Background="Transparent" BorderThickness="0">
                         <ListBox.ItemTemplate>
                             <DataTemplate>
-                                <TextBlock FontSize="12" TextWrapping="Wrap">
+                                <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap">
                                     <Run Text="{Binding Time, Mode=OneWay, StringFormat=g}" Foreground="{DynamicResource TextSecondaryBrush}" />
                                     <Run Text=" - " /><Run Text="{Binding EventType, Mode=OneWay}" FontWeight="SemiBold" />
                                     <Run Text=" - " /><Run Text="{Binding Summary, Mode=OneWay}" />
@@ -794,7 +794,7 @@
                     </DataGrid>
 
                     <!-- #864: run a scan - Quick/Full/folder/offline, streamed output, Cancel. -->
-                    <TextBlock Text="Run a scan" FontSize="13" FontWeight="SemiBold" Margin="0,0,0,6" />
+                    <TextBlock Text="Run a scan" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" Margin="0,0,0,6" />
                     <WrapPanel Margin="0,0,0,8">
                         <Button Content="Quick scan" Margin="0,0,8,8" Command="{Binding RunQuickScanCommand}" />
                         <Button Content="Full scan" Margin="0,0,8,8" Command="{Binding RunFullScanCommand}" />
@@ -809,7 +809,7 @@
                             <ItemsControl ItemsSource="{Binding ScanOutputLines}">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
-                                        <TextBlock Text="{Binding}" FontFamily="Consolas" FontSize="11" TextWrapping="Wrap" />
+                                        <TextBlock Text="{Binding}" FontFamily="Consolas" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" />
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
@@ -832,7 +832,7 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <StackPanel Grid.Column="0">
-                            <TextBlock Text="Platform security" FontSize="14" FontWeight="SemiBold" />
+                            <TextBlock Text="Platform security" FontSize="{StaticResource FontSection}" FontWeight="SemiBold" />
                             <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}"
                                        Text="HVCI/memory integrity, virtualization-based security detail, LSA protection, Kernel DMA Protection, the vulnerable-driver blocklist, boot integrity switches, app control policy (WDAC/AppLocker/Smart App Control), extended TPM detail, Secure Boot detail, and a UAC configuration audit - all read-only, on-demand." />
                         </StackPanel>
@@ -861,7 +861,7 @@
                                 <TextBlock Text="HVCI / memory integrity" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
                                 <TextBlock TextWrapping="Wrap"><Run Text="Running: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.Hvci.RunningText, Mode=OneWay}" FontWeight="SemiBold" /><Run Text="   Configured: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.Hvci.ConfiguredText, Mode=OneWay}" /></TextBlock>
                                 <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" Text="{Binding PlatformSecurity.Hvci.ReasonText}" />
-                                <TextBlock Margin="0,6,0,0" TextWrapping="Wrap" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}">
+                                <TextBlock Margin="0,6,0,0" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}">
                                     <Run Text="DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity: " />
                                     <Run Text="{Binding PlatformSecurity.Hvci.RegistryValuesText, Mode=OneWay}" />
                                 </TextBlock>
@@ -875,12 +875,12 @@
                                 <TextBlock TextWrapping="Wrap" Text="{Binding PlatformSecurity.VbsDetail.ExplanationText}" />
                                 <TextBlock Margin="0,6,0,0" TextWrapping="Wrap"><Run Text="Credential Guard running: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.VbsDetail.CredentialGuardRunningText, Mode=OneWay}" FontWeight="SemiBold" /></TextBlock>
                                 <UniformGrid Columns="2" Margin="0,6,0,0">
-                                    <TextBlock Margin="0,0,8,4" FontSize="11.5"><Run Text="Required: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.VbsDetail.RequiredPropertiesText, Mode=OneWay}" /></TextBlock>
-                                    <TextBlock Margin="0,0,0,4" FontSize="11.5"><Run Text="Available: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.VbsDetail.AvailablePropertiesText, Mode=OneWay}" /></TextBlock>
-                                    <TextBlock Margin="0,0,8,0" FontSize="11.5"><Run Text="Configured services: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.VbsDetail.ConfiguredServicesText, Mode=OneWay}" /></TextBlock>
-                                    <TextBlock Margin="0,0,0,0" FontSize="11.5"><Run Text="Running services: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.VbsDetail.RunningServicesText, Mode=OneWay}" /></TextBlock>
+                                    <TextBlock Margin="0,0,8,4" FontSize="{StaticResource FontBody}"><Run Text="Required: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.VbsDetail.RequiredPropertiesText, Mode=OneWay}" /></TextBlock>
+                                    <TextBlock Margin="0,0,0,4" FontSize="{StaticResource FontBody}"><Run Text="Available: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.VbsDetail.AvailablePropertiesText, Mode=OneWay}" /></TextBlock>
+                                    <TextBlock Margin="0,0,8,0" FontSize="{StaticResource FontBody}"><Run Text="Configured services: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.VbsDetail.ConfiguredServicesText, Mode=OneWay}" /></TextBlock>
+                                    <TextBlock Margin="0,0,0,0" FontSize="{StaticResource FontBody}"><Run Text="Running services: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.VbsDetail.RunningServicesText, Mode=OneWay}" /></TextBlock>
                                 </UniformGrid>
-                                <TextBlock Margin="0,6,0,0" TextWrapping="Wrap" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}">
+                                <TextBlock Margin="0,6,0,0" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}">
                                     <Run Text="Prerequisites - hypervisor active: " /><Run Text="{Binding PlatformSecurity.VbsDetail.HypervisorPresentText, Mode=OneWay}" />
                                     <Run Text=", firmware virtualization: " /><Run Text="{Binding PlatformSecurity.VbsDetail.VirtualizationFirmwareEnabledText, Mode=OneWay}" />
                                     <Run Text=", UEFI (via Secure Boot key): " /><Run Text="{Binding PlatformSecurity.VbsDetail.UefiSecureBootKeyPresentText, Mode=OneWay}" />
@@ -894,18 +894,18 @@
                             <StackPanel>
                                 <TextBlock Text="LSA protection (RunAsPPL)" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
                                 <TextBlock TextWrapping="Wrap"><Run Text="RunAsPPL: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.LsaProtection.RunAsPPLText, Mode=OneWay}" FontWeight="SemiBold" /><Run Text="   RunAsPPLBoot: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.LsaProtection.RunAsPPLBootText, Mode=OneWay}" /></TextBlock>
-                                <TextBlock Margin="0,6,0,0" TextWrapping="Wrap" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}"
+                                <TextBlock Margin="0,6,0,0" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}"
                                            Text="Turning this on prevents unsigned/untrusted code from loading into lsass.exe, blocking a common credential-theft technique. It can also break legitimate LSA plugins, some third-party antivirus/EDR drivers, or other software that intentionally loads into lsass.exe - test before enabling broadly. Not a toggle here; change it via Windows Security &gt; Device security &gt; Core isolation, or the registry value directly." />
-                                <TextBlock Margin="0,6,0,0" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}"
+                                <TextBlock Margin="0,6,0,0" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}"
                                            Text="Related Microsoft-Windows-CodeIntegrity/Operational events (3065/3033 - what was blocked from loading into lsass), last 180 days:" />
-                                <TextBlock FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap"
+                                <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap"
                                            Visibility="{Binding PlatformSecurity.LsaProtection.EventLogUnavailable, Converter={StaticResource BoolToVisibilityConverter}}">
                                     <Run Text="Couldn't read the CodeIntegrity Operational event log (unavailable, access denied, or the channel isn't enabled)." />
                                 </TextBlock>
                                 <ListBox ItemsSource="{Binding PlatformSecurity.LsaProtection.RelatedEvents}" MaxHeight="100" Margin="0,2,0,0" Background="Transparent" BorderThickness="0">
                                     <ListBox.ItemTemplate>
                                         <DataTemplate>
-                                            <TextBlock FontSize="11.5" TextWrapping="Wrap">
+                                            <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap">
                                                 <Run Text="{Binding Time, Mode=OneWay, StringFormat=g}" Foreground="{DynamicResource TextSecondaryBrush}" />
                                                 <Run Text=" - Event " /><Run Text="{Binding EventId, Mode=OneWay}" />
                                                 <Run Text=" - " /><Run Text="{Binding Summary, Mode=OneWay}" />
@@ -932,7 +932,7 @@
                             <StackPanel>
                                 <TextBlock Text="Vulnerable driver blocklist" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
                                 <TextBlock TextWrapping="Wrap"><Run Text="VulnerableDriverBlocklistEnable: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.DriverBlocklist.EnabledText, Mode=OneWay}" FontWeight="SemiBold" /></TextBlock>
-                                <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}">
+                                <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}">
                                     <Run Text="Other values under HKLM\SYSTEM\CurrentControlSet\Control\CI\Config: " />
                                     <Run Text="{Binding PlatformSecurity.DriverBlocklist.OtherConfigValuesText, Mode=OneWay}" />
                                 </TextBlock>
@@ -941,7 +941,7 @@
                                 <ItemsControl ItemsSource="{Binding PlatformSecurity.DriverBlocklist.PossibleMatches}" Margin="0,4,0,0">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
-                                            <TextBlock FontSize="12" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap">
+                                            <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap">
                                                 <Run Text="⚠ " /><Run Text="{Binding FileName, Mode=OneWay}" FontWeight="SemiBold" /><Run Text=" (" /><Run Text="{Binding ServiceName, Mode=OneWay}" /><Run Text=")" />
                                             </TextBlock>
                                         </DataTemplate>
@@ -955,7 +955,7 @@
                             <StackPanel>
                                 <TextBlock Text="Boot configuration integrity switches" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
                                 <TextBlock TextWrapping="Wrap" Text="{Binding PlatformSecurity.BootIntegrity.RawFieldsText}" />
-                                <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}"
+                                <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}"
                                            Text="testsigning/nointegritychecks/debug/safeboot/flightsigning, parsed from bcdedit /enum {current}. Any of these left ON after a driver-install workaround is a real, findable exposure - see the finding above if one is currently on." />
                             </StackPanel>
                         </Border>
@@ -965,14 +965,14 @@
                             <StackPanel>
                                 <TextBlock Text="App control policy presence" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
                                 <TextBlock TextWrapping="Wrap"><Run Text="WDAC enforcement (CodeIntegrityPolicyEnforcementStatus): " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.AppControl.CodeIntegrityEnforcementText, Mode=OneWay}" FontWeight="SemiBold" /></TextBlock>
-                                <TextBlock Margin="0,2,0,0" TextWrapping="Wrap" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}">
+                                <TextBlock Margin="0,2,0,0" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}">
                                     <Run Text="WDAC policy files (CodeIntegrity\CiPolicies\Active\*.cip): " />
                                     <Run Text="{Binding PlatformSecurity.AppControl.WdacPolicyFilesText, Mode=OneWay}" />
                                 </TextBlock>
                                 <TextBlock Margin="0,6,0,0" TextWrapping="Wrap"><Run Text="AppIDSvc (AppLocker): " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.AppControl.AppIdSvcStatusText, Mode=OneWay}" /></TextBlock>
                                 <TextBlock Margin="0,2,0,0" TextWrapping="Wrap" Text="{Binding PlatformSecurity.AppControl.AppLockerRulesText}" />
                                 <TextBlock Margin="0,6,0,0" TextWrapping="Wrap"><Run Text="Smart App Control: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.AppControl.SmartAppControlText, Mode=OneWay}" FontWeight="SemiBold" /></TextBlock>
-                                <TextBlock Margin="0,2,0,0" TextWrapping="Wrap" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}"
+                                <TextBlock Margin="0,2,0,0" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}"
                                            Text="Smart App Control blocks based on reputation, not just signature validity - a locally-built, unsigned executable is blocked outright while it's On. In Evaluation mode it watches your usage and can turn itself OFF permanently if certain apps/drivers trigger it; once off, re-enabling it requires a full OS reset." />
                             </StackPanel>
                         </Border>
@@ -982,7 +982,7 @@
                         <Border Padding="10,8" Margin="0,0,0,12" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
                             <StackPanel>
                                 <TextBlock Text="TPM detail" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
-                                <TextBlock Margin="0,0,0,4" TextWrapping="Wrap" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}"
+                                <TextBlock Margin="0,0,0,4" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}"
                                            Text="Complements the TPM summary on the System Specs tab's Security card with a few extra Win32_Tpm fields." />
                                 <UniformGrid Columns="3">
                                     <TextBlock Margin="0,0,8,4"><Run Text="Present: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.TpmDetail.PresentText, Mode=OneWay}" /></TextBlock>
@@ -992,14 +992,14 @@
                                     <TextBlock Margin="0,0,8,0"><Run Text="Spec version: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.TpmDetail.SpecVersion, Mode=OneWay}" /></TextBlock>
                                     <TextBlock Margin="0,0,0,0"><Run Text="Manufacturer: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.TpmDetail.ManufacturerIdText, Mode=OneWay}" /></TextBlock>
                                 </UniformGrid>
-                                <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}">
+                                <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}">
                                     <Run Text="Manufacturer version: " /><Run Text="{Binding PlatformSecurity.TpmDetail.ManufacturerVersion, Mode=OneWay}" />
                                     <Run Text="  Version info: " /><Run Text="{Binding PlatformSecurity.TpmDetail.ManufacturerVersionInfo, Mode=OneWay}" />
                                 </TextBlock>
-                                <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}">
+                                <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}">
                                     <Run Text="Lockout count: " /><Run Text="{Binding PlatformSecurity.TpmDetail.LockoutCountText, Mode=OneWay}" />
                                 </TextBlock>
-                                <TextBlock Margin="0,6,0,0" TextWrapping="Wrap" FontSize="11.5" Foreground="{DynamicResource WarningBrush}"
+                                <TextBlock Margin="0,6,0,0" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource WarningBrush}"
                                            Visibility="{Binding PlatformSecurity.TpmDetail.ShowAdvisoryCaveat, Converter={StaticResource BoolToVisibilityConverter}}"
                                            Text="Worth a manual check against your TPM vendor's published advisories for this firmware version - this app has no live advisory database to check against automatically." />
                             </StackPanel>
@@ -1015,7 +1015,7 @@
                                            Text="Legacy BIOS boot - Secure Boot not applicable." />
                                 <StackPanel Visibility="{Binding PlatformSecurity.SecureBootDetail.KeyPresent, Converter={StaticResource BoolToVisibilityConverter}}">
                                     <TextBlock TextWrapping="Wrap"><Run Text="Enabled: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.SecureBootDetail.EnabledText, Mode=OneWay}" FontWeight="SemiBold" /><Run Text="   Setup mode: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.SecureBootDetail.SetupModeText, Mode=OneWay}" /></TextBlock>
-                                    <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}"
+                                    <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}"
                                                Text="Setup mode means Secure Boot policy isn't fully enforced - itself a red flag if seen outside an active firmware update/reconfiguration." />
                                     <TextBlock Margin="0,4,0,0" TextWrapping="Wrap"><Run Text="DBX (revocation list) last updated: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.SecureBootDetail.DbxRecencyText, Mode=OneWay}" /></TextBlock>
                                 </StackPanel>
@@ -1028,12 +1028,12 @@
                                 <TextBlock Text="UAC configuration audit" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
                                 <TextBlock TextWrapping="Wrap" FontWeight="SemiBold" Text="{Binding PlatformSecurity.Uac.SliderPositionText}" />
                                 <UniformGrid Columns="3" Margin="0,6,0,0">
-                                    <TextBlock Margin="0,0,8,4" FontSize="11.5"><Run Text="EnableLUA: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.Uac.EnableLUA, Mode=OneWay}" /></TextBlock>
-                                    <TextBlock Margin="0,0,8,4" FontSize="11.5"><Run Text="ConsentPromptBehaviorAdmin: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.Uac.ConsentPromptBehaviorAdmin, Mode=OneWay}" /></TextBlock>
-                                    <TextBlock Margin="0,0,0,4" FontSize="11.5"><Run Text="ConsentPromptBehaviorUser: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.Uac.ConsentPromptBehaviorUser, Mode=OneWay}" /></TextBlock>
-                                    <TextBlock Margin="0,0,8,0" FontSize="11.5"><Run Text="PromptOnSecureDesktop: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.Uac.PromptOnSecureDesktop, Mode=OneWay}" /></TextBlock>
-                                    <TextBlock Margin="0,0,8,0" FontSize="11.5"><Run Text="FilterAdministratorToken: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.Uac.FilterAdministratorToken, Mode=OneWay}" /></TextBlock>
-                                    <TextBlock Margin="0,0,0,0" FontSize="11.5"><Run Text="EnableInstallerDetection: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.Uac.EnableInstallerDetection, Mode=OneWay}" /></TextBlock>
+                                    <TextBlock Margin="0,0,8,4" FontSize="{StaticResource FontBody}"><Run Text="EnableLUA: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.Uac.EnableLUA, Mode=OneWay}" /></TextBlock>
+                                    <TextBlock Margin="0,0,8,4" FontSize="{StaticResource FontBody}"><Run Text="ConsentPromptBehaviorAdmin: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.Uac.ConsentPromptBehaviorAdmin, Mode=OneWay}" /></TextBlock>
+                                    <TextBlock Margin="0,0,0,4" FontSize="{StaticResource FontBody}"><Run Text="ConsentPromptBehaviorUser: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.Uac.ConsentPromptBehaviorUser, Mode=OneWay}" /></TextBlock>
+                                    <TextBlock Margin="0,0,8,0" FontSize="{StaticResource FontBody}"><Run Text="PromptOnSecureDesktop: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.Uac.PromptOnSecureDesktop, Mode=OneWay}" /></TextBlock>
+                                    <TextBlock Margin="0,0,8,0" FontSize="{StaticResource FontBody}"><Run Text="FilterAdministratorToken: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.Uac.FilterAdministratorToken, Mode=OneWay}" /></TextBlock>
+                                    <TextBlock Margin="0,0,0,0" FontSize="{StaticResource FontBody}"><Run Text="EnableInstallerDetection: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding PlatformSecurity.Uac.EnableInstallerDetection, Mode=OneWay}" /></TextBlock>
                                 </UniformGrid>
                             </StackPanel>
                         </Border>
@@ -1050,7 +1050,7 @@
                  nothing here polls. -->
             <Border BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,1,0,0" Padding="0,16,0,0" Margin="0,16,0,0">
                 <StackPanel>
-                    <TextBlock Text="Network exposure" FontSize="14" FontWeight="SemiBold" />
+                    <TextBlock Text="Network exposure" FontSize="{StaticResource FontSection}" FontWeight="SemiBold" />
                     <TextBlock Margin="0,4,0,12" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}"
                                Text="Firewall posture and rules, what's actually reachable on the network, legacy SMB/NTLM settings, shares, remote-management surfaces, the hosts file, DNS posture, proxy configuration, and the certificate store - all read-only unless you explicitly click a Disable/Reset action below, and every reachability judgment here is a heuristic cross-reference, not a definitive penetration test." />
 
@@ -1060,7 +1060,7 @@
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="Firewall profile posture" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="0" Text="Firewall profile posture" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" VerticalAlignment="Center" />
                         <Button Grid.Column="1" Command="{Binding RefreshFirewallPostureCommand}">
                             <TextBlock>
                                 <TextBlock.Style>
@@ -1113,7 +1113,7 @@
                         </ItemsControl.ItemsPanel>
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <TextBlock FontSize="11.5" Margin="0,0,12,2" Foreground="{DynamicResource TextSecondaryBrush}">
+                                <TextBlock FontSize="{StaticResource FontBody}" Margin="0,0,12,2" Foreground="{DynamicResource TextSecondaryBrush}">
                                     <Run Text="{Binding InterfaceAlias, Mode=OneWay}" /><Run Text=" → " /><Run Text="{Binding ProfileName, Mode=OneWay}" FontWeight="SemiBold" />
                                 </TextBlock>
                             </DataTemplate>
@@ -1127,9 +1127,9 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" TextWrapping="Wrap" VerticalAlignment="Center">
-                            <Run Text="Firewall rule audit" FontSize="13" FontWeight="SemiBold" />
+                            <Run Text="Firewall rule audit" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" />
                             <LineBreak />
-                            <Run Text="Enabled inbound Allow rules only. &quot;Created recently&quot; isn't available from netsh's output - not implemented, infeasible via this data source." FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+                            <Run Text="Enabled inbound Allow rules only. &quot;Created recently&quot; isn't available from netsh's output - not implemented, infeasible via this data source." FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
                         </TextBlock>
                         <Button Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Top" Command="{Binding ScanFirewallRulesCommand}">
                             <TextBlock>
@@ -1157,7 +1157,7 @@
                             <DataGridTemplateColumn Header="Risk" Width="220">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
-                                        <TextBlock Text="{Binding RiskReasonsText}" TextWrapping="Wrap" FontSize="11.5">
+                                        <TextBlock Text="{Binding RiskReasonsText}" TextWrapping="Wrap" FontSize="{StaticResource FontBody}">
                                             <TextBlock.Style>
                                                 <Style TargetType="TextBlock">
                                                     <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
@@ -1183,7 +1183,7 @@
                             </DataGridTemplateColumn>
                         </DataGrid.Columns>
                     </DataGrid>
-                    <TextBlock FontSize="11.5" Margin="0,0,0,4" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}"
+                    <TextBlock FontSize="{StaticResource FontBody}" Margin="0,0,0,4" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}"
                                Text="Rule names aren't guaranteed unique - Disable/Undo apply to every rule sharing that exact name, the same ambiguity netsh itself has. Disable never deletes a rule." />
                     <ItemsControl ItemsSource="{Binding DisabledFirewallRuleNames}" Margin="0,0,0,16">
                         <ItemsControl.ItemTemplate>
@@ -1193,7 +1193,7 @@
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0" Text="{Binding}" FontSize="12" VerticalAlignment="Center" TextWrapping="Wrap" />
+                                    <TextBlock Grid.Column="0" Text="{Binding}" FontSize="{StaticResource FontBody}" VerticalAlignment="Center" TextWrapping="Wrap" />
                                     <Button Grid.Column="1" Content="Undo (re-enable)" Padding="6,2" Margin="8,0,0,0"
                                             Command="{Binding DataContext.UndoDisableFirewallRuleCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                             CommandParameter="{Binding}" />
@@ -1209,9 +1209,9 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" TextWrapping="Wrap" VerticalAlignment="Center">
-                            <Run Text="Exposed-listener map" FontSize="13" FontWeight="SemiBold" />
+                            <Run Text="Exposed-listener map" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" />
                             <LineBreak />
-                            <Run Text="What's reachable from the LAN - listeners bound to all interfaces that also look firewall-allowed are the interesting rows. This is a heuristic cross-reference, not a definitive reachability test." FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+                            <Run Text="What's reachable from the LAN - listeners bound to all interfaces that also look firewall-allowed are the interesting rows. This is a heuristic cross-reference, not a definitive reachability test." FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
                         </TextBlock>
                         <Button Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Top" Command="{Binding ScanExposedListenersCommand}">
                             <TextBlock>
@@ -1269,7 +1269,7 @@
                             <DataGridTemplateColumn Header="Note" Width="2*">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
-                                        <TextBlock Text="{Binding ReachabilityNote}" TextWrapping="Wrap" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        <TextBlock Text="{Binding ReachabilityNote}" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
@@ -1307,7 +1307,7 @@
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="SMB and legacy protocol posture" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="0" Text="SMB and legacy protocol posture" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" VerticalAlignment="Center" />
                         <Button Grid.Column="1" Command="{Binding RefreshSmbPostureCommand}">
                             <TextBlock>
                                 <TextBlock.Style>
@@ -1329,10 +1329,10 @@
                             <DataTemplate>
                                 <Border Padding="8" Margin="0,0,0,6" CornerRadius="4" Background="{DynamicResource BgElevatedBrush}">
                                     <StackPanel>
-                                        <TextBlock FontWeight="SemiBold" FontSize="12.5" Text="{Binding Label}" />
-                                        <TextBlock FontSize="12" Margin="0,2,0,0" TextWrapping="Wrap" Text="{Binding ValueText}" />
-                                        <TextBlock FontSize="11.5" Margin="0,4,0,0" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" Text="{Binding WhyItMatters}" />
-                                        <TextBlock FontSize="11.5" Margin="0,4,0,0" TextWrapping="Wrap" FontFamily="Consolas" Text="{Binding HowToChange}" />
+                                        <TextBlock FontWeight="SemiBold" FontSize="{StaticResource FontStrong}" Text="{Binding Label}" />
+                                        <TextBlock FontSize="{StaticResource FontBody}" Margin="0,2,0,0" TextWrapping="Wrap" Text="{Binding ValueText}" />
+                                        <TextBlock FontSize="{StaticResource FontBody}" Margin="0,4,0,0" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" Text="{Binding WhyItMatters}" />
+                                        <TextBlock FontSize="{StaticResource FontBody}" Margin="0,4,0,0" TextWrapping="Wrap" FontFamily="Consolas" Text="{Binding HowToChange}" />
                                     </StackPanel>
                                 </Border>
                             </DataTemplate>
@@ -1345,7 +1345,7 @@
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="Share audit" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="0" Text="Share audit" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" VerticalAlignment="Center" />
                         <Button Grid.Column="1" Command="{Binding ScanSharesCommand}">
                             <TextBlock>
                                 <TextBlock.Style>
@@ -1371,7 +1371,7 @@
                             <DataGridTemplateColumn Header="Weak permissions" Width="220">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
-                                        <TextBlock TextWrapping="Wrap" FontSize="11.5">
+                                        <TextBlock TextWrapping="Wrap" FontSize="{StaticResource FontBody}">
                                             <TextBlock.Style>
                                                 <Style TargetType="TextBlock">
                                                     <Setter Property="Text" Value="—" />
@@ -1407,7 +1407,7 @@
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="Remote management exposure" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="0" Text="Remote management exposure" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" VerticalAlignment="Center" />
                         <Button Grid.Column="1" Command="{Binding ScanRemoteManagementCommand}">
                             <TextBlock>
                                 <TextBlock.Style>
@@ -1438,7 +1438,7 @@
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="Hosts file audit" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="0" Text="Hosts file audit" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" VerticalAlignment="Center" />
                         <StackPanel Grid.Column="1" Orientation="Horizontal">
                             <Button Content="Open in Notepad" Margin="0,0,8,0" Command="{Binding OpenHostsFileInNotepadCommand}"
                                     ToolTip="Opens the hosts file in Notepad - no direct in-app editing." />
@@ -1463,7 +1463,7 @@
                         <ItemsControl ItemsSource="{Binding HostsFileAudit.UpdateOrAvBlocks}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <TextBlock FontSize="11.5" TextWrapping="Wrap" Foreground="{DynamicResource WarningBrush}">
+                                    <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Foreground="{DynamicResource WarningBrush}">
                                         <Run Text="{Binding Hostname, Mode=OneWay}" /><Run Text=" → " /><Run Text="{Binding Address, Mode=OneWay}" /><Run Text=" - " /><Run Text="{Binding Reason, Mode=OneWay}" />
                                     </TextBlock>
                                 </DataTemplate>
@@ -1473,7 +1473,7 @@
                             <ItemsControl ItemsSource="{Binding HostsFileAudit.NonLoopbackEntries}" Margin="0,4,0,0">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
-                                        <TextBlock FontSize="11.5" TextWrapping="Wrap">
+                                        <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap">
                                             <Run Text="{Binding Hostname, Mode=OneWay}" /><Run Text=" → " /><Run Text="{Binding Address, Mode=OneWay}" />
                                         </TextBlock>
                                     </DataTemplate>
@@ -1514,7 +1514,7 @@
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="Proxy hijack check" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="0" Text="Proxy hijack check" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" VerticalAlignment="Center" />
                         <Button Grid.Column="1" Command="{Binding RefreshProxyPostureCommand}">
                             <TextBlock>
                                 <TextBlock.Style>
@@ -1536,14 +1536,14 @@
                         <StackPanel>
                             <TextBlock TextWrapping="Wrap"><Run Text="Per-user proxy: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding ProxyConfig.Enabled, Mode=OneWay}" /><Run Text="   Server: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding ProxyConfig.ProxyServer, Mode=OneWay}" /></TextBlock>
                             <TextBlock Margin="0,2,0,0" TextWrapping="Wrap"><Run Text="Bypass list: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding ProxyConfig.ProxyOverride, Mode=OneWay}" /></TextBlock>
-                            <TextBlock Margin="0,2,0,0" TextWrapping="Wrap" FontFamily="Consolas" FontSize="11.5"><Run Text="Auto-config URL: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding ProxyConfig.AutoConfigUrl, Mode=OneWay}" /></TextBlock>
+                            <TextBlock Margin="0,2,0,0" TextWrapping="Wrap" FontFamily="Consolas" FontSize="{StaticResource FontBody}"><Run Text="Auto-config URL: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding ProxyConfig.AutoConfigUrl, Mode=OneWay}" /></TextBlock>
                             <TextBlock Margin="0,6,0,0" TextWrapping="Wrap"><Run Text="Machine WinHTTP proxy: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding MachineProxyConfig.DirectAccess, StringFormat={}{0}, Mode=OneWay}" /><Run Text="   Server: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding MachineProxyConfig.ProxyServer, Mode=OneWay}" /></TextBlock>
                             <TextBlock Margin="0,2,0,0" TextWrapping="Wrap"><Run Text="Bypass list: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding MachineProxyConfig.BypassList, Mode=OneWay}" /></TextBlock>
                         </StackPanel>
                     </Border>
                     <Button Content="Reset proxy and Winsock..." Style="{StaticResource DangerButton}" HorizontalAlignment="Left" Command="{Binding ResetProxyAndWinsockCommand}"
                             ToolTip="Runs netsh winhttp reset proxy / netsh winsock reset / ipconfig /flushdns, behind a confirmation naming the reboot this requires." />
-                    <TextBlock Text="{Binding ProxyResetOutput}" TextWrapping="Wrap" FontFamily="Consolas" FontSize="11" Margin="0,8,0,16" Foreground="{DynamicResource TextSecondaryBrush}" />
+                    <TextBlock Text="{Binding ProxyResetOutput}" TextWrapping="Wrap" FontFamily="Consolas" FontSize="{StaticResource FontBody}" Margin="0,8,0,16" Foreground="{DynamicResource TextSecondaryBrush}" />
 
                     <!-- #890: certificate store anomalies - inspection only. -->
                     <Grid Margin="0,0,0,4">
@@ -1551,7 +1551,7 @@
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="Certificate store anomalies" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="0" Text="Certificate store anomalies" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" VerticalAlignment="Center" />
                         <StackPanel Grid.Column="1" Orientation="Horizontal">
                             <Button Content="Open Certificate Manager" Margin="0,0,8,0" Command="{Binding OpenCertificateManagerCommand}" ToolTip="Launches certlm.msc - this app makes no removal changes itself." />
                             <Button Command="{Binding ScanCertificateStoreCommand}">
@@ -1571,7 +1571,7 @@
                         </StackPanel>
                     </Grid>
                     <TextBlock Text="{Binding CertificateScanStatus}" TextWrapping="Wrap" Margin="0,4,0,4" Foreground="{DynamicResource TextSecondaryBrush}" />
-                    <TextBlock Margin="0,0,0,8" TextWrapping="Wrap" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}">
+                    <TextBlock Margin="0,0,0,8" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}">
                         <Run Text="Disallowed store entries (already flagged by Windows, reported as a count only): " /><Run Text="{Binding DisallowedCertificateCount, Mode=OneWay}" />
                         <Run Text="   &quot;Installed recently&quot; isn't determinable via X509Certificate2 - not implemented, see class remarks." />
                     </TextBlock>
@@ -1598,7 +1598,7 @@
                             <DataGridTemplateColumn Header="Reasons" Width="2.4*">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
-                                        <TextBlock Text="{Binding ReasonsText}" TextWrapping="Wrap" FontSize="11.5">
+                                        <TextBlock Text="{Binding ReasonsText}" TextWrapping="Wrap" FontSize="{StaticResource FontBody}">
                                             <TextBlock.Style>
                                                 <Style TargetType="TextBlock">
                                                     <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
@@ -1624,7 +1624,7 @@
             <!-- Round 20, #891-894: "Accounts and remote access". -->
             <Border Margin="0,20,0,0" BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,1,0,0" Padding="0,16,0,0">
                 <StackPanel>
-                    <TextBlock Text="Accounts and remote access" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,4" />
+                    <TextBlock Text="Accounts and remote access" FontSize="{StaticResource FontSection}" FontWeight="SemiBold" Margin="0,0,0,4" />
                     <TextBlock TextWrapping="Wrap" Margin="0,0,0,12" Foreground="{DynamicResource TextSecondaryBrush}"
                                Text="Who can sign in, who's an administrator, and how remotely reachable this PC is." />
 
@@ -1634,7 +1634,7 @@
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="Local account audit" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="0" Text="Local account audit" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" VerticalAlignment="Center" />
                         <Button Grid.Column="1" Command="{Binding ScanLocalAccountsCommand}">
                             <TextBlock>
                                 <TextBlock.Style>
@@ -1686,7 +1686,7 @@
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="Autologon credential exposure" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="0" Text="Autologon credential exposure" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" VerticalAlignment="Center" />
                         <Button Grid.Column="1" Command="{Binding CheckAutologonExposureCommand}">
                             <TextBlock>
                                 <TextBlock.Style>
@@ -1703,7 +1703,7 @@
                         </Button>
                     </Grid>
                     <TextBlock Text="{Binding AutologonExposureStatus}" TextWrapping="Wrap" Margin="0,4,0,4" Foreground="{DynamicResource TextSecondaryBrush}" />
-                    <TextBlock Margin="0,0,0,16" TextWrapping="Wrap" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}"
+                    <TextBlock Margin="0,0,0,16" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}"
                                Text="This app reads only WHETHER a DefaultPassword registry value exists, never the value itself - not here, not in any log." />
 
                     <!-- #893: RDP exposure card. -->
@@ -1712,7 +1712,7 @@
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="RDP exposure" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="0" Text="RDP exposure" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" VerticalAlignment="Center" />
                         <Button Grid.Column="1" Command="{Binding CheckRdpExposureCommand}">
                             <TextBlock>
                                 <TextBlock.Style>
@@ -1734,11 +1734,11 @@
                         <StackPanel>
                             <TextBlock TextWrapping="Wrap"><Run Text="Shadow (remote control) setting: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding RdpExposure.ShadowDescription, Mode=OneWay}" /></TextBlock>
                             <TextBlock Margin="0,2,0,0" TextWrapping="Wrap"><Run Text="Restricted Admin mode disabled: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding RdpExposure.RestrictedAdminDisabled, Mode=OneWay}" /></TextBlock>
-                            <TextBlock Margin="0,6,0,0" Text="{Binding RdpExposure.RemoteDesktopUsersMembers.Count, StringFormat=Remote Desktop Users members ({0}):}" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+                            <TextBlock Margin="0,6,0,0" Text="{Binding RdpExposure.RemoteDesktopUsersMembers.Count, StringFormat=Remote Desktop Users members ({0}):}" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
                             <ItemsControl ItemsSource="{Binding RdpExposure.RemoteDesktopUsersMembers}">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
-                                        <TextBlock Text="{Binding}" FontSize="11.5" Margin="8,0,0,0" />
+                                        <TextBlock Text="{Binding}" FontSize="{StaticResource FontBody}" Margin="8,0,0,0" />
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
@@ -1754,9 +1754,9 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" TextWrapping="Wrap" VerticalAlignment="Center">
-                            <Run Text="Sign-in and account-change timeline" FontSize="13" FontWeight="SemiBold" />
+                            <Run Text="Sign-in and account-change timeline" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" />
                             <LineBreak />
-                            <Run Text="Reads the Security event log directly - can be slow and is sometimes access-denied even elevated, depending on local audit policy. Last 30 days, capped at 200 events." FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+                            <Run Text="Reads the Security event log directly - can be slow and is sometimes access-denied even elevated, depending on local audit policy. Last 30 days, capped at 200 events." FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
                         </TextBlock>
                         <Button Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Top" Command="{Binding ScanSignInTimelineCommand}">
                             <TextBlock>
@@ -1790,7 +1790,7 @@
             <!-- Round 20, #895-896: "Bloatware". -->
             <Border Margin="0,20,0,0" BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,1,0,0" Padding="0,16,0,0">
                 <StackPanel>
-                    <TextBlock Text="Bloatware" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,4" />
+                    <TextBlock Text="Bloatware" FontSize="{StaticResource FontSection}" FontWeight="SemiBold" Margin="0,0,0,4" />
                     <TextBlock TextWrapping="Wrap" Margin="0,0,0,12" Foreground="{DynamicResource TextSecondaryBrush}"
                                Text="Preinstalled/OEM software, tiered by a simple keyword heuristic - not a perfect classifier, and the 'driver-adjacent' tier is called out because removing it can break hardware, not because it's suspicious." />
 
@@ -1800,7 +1800,7 @@
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="Preinstalled/OEM software inventory" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="0" Text="Preinstalled/OEM software inventory" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" VerticalAlignment="Center" />
                         <Button Grid.Column="1" Command="{Binding ScanBloatwareCommand}">
                             <TextBlock>
                                 <TextBlock.Style>
@@ -1824,7 +1824,7 @@
                             <DataGridTemplateColumn Header="Tier" Width="180">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
-                                        <Border CornerRadius="3" Padding="5,1" HorizontalAlignment="Left">
+                                        <Border CornerRadius="4" Padding="4,0" HorizontalAlignment="Left">
                                             <Border.Style>
                                                 <Style TargetType="Border">
                                                     <Setter Property="Background" Value="Transparent" />
@@ -1838,7 +1838,7 @@
                                                     </Style.Triggers>
                                                 </Style>
                                             </Border.Style>
-                                            <TextBlock Text="{Binding TierLabel}" FontSize="11.5" />
+                                            <TextBlock Text="{Binding TierLabel}" FontSize="{StaticResource FontBody}" />
                                         </Border>
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
@@ -1857,9 +1857,9 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" TextWrapping="Wrap" VerticalAlignment="Center">
-                            <Run Text="OEM cleanup guidance" FontSize="13" FontWeight="SemiBold" />
+                            <Run Text="OEM cleanup guidance" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" />
                             <LineBreak />
-                            <Run Text="Cross-references the inventory above against currently installed services/scheduled tasks/startup entries by a simple name/publisher match. Disable routes through the SAME control this app's Services/Startup tabs already use - it never deletes anything." FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+                            <Run Text="Cross-references the inventory above against currently installed services/scheduled tasks/startup entries by a simple name/publisher match. Disable routes through the SAME control this app's Services/Startup tabs already use - it never deletes anything." FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
                         </TextBlock>
                         <Button Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Top" Command="{Binding ScanOemCleanupCommand}"
                                 ToolTip="Scan the Bloatware inventory above first - this button matches against it.">
@@ -1878,7 +1878,7 @@
                         </Button>
                     </Grid>
                     <TextBlock Text="{Binding OemCleanupStatus}" TextWrapping="Wrap" Margin="0,4,0,4" Foreground="{DynamicResource TextSecondaryBrush}" />
-                    <TextBlock Margin="0,0,0,8" TextWrapping="Wrap" FontSize="11.5" Foreground="{DynamicResource WarningBrush}"
+                    <TextBlock Margin="0,0,0,8" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource WarningBrush}"
                                Text="DiagTrack (Connected User Experiences and Telemetry) and Customer Experience Improvement Program tasks are always shown here when present. Disabling them reduces SOME diagnostic data sent to Microsoft - Windows still collects other built-in telemetry regardless, so don't expect this to eliminate telemetry entirely." />
                     <DataGrid IsReadOnly="True" MaxHeight="220" ItemsSource="{Binding OemCleanupCandidates}" AutoGenerateColumns="False">
                         <DataGrid.Columns>
@@ -1909,7 +1909,7 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <StackPanel Grid.Column="0">
-                            <TextBlock Text="Browser hijack check" FontSize="15" FontWeight="SemiBold" />
+                            <TextBlock Text="Browser hijack check" FontSize="{StaticResource FontSection}" FontWeight="SemiBold" />
                             <TextBlock TextWrapping="Wrap" Margin="0,4,0,0" Foreground="{DynamicResource TextSecondaryBrush}"
                                        Text="Homepage/startup-pages/search-engine overrides per Chrome/Edge/Firefox profile, PLUS enterprise policy (force-installed extensions, policy homepage/proxy), native-messaging-host registrations, and an External Extensions file check. Policy-forced extensions on a home PC are the single clearest adware signature - shown as High severity whenever found." />
                         </StackPanel>
@@ -1937,7 +1937,7 @@
                             <DataGridTemplateColumn Header="Detail" Width="3*">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
-                                        <TextBlock Text="{Binding Detail}" TextWrapping="Wrap" FontSize="11.5">
+                                        <TextBlock Text="{Binding Detail}" TextWrapping="Wrap" FontSize="{StaticResource FontBody}">
                                             <TextBlock.Style>
                                                 <Style TargetType="TextBlock">
                                                     <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
@@ -1966,17 +1966,17 @@
                  the actions currently wired into this journal - see the report for exact coverage. -->
             <Border Margin="0,20,0,0" BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,1,0,0" Padding="0,16,0,0">
                 <StackPanel>
-                    <TextBlock Text="Owner-initiated cleanup" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,4" />
+                    <TextBlock Text="Owner-initiated cleanup" FontSize="{StaticResource FontSection}" FontWeight="SemiBold" Margin="0,0,0,4" />
                     <TextBlock TextWrapping="Wrap" Margin="0,0,0,12" Foreground="{DynamicResource TextSecondaryBrush}"
                                Text="A shared safety net for the change-making buttons on this tab: an opt-in System Restore point before a change, files moved (never shredded) into quarantine, and a persistent journal of what changed with Undo where that's meaningful." />
 
                     <CheckBox Content="Create a System Restore point before the next change-making action" Margin="0,0,0,4"
                               IsChecked="{Binding CreateRestorePointBeforeActions}"
                               ToolTip="Runs Checkpoint-Computer (PowerShell) before Disable/Quarantine actions wired into this journal. System Restore can be off entirely on some machines - this degrades gracefully and never blocks the actual action." />
-                    <TextBlock Text="{Binding RestorePointStatus}" TextWrapping="Wrap" Margin="0,0,0,12" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+                    <TextBlock Text="{Binding RestorePointStatus}" TextWrapping="Wrap" Margin="0,0,0,12" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
 
-                    <TextBlock Text="Action journal" FontSize="13" FontWeight="SemiBold" Margin="0,0,0,4" />
-                    <TextBlock Margin="0,0,0,8" TextWrapping="Wrap" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}"
+                    <TextBlock Text="Action journal" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" Margin="0,0,0,4" />
+                    <TextBlock Margin="0,0,0,8" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}"
                                Text="Persisted to security-actions.json - every Disable/Quarantine action recorded here can be undone by calling the exact same toggle method again with the opposite state, or (for a quarantined file) moving it back to its original path." />
                     <DataGrid IsReadOnly="True" MaxHeight="240" ItemsSource="{Binding ActionJournal}" AutoGenerateColumns="False">
                         <DataGrid.Columns>
@@ -2001,10 +2001,10 @@
             <!-- Round 20, #900: second-opinion scanner launcher + evidence bundle. -->
             <Border Margin="0,20,0,20" BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,1,0,0" Padding="0,16,0,0">
                 <StackPanel>
-                    <TextBlock Text="Second opinion and evidence bundle" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,4" />
+                    <TextBlock Text="Second opinion and evidence bundle" FontSize="{StaticResource FontSection}" FontWeight="SemiBold" Margin="0,0,0,4" />
                     <TextBlock TextWrapping="Wrap" Margin="0,0,0,4" Foreground="{DynamicResource TextSecondaryBrush}"
                                Text="A single AV/scanner disagreeing with another is not proof either way - these are link-outs to each tool's own official page only. This app never bundles, downloads, or runs any of them itself." />
-                    <TextBlock TextWrapping="Wrap" Margin="0,0,0,12" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}"
+                    <TextBlock TextWrapping="Wrap" Margin="0,0,0,12" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}"
                                Text="Microsoft Defender Offline is already built into this app - see the &quot;Run Defender Offline scan&quot; button in the Protection status section above, no outbound link needed for that one." />
 
                     <ItemsControl ItemsSource="{Binding SecondOpinionTools}">
@@ -2017,8 +2017,8 @@
                                             <ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
                                         <StackPanel Grid.Column="0">
-                                            <TextBlock FontWeight="SemiBold" FontSize="12.5" Text="{Binding Name}" />
-                                            <TextBlock FontSize="11.5" Margin="0,2,0,0" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" Text="{Binding GoodFor}" />
+                                            <TextBlock FontWeight="SemiBold" FontSize="{StaticResource FontStrong}" Text="{Binding Name}" />
+                                            <TextBlock FontSize="{StaticResource FontBody}" Margin="0,2,0,0" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" Text="{Binding GoodFor}" />
                                         </StackPanel>
                                         <Button Grid.Column="1" Content="Open" VerticalAlignment="Center" Margin="8,0,0,0"
                                                 Command="{Binding DataContext.OpenSecondOpinionToolCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
@@ -2031,8 +2031,8 @@
 
                     <Border BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,1,0,0" Padding="0,16,0,0" Margin="0,16,0,0">
                         <StackPanel>
-                            <TextBlock Text="Build evidence bundle" FontSize="13" FontWeight="SemiBold" Margin="0,0,0,4" />
-                            <TextBlock TextWrapping="Wrap" Margin="0,0,0,8" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}"
+                            <TextBlock Text="Build evidence bundle" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" Margin="0,0,0,4" />
+                            <TextBlock TextWrapping="Wrap" Margin="0,0,0,8" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}"
                                        Text="Writes out only what's already been loaded/run this session (the report, baseline diff, flagged-file hashes, event timelines already scanned above) into one timestamped folder, with a README.txt naming what was included vs. skipped, then opens it in Explorer. Nothing is uploaded or sent anywhere by this app." />
                             <Button HorizontalAlignment="Left" Style="{StaticResource PrimaryButton}" Command="{Binding BuildEvidenceBundleCommand}">
                                 <TextBlock>

@@ -26,7 +26,7 @@
                         </Style.Triggers>
                     </Style>
                 </Border.Style>
-                <TextBlock Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" FontSize="12.5"
+                <TextBlock Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" FontSize="{StaticResource FontStrong}"
                            Text="Sensors unavailable — the hardware sensor driver couldn't be opened. This can happen under Smart App Control, a restrictive driver-signing policy, or on hardware LibreHardwareMonitor doesn't support." />
             </Border>
 
@@ -44,7 +44,7 @@
                         </Style.Triggers>
                     </Style>
                 </Border.Style>
-                <TextBlock Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" FontSize="12.5">
+                <TextBlock Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" FontSize="{StaticResource FontStrong}">
                     <Run Text="Possible stopped fan: " /><Run Text="{Binding DeadFanName, Mode=OneWay}" />
                     <Run Text=" is reading 0 RPM while the system is running warm." />
                 </TextBlock>
@@ -65,24 +65,24 @@
                         </Style.Triggers>
                     </Style>
                 </Border.Style>
-                <TextBlock Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" FontSize="12.5">
+                <TextBlock Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" FontSize="{StaticResource FontStrong}">
                     <Run Text="Fan hunting (quick flag, not a verdict): " /><Run Text="{Binding FanHuntingReason, Mode=OneWay}" />
                 </TextBlock>
             </Border>
 
             <!-- #605: time-to-throttle header readout - falling time-to-throttle across weeks is
                  the clearest single signal of degrading cooling. -->
-            <TextBlock Text="{Binding TimeToThrottleText}" FontSize="13" FontWeight="SemiBold"
+            <TextBlock Text="{Binding TimeToThrottleText}" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold"
                        Foreground="{DynamicResource TextPrimaryBrush}" Margin="0,0,0,4" TextWrapping="Wrap" />
 
             <!-- #618: cooldown-rate readout, alongside the time-to-throttle readout above. -->
-            <TextBlock Text="{Binding CooldownText}" FontSize="13" FontWeight="SemiBold"
+            <TextBlock Text="{Binding CooldownText}" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold"
                        Foreground="{DynamicResource TextPrimaryBrush}" Margin="0,0,0,4" TextWrapping="Wrap" />
 
             <!-- #617: heat-soak readout - burst vs. steady-state temperature under one sustained
                  load, which needs a different fix (undersized cooler / hot case) than a high
                  peak alone. -->
-            <TextBlock Text="{Binding HeatSoakText}" FontSize="13" FontWeight="SemiBold"
+            <TextBlock Text="{Binding HeatSoakText}" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold"
                        Foreground="{DynamicResource TextPrimaryBrush}" Margin="0,0,0,12" TextWrapping="Wrap" />
 
             <!-- Headline tiles -->
@@ -264,7 +264,7 @@
                         <ItemsControl ItemsSource="{Binding ThrottleEvents}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <TextBlock Text="{Binding}" FontSize="11.5" Foreground="{DynamicResource WarningBrush}" Margin="0,0,0,3" />
+                                    <TextBlock Text="{Binding}" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource WarningBrush}" Margin="0,0,0,3" />
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
@@ -299,7 +299,7 @@
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <StackPanel Grid.Column="0">
-                                        <TextBlock Text="{Binding ZoneName}" FontSize="12" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Text="{Binding ZoneName}" FontSize="{StaticResource FontBody}" TextTrimming="CharacterEllipsis" />
                                         <TextBlock Style="{StaticResource SubStat}">
                                             <Run Text="{Binding TemperatureC, StringFormat={}{0:0.#}°C, TargetNullValue=Temperature: Unknown, Mode=OneWay}" />
                                             <Run Text=" · Passive limit " /><Run Text="{Binding PassiveLimitPercent, StringFormat={}{0:0}%, TargetNullValue=Unknown, Mode=OneWay}" />
@@ -316,7 +316,7 @@
                                                 </Style.Triggers>
                                             </Style>
                                         </Border.Style>
-                                        <TextBlock FontSize="11.5" FontWeight="SemiBold" Foreground="{DynamicResource WarningBrush}">
+                                        <TextBlock FontSize="{StaticResource FontBody}" FontWeight="SemiBold" Foreground="{DynamicResource WarningBrush}">
                                             <Run Text="{Binding ThrottlePercent, StringFormat={}{0:0}%, Mode=OneWay}" /><Run Text=" throttle" />
                                         </TextBlock>
                                     </Border>
@@ -364,11 +364,11 @@
                                         <ColumnDefinition Width="Auto" />
                                         <ColumnDefinition Width="*" />
                                     </Grid.ColumnDefinitions>
-                                    <Border Grid.Column="0" CornerRadius="10" Padding="7,2" Margin="0,0,8,0" VerticalAlignment="Center"
+                                    <Border Grid.Column="0" CornerRadius="10" Padding="6,2" Margin="0,0,8,0" VerticalAlignment="Center"
                                             Background="{DynamicResource DangerMutedBrush}">
-                                        <TextBlock FontSize="10.5" FontWeight="SemiBold" Foreground="{DynamicResource DangerBrush}" Text="Confirmed by Windows" />
+                                        <TextBlock FontSize="{StaticResource FontCaption}" FontWeight="SemiBold" Foreground="{DynamicResource DangerBrush}" Text="Confirmed by Windows" />
                                     </Border>
-                                    <TextBlock Grid.Column="1" FontSize="11.5" VerticalAlignment="Center">
+                                    <TextBlock Grid.Column="1" FontSize="{StaticResource FontBody}" VerticalAlignment="Center">
                                         <Run Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}" />
                                         <Run Text=" — " />
                                         <Run Text="{Binding IsRecovery, Converter={StaticResource BoolToFirmwareEventTextConverter}, Mode=OneWay}" />
@@ -410,7 +410,7 @@
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <StackPanel Grid.Column="0">
-                                        <TextBlock FontSize="12">
+                                        <TextBlock FontSize="{StaticResource FontBody}">
                                             <Run Text="{Binding Start, StringFormat={}{0:g}, Mode=OneWay}" />
                                             <Run Text=" — " /><Run Text="{Binding ReasonClass, Mode=OneWay}" />
                                         </TextBlock>
@@ -420,7 +420,7 @@
                                             <Run Text=" · " /><Run Text="{Binding MeanEffectiveMhz, StringFormat={}{0:0} MHz avg, Mode=OneWay}" />
                                         </TextBlock>
                                     </StackPanel>
-                                    <TextBlock Grid.Column="1" VerticalAlignment="Center" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}"
+                                    <TextBlock Grid.Column="1" VerticalAlignment="Center" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}"
                                                Text="{Binding Converter={StaticResource EpisodeDurationConverter}, Mode=OneWay}" />
                                 </Grid>
                             </DataTemplate>
@@ -455,7 +455,7 @@
                         <TextBlock Grid.Column="0" Text="Idle-temperature baseline" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
                         <!-- #619: normalize-to-ambient toggle - without it, a hot summer looks
                              identical to a dying cooler in this trend. -->
-                        <CheckBox Grid.Column="1" Content="Normalize to ambient" FontSize="11.5" VerticalAlignment="Center"
+                        <CheckBox Grid.Column="1" Content="Normalize to ambient" FontSize="{StaticResource FontBody}" VerticalAlignment="Center"
                                   IsChecked="{Binding NormalizeToAmbient}" Foreground="{DynamicResource TextSecondaryBrush}" />
                     </Grid>
                     <TextBlock Text="Median CPU package temperature during genuinely idle windows, one point per day since first run. A rising floor at similar ambient conditions is a cleaner dust/pump-failure signal than load temps."
@@ -518,10 +518,10 @@
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <StackPanel Grid.Column="0">
-                                        <TextBlock Text="{Binding BucketText}" FontSize="12" />
+                                        <TextBlock Text="{Binding BucketText}" FontSize="{StaticResource FontBody}" />
                                         <TextBlock Text="{Binding ComparisonText}" Style="{StaticResource SubStat}" />
                                     </StackPanel>
-                                    <TextBlock Grid.Column="1" VerticalAlignment="Center" FontSize="13" FontWeight="SemiBold"
+                                    <TextBlock Grid.Column="1" VerticalAlignment="Center" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold"
                                                Foreground="{DynamicResource WarningBrush}"
                                                Text="{Binding DeltaC, StringFormat={}{0:+0.#;-0.#;0}°C}" />
                                 </Grid>
@@ -601,7 +601,7 @@
                                 </Style.Triggers>
                             </Style>
                         </Border.Style>
-                        <TextBlock Foreground="{DynamicResource DangerBrush}" FontSize="12" TextWrapping="Wrap"
+                        <TextBlock Foreground="{DynamicResource DangerBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap"
                                    Text="VRM is hot while the CPU package is not - points at a poorly-cooled VRM heatsink rather than the CPU cooler. Quick flag, not a verdict." />
                     </Border>
                     <lvc:CartesianChart Series="{Binding VrmTempSeries}" XAxes="{Binding HiddenXAxes}" YAxes="{Binding VrmTempYAxes}"
@@ -617,13 +617,13 @@
                     <TextBlock Text="A 12V rail that measurably drops as system power rises is a loaded or failing PSU; a noisy-but-uncorrelated reading is just a poor sensor. Vcore plotted against package power exposes the effective load-line calibration curve - excessive droop shows as an unusually steep slope."
                                Style="{StaticResource SubStat}" Margin="0,-6,0,10" TextWrapping="Wrap" />
 
-                    <TextBlock Text="Rail sag under load" FontSize="12.5" FontWeight="SemiBold"
+                    <TextBlock Text="Rail sag under load" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold"
                                Foreground="{DynamicResource TextPrimaryBrush}" Margin="0,0,0,4" />
                     <lvc:CartesianChart Series="{Binding RailSagSeries}" XAxes="{Binding RailSagXAxes}" YAxes="{Binding RailSagYAxes}"
                                          Height="160" TooltipPosition="Hidden" LegendPosition="Hidden" Background="Transparent" Margin="0,0,0,4" />
                     <TextBlock Text="{Binding RailSagVerdictText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,14" />
 
-                    <TextBlock Text="Vcore vs. load (load-line behavior)" FontSize="12.5" FontWeight="SemiBold"
+                    <TextBlock Text="Vcore vs. load (load-line behavior)" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold"
                                Foreground="{DynamicResource TextPrimaryBrush}" Margin="0,0,0,4" />
                     <lvc:CartesianChart Series="{Binding VcoreLoadSeries}" XAxes="{Binding VcoreLoadXAxes}" YAxes="{Binding VcoreLoadYAxes}"
                                          Height="160" TooltipPosition="Hidden" LegendPosition="Hidden" Background="Transparent" Margin="0,0,0,4" />
@@ -680,7 +680,7 @@
                                 </Style.Triggers>
                             </Style>
                         </Border.Style>
-                        <TextBlock Foreground="{DynamicResource DangerBrush}" FontSize="12" TextWrapping="Wrap"
+                        <TextBlock Foreground="{DynamicResource DangerBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap"
                                    Text="Sustained estimated draw above ~80% of rated wattage - a brownout/shutdown risk under this PSU's rated capacity. Quick flag, not a verdict." />
                     </Border>
 
@@ -691,7 +691,7 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <TextBox Grid.Column="0" Text="{Binding PsuWattageInputText, UpdateSourceTrigger=PropertyChanged}"
-                                 VerticalContentAlignment="Center" Padding="8,5" Margin="0,0,8,0" ToolTip="PSU rated wattage (e.g. 650)" />
+                                 VerticalContentAlignment="Center" Padding="8,4" Margin="0,0,8,0" ToolTip="PSU rated wattage (e.g. 650)" />
                         <Button Grid.Column="1" Content="Save wattage" Command="{Binding SavePsuWattageCommand}" Margin="0,0,8,0" />
                         <Button Grid.Column="2" Content="Re-check WMI" Command="{Binding LoadPsuInfoCommand}" />
                     </Grid>
@@ -798,7 +798,7 @@
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0" FontSize="12.5" VerticalAlignment="Center">
+                                    <TextBlock Grid.Column="0" FontSize="{StaticResource FontStrong}" VerticalAlignment="Center">
                                         <Run Text="{Binding Name, Mode=OneWay}" />
                                         <Run Foreground="{DynamicResource SuccessBrush}">
                                             <Run.Text>
@@ -806,7 +806,7 @@
                                             </Run.Text>
                                         </Run>
                                     </TextBlock>
-                                    <Button Grid.Column="1" Content="Switch to this" FontSize="11" Padding="8,3"
+                                    <Button Grid.Column="1" Content="Switch to this" FontSize="{StaticResource FontBody}" Padding="8,3"
                                             Command="{Binding DataContext.SetPowerPlanCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                             CommandParameter="{Binding Guid}" />
                                 </Grid>
@@ -820,13 +820,13 @@
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" TextWrapping="Wrap" Style="{StaticResource SubStat}" VerticalAlignment="Center">
                             <Run Text="Sleep state: " />
-                            <Run Text="{Binding SleepStateSupportText, Mode=OneWay}" FontSize="12.5" />
+                            <Run Text="{Binding SleepStateSupportText, Mode=OneWay}" FontSize="{StaticResource FontStrong}" />
                         </TextBlock>
                         <!-- #736: cross-link over to the Startup tab's full hibernation/sleep-state
                              inventory card (powercfg /a details, hiberfile size, and the confirmed
                              on/off/type/size toggles) - same SelectTabByName mechanism as
                              StartupView.xaml.cs's own cross-tab links. -->
-                        <Button Grid.Column="1" Content="Hibernation details (Startup tab)" Padding="8,4" FontSize="11" Click="ViewHibernationDetails_Click" />
+                        <Button Grid.Column="1" Content="Hibernation details (Startup tab)" Padding="8,4" FontSize="{StaticResource FontBody}" Click="ViewHibernationDetails_Click" />
                     </Grid>
 
                     <!-- #664: power-plan change history - a change this app didn't itself cause
@@ -845,7 +845,7 @@
                         </ItemsControl.Style>
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <TextBlock FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4" TextWrapping="Wrap">
+                                <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4" TextWrapping="Wrap">
                                     <Run Text="{Binding Timestamp, StringFormat={}{0:g}, Mode=OneWay}" />
                                     <Run Text=" — plan changed from " />
                                     <Run Text="{Binding FromPlanName, Mode=OneWay}" />
@@ -869,8 +869,8 @@
                                Text="The power-mode overlay sits on top of the power plan above - a machine can show Balanced as its active plan while the overlay independently caps it to the efficiency profile. Vendor thermal mode reads the OEM's own fan-mode/thermal-profile setting where a WMI namespace for it exists." />
 
                     <TextBlock Margin="0,0,0,6" TextWrapping="Wrap">
-                        <Run Text="Active overlay: " Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" />
-                        <Run Text="{Binding ActiveOverlaySchemeText, Mode=OneWay}" FontSize="12.5" FontWeight="SemiBold" />
+                        <Run Text="Active overlay: " Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" />
+                        <Run Text="{Binding ActiveOverlaySchemeText, Mode=OneWay}" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" />
                     </TextBlock>
                     <ItemsControl ItemsSource="{Binding PowerOverlaySchemes}" Margin="0,0,0,10">
                         <ItemsControl.ItemTemplate>
@@ -880,8 +880,8 @@
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0" Text="{Binding Name, Mode=OneWay}" FontSize="12.5" VerticalAlignment="Center" />
-                                    <Button Grid.Column="1" Content="Switch to this" FontSize="11" Padding="8,3"
+                                    <TextBlock Grid.Column="0" Text="{Binding Name, Mode=OneWay}" FontSize="{StaticResource FontStrong}" VerticalAlignment="Center" />
+                                    <Button Grid.Column="1" Content="Switch to this" FontSize="{StaticResource FontBody}" Padding="8,3"
                                             Command="{Binding DataContext.SetOverlaySchemeCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                             CommandParameter="{Binding Guid}" />
                                 </Grid>
@@ -890,10 +890,10 @@
                     </ItemsControl>
 
                     <TextBlock Margin="0,4,0,0" TextWrapping="Wrap">
-                        <Run Text="Vendor thermal mode: " Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" />
-                        <Run Text="{Binding OemThermalProfile.ModeText, Mode=OneWay}" FontSize="12.5" FontWeight="SemiBold" />
+                        <Run Text="Vendor thermal mode: " Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" />
+                        <Run Text="{Binding OemThermalProfile.ModeText, Mode=OneWay}" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" />
                     </TextBlock>
-                    <TextBlock Margin="0,2,0,0" TextWrapping="Wrap" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}"
+                    <TextBlock Margin="0,2,0,0" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}"
                                Text="{Binding OemThermalProfile.Vendor, Mode=OneWay, StringFormat=({0})}">
                         <TextBlock.Style>
                             <Style TargetType="TextBlock">
@@ -925,7 +925,7 @@
                     <TextBlock Text="AC vs. battery sustained-performance cliff" Style="{StaticResource CardTitle}" />
                     <TextBlock Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap"
                                Text="Steady-state clock, package power, and temperature recorded separately during sustained CPU load (60%+ for 20+ seconds) on AC and on battery, so this shows what the machine actually does - not what its power plan is configured to allow." />
-                    <TextBlock Text="{Binding AcDcCliffText, Mode=OneWay}" TextWrapping="Wrap" FontSize="12.5" Margin="0,0,0,10" />
+                    <TextBlock Text="{Binding AcDcCliffText, Mode=OneWay}" TextWrapping="Wrap" FontSize="{StaticResource FontStrong}" Margin="0,0,0,10" />
                     <UniformGrid Columns="3">
                         <views:VfdMeter Title="AC sustained clock" Glow="False" Margin="0,0,6,0"
                                         ValueText="{Binding AcDcCliff.AcClockGhz, StringFormat={}{0:0.00}, TargetNullValue=–}" Unit="GHz"
@@ -955,7 +955,7 @@
                         </Style.Triggers>
                     </Style>
                 </Border.Style>
-                <TextBlock Foreground="{DynamicResource DangerBrush}" Text="{Binding BlockedVentText}" TextWrapping="Wrap" FontSize="12.5" />
+                <TextBlock Foreground="{DynamicResource DangerBrush}" Text="{Binding BlockedVentText}" TextWrapping="Wrap" FontSize="{StaticResource FontStrong}" />
             </Border>
 
             <!-- #661: active-plan setting diff against Balanced defaults. -->
@@ -1053,7 +1053,7 @@
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" FontSize="12.5" VerticalAlignment="Center"
+                            <TextBlock Grid.Column="0" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" FontSize="{StaticResource FontStrong}" VerticalAlignment="Center"
                                        Text="System cooling policy is Passive on AC (quick flag, not a verdict) - this throttles the CPU instead of ramping fans, a classic cause of 'inexplicably slow but cool.' Some quiet-focused builds set this on purpose." />
                             <Button Grid.Column="1" Content="Set to Active" Margin="10,0,0,0" Command="{Binding FixPassiveCoolingCommand}" />
                         </Grid>
@@ -1076,18 +1076,18 @@
                             <DataTemplate>
                                 <Border Margin="0,0,0,8" Padding="0,0,0,8" BorderThickness="0,0,0,1" BorderBrush="{DynamicResource BorderSubtleBrush}">
                                     <StackPanel>
-                                        <TextBlock Text="{Binding SettingName}" FontSize="12.5" FontWeight="SemiBold" />
-                                        <TextBlock Text="{Binding Explanation}" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,2,0,4" />
+                                        <TextBlock Text="{Binding SettingName}" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" />
+                                        <TextBlock Text="{Binding Explanation}" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,2,0,4" />
                                         <StackPanel Orientation="Horizontal">
-                                            <TextBlock FontSize="12">
+                                            <TextBlock FontSize="{StaticResource FontBody}">
                                                 <Run Text="AC: " Foreground="{DynamicResource TextSecondaryBrush}" />
                                                 <Run Text="{Binding AcValueText, Mode=OneWay}" FontWeight="SemiBold" />
                                             </TextBlock>
-                                            <TextBlock FontSize="12" Margin="16,0,0,0">
+                                            <TextBlock FontSize="{StaticResource FontBody}" Margin="16,0,0,0">
                                                 <Run Text="DC: " Foreground="{DynamicResource TextSecondaryBrush}" />
                                                 <Run Text="{Binding DcValueText, Mode=OneWay}" FontWeight="SemiBold" />
                                             </TextBlock>
-                                            <TextBlock Text="differs" FontSize="11" Margin="10,0,0,0" Foreground="{DynamicResource WarningBrush}" VerticalAlignment="Center">
+                                            <TextBlock Text="differs" FontSize="{StaticResource FontBody}" Margin="10,0,0,0" Foreground="{DynamicResource WarningBrush}" VerticalAlignment="Center">
                                                 <TextBlock.Style>
                                                     <Style TargetType="TextBlock">
                                                         <Setter Property="Visibility" Value="Collapsed" />
@@ -1207,7 +1207,7 @@
                                 </Style>
                             </TextBlock.Style>
                         </TextBlock>
-                        <Button Grid.Column="1" Content="Disable plan-level USB suspend (AC)" FontSize="11" Padding="8,3"
+                        <Button Grid.Column="1" Content="Disable plan-level USB suspend (AC)" FontSize="{StaticResource FontBody}" Padding="8,3"
                                 Command="{Binding DisablePlanUsbSuspendCommand}" />
                     </Grid>
 
@@ -1222,11 +1222,11 @@
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <StackPanel Grid.Column="0" VerticalAlignment="Center">
-                                        <TextBlock Text="{Binding Name}" FontSize="12" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Text="{Binding Name}" FontSize="{StaticResource FontBody}" TextTrimming="CharacterEllipsis" />
                                         <!-- #668: "quick flag, not a verdict" - a device in a
                                              suspend-fragile class (USB audio/DAC, HID input,
                                              external storage) with suspend currently enabled. -->
-                                        <TextBlock FontSize="10.5" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" Margin="0,2,0,0">
+                                        <TextBlock FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" Margin="0,2,0,0">
                                             <TextBlock.Style>
                                                 <Style TargetType="TextBlock">
                                                     <Setter Property="Visibility" Value="Collapsed" />
@@ -1240,7 +1240,7 @@
                                             <Run Text="Suspend risk (quick flag, not a verdict): " /><Run Text="{Binding RiskClass, Mode=OneWay}" />
                                         </TextBlock>
                                     </StackPanel>
-                                    <TextBlock Grid.Column="1" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="8,0,0,0" VerticalAlignment="Center">
+                                    <TextBlock Grid.Column="1" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" Margin="8,0,0,0" VerticalAlignment="Center">
                                         <TextBlock.Style>
                                             <Style TargetType="TextBlock">
                                                 <Setter Property="Text" Value="Unknown" />
@@ -1257,7 +1257,7 @@
                                     </TextBlock>
                                     <!-- #667: re-enumeration count - hidden until LoadUsbEventsCommand
                                          has actually run (ReenumerationCount's -1 default). -->
-                                    <TextBlock Grid.Column="2" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="8,0,0,0" VerticalAlignment="Center">
+                                    <TextBlock Grid.Column="2" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" Margin="8,0,0,0" VerticalAlignment="Center">
                                         <TextBlock.Style>
                                             <Style TargetType="TextBlock">
                                                 <Setter Property="Visibility" Value="Visible" />
@@ -1270,7 +1270,7 @@
                                         </TextBlock.Style>
                                         <Run Text="{Binding ReenumerationCount, Mode=OneWay}" /><Run Text=" re-enum" />
                                     </TextBlock>
-                                    <Button Grid.Column="3" Content="Toggle suspend" FontSize="10.5" Padding="6,2" Margin="8,0,0,0"
+                                    <Button Grid.Column="3" Content="Toggle suspend" FontSize="{StaticResource FontCaption}" Padding="6,2" Margin="8,0,0,0"
                                             Command="{Binding DataContext.ToggleUsbDeviceSuspendCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                             CommandParameter="{Binding}" />
                                 </Grid>
@@ -1297,7 +1297,7 @@
                     <ItemsControl ItemsSource="{Binding UsbOverCurrentEvents}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <TextBlock FontSize="11.5" TextWrapping="Wrap" Margin="0,0,0,6">
+                                <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,6">
                                     <Run Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}" FontWeight="SemiBold" />
                                     <Run Text=" — " />
                                     <Run Text="{Binding Message, Mode=OneWay}" Foreground="{DynamicResource TextSecondaryBrush}" />
@@ -1332,8 +1332,8 @@
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0" Text="{Binding HubName}" FontSize="12" TextTrimming="CharacterEllipsis" />
-                                    <TextBlock Grid.Column="1" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="8,0,0,0">
+                                    <TextBlock Grid.Column="0" Text="{Binding HubName}" FontSize="{StaticResource FontBody}" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Grid.Column="1" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" Margin="8,0,0,0">
                                         <Run Text="{Binding PortCount, TargetNullValue=?, Mode=OneWay}" /><Run Text=" ports" />
                                     </TextBlock>
                                 </Grid>
@@ -1364,8 +1364,8 @@
                             <DataTemplate>
                                 <Border Margin="0,0,0,8" Padding="0,0,0,8" BorderThickness="0,0,0,1" BorderBrush="{DynamicResource BorderSubtleBrush}">
                                     <StackPanel>
-                                        <TextBlock Text="{Binding ClassName}" FontSize="12" FontWeight="SemiBold" />
-                                        <TextBlock Text="{Binding SummaryText}" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,2,0,4">
+                                        <TextBlock Text="{Binding ClassName}" FontSize="{StaticResource FontBody}" FontWeight="SemiBold" />
+                                        <TextBlock Text="{Binding SummaryText}" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,2,0,4">
                                             <TextBlock.Style>
                                                 <Style TargetType="TextBlock">
                                                     <Setter Property="Visibility" Value="Visible" />
@@ -1380,7 +1380,7 @@
                                         <ItemsControl ItemsSource="{Binding Properties}">
                                             <ItemsControl.ItemTemplate>
                                                 <DataTemplate>
-                                                    <TextBlock FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" FontFamily="Consolas">
+                                                    <TextBlock FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextSecondaryBrush}" FontFamily="Consolas">
                                                         <Run Text="{Binding Name, Mode=OneWay}" /><Run Text=": " /><Run Text="{Binding Value, Mode=OneWay}" />
                                                     </TextBlock>
                                                 </DataTemplate>
@@ -1505,7 +1505,7 @@
             <ItemsControl ItemsSource="{Binding Fans}" Margin="0,-8,0,16">
                 <ItemsControl.ItemTemplate>
                     <DataTemplate>
-                        <TextBlock FontSize="11.5" Foreground="{DynamicResource WarningBrush}" Margin="0,0,0,3">
+                        <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource WarningBrush}" Margin="0,0,0,3">
                             <TextBlock.Style>
                                 <Style TargetType="TextBlock">
                                     <Setter Property="Visibility" Value="Collapsed" />
@@ -1550,7 +1550,7 @@
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <StackPanel Grid.Column="0">
-                                        <TextBlock FontSize="12">
+                                        <TextBlock FontSize="{StaticResource FontBody}">
                                             <Run Text="{Binding Name, Mode=OneWay}" />
                                             <Run Text=" — " /><Run Text="{Binding CurrentRpm, StringFormat={}{0:0} RPM, Mode=OneWay}" />
                                         </TextBlock>
@@ -1561,7 +1561,7 @@
                                     </StackPanel>
                                     <Border Grid.Column="1" CornerRadius="10" Padding="8,3" VerticalAlignment="Center"
                                             Background="{DynamicResource BgElevatedBrush}">
-                                        <TextBlock FontSize="11.5" FontWeight="SemiBold">
+                                        <TextBlock FontSize="{StaticResource FontBody}" FontWeight="SemiBold">
                                             <TextBlock.Style>
                                                 <Style TargetType="TextBlock">
                                                     <Setter Property="Text" Value="Stable" />
@@ -1588,7 +1588,7 @@
             <!-- #620: ATX rail verdict caveat - shown once per section, not per row, since it
                  applies to every Super I/O voltage reading here regardless of in/out-of-spec. -->
             <TextBlock Text="Super I/O rail readings are uncalibrated on many boards - treat the deviation/excursion figures below as informational, not a certified measurement."
-                       Style="{StaticResource SubStat}" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,6" />
+                       Style="{StaticResource SubStat}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,6" />
             <ItemsControl ItemsSource="{Binding Voltages}" Margin="0,0,0,16">
                 <ItemsControl.ItemsPanel>
                     <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
@@ -1709,7 +1709,7 @@
                             </Style>
                         </TextBlock.Style>
                     </TextBlock>
-                    <Button Grid.Column="1" Content="Check power-source events" FontSize="11" Padding="8,3"
+                    <Button Grid.Column="1" Content="Check power-source events" FontSize="{StaticResource FontBody}" Padding="8,3"
                             Command="{Binding LoadPowerSourceEventsCommand}" />
                 </Grid>
             </StackPanel>
@@ -1728,7 +1728,7 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" Text="Battery report" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
-                        <Button Grid.Column="1" Content="Run battery report" FontSize="11" Padding="8,3"
+                        <Button Grid.Column="1" Content="Run battery report" FontSize="{StaticResource FontBody}" Padding="8,3"
                                 Command="{Binding LoadBatteryReportCommand}" />
                     </Grid>
                     <TextBlock Text="{Binding BatteryReportStatusText}" Style="{StaticResource SubStat}"
@@ -1916,7 +1916,7 @@
                         <ItemsControl ItemsSource="{Binding BatteryDropoutEvents}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <TextBlock FontSize="12" Margin="0,0,0,3" Foreground="{DynamicResource WarningBrush}">
+                                    <TextBlock FontSize="{StaticResource FontBody}" Margin="0,0,0,3" Foreground="{DynamicResource WarningBrush}">
                                         <Run Text="{Binding Timestamp, StringFormat={}{0:g}, Mode=OneWay}" />
                                         <Run Text=" — " />
                                         <Run Text="{Binding DescriptionText, Mode=OneWay}" />
@@ -1939,7 +1939,7 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" Text="Battery drain by app (SRUM)" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
-                        <Button Grid.Column="1" Content="Scan drain history" FontSize="11" Padding="8,3"
+                        <Button Grid.Column="1" Content="Scan drain history" FontSize="{StaticResource FontBody}" Padding="8,3"
                                 Command="{Binding LoadBatteryDrainAttributionCommand}" />
                     </Grid>
                     <TextBlock TextWrapping="Wrap" Style="{StaticResource SubStat}" Margin="0,4,0,10"
@@ -1962,7 +1962,7 @@
                  tick timer (see EnergyThermalsViewModel's remarks). Not gated on HasBattery like
                  the battery-report panel above - sleep/wake diagnostics matter on desktops too. -->
             <TextBlock Text="Sleep, Modern Standby &amp; wake diagnostics" Style="{StaticResource CardTitle}"
-                       FontSize="15" Margin="0,20,0,8" />
+                       FontSize="{StaticResource FontSection}" Margin="0,20,0,8" />
 
             <!-- #657: overnight standby-drain summary - shown at the top of the panel per the
                  backlog item's own framing, since it's the headline "was my laptop dead this
@@ -1984,7 +1984,7 @@
                         </ItemsControl.Style>
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <TextBlock FontSize="12" Margin="0,0,0,3">
+                                <TextBlock FontSize="{StaticResource FontBody}" Margin="0,0,0,3">
                                     <Run Text="{Binding SleepTime, StringFormat={}{0:g}, Mode=OneWay}" />
                                     <Run Text=" → " />
                                     <Run Text="{Binding WakeTime, StringFormat={}{0:t}, Mode=OneWay}" />
@@ -2012,7 +2012,7 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" Text="Sleep report (sleepstudy)" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
-                        <Button Grid.Column="1" Content="Run sleep report" FontSize="11" Padding="8,3"
+                        <Button Grid.Column="1" Content="Run sleep report" FontSize="{StaticResource FontBody}" Padding="8,3"
                                 Command="{Binding LoadSleepStudyCommand}" />
                     </Grid>
                     <TextBlock Text="{Binding SleepStudyStatusText}" TextWrapping="Wrap" Style="{StaticResource SubStat}" Margin="0,0,0,8" />
@@ -2020,7 +2020,7 @@
                     <TextBlock Text="Sessions" Margin="0,0,0,4">
                         <TextBlock.Style>
                             <Style TargetType="TextBlock" BasedOn="{StaticResource CardTitle}">
-                                <Setter Property="FontSize" Value="12.5" />
+                                <Setter Property="FontSize" Value="{StaticResource FontStrong}" />
                                 <Setter Property="Visibility" Value="Visible" />
                                 <Style.Triggers>
                                     <DataTrigger Binding="{Binding SleepStudySessions.Count}" Value="0">
@@ -2062,11 +2062,11 @@
                                 </Style.Triggers>
                             </Style>
                         </StackPanel.Style>
-                        <TextBlock Text="Top standby offenders (across all parsed sessions)" Style="{StaticResource CardTitle}" FontSize="12.5" Margin="0,0,0,4" />
+                        <TextBlock Text="Top standby offenders (across all parsed sessions)" Style="{StaticResource CardTitle}" FontSize="{StaticResource FontStrong}" Margin="0,0,0,4" />
                         <ItemsControl ItemsSource="{Binding TopStandbyOffenders}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <TextBlock FontSize="12" Margin="0,0,0,3">
+                                    <TextBlock FontSize="{StaticResource FontBody}" Margin="0,0,0,3">
                                         <Run Text="{Binding Name, Mode=OneWay}" FontWeight="SemiBold" />
                                         <Run Text=" — " />
                                         <Run Text="{Binding Category, Mode=OneWay}" Foreground="{DynamicResource TextSecondaryBrush}" />
@@ -2091,7 +2091,7 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" Text="Outstanding power requests" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
-                        <Button Grid.Column="1" Content="Refresh" FontSize="11" Padding="8,3"
+                        <Button Grid.Column="1" Content="Refresh" FontSize="{StaticResource FontBody}" Padding="8,3"
                                 Command="{Binding LoadPowerRequestsCommand}" />
                     </Grid>
                     <TextBlock Text="{Binding PowerRequestsStatusText}" TextWrapping="Wrap" Style="{StaticResource SubStat}" Margin="0,0,0,8" />
@@ -2126,7 +2126,7 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" Text="Wake-armed devices" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
-                        <Button Grid.Column="1" Content="Load wake-armed devices" FontSize="11" Padding="8,3"
+                        <Button Grid.Column="1" Content="Load wake-armed devices" FontSize="{StaticResource FontBody}" Padding="8,3"
                                 Command="{Binding LoadWakeArmedDevicesCommand}" />
                     </Grid>
                     <TextBlock Text="{Binding WakeArmedDevicesStatusText}" TextWrapping="Wrap" Style="{StaticResource SubStat}" Margin="0,0,0,8" />
@@ -2138,8 +2138,8 @@
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0" Text="{Binding Name, Mode=OneWay}" FontSize="12.5" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
-                                    <Button Grid.Column="1" Content="Disable wake" FontSize="11" Padding="8,3"
+                                    <TextBlock Grid.Column="0" Text="{Binding Name, Mode=OneWay}" FontSize="{StaticResource FontStrong}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                    <Button Grid.Column="1" Content="Disable wake" FontSize="{StaticResource FontBody}" Padding="8,3"
                                             Command="{Binding DataContext.DisableDeviceWakeCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                             CommandParameter="{Binding Name}" />
                                 </Grid>
@@ -2160,7 +2160,7 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" Text="Wake history &amp; software wake sources" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
-                        <Button Grid.Column="1" Content="Load wake history" FontSize="11" Padding="8,3"
+                        <Button Grid.Column="1" Content="Load wake history" FontSize="{StaticResource FontBody}" Padding="8,3"
                                 Command="{Binding LoadWakeHistoryCommand}" />
                     </Grid>
                     <TextBlock Text="{Binding WakeHistoryStatusText}" TextWrapping="Wrap" Style="{StaticResource SubStat}" Margin="0,0,0,8" />
@@ -2182,7 +2182,7 @@
                         <ItemsControl ItemsSource="{Binding VetoedSleepTransitions}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <TextBlock FontSize="12" Margin="0,0,0,3" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap">
+                                    <TextBlock FontSize="{StaticResource FontBody}" Margin="0,0,0,3" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap">
                                         <Run Text="{Binding SleepAttemptTime, StringFormat={}{0:g}, Mode=OneWay}" />
                                         <Run Text=" — " />
                                         <Run Text="{Binding DescriptionText, Mode=OneWay}" />
@@ -2194,7 +2194,7 @@
                         </ItemsControl>
                     </StackPanel>
 
-                    <TextBlock Text="Wake history" Style="{StaticResource CardTitle}" FontSize="12.5" Margin="0,0,0,4" />
+                    <TextBlock Text="Wake history" Style="{StaticResource CardTitle}" FontSize="{StaticResource FontStrong}" Margin="0,0,0,4" />
                     <DataGrid ItemsSource="{Binding WakeHistory}" IsReadOnly="True" Height="160" Margin="0,0,0,10">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="Wake time" Binding="{Binding WakeTime, StringFormat={}{0:g}}" Width="1.3*" />
@@ -2204,7 +2204,7 @@
                         </DataGrid.Columns>
                     </DataGrid>
 
-                    <TextBlock Text="Software wake sources (wake timers + wake-enabled scheduled tasks)" Style="{StaticResource CardTitle}" FontSize="12.5" Margin="0,0,0,4" />
+                    <TextBlock Text="Software wake sources (wake timers + wake-enabled scheduled tasks)" Style="{StaticResource CardTitle}" FontSize="{StaticResource FontStrong}" Margin="0,0,0,4" />
                     <DataGrid ItemsSource="{Binding WakeSources}" IsReadOnly="True" Height="160">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="Kind" Binding="{Binding Kind}" Width="*" />
@@ -2227,9 +2227,9 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" Text="Hibernation" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
-                        <Button Grid.Column="1" Content="Refresh" FontSize="11" Padding="8,3" Margin="0,0,6,0"
+                        <Button Grid.Column="1" Content="Refresh" FontSize="{StaticResource FontBody}" Padding="8,3" Margin="0,0,6,0"
                                 Command="{Binding LoadHibernationStatusCommand}" />
-                        <Button Grid.Column="2" FontSize="11" Padding="8,3"
+                        <Button Grid.Column="2" FontSize="{StaticResource FontBody}" Padding="8,3"
                                 Content="{Binding Hibernation.Enabled, Converter={StaticResource BoolToEnableDisableTextConverter}}"
                                 Command="{Binding ToggleHibernationCommand}" />
                     </Grid>

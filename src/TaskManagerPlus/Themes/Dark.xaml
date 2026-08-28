@@ -59,6 +59,82 @@
     <sys:Double x:Key="DataGridRowHeightValue">34</sys:Double>
     <Thickness x:Key="DataGridCellPaddingValue">10,4</Thickness>
 
+    <!-- ==================== Design tokens: type, spacing, radius ==================== -->
+    <!-- Before the UI overhaul this codebase carried 1,889 hardcoded FontSize values spread over
+         18 distinct sizes (9, 9.5, 10, 10.5, 11, 11.5, 12, 12.5, 13, 13.5, 14, 14.5, 15, 16, 17,
+         18, 20, 34), 179 distinct Margin values and 11 CornerRadius values - accumulated one
+         backlog item at a time, each view picking whatever looked right in isolation. The result
+         was that nothing lined up across tabs and the most common body size was 11.5px.
+
+         Those are collapsed onto the scale below and the floor is raised: nothing renders under
+         12px any more. Use these keys (or the Text* styles below them) for anything new - a
+         literal FontSize="11.5" in a view is precisely what this scale exists to stop coming back.
+
+         Note these are StaticResource-consumed doubles, not brushes: unlike the palette they never
+         change at runtime, so they don't need the DynamicResource treatment the color keys do. -->
+    <sys:Double x:Key="FontCaption">12</sys:Double>
+    <sys:Double x:Key="FontBody">13</sys:Double>
+    <sys:Double x:Key="FontStrong">13.5</sys:Double>
+    <sys:Double x:Key="FontSection">15</sys:Double>
+    <sys:Double x:Key="FontTitle">17</sys:Double>
+    <sys:Double x:Key="FontDisplay">22</sys:Double>
+    <sys:Double x:Key="FontHero">30</sys:Double>
+
+    <!-- Spacing: a 4px grid. StackGap* is the bottom-margin between stacked siblings (by far the
+         most common margin shape in this app); Inline* is the trailing gap between horizontal
+         siblings. -->
+    <Thickness x:Key="StackGapXs">0,0,0,4</Thickness>
+    <Thickness x:Key="StackGapSm">0,0,0,8</Thickness>
+    <Thickness x:Key="StackGapMd">0,0,0,12</Thickness>
+    <Thickness x:Key="StackGapLg">0,0,0,16</Thickness>
+    <Thickness x:Key="StackGapXl">0,0,0,24</Thickness>
+    <Thickness x:Key="InlineGapSm">0,0,8,0</Thickness>
+    <Thickness x:Key="InlineGapMd">0,0,12,0</Thickness>
+
+    <CornerRadius x:Key="RadiusSm">4</CornerRadius>
+    <CornerRadius x:Key="RadiusMd">6</CornerRadius>
+    <CornerRadius x:Key="RadiusLg">10</CornerRadius>
+
+    <!-- ==================== Type scale ==================== -->
+    <!-- Six steps, each with a default colour matching its role, so a view can usually say
+         Style="{StaticResource TextBody}" and set nothing else. -->
+    <Style x:Key="TextCaption" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="{StaticResource FontCaption}" />
+        <Setter Property="Foreground" Value="{DynamicResource TextTertiaryBrush}" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+    <Style x:Key="TextBody" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="{StaticResource FontBody}" />
+        <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+    <Style x:Key="TextStrong" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="{StaticResource FontStrong}" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+    <Style x:Key="TextSection" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="{StaticResource FontSection}" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+    </Style>
+    <Style x:Key="TextTitle" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="{StaticResource FontTitle}" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+    </Style>
+    <Style x:Key="TextDisplay" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="{StaticResource FontDisplay}" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+    </Style>
+    <Style x:Key="TextHero" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="{StaticResource FontHero}" />
+        <Setter Property="FontWeight" Value="Light" />
+        <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+    </Style>
+
     <!-- ============================= Focus visual (#1000) ============================= -->
     <!-- suggestions.md #1000: a visible focus adorner - this app had none before (grep-confirmed:
          no FocusVisualStyle anywhere in this dictionary). Keying it as the special
@@ -101,35 +177,39 @@
          constructor threw and the app started with an error dialog and no main window at all. -->
     <Style x:Key="ColorRowLabel" TargetType="TextBlock">
         <Setter Property="FontWeight" Value="SemiBold" />
-        <Setter Property="FontSize" Value="12.5" />
-        <Setter Property="Margin" Value="0,0,0,8" />
+        <Setter Property="FontSize" Value="{StaticResource FontStrong}" />
+        <Setter Property="Margin" Value="{StaticResource StackGapSm}" />
     </Style>
 
     <Style x:Key="CardStyle" TargetType="Border">
         <Setter Property="Background" Value="{DynamicResource BgPanelBrush}" />
         <Setter Property="BorderBrush" Value="{DynamicResource BorderSubtleBrush}" />
         <Setter Property="BorderThickness" Value="1" />
-        <Setter Property="CornerRadius" Value="10" />
+        <Setter Property="CornerRadius" Value="{StaticResource RadiusLg}" />
         <Setter Property="Padding" Value="18" />
-        <Setter Property="Margin" Value="0,0,0,16" />
+        <Setter Property="Margin" Value="{StaticResource StackGapLg}" />
         <Setter Property="Effect" Value="{StaticResource CardShadow}" />
     </Style>
 
+    <!-- 413 cards across the app use this as their heading. It was 13px in TextSecondary grey,
+         which made every card title recede into its own body text and left the long scrolling tabs
+         with no scannable structure at all - so it now sits on the section step in primary text. -->
     <Style x:Key="CardTitle" TargetType="TextBlock">
-        <Setter Property="FontSize" Value="13" />
+        <Setter Property="FontSize" Value="{StaticResource FontSection}" />
         <Setter Property="FontWeight" Value="SemiBold" />
-        <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
-        <Setter Property="Margin" Value="0,0,0,12" />
+        <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+        <Setter Property="Margin" Value="{StaticResource StackGapMd}" />
+        <Setter Property="TextWrapping" Value="Wrap" />
     </Style>
 
     <Style x:Key="BigStat" TargetType="TextBlock">
-        <Setter Property="FontSize" Value="30" />
+        <Setter Property="FontSize" Value="{StaticResource FontHero}" />
         <Setter Property="FontWeight" Value="Light" />
         <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
     </Style>
 
     <Style x:Key="SubStat" TargetType="TextBlock">
-        <Setter Property="FontSize" Value="12" />
+        <Setter Property="FontSize" Value="{StaticResource FontBody}" />
         <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
     </Style>
 
@@ -139,12 +219,12 @@
          referencing it too - a StaticResource in one UserControl's local Resources isn't visible to
          another UserControl, so this must live in the shared theme dictionary to be usable app-wide. -->
     <Style x:Key="SpecLabel" TargetType="TextBlock">
-        <Setter Property="FontSize" Value="12" />
+        <Setter Property="FontSize" Value="{StaticResource FontCaption}" />
         <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
         <Setter Property="Margin" Value="0,0,0,3" />
     </Style>
     <Style x:Key="SpecValue" TargetType="TextBlock">
-        <Setter Property="FontSize" Value="14" />
+        <Setter Property="FontSize" Value="{StaticResource FontSection}" />
         <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
         <Setter Property="TextWrapping" Value="Wrap" />
     </Style>
@@ -172,7 +252,7 @@
         <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush2}" />
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="Padding" Value="16,8" />
-        <Setter Property="FontSize" Value="12.5" />
+        <Setter Property="FontSize" Value="{StaticResource FontBody}" />
         <Setter Property="Cursor" Value="Hand" />
         <Setter Property="SnapsToDevicePixels" Value="True" />
         <Setter Property="Template">
@@ -255,7 +335,7 @@
         <Setter Property="SelectionBrush" Value="{DynamicResource AccentMutedBrush}" />
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="Padding" Value="12,7" />
-        <Setter Property="FontSize" Value="13" />
+        <Setter Property="FontSize" Value="{StaticResource FontBody}" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="{x:Type TextBox}">
@@ -351,6 +431,150 @@
                             </MultiTrigger.Conditions>
                             <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
                             <Setter TargetName="border" Property="Background" Value="{DynamicResource BgHoverBrush}" />
+                        </MultiTrigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- ==================== Level 2: group sub-tabs ==================== -->
+    <!-- The strip at the top of the window is level 1 (icon + label, filled pill). These two
+         styles are the second-level row that appears *inside* a group tab - e.g. Hardware -> CPU /
+         Memory / Storage / Network / GPU / Energy. They are deliberately a different shape from
+         level 1 (underline indicator, no icon, page background rather than the panel-coloured
+         strip) so the two rows never read as one continuous ribbon of tabs.
+
+         SectionTabControl below is level 3. Three nav levels only works if a glance tells you
+         which one you are looking at, so the shapes go: pill-with-icon, then underline, then
+         chip. -->
+    <Style x:Key="GroupTabControl" TargetType="{x:Type TabControl}">
+        <Setter Property="Background" Value="{DynamicResource BgBrush}" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="ItemContainerStyle" Value="{DynamicResource GroupTabItem}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="{x:Type TabControl}">
+                    <Grid KeyboardNavigation.TabNavigation="Local" Background="{TemplateBinding Background}">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+                        <Border Grid.Row="0" Background="{DynamicResource BgBrush}"
+                                BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,0,0,1">
+                            <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+                                <TabPanel IsItemsHost="True" Background="Transparent" Margin="18,0,18,0" />
+                            </ScrollViewer>
+                        </Border>
+                        <ContentPresenter Grid.Row="1" ContentSource="SelectedContent" />
+                    </Grid>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="GroupTabItem" TargetType="{x:Type TabItem}">
+        <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+        <Setter Property="FontSize" Value="{StaticResource FontSection}" />
+        <Setter Property="Padding" Value="2,0" />
+        <Setter Property="Margin" Value="0,0,20,0" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="{x:Type TabItem}">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <ContentPresenter Grid.Row="0" ContentSource="Header"
+                                          VerticalAlignment="Center" Margin="{TemplateBinding Padding}"
+                                          RecognizesAccessKey="True" />
+                        <Border Grid.Row="1" x:Name="indicator" Height="2" CornerRadius="1,1,0,0"
+                                Background="Transparent" Margin="0,10,0,0" />
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsSelected" Value="True">
+                            <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+                            <Setter TargetName="indicator" Property="Background" Value="{DynamicResource AccentBrush}" />
+                        </Trigger>
+                        <MultiTrigger>
+                            <MultiTrigger.Conditions>
+                                <Condition Property="IsMouseOver" Value="True" />
+                                <Condition Property="IsSelected" Value="False" />
+                            </MultiTrigger.Conditions>
+                            <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+                            <Setter TargetName="indicator" Property="Background" Value="{DynamicResource BorderBrush2}" />
+                        </MultiTrigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- ==================== Level 3: in-page section chips ==================== -->
+    <!-- Why this exists: tabs in this app grew by appending one card per backlog item to a single
+         ScrollViewer > StackPanel, and Stability reached 80 cards in one unbroken scroll (Network
+         52, Energy and Thermals 41, Storage 37). Wrapping those cards in a TabControl styled as a
+         chip bar splits them into named sections without needing a ViewModel change: no
+         IsXxxViewActive bool per section, no new commands - the sections are plain TabItems and
+         WPF handles selection, keyboard navigation and automation for free.
+
+         Set Style="{StaticResource SectionTabControl}" on the TabControl only; its
+         ItemContainerStyle styles the child TabItems, so individual sections stay a plain
+         <TabItem Header="..."> with nothing else on them. -->
+    <Style x:Key="SectionTabControl" TargetType="{x:Type TabControl}">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="ItemContainerStyle" Value="{DynamicResource SectionTabItem}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="{x:Type TabControl}">
+                    <Grid KeyboardNavigation.TabNavigation="Local" Background="{TemplateBinding Background}">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+                        <ScrollViewer Grid.Row="0" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled"
+                                      Margin="16,12,16,4">
+                            <TabPanel IsItemsHost="True" Background="Transparent" />
+                        </ScrollViewer>
+                        <ContentPresenter Grid.Row="1" ContentSource="SelectedContent" />
+                    </Grid>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="SectionTabItem" TargetType="{x:Type TabItem}">
+        <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+        <Setter Property="FontSize" Value="{StaticResource FontBody}" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Padding" Value="14,6" />
+        <Setter Property="Margin" Value="0,0,8,0" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="{x:Type TabItem}">
+                    <Border x:Name="chip" CornerRadius="14" Padding="{TemplateBinding Padding}"
+                            Background="{DynamicResource BgPanelBrush}"
+                            BorderBrush="{DynamicResource BorderBrush2}" BorderThickness="1">
+                        <ContentPresenter ContentSource="Header" VerticalAlignment="Center" RecognizesAccessKey="True" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsSelected" Value="True">
+                            <Setter Property="Foreground" Value="{DynamicResource AccentForegroundBrush}" />
+                            <Setter TargetName="chip" Property="Background" Value="{DynamicResource AccentBrush}" />
+                            <Setter TargetName="chip" Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+                        </Trigger>
+                        <MultiTrigger>
+                            <MultiTrigger.Conditions>
+                                <Condition Property="IsMouseOver" Value="True" />
+                                <Condition Property="IsSelected" Value="False" />
+                            </MultiTrigger.Conditions>
+                            <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+                            <Setter TargetName="chip" Property="Background" Value="{DynamicResource BgHoverBrush}" />
+                            <Setter TargetName="chip" Property="BorderBrush" Value="{DynamicResource TextTertiaryBrush}" />
                         </MultiTrigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>

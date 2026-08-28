@@ -29,9 +29,9 @@
                     </Style>
                 </Border.Style>
                 <StackPanel>
-                    <TextBlock Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" FontSize="12.5" FontWeight="SemiBold"
+                    <TextBlock Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold"
                                Text="This boot entry has one or more boot-mode/driver-signature flags set." />
-                    <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" FontSize="11" Margin="0,4,0,0"
+                    <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Margin="0,4,0,0"
                                Text="Quick flag, not a verdict - these are routinely on deliberately (driver development, troubleshooting a boot failure). Each can be cleared below, with confirmation." />
                     <ItemsControl ItemsSource="{Binding BootModeFlags}" Margin="0,8,0,0">
                         <ItemsControl.ItemTemplate>
@@ -43,10 +43,10 @@
                                             <ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
                                         <StackPanel Grid.Column="0">
-                                            <TextBlock FontSize="12" FontWeight="SemiBold" Text="{Binding OptionName}" />
-                                            <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Text="{Binding Message}" Margin="0,2,0,0" />
+                                            <TextBlock FontSize="{StaticResource FontBody}" FontWeight="SemiBold" Text="{Binding OptionName}" />
+                                            <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Text="{Binding Message}" Margin="0,2,0,0" />
                                         </StackPanel>
-                                        <Button Grid.Column="1" Content="Clear this flag" Padding="8,3" FontSize="11" VerticalAlignment="Center" Margin="8,0,0,0"
+                                        <Button Grid.Column="1" Content="Clear this flag" Padding="8,3" FontSize="{StaticResource FontBody}" VerticalAlignment="Center" Margin="8,0,0,0"
                                                 Command="{Binding DataContext.ClearBootModeFlagCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                                 CommandParameter="{Binding}" />
                                     </Grid>
@@ -72,9 +72,9 @@
                     </Style>
                 </Border.Style>
                 <StackPanel>
-                    <TextBlock Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" FontSize="12.5" FontWeight="SemiBold"
+                    <TextBlock Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold"
                                Text="{Binding RegressionFlag.Message}" />
-                    <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" FontSize="11" Margin="0,4,0,0"
+                    <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Margin="0,4,0,0"
                                Text="Quick flag, not a verdict - a one-off slow boot (e.g. an update finishing up) can look identical to a persistent slowdown." />
                     <ItemsControl ItemsSource="{Binding RegressionFlag.DegradationRows}" Margin="0,8,0,0">
                         <ItemsControl.ItemsPanel>
@@ -83,7 +83,7 @@
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
                                 <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,6" Margin="0,0,8,8">
-                                    <TextBlock FontSize="11.5">
+                                    <TextBlock FontSize="{StaticResource FontBody}">
                                         <Run Text="{Binding Name, Mode=OneWay}" FontWeight="SemiBold" />
                                         <Run Text=" — " /><Run Text="{Binding Category, Mode=OneWay}" Foreground="{DynamicResource TextSecondaryBrush}" />
                                         <Run Text=": " /><Run Text="{Binding ImpactMs, Converter={StaticResource BootMsToSecondsConverter}, Mode=OneWay}" />
@@ -129,7 +129,7 @@
                             <DataTemplate>
                                 <TextBlock VerticalAlignment="Center" TextTrimming="CharacterEllipsis">
                                     <Run Text="{Binding Publisher, Mode=OneWay}" />
-                                    <Run Text=" (self-signed)" Foreground="{DynamicResource WarningBrush}" FontSize="11">
+                                    <Run Text=" (self-signed)" Foreground="{DynamicResource WarningBrush}" FontSize="{StaticResource FontBody}">
                                         <Run.Style>
                                             <Style TargetType="Run">
                                                 <Setter Property="Text" Value="" />
@@ -342,7 +342,7 @@
                         <TextBlock Grid.Column="0" Text="Boot performance" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
                         <!-- #713: cross-link over to the Stability tab's "Power & boot timeline" -
                              see StartupView.xaml.cs's ViewPowerTimeline_Click. -->
-                        <Button Grid.Column="1" Content="View power &amp; boot timeline" Padding="8,3" FontSize="11.5"
+                        <Button Grid.Column="1" Content="View power &amp; boot timeline" Padding="8,3" FontSize="{StaticResource FontBody}"
                                 Click="ViewPowerTimeline_Click" />
                     </Grid>
                     <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,10" TextWrapping="Wrap">
@@ -383,8 +383,8 @@
                                 <Border Background="{DynamicResource BorderBrush2}" CornerRadius="0,4,4,0"
                                         Width="{Binding BootBreakdown.OtherMs, Converter={StaticResource BootPhaseMsToWidthConverter}}" />
                             </StackPanel>
-                            <Rectangle Width="2" Fill="{DynamicResource DangerBrush}" HorizontalAlignment="Left" Margin="150,0,0,0" ToolTip="~20s healthy-boot target for main path" />
-                            <Rectangle Width="2" Fill="{DynamicResource DangerBrush}" HorizontalAlignment="Left" Margin="225,0,0,0" ToolTip="~10s more healthy-boot target for post-boot (30s cumulative)" />
+                            <Rectangle Width="2" Fill="{DynamicResource DangerBrush}" HorizontalAlignment="Left" Margin="32,0,0,0" ToolTip="~20s healthy-boot target for main path" />
+                            <Rectangle Width="2" Fill="{DynamicResource DangerBrush}" HorizontalAlignment="Left" Margin="32,0,0,0" ToolTip="~10s more healthy-boot target for post-boot (30s cumulative)" />
                         </Grid>
                         <TextBlock Style="{StaticResource SubStat}" Margin="0,4,0,0" TextWrapping="Wrap">
                             <Run Text="Main path " /><Run Text="{Binding BootBreakdown.MainPathBootMs, Converter={StaticResource BootMsToSecondsConverter}, Mode=OneWay}" FontWeight="SemiBold" />
@@ -400,7 +400,7 @@
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
                                 <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,6" Margin="0,0,8,8">
-                                    <TextBlock FontSize="11.5">
+                                    <TextBlock FontSize="{StaticResource FontBody}">
                                         <Run Text="{Binding Label, Mode=OneWay}" Foreground="{DynamicResource TextSecondaryBrush}" />
                                         <Run Text=": " />
                                         <Run Text="{Binding Milliseconds, Converter={StaticResource BootMsToSecondsConverter}, Mode=OneWay}" FontWeight="SemiBold" />
@@ -433,8 +433,8 @@
                                 <DataTemplate>
                                     <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,6" Margin="0,0,8,8" MaxWidth="260">
                                         <StackPanel>
-                                            <TextBlock FontSize="11.5" FontWeight="SemiBold" Text="{Binding Name}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Name}" />
-                                            <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}">
+                                            <TextBlock FontSize="{StaticResource FontBody}" FontWeight="SemiBold" Text="{Binding Name}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Name}" />
+                                            <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}">
                                                 <Run Text="{Binding Category, Mode=OneWay}" />
                                                 <Run Text=" · " /><Run Text="{Binding ImpactMs, Converter={StaticResource BootMsToSecondsConverter}, Mode=OneWay}" />
                                             </TextBlock>
@@ -510,7 +510,7 @@
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
                                     <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,6" Margin="0,0,8,8">
-                                        <TextBlock FontSize="11.5">
+                                        <TextBlock FontSize="{StaticResource FontBody}">
                                             <Run Text="{Binding SubscriberName, Mode=OneWay}" FontWeight="SemiBold" />
                                             <Run Text=": " /><Run Text="{Binding DurationMs, Converter={StaticResource BootMsToSecondsConverter}, Mode=OneWay}" />
                                         </TextBlock>
@@ -562,8 +562,8 @@
                                                 <ColumnDefinition Width="Auto" />
                                             </Grid.ColumnDefinitions>
                                             <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
-                                                <TextBlock FontSize="12" FontWeight="SemiBold" Text="{Binding ExtensionName}" />
-                                                <TextBlock FontSize="11" Foreground="{DynamicResource WarningBrush}" Text=" (slow/warned)" Margin="4,0,0,0">
+                                                <TextBlock FontSize="{StaticResource FontBody}" FontWeight="SemiBold" Text="{Binding ExtensionName}" />
+                                                <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource WarningBrush}" Text=" (slow/warned)" Margin="4,0,0,0">
                                                     <TextBlock.Style>
                                                         <Style TargetType="TextBlock">
                                                             <Setter Property="Visibility" Value="Collapsed" />
@@ -576,7 +576,7 @@
                                                     </TextBlock.Style>
                                                 </TextBlock>
                                             </StackPanel>
-                                            <TextBlock Grid.Column="1" VerticalAlignment="Center" FontWeight="SemiBold" FontSize="12.5"
+                                            <TextBlock Grid.Column="1" VerticalAlignment="Center" FontWeight="SemiBold" FontSize="{StaticResource FontStrong}"
                                                        Text="{Binding ElapsedMs, Converter={StaticResource BootMsToSecondsConverter}}" />
                                         </Grid>
                                     </Border>
@@ -615,23 +615,23 @@
                                 </Style.Triggers>
                             </Style>
                         </Border.Style>
-                        <TextBlock Foreground="{DynamicResource DangerBrush}" FontSize="11.5" TextWrapping="Wrap"
+                        <TextBlock Foreground="{DynamicResource DangerBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap"
                                    Text="Quick flag, not a verdict - at least one policy below forces sign-in to wait synchronously. This is often intentional on a domain-managed PC, but is a common cause of a slow sign-in." />
                     </Border>
                     <StackPanel Margin="0,0,0,4">
-                        <TextBlock FontSize="12" FontWeight="SemiBold" Text="SyncForegroundPolicy" />
+                        <TextBlock FontSize="{StaticResource FontBody}" FontWeight="SemiBold" Text="SyncForegroundPolicy" />
                         <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Text="{Binding SyncForegroundAudit.SyncForegroundPolicyText}" />
                     </StackPanel>
                     <StackPanel Margin="0,8,0,4">
-                        <TextBlock FontSize="12" FontWeight="SemiBold" Text="GpNetworkStartTimeoutPolicyValue" />
+                        <TextBlock FontSize="{StaticResource FontBody}" FontWeight="SemiBold" Text="GpNetworkStartTimeoutPolicyValue" />
                         <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Text="{Binding SyncForegroundAudit.GpNetworkStartTimeoutText}" />
                     </StackPanel>
                     <StackPanel Margin="0,8,0,4">
-                        <TextBlock FontSize="12" FontWeight="SemiBold" Text="RunLogonScriptSync" />
+                        <TextBlock FontSize="{StaticResource FontBody}" FontWeight="SemiBold" Text="RunLogonScriptSync" />
                         <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Text="{Binding SyncForegroundAudit.RunLogonScriptSyncText}" />
                     </StackPanel>
                     <StackPanel Margin="0,8,0,0">
-                        <TextBlock FontSize="12" FontWeight="SemiBold" Text="DelayedDesktopSwitchTimeout" />
+                        <TextBlock FontSize="{StaticResource FontBody}" FontWeight="SemiBold" Text="DelayedDesktopSwitchTimeout" />
                         <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Text="{Binding SyncForegroundAudit.DelayedDesktopSwitchTimeoutText}" />
                     </StackPanel>
                 </StackPanel>
@@ -659,7 +659,7 @@
                             <DataTemplate>
                                 <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,8" Margin="0,0,0,6">
                                     <StackPanel>
-                                        <TextBlock FontSize="12.5" FontWeight="SemiBold">
+                                        <TextBlock FontSize="{StaticResource FontStrong}" FontWeight="SemiBold">
                                             <Run Text="{Binding Category, Mode=OneWay}" /><Run Text="  " />
                                             <Run Text="{Binding StatusText, Mode=OneWay}">
                                                 <Run.Style>
@@ -675,7 +675,7 @@
                                                 </Run.Style>
                                             </Run>
                                         </TextBlock>
-                                        <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap">
+                                        <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap">
                                             <Run Text="{Binding Path, Mode=OneWay}" />
                                             <Run Text=" · " /><Run Text="{Binding LastModifiedUtc, StringFormat={}{0:g}, TargetNullValue=Unknown, Mode=OneWay}" />
                                         </TextBlock>
@@ -725,7 +725,7 @@
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
                                     <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,6" Margin="0,0,8,8">
-                                        <TextBlock FontSize="11.5">
+                                        <TextBlock FontSize="{StaticResource FontBody}">
                                             <Run Text="{Binding LoadStart, StringFormat={}{0:g}, Mode=OneWay}" Foreground="{DynamicResource TextSecondaryBrush}" />
                                             <Run Text=": " /><Run Text="{Binding DurationMs, Converter={StaticResource BootMsToSecondsConverter}, Mode=OneWay}" FontWeight="SemiBold" />
                                         </TextBlock>
@@ -758,11 +758,11 @@
                                                 <ColumnDefinition Width="*" />
                                                 <ColumnDefinition Width="Auto" />
                                             </Grid.ColumnDefinitions>
-                                            <TextBlock Grid.Column="0" FontSize="12" TextTrimming="CharacterEllipsis">
+                                            <TextBlock Grid.Column="0" FontSize="{StaticResource FontBody}" TextTrimming="CharacterEllipsis">
                                                 <Run Text="{Binding ProfileImagePath, TargetNullValue=(unknown path), Mode=OneWay}" FontWeight="SemiBold" />
                                                 <Run Text=" — " /><Run Text="{Binding Sid, Mode=OneWay}" Foreground="{DynamicResource TextSecondaryBrush}" />
                                             </TextBlock>
-                                            <Button Grid.Column="1" Padding="8,2" FontSize="11" Margin="8,0,0,0"
+                                            <Button Grid.Column="1" Padding="8,2" FontSize="{StaticResource FontBody}" Margin="8,0,0,0"
                                                     Command="{Binding DataContext.MeasureProfileSizeCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                                     CommandParameter="{Binding}">
                                                 <TextBlock>
@@ -779,7 +779,7 @@
                                                 </TextBlock>
                                             </Button>
                                         </Grid>
-                                        <TextBlock FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0">
+                                        <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,4,0,0">
                                             <TextBlock.Style>
                                                 <Style TargetType="TextBlock">
                                                     <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
@@ -792,7 +792,7 @@
                                             </TextBlock.Style>
                                             <Run Text="{Binding FlagSummary, Mode=OneWay}" />
                                         </TextBlock>
-                                        <TextBlock FontSize="11" TextWrapping="Wrap" Margin="0,2,0,0" Foreground="{DynamicResource TextSecondaryBrush}">
+                                        <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,2,0,0" Foreground="{DynamicResource TextSecondaryBrush}">
                                             <TextBlock.Style>
                                                 <Style TargetType="TextBlock">
                                                     <Setter Property="Visibility" Value="Collapsed" />
@@ -828,7 +828,7 @@
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
                                     <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,6" Margin="0,0,0,6">
-                                        <TextBlock FontSize="11.5" TextWrapping="Wrap">
+                                        <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap">
                                             <Run Text="{Binding Sid, Mode=OneWay}" FontWeight="SemiBold" />
                                             <Run Text=" → " /><Run Text="{Binding CentralProfile, Mode=OneWay}" />
                                         </TextBlock>
@@ -858,11 +858,11 @@
                                 <DataTemplate>
                                     <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,8" Margin="0,0,0,6">
                                         <StackPanel>
-                                            <TextBlock FontSize="12" FontWeight="SemiBold">
+                                            <TextBlock FontSize="{StaticResource FontBody}" FontWeight="SemiBold">
                                                 <Run Text="{Binding CategoryText, Mode=OneWay}" /><Run Text=" (" /><Run Text="{Binding EventId, Mode=OneWay}" /><Run Text=")" />
                                                 <Run Text="  " /><Run Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}" Foreground="{DynamicResource TextSecondaryBrush}" FontWeight="Normal" />
                                             </TextBlock>
-                                            <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Text="{Binding Message}" />
+                                            <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Text="{Binding Message}" />
                                         </StackPanel>
                                     </Border>
                                 </DataTemplate>
@@ -889,15 +889,15 @@
                                     <Border Background="{DynamicResource DangerMutedBrush}" BorderBrush="{DynamicResource DangerBrush}" BorderThickness="1"
                                             CornerRadius="6" Padding="10,8" Margin="0,0,0,6">
                                         <StackPanel>
-                                            <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}" />
-                                            <TextBlock FontSize="11.5" TextWrapping="Wrap" Foreground="{DynamicResource DangerBrush}" Margin="0,2,0,6" Text="{Binding Message}" />
+                                            <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}" />
+                                            <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Foreground="{DynamicResource DangerBrush}" Margin="0,2,0,6" Text="{Binding Message}" />
                                             <ItemsControl ItemsSource="{Binding LeakedProcessNames}">
                                                 <ItemsControl.ItemsPanel>
                                                     <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
                                                 </ItemsControl.ItemsPanel>
                                                 <ItemsControl.ItemTemplate>
                                                     <DataTemplate>
-                                                        <Button Content="{Binding}" Tag="{Binding}" Padding="8,3" FontSize="11" Margin="0,0,6,6"
+                                                        <Button Content="{Binding}" Tag="{Binding}" Padding="8,3" FontSize="{StaticResource FontBody}" Margin="0,0,6,6"
                                                                 Click="ViewLeakedProcessInProcesses_Click"
                                                                 ToolTip="View this process on the Processes tab" />
                                                     </DataTemplate>
@@ -932,7 +932,7 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" Text="Drivers that failed to load at boot" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
-                        <Button Grid.Column="1" Content="View drivers in Services tab" Padding="8,3" FontSize="11.5"
+                        <Button Grid.Column="1" Content="View drivers in Services tab" Padding="8,3" FontSize="{StaticResource FontBody}"
                                 Click="ViewDriversInServices_Click" />
                     </Grid>
                     <ItemsControl ItemsSource="{Binding DriverLoadFailures}">
@@ -940,10 +940,10 @@
                             <DataTemplate>
                                 <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,8" Margin="0,0,0,6">
                                     <StackPanel>
-                                        <TextBlock FontSize="12.5" FontWeight="SemiBold">
+                                        <TextBlock FontSize="{StaticResource FontStrong}" FontWeight="SemiBold">
                                             <Run Text="{Binding Name, Mode=OneWay}" /><Run Text="  " /><Run Text="{Binding CategoryText, Mode=OneWay}" Foreground="{DynamicResource DangerBrush}" FontWeight="Normal" />
                                         </TextBlock>
-                                        <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap">
+                                        <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap">
                                             <Run Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}" />
                                             <Run Text=" · " /><Run Text="{Binding Detail, Mode=OneWay}" />
                                         </TextBlock>
@@ -973,7 +973,7 @@
                     <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap">
                         <Run Text="Raw value: " /><Run Text="{Binding BootExecuteInfo.RawValueText, Mode=OneWay}" FontFamily="Consolas" />
                     </TextBlock>
-                    <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" FontSize="12">
+                    <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" FontSize="{StaticResource FontBody}">
                         <TextBlock.Style>
                             <Style TargetType="TextBlock">
                                 <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
@@ -1017,7 +1017,7 @@
                                 </Style.Triggers>
                             </Style>
                         </Border.Style>
-                        <TextBlock Foreground="{DynamicResource DangerBrush}" FontSize="11.5" TextWrapping="Wrap"
+                        <TextBlock Foreground="{DynamicResource DangerBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap"
                                    Text="Quick flag, not a verdict - boot prefetching looks disabled on a spinning (HDD) system drive, a common side effect of a &quot;debloat guide&quot;. Prefetch/Superfetch generally help on an HDD; this is usually worth turning back on." />
                     </Border>
                     <Button Content="Restore Windows defaults" HorizontalAlignment="Left" Margin="0,10,0,0"
@@ -1035,7 +1035,7 @@
                     <StackPanel Orientation="Horizontal">
                         <Button Content="Capture a boot log" Command="{Binding ArmBootLogCaptureCommand}" Margin="0,0,8,0" />
                         <Button Content="Turn boot logging off" Command="{Binding DisarmBootLogCaptureCommand}" Margin="0,0,8,0" />
-                        <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource WarningBrush}" FontSize="11.5">
+                        <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource WarningBrush}" FontSize="{StaticResource FontBody}">
                             <TextBlock.Style>
                                 <Style TargetType="TextBlock">
                                     <Setter Property="Visibility" Value="Collapsed" />
@@ -1071,7 +1071,7 @@
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
                                     <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,6" Margin="0,0,8,8" MaxWidth="320">
-                                        <TextBlock FontSize="11.5" TextWrapping="Wrap">
+                                        <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap">
                                             <Run Text="{Binding Order, Mode=OneWay}" Foreground="{DynamicResource TextSecondaryBrush}" />
                                             <Run Text=". " /><Run Text="{Binding DriverPath, Mode=OneWay}" />
                                         </TextBlock>
@@ -1104,7 +1104,7 @@
                         <Button Content="Arm boot trace" Command="{Binding ArmBootEtwTraceCommand}" Margin="0,0,8,0" />
                         <Button Content="Cancel" Command="{Binding DisarmBootEtwTraceCommand}" Margin="0,0,8,0" />
                         <Button Content="Open in WPA" Command="{Binding OpenEtlInWpaCommand}" Margin="0,0,8,0" />
-                        <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource WarningBrush}" FontSize="11.5">
+                        <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource WarningBrush}" FontSize="{StaticResource FontBody}">
                             <TextBlock.Style>
                                 <Style TargetType="TextBlock">
                                     <Setter Property="Visibility" Value="Collapsed" />
@@ -1161,12 +1161,12 @@
                                             <ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
                                         <StackPanel Grid.Column="0">
-                                            <TextBlock FontSize="12.5" FontWeight="SemiBold" TextTrimming="CharacterEllipsis">
+                                            <TextBlock FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis">
                                                 <Run Text="{Binding Name, Mode=OneWay}" /><Run Text="  " /><Run Text="{Binding Category, Mode=OneWay}" Foreground="{DynamicResource TextSecondaryBrush}" FontWeight="Normal" />
                                             </TextBlock>
-                                            <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Text="{Binding AppearedText}" />
+                                            <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" Text="{Binding AppearedText}" />
                                         </StackPanel>
-                                        <TextBlock Grid.Column="1" VerticalAlignment="Center" FontWeight="SemiBold" FontSize="13"
+                                        <TextBlock Grid.Column="1" VerticalAlignment="Center" FontWeight="SemiBold" FontSize="{StaticResource FontStrong}"
                                                     Text="{Binding TotalDegradationMs, Converter={StaticResource BootMsToSecondsConverter}}" />
                                     </Grid>
                                 </Border>
@@ -1227,7 +1227,7 @@
                             <TextBlock Text="Performance-limiting boot options" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
                             <Border Background="{DynamicResource DangerMutedBrush}" BorderBrush="{DynamicResource DangerBrush}"
                                     BorderThickness="1" CornerRadius="8" Padding="10,8" Margin="0,0,0,8">
-                                <TextBlock Foreground="{DynamicResource DangerBrush}" FontSize="11.5" TextWrapping="Wrap"
+                                <TextBlock Foreground="{DynamicResource DangerBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap"
                                            Text="Quick flag, not a verdict - these BCD options cap what hardware Windows will actually use at boot, which can look exactly like a hardware problem." />
                             </Border>
                             <ItemsControl ItemsSource="{Binding PerformanceTrapOptions}">
@@ -1235,11 +1235,11 @@
                                     <DataTemplate>
                                         <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,8" Margin="0,0,0,6">
                                             <StackPanel>
-                                                <TextBlock FontSize="12.5" FontWeight="SemiBold">
+                                                <TextBlock FontSize="{StaticResource FontStrong}" FontWeight="SemiBold">
                                                     <Run Text="{Binding OptionName, Mode=OneWay}" /><Run Text="  " />
                                                     <Run Text="{Binding RawValue, Mode=OneWay}" Foreground="{DynamicResource TextSecondaryBrush}" FontWeight="Normal" />
                                                 </TextBlock>
-                                                <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap"
+                                                <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap"
                                                            Text="{Binding ObservedEffect}" Margin="0,2,0,0" />
                                             </StackPanel>
                                         </Border>
@@ -1272,11 +1272,11 @@
                                     </Style>
                                 </Border.Style>
                                 <StackPanel>
-                                    <TextBlock FontSize="11.5" TextWrapping="Wrap">
+                                    <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap">
                                         <Run Text="bootstatuspolicy: " FontWeight="SemiBold" /><Run Text="{Binding BootStatusPolicy.PolicyText, Mode=OneWay}" />
                                         <Run Text="   ·   recoveryenabled: " FontWeight="SemiBold" /><Run Text="{Binding BootStatusPolicy.RecoveryText, Mode=OneWay}" />
                                     </TextBlock>
-                                    <TextBlock FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0">
+                                    <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,4,0,0">
                                         <TextBlock.Style>
                                             <Style TargetType="TextBlock">
                                                 <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
@@ -1318,7 +1318,7 @@
                                 </Style>
                             </StackPanel.Style>
                             <TextBlock Text="Boot menu" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
-                            <TextBlock FontSize="11.5" TextWrapping="Wrap" Margin="0,0,0,8">
+                            <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,8">
                                 <Run Text="Show boot menu: " FontWeight="SemiBold" /><Run Text="{Binding BootMenuInfo.DisplayBootMenuText, Mode=OneWay}" />
                                 <Run Text="   ·   Timeout: " FontWeight="SemiBold" /><Run Text="{Binding BootMenuInfo.TimeoutText, Mode=OneWay}" />
                                 <Run Text="   ·   Default: " FontWeight="SemiBold" /><Run Text="{Binding BootMenuInfo.DefaultDescription, Mode=OneWay}" />
@@ -1347,10 +1347,10 @@
                                                     <ColumnDefinition Width="Auto" />
                                                 </Grid.ColumnDefinitions>
                                                 <StackPanel Grid.Column="0" VerticalAlignment="Center">
-                                                    <TextBlock FontSize="12" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" Text="{Binding Description}" />
-                                                    <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Text="{Binding Identifier}" />
+                                                    <TextBlock FontSize="{StaticResource FontBody}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" Text="{Binding Description}" />
+                                                    <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" Text="{Binding Identifier}" />
                                                 </StackPanel>
-                                                <Button Grid.Column="1" Padding="8,3" FontSize="11" VerticalAlignment="Center" Margin="8,0,0,0"
+                                                <Button Grid.Column="1" Padding="8,3" FontSize="{StaticResource FontBody}" VerticalAlignment="Center" Margin="8,0,0,0"
                                                         Command="{Binding DataContext.SetDefaultEntryCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                                         CommandParameter="{Binding}">
                                                     <Button.Style>
@@ -1398,9 +1398,9 @@
                                     </Style>
                                 </Border.Style>
                                 <StackPanel>
-                                    <TextBlock Foreground="{DynamicResource DangerBrush}" FontSize="11.5" TextWrapping="Wrap"
+                                    <TextBlock Foreground="{DynamicResource DangerBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap"
                                                Text="Windows Boot Manager isn't first in the UEFI firmware boot order - another entry (another OS, a network/PXE boot, a USB device) will be tried first at power-on." />
-                                    <TextBlock FontSize="11" FontFamily="Consolas" TextWrapping="Wrap" Margin="0,6,0,0"
+                                    <TextBlock FontSize="{StaticResource FontBody}" FontFamily="Consolas" TextWrapping="Wrap" Margin="0,6,0,0"
                                                Foreground="{DynamicResource TextSecondaryBrush}" Text="{Binding FirmwareBootOrder.SuggestedFixCommand}" />
                                     <Button Content="Copy fix command" HorizontalAlignment="Left" Margin="0,8,0,0" Command="{Binding CopyFirmwareDisplayOrderFixCommand}" />
                                 </StackPanel>
@@ -1409,7 +1409,7 @@
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
                                         <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,8" Margin="0,0,0,6">
-                                            <TextBlock FontSize="11.5" TextWrapping="Wrap">
+                                            <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap">
                                                 <TextBlock.Style>
                                                     <Style TargetType="TextBlock">
                                                         <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
@@ -1441,8 +1441,8 @@
                                     <DataTemplate>
                                         <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,8" Margin="0,0,0,6">
                                             <StackPanel>
-                                                <TextBlock FontSize="11.5" FontWeight="SemiBold" Text="{Binding CreatedUtc, StringFormat={}{0:g}, Mode=OneWay}" />
-                                                <TextBlock FontSize="11" FontFamily="Consolas" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap"
+                                                <TextBlock FontSize="{StaticResource FontBody}" FontWeight="SemiBold" Text="{Binding CreatedUtc, StringFormat={}{0:g}, Mode=OneWay}" />
+                                                <TextBlock FontSize="{StaticResource FontBody}" FontFamily="Consolas" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap"
                                                            Text="{Binding ImportCommandText}" Margin="0,2,0,0" />
                                             </StackPanel>
                                         </Border>
@@ -1461,7 +1461,7 @@
                                     <DataTemplate>
                                         <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,8" Margin="0,0,0,8">
                                             <StackPanel>
-                                                <TextBlock FontSize="12.5" FontWeight="SemiBold">
+                                                <TextBlock FontSize="{StaticResource FontStrong}" FontWeight="SemiBold">
                                                     <Run Text="{Binding Header, Mode=OneWay}" /><Run Text="  " />
                                                     <Run Text="{Binding Identifier, Mode=OneWay}" Foreground="{DynamicResource TextSecondaryBrush}" FontWeight="Normal" />
                                                 </TextBlock>
@@ -1472,7 +1472,7 @@
                                                     <ItemsControl.ItemTemplate>
                                                         <DataTemplate>
                                                             <Border Background="{DynamicResource BgHoverBrush}" CornerRadius="4" Padding="6,3" Margin="0,0,6,6">
-                                                                <TextBlock Text="{Binding}" FontSize="10.5" FontFamily="Consolas" TextTrimming="CharacterEllipsis" MaxWidth="420" />
+                                                                <TextBlock Text="{Binding}" FontSize="{StaticResource FontCaption}" FontFamily="Consolas" TextTrimming="CharacterEllipsis" MaxWidth="420" />
                                                             </Border>
                                                         </DataTemplate>
                                                     </ItemsControl.ItemTemplate>
@@ -1509,10 +1509,10 @@
                             </Style>
                         </Border.Style>
                         <StackPanel>
-                            <TextBlock Foreground="{DynamicResource WarningBrush}" FontSize="12.5" FontWeight="SemiBold" TextWrapping="Wrap">
+                            <TextBlock Foreground="{DynamicResource WarningBrush}" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" TextWrapping="Wrap">
                                 <Run Text="You haven't fully restarted in " /><Run Text="{Binding FastStartupInfo.DaysSinceFullRestart, Mode=OneWay}" /><Run Text=" days." />
                             </TextBlock>
-                            <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0"
+                            <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,4,0,0"
                                        Text="Under Fast Startup, the regular Shut Down/Restart path doesn't do a full boot - drivers, firmware updates, and a queued chkdsk can all silently not apply. A full restart clears that." />
                             <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
                                 <Button Content="Full restart now" Style="{StaticResource PrimaryButton}" Margin="0,0,8,0" Command="{Binding FullRestartCommand}" />
@@ -1524,11 +1524,11 @@
                     <!-- #734: uptime-clock reconciliation. -->
                     <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="8" Padding="12,10" Margin="0,0,0,14">
                         <StackPanel>
-                            <TextBlock FontSize="11.5" TextWrapping="Wrap">
+                            <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap">
                                 <Run Text="Fast Startup: " FontWeight="SemiBold" /><Run Text="{Binding FastStartupInfo.HiberbootEnabledText, Mode=OneWay}" />
                                 <Run Text="   ·   Last full restart: " FontWeight="SemiBold" /><Run Text="{Binding FastStartupInfo.LastFullBootText, Mode=OneWay}" />
                             </TextBlock>
-                            <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,4,0,0">
+                            <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,4,0,0">
                                 <Run Text="Tick-count uptime (this session): " /><Run Text="{Binding Performance.Uptime, Mode=OneWay}" />
                                 <Run Text="   ·   WMI LastBootUpTime: " /><Run Text="{Binding FastStartupInfo.LastBootUpTimeWmiText, Mode=OneWay}" />
                             </TextBlock>
@@ -1552,15 +1552,15 @@
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <TextBlock Grid.Column="0" Text="Fast Startup side effects" Style="{StaticResource SubStat}" VerticalAlignment="Center" />
-                            <Button Grid.Column="1" Content="Turn off Fast Startup" Padding="8,4" FontSize="11" Command="{Binding DisableFastStartupCommand}" />
+                            <Button Grid.Column="1" Content="Turn off Fast Startup" Padding="8,4" FontSize="{StaticResource FontBody}" Command="{Binding DisableFastStartupCommand}" />
                         </Grid>
                         <ItemsControl ItemsSource="{Binding FastStartupSideEffects}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
                                     <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,8" Margin="0,0,0,6">
                                         <StackPanel>
-                                            <TextBlock FontSize="12" FontWeight="SemiBold" Text="{Binding Title}" TextWrapping="Wrap" />
-                                            <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Text="{Binding Detail}" Margin="0,2,0,0" />
+                                            <TextBlock FontSize="{StaticResource FontBody}" FontWeight="SemiBold" Text="{Binding Title}" TextWrapping="Wrap" />
+                                            <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Text="{Binding Detail}" Margin="0,2,0,0" />
                                         </StackPanel>
                                     </Border>
                                 </DataTemplate>
@@ -1592,8 +1592,8 @@
                                             </Border.Style>
                                         </Border>
                                         <StackPanel Grid.Column="1">
-                                            <TextBlock FontSize="12" FontWeight="SemiBold" Text="{Binding Name}" />
-                                            <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Text="{Binding UnavailableReason}">
+                                            <TextBlock FontSize="{StaticResource FontBody}" FontWeight="SemiBold" Text="{Binding Name}" />
+                                            <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Text="{Binding UnavailableReason}">
                                                 <TextBlock.Style>
                                                     <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
                                                         <Setter Property="Visibility" Value="Visible" />
@@ -1613,8 +1613,8 @@
 
                         <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="8" Padding="12,10">
                             <StackPanel>
-                                <TextBlock FontSize="12" Text="{Binding HiberFileInfo.SizeText}" TextWrapping="Wrap" />
-                                <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,2,0,10" Text="C:\hiberfil.sys" />
+                                <TextBlock FontSize="{StaticResource FontBody}" Text="{Binding HiberFileInfo.SizeText}" TextWrapping="Wrap" />
+                                <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,2,0,10" Text="C:\hiberfil.sys" />
                                 <WrapPanel>
                                     <Button Content="Turn off hibernation" Margin="0,0,8,8" Command="{Binding DisableHibernationCommand}" />
                                     <Button Content="Turn on hibernation" Margin="0,0,8,8" Command="{Binding EnableHibernationCommand}" />
@@ -1676,13 +1676,13 @@
                                                 <ColumnDefinition Width="Auto" />
                                             </Grid.ColumnDefinitions>
                                             <StackPanel Grid.Column="0">
-                                                <TextBlock FontSize="12" FontWeight="SemiBold" Text="{Binding RoleLabel}" />
-                                                <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}">
+                                                <TextBlock FontSize="{StaticResource FontBody}" FontWeight="SemiBold" Text="{Binding RoleLabel}" />
+                                                <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}">
                                                     <Run Text="Partition " /><Run Text="{Binding PartitionNumber, Mode=OneWay}" />
                                                     <Run Text="   ·   " /><Run Text="{Binding GptType, Mode=OneWay}" />
                                                 </TextBlock>
                                             </StackPanel>
-                                            <TextBlock Grid.Column="1" FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center" Text="{Binding SizeText}" />
+                                            <TextBlock Grid.Column="1" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" VerticalAlignment="Center" Text="{Binding SizeText}" />
                                         </Grid>
                                     </Border>
                                 </DataTemplate>
@@ -1706,9 +1706,9 @@
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0" Text="EFI System Partition health" Style="{StaticResource SubStat}" VerticalAlignment="Center" />
-                                <Button Grid.Column="1" Content="Measure free space" Padding="8,4" FontSize="11" Command="{Binding MeasureEspFreeSpaceCommand}" />
+                                <Button Grid.Column="1" Content="Measure free space" Padding="8,4" FontSize="{StaticResource FontBody}" Command="{Binding MeasureEspFreeSpaceCommand}" />
                             </Grid>
-                            <TextBlock FontSize="11.5" TextWrapping="Wrap" Margin="0,0,0,6">
+                            <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,6">
                                 <Run Text="Size: " FontWeight="SemiBold" /><Run Text="{Binding EspHealth.Partition.SizeText, Mode=OneWay}" />
                                 <Run Text="   ·   Free: " FontWeight="SemiBold" /><Run Text="{Binding EspHealth.FreeText, Mode=OneWay}" />
                             </TextBlock>
@@ -1724,7 +1724,7 @@
                                         </Style.Triggers>
                                     </Style>
                                 </Border.Style>
-                                <TextBlock Foreground="{DynamicResource DangerBrush}" FontSize="11.5" TextWrapping="Wrap" Text="{Binding EspHealth.NearFullWarning}" />
+                                <TextBlock Foreground="{DynamicResource DangerBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Text="{Binding EspHealth.NearFullWarning}" />
                             </Border>
                         </StackPanel>
 
@@ -1745,21 +1745,21 @@
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0" Text="Windows Recovery Environment (WinRE)" Style="{StaticResource SubStat}" VerticalAlignment="Center" />
-                                <Button Grid.Column="1" Content="Enable WinRE" Padding="8,4" FontSize="11" Command="{Binding EnableWinReCommand}" />
+                                <Button Grid.Column="1" Content="Enable WinRE" Padding="8,4" FontSize="{StaticResource FontBody}" Command="{Binding EnableWinReCommand}" />
                             </Grid>
-                            <TextBlock FontSize="11.5" TextWrapping="Wrap" Margin="0,0,0,4">
+                            <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,4">
                                 <Run Text="Status: " FontWeight="SemiBold" /><Run Text="{Binding WinReStatus.StatusText, Mode=OneWay}" />
                             </TextBlock>
-                            <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap">
+                            <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap">
                                 <Run Text="Location: " /><Run Text="{Binding WinReStatus.Location, Mode=OneWay}" />
                             </TextBlock>
-                            <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap">
+                            <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap">
                                 <Run Text="BCD identifier: " /><Run Text="{Binding WinReStatus.BcdIdentifier, Mode=OneWay}" />
                             </TextBlock>
-                            <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap">
+                            <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap">
                                 <Run Text="Recovery image: " /><Run Text="{Binding WinReStatus.RecoveryImageLocation, Mode=OneWay}" />
                             </TextBlock>
-                            <TextBlock FontSize="11" Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" Margin="0,4,0,0">
+                            <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" Margin="0,4,0,0">
                                 <Run Text="{Binding WinReStatus.Error, Mode=OneWay}" />
                             </TextBlock>
                         </StackPanel>
@@ -1782,7 +1782,7 @@
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0" Text="Recovery partition" Style="{StaticResource SubStat}" VerticalAlignment="Center" />
-                                <Button Grid.Column="1" Content="Measure free space" Padding="8,4" FontSize="11" Command="{Binding MeasureRecoveryFreeSpaceCommand}" />
+                                <Button Grid.Column="1" Content="Measure free space" Padding="8,4" FontSize="{StaticResource FontBody}" Command="{Binding MeasureRecoveryFreeSpaceCommand}" />
                             </Grid>
                             <Border CornerRadius="8" Padding="10,8">
                                 <Border.Style>
@@ -1795,7 +1795,7 @@
                                         </Style.Triggers>
                                     </Style>
                                 </Border.Style>
-                                <TextBlock FontSize="11.5" TextWrapping="Wrap">
+                                <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap">
                                     <TextBlock.Style>
                                         <Style TargetType="TextBlock">
                                             <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
@@ -1880,7 +1880,7 @@
                             <DataGridTemplateColumn Header="Flag" Width="90">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
-                                        <TextBlock Text="Missing target" FontSize="10" FontWeight="SemiBold" TextWrapping="Wrap"
+                                        <TextBlock Text="Missing target" FontSize="{StaticResource FontCaption}" FontWeight="SemiBold" TextWrapping="Wrap"
                                                    Foreground="{DynamicResource DangerBrush}" ToolTip="{Binding MissingTargetReason}">
                                             <TextBlock.Style>
                                                 <Style TargetType="TextBlock">
@@ -1950,7 +1950,7 @@
                         </Border.Style>
                         <StackPanel>
                             <TextBlock Text="Trigger summary" Style="{StaticResource SubStat}" />
-                            <TextBlock Text="{Binding SelectedScheduledTask.TriggerSummaryText}" TextWrapping="Wrap" FontSize="11.5" Margin="0,4,0,0" />
+                            <TextBlock Text="{Binding SelectedScheduledTask.TriggerSummaryText}" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Margin="0,4,0,0" />
                         </StackPanel>
                     </Border>
 
@@ -1982,7 +1982,7 @@
                         <Button Grid.Column="2" Style="{StaticResource PrimaryButton}" Content="Load task failures"
                                 Command="{Binding LoadTaskFailuresCommand}" />
                     </Grid>
-                    <TextBlock Text="{Binding TaskFailuresStatus}" Margin="0,4,0,8" FontSize="11.5"
+                    <TextBlock Text="{Binding TaskFailuresStatus}" Margin="0,4,0,8" FontSize="{StaticResource FontBody}"
                                TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" />
 
                     <DataGrid Height="180" ItemsSource="{Binding TaskFailures}" IsReadOnly="True">
@@ -2060,7 +2060,7 @@
                             <DataGridTemplateColumn Header="Sensitive permissions" Width="1.6*">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
-                                        <TextBlock FontSize="11.5" TextWrapping="Wrap" Foreground="{DynamicResource WarningBrush}"
+                                        <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Foreground="{DynamicResource WarningBrush}"
                                                    Text="{Binding SensitivePermissionsText}" />
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
@@ -2200,13 +2200,13 @@
                                         </Style>
                                     </Border.Style>
                                     <StackPanel>
-                                        <TextBlock FontSize="12" FontWeight="SemiBold" TextWrapping="Wrap">
+                                        <TextBlock FontSize="{StaticResource FontBody}" FontWeight="SemiBold" TextWrapping="Wrap">
                                             <Run Text="{Binding ValueName, Mode=OneWay}" /><Run Text=" — " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding Scope, Mode=OneWay}" Foreground="{DynamicResource TextSecondaryBrush}" />
                                         </TextBlock>
-                                        <TextBlock FontSize="11" Margin="0,3,0,0" TextWrapping="Wrap">
+                                        <TextBlock FontSize="{StaticResource FontBody}" Margin="0,3,0,0" TextWrapping="Wrap">
                                             <Run Text="Expected: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding ExpectedText, Mode=OneWay}" FontFamily="Consolas" />
                                         </TextBlock>
-                                        <TextBlock FontSize="11" Margin="0,1,0,0" TextWrapping="Wrap">
+                                        <TextBlock FontSize="{StaticResource FontBody}" Margin="0,0,0,0" TextWrapping="Wrap">
                                             <Run Text="Actual: " Foreground="{DynamicResource TextSecondaryBrush}" />
                                             <Run Text="{Binding ActualText, Mode=OneWay}" FontFamily="Consolas">
                                                 <Run.Style>
@@ -2273,7 +2273,7 @@
                             <DataGridTemplateColumn Header="" Width="130">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
-                                        <Button Content="View in Processes" Padding="8,3" FontSize="11" Tag="{Binding ProcessNameForFilter}"
+                                        <Button Content="View in Processes" Padding="8,3" FontSize="{StaticResource FontBody}" Tag="{Binding ProcessNameForFilter}"
                                                 Click="ViewIfeoExeInProcesses_Click">
                                             <Button.Style>
                                                 <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
@@ -2311,7 +2311,7 @@
                     <TextBlock Text="Global DLL injection audit" Style="{StaticResource CardTitle}" Margin="0,0,0,4" />
                     <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap"
                                Text="AppInit_DLLs, AppCertDlls, LSA security/authentication packages, and KnownDLLs anomalies - the locations that load a DLL into many/every process rather than one specific app." />
-                    <TextBlock Margin="0,4,0,0" FontSize="11.5" TextWrapping="Wrap">
+                    <TextBlock Margin="0,4,0,0" FontSize="{StaticResource FontBody}" TextWrapping="Wrap">
                         <Run Text="AppInit_DLLs (64-bit): " Foreground="{DynamicResource TextSecondaryBrush}" />
                         <Run Text="{Binding DllInjectionAudit.AppInitEnabled64Text, Mode=OneWay}" />
                         <Run Text="   ·   AppInit_DLLs (32-bit): " Foreground="{DynamicResource TextSecondaryBrush}" />

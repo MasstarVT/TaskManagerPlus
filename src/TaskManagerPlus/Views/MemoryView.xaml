@@ -36,16 +36,16 @@
                             <Border Style="{StaticResource ColorDot}" Background="{Binding Performance.RamColor, Converter={StaticResource ColorToBrushConverter}}" />
                             <TextBlock Text="Memory Utilization" Style="{StaticResource CardTitle}" Margin="0" />
                         </StackPanel>
-                        <TextBlock Grid.Column="1" VerticalAlignment="Center" FontSize="20" FontWeight="SemiBold">
+                        <TextBlock Grid.Column="1" VerticalAlignment="Center" FontSize="{StaticResource FontDisplay}" FontWeight="SemiBold">
                             <Run Text="{Binding Performance.RamUsedGb, StringFormat={}{0:0.0}, Mode=OneWay}" />
-                            <Run Text=" / " FontSize="13" FontWeight="Normal" />
-                            <Run Text="{Binding Performance.RamTotalGb, StringFormat={}{0:0.0}, Mode=OneWay}" FontSize="13" FontWeight="Normal" />
-                            <Run Text=" GB" FontSize="13" FontWeight="Normal" />
+                            <Run Text=" / " FontSize="{StaticResource FontStrong}" FontWeight="Normal" />
+                            <Run Text="{Binding Performance.RamTotalGb, StringFormat={}{0:0.0}, Mode=OneWay}" FontSize="{StaticResource FontStrong}" FontWeight="Normal" />
+                            <Run Text=" GB" FontSize="{StaticResource FontStrong}" FontWeight="Normal" />
                         </TextBlock>
                     </Grid>
                     <!-- #141: crash/error markers, reusing whatever the Stability tab last read - toggleable. -->
                     <CheckBox Content="Show crash/error markers" IsChecked="{Binding Performance.ShowEventMarkers}"
-                               FontSize="10.5" HorizontalAlignment="Right" Margin="0,0,0,4" />
+                               FontSize="{StaticResource FontCaption}" HorizontalAlignment="Right" Margin="0,0,0,4" />
                     <lvc:CartesianChart Series="{Binding Performance.RamSeries}" XAxes="{Binding Performance.HiddenXAxes}" YAxes="{Binding Performance.PercentYAxes}"
                                          Sections="{Binding Performance.EventMarkerSections}"
                                          Height="180" TooltipPosition="Hidden" LegendPosition="Hidden" Background="Transparent" />
@@ -114,22 +114,22 @@
                             <ColumnDefinition Width="{Binding Performance.MemoryStandbyPercent, Converter={StaticResource PercentToStarWidthConverter}}" />
                             <ColumnDefinition Width="{Binding Performance.MemoryFreePercent, Converter={StaticResource PercentToStarWidthConverter}}" />
                         </Grid.ColumnDefinitions>
-                        <Border Grid.Column="0" Background="{Binding Performance.RamColor, Converter={StaticResource ColorToBrushConverter}}" CornerRadius="4,0,0,4" Margin="0,0,1,0" />
-                        <Border Grid.Column="1" Background="{DynamicResource WarningBrush}" Opacity="0.55" Margin="0,0,1,0" />
+                        <Border Grid.Column="0" Background="{Binding Performance.RamColor, Converter={StaticResource ColorToBrushConverter}}" CornerRadius="4,0,0,4" Margin="0,0,0,0" />
+                        <Border Grid.Column="1" Background="{DynamicResource WarningBrush}" Opacity="0.55" Margin="0,0,0,0" />
                         <Border Grid.Column="2" Background="{DynamicResource SuccessBrush}" Opacity="0.45" CornerRadius="0,4,4,0" />
                     </Grid>
                     <UniformGrid Columns="3" Margin="0,8,0,0">
                         <StackPanel Orientation="Horizontal">
                             <Border Width="9" Height="9" CornerRadius="2" Margin="0,0,6,0" Background="{Binding Performance.RamColor, Converter={StaticResource ColorToBrushConverter}}" />
-                            <TextBlock Text="{Binding Performance.MemoryInUsePercent, StringFormat={}In use {0:0}%}" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+                            <TextBlock Text="{Binding Performance.MemoryInUsePercent, StringFormat={}In use {0:0}%}" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
                         </StackPanel>
                         <StackPanel Orientation="Horizontal">
                             <Border Width="9" Height="9" CornerRadius="2" Margin="0,0,6,0" Background="{DynamicResource WarningBrush}" />
-                            <TextBlock Text="{Binding Performance.MemoryStandbyPercent, StringFormat={}Standby {0:0}%}" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+                            <TextBlock Text="{Binding Performance.MemoryStandbyPercent, StringFormat={}Standby {0:0}%}" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
                         </StackPanel>
                         <StackPanel Orientation="Horizontal">
                             <Border Width="9" Height="9" CornerRadius="2" Margin="0,0,6,0" Background="{DynamicResource SuccessBrush}" />
-                            <TextBlock Text="{Binding Performance.MemoryFreePercent, StringFormat={}Free {0:0}%}" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+                            <TextBlock Text="{Binding Performance.MemoryFreePercent, StringFormat={}Free {0:0}%}" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
                         </StackPanel>
                     </UniformGrid>
                 </StackPanel>
@@ -167,7 +167,7 @@
             <!-- #432: page-file thrashing status strip - combines the actual page-file I/O rate,
                  how full the page file is, and its volume's disk queue length into one flag with a
                  "how long has this been going on" duration - see MemoryViewModel.RefreshThrashingState. -->
-            <Border CornerRadius="6" Padding="10,7" Margin="0,0,0,12">
+            <Border CornerRadius="6" Padding="10,6" Margin="0,0,0,12">
                 <Border.Style>
                     <Style TargetType="Border">
                         <Setter Property="Background" Value="{DynamicResource BgElevatedBrush}" />
@@ -179,7 +179,7 @@
                     </Style>
                 </Border.Style>
                 <StackPanel Orientation="Horizontal">
-                    <Border Width="9" Height="9" CornerRadius="4.5" Margin="0,0,8,0" VerticalAlignment="Center">
+                    <Border Width="9" Height="9" CornerRadius="4" Margin="0,0,8,0" VerticalAlignment="Center">
                         <Border.Style>
                             <Style TargetType="Border">
                                 <Setter Property="Background" Value="{DynamicResource SuccessBrush}" />
@@ -191,7 +191,7 @@
                             </Style>
                         </Border.Style>
                     </Border>
-                    <TextBlock Text="{Binding ThrashingStatusText}" FontSize="12" VerticalAlignment="Center" TextWrapping="Wrap">
+                    <TextBlock Text="{Binding ThrashingStatusText}" FontSize="{StaticResource FontBody}" VerticalAlignment="Center" TextWrapping="Wrap">
                         <TextBlock.Style>
                             <Style TargetType="TextBlock">
                                 <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
@@ -286,22 +286,22 @@
                             <ColumnDefinition Width="{Binding Performance.StandbyNormalPercentOfStandby, Converter={StaticResource PercentToStarWidthConverter}}" />
                             <ColumnDefinition Width="{Binding Performance.StandbyReservePercentOfStandby, Converter={StaticResource PercentToStarWidthConverter}}" />
                         </Grid.ColumnDefinitions>
-                        <Border Grid.Column="0" Background="{Binding Performance.RamColor, Converter={StaticResource ColorToBrushConverter}}" CornerRadius="4,0,0,4" Margin="0,0,1,0" />
-                        <Border Grid.Column="1" Background="{DynamicResource WarningBrush}" Opacity="0.55" Margin="0,0,1,0" />
+                        <Border Grid.Column="0" Background="{Binding Performance.RamColor, Converter={StaticResource ColorToBrushConverter}}" CornerRadius="4,0,0,4" Margin="0,0,0,0" />
+                        <Border Grid.Column="1" Background="{DynamicResource WarningBrush}" Opacity="0.55" Margin="0,0,0,0" />
                         <Border Grid.Column="2" Background="{DynamicResource SuccessBrush}" Opacity="0.45" CornerRadius="0,4,4,0" />
                     </Grid>
                     <UniformGrid Columns="3" Margin="0,8,0,0">
                         <StackPanel Orientation="Horizontal">
                             <Border Width="9" Height="9" CornerRadius="2" Margin="0,0,6,0" Background="{Binding Performance.RamColor, Converter={StaticResource ColorToBrushConverter}}" />
-                            <TextBlock Text="{Binding Performance.StandbyCoreGb, StringFormat=Core {0:0.00} GB}" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+                            <TextBlock Text="{Binding Performance.StandbyCoreGb, StringFormat=Core {0:0.00} GB}" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
                         </StackPanel>
                         <StackPanel Orientation="Horizontal">
                             <Border Width="9" Height="9" CornerRadius="2" Margin="0,0,6,0" Background="{DynamicResource WarningBrush}" />
-                            <TextBlock Text="{Binding Performance.StandbyNormalGb, StringFormat=Normal {0:0.00} GB}" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+                            <TextBlock Text="{Binding Performance.StandbyNormalGb, StringFormat=Normal {0:0.00} GB}" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
                         </StackPanel>
                         <StackPanel Orientation="Horizontal">
                             <Border Width="9" Height="9" CornerRadius="2" Margin="0,0,6,0" Background="{DynamicResource SuccessBrush}" />
-                            <TextBlock Text="{Binding Performance.StandbyReserveGb, StringFormat=Reserve {0:0.00} GB}" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+                            <TextBlock Text="{Binding Performance.StandbyReserveGb, StringFormat=Reserve {0:0.00} GB}" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
                         </StackPanel>
                     </UniformGrid>
                 </StackPanel>
@@ -348,13 +348,13 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" Text="System cache resident" Style="{StaticResource CardTitle}" Margin="0" />
-                        <TextBlock Grid.Column="1" VerticalAlignment="Center" FontSize="16" FontWeight="SemiBold">
+                        <TextBlock Grid.Column="1" VerticalAlignment="Center" FontSize="{StaticResource FontTitle}" FontWeight="SemiBold">
                             <Run Text="{Binding Performance.SystemCacheResidentGb, StringFormat={}{0:0.00}, Mode=OneWay}" /><Run Text=" GB" />
                         </TextBlock>
                     </Grid>
                     <TextBlock Text="The file-system-cache component of Cache Bytes above (Cache Bytes also includes driver- and OS-code-resident memory shown in the card above) - reclaimable under pressure the same as the standby list, so a high number alone isn't a problem. Flagged below only when it's both a large share of physical RAM and has kept growing over the last couple minutes, not on either signal alone."
                                Style="{StaticResource SubStat}" Margin="0,0,0,6" TextWrapping="Wrap" />
-                    <TextBlock Text="Sustained growth flagged - worth a look, not a confirmed leak (cache is reclaimable)." FontSize="11.5" Foreground="{DynamicResource DangerBrush}" FontWeight="SemiBold">
+                    <TextBlock Text="Sustained growth flagged - worth a look, not a confirmed leak (cache is reclaimable)." FontSize="{StaticResource FontBody}" Foreground="{DynamicResource DangerBrush}" FontWeight="SemiBold">
                         <TextBlock.Style>
                             <Style TargetType="TextBlock">
                                 <Setter Property="Visibility" Value="Collapsed" />
@@ -428,7 +428,7 @@
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
                                 <Border Padding="10,8" Margin="0,0,0,8" Background="{DynamicResource DangerMutedBrush}" CornerRadius="6">
-                                    <TextBlock Text="{Binding}" FontSize="11.5" TextWrapping="Wrap" Foreground="{DynamicResource DangerBrush}" />
+                                    <TextBlock Text="{Binding}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Foreground="{DynamicResource DangerBrush}" />
                                 </Border>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
@@ -462,56 +462,56 @@
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="Total physical RAM" FontSize="12.5" />
-                        <TextBlock Grid.Column="1" Text="{Binding Performance.RamTotalGb, StringFormat={}{0:0.00} GB}" FontSize="12.5" FontWeight="SemiBold" />
+                        <TextBlock Grid.Column="0" Text="Total physical RAM" FontSize="{StaticResource FontStrong}" />
+                        <TextBlock Grid.Column="1" Text="{Binding Performance.RamTotalGb, StringFormat={}{0:0.00} GB}" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" />
                     </Grid>
                     <Grid Margin="0,4,0,0">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="− Process private working sets" FontSize="12.5" Foreground="{DynamicResource TextSecondaryBrush}" />
-                        <TextBlock Grid.Column="1" Text="{Binding ReconciledProcessPrivateWsGb, StringFormat={}{0:0.00} GB}" FontSize="12.5" />
+                        <TextBlock Grid.Column="0" Text="− Process private working sets" FontSize="{StaticResource FontStrong}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        <TextBlock Grid.Column="1" Text="{Binding ReconciledProcessPrivateWsGb, StringFormat={}{0:0.00} GB}" FontSize="{StaticResource FontStrong}" />
                     </Grid>
                     <Grid Margin="0,4,0,0">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="− Standby (reclaimable) list" FontSize="12.5" Foreground="{DynamicResource TextSecondaryBrush}" />
-                        <TextBlock Grid.Column="1" Text="{Binding Performance.StandbyGb, StringFormat={}{0:0.00} GB}" FontSize="12.5" />
+                        <TextBlock Grid.Column="0" Text="− Standby (reclaimable) list" FontSize="{StaticResource FontStrong}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        <TextBlock Grid.Column="1" Text="{Binding Performance.StandbyGb, StringFormat={}{0:0.00} GB}" FontSize="{StaticResource FontStrong}" />
                     </Grid>
                     <Grid Margin="0,4,0,0">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="− Modified (dirty) list" FontSize="12.5" Foreground="{DynamicResource TextSecondaryBrush}" />
-                        <TextBlock Grid.Column="1" Text="{Binding Performance.ModifiedGb, StringFormat={}{0:0.00} GB}" FontSize="12.5" />
+                        <TextBlock Grid.Column="0" Text="− Modified (dirty) list" FontSize="{StaticResource FontStrong}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        <TextBlock Grid.Column="1" Text="{Binding Performance.ModifiedGb, StringFormat={}{0:0.00} GB}" FontSize="{StaticResource FontStrong}" />
                     </Grid>
                     <Grid Margin="0,4,0,0">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="− Kernel pools (nonpaged + paged)" FontSize="12.5" Foreground="{DynamicResource TextSecondaryBrush}" />
-                        <TextBlock Grid.Column="1" Text="{Binding ReconciledKernelPoolsGb, StringFormat={}{0:0.00} GB}" FontSize="12.5" />
+                        <TextBlock Grid.Column="0" Text="− Kernel pools (nonpaged + paged)" FontSize="{StaticResource FontStrong}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        <TextBlock Grid.Column="1" Text="{Binding ReconciledKernelPoolsGb, StringFormat={}{0:0.00} GB}" FontSize="{StaticResource FontStrong}" />
                     </Grid>
                     <Grid Margin="0,4,0,0">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="− Driver-locked pages" FontSize="12.5" Foreground="{DynamicResource TextSecondaryBrush}" />
-                        <TextBlock Grid.Column="1" Text="{Binding Performance.SystemDriverResidentGb, StringFormat={}{0:0.00} GB}" FontSize="12.5" />
+                        <TextBlock Grid.Column="0" Text="− Driver-locked pages" FontSize="{StaticResource FontStrong}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        <TextBlock Grid.Column="1" Text="{Binding Performance.SystemDriverResidentGb, StringFormat={}{0:0.00} GB}" FontSize="{StaticResource FontStrong}" />
                     </Grid>
                     <Grid Margin="0,4,0,0">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="− Hardware-reserved memory" FontSize="12.5" Foreground="{DynamicResource TextSecondaryBrush}" />
-                        <TextBlock Grid.Column="1" Text="{Binding Performance.HardwareReservedGb, StringFormat={}{0:0.00} GB}" FontSize="12.5" />
+                        <TextBlock Grid.Column="0" Text="− Hardware-reserved memory" FontSize="{StaticResource FontStrong}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        <TextBlock Grid.Column="1" Text="{Binding Performance.HardwareReservedGb, StringFormat={}{0:0.00} GB}" FontSize="{StaticResource FontStrong}" />
                     </Grid>
                     <Border BorderThickness="0,1,0,0" BorderBrush="{DynamicResource BorderSubtleBrush}" Margin="0,8,0,8" />
                     <Grid>
@@ -519,8 +519,8 @@
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="Unaccounted remainder" FontSize="13" FontWeight="SemiBold" />
-                        <TextBlock Grid.Column="1" FontSize="13" FontWeight="SemiBold">
+                        <TextBlock Grid.Column="0" Text="Unaccounted remainder" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" />
+                        <TextBlock Grid.Column="1" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold">
                             <Run Text="{Binding ReconciledRemainderGb, StringFormat={}{0:0.00} GB, Mode=OneWay}" />
                             <Run Text=" (" /><Run Text="{Binding ReconciledRemainderPercent, StringFormat={}{0:0.0}%, Mode=OneWay}" /><Run Text=")" />
                         </TextBlock>
@@ -539,7 +539,7 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" Text="System-wide handle count" Style="{StaticResource CardTitle}" Margin="0" />
-                        <TextBlock Grid.Column="1" VerticalAlignment="Center" FontSize="18" FontWeight="SemiBold" Text="{Binding Performance.HandleCount, StringFormat={}{0:N0}}" />
+                        <TextBlock Grid.Column="1" VerticalAlignment="Center" FontSize="{StaticResource FontTitle}" FontWeight="SemiBold" Text="{Binding Performance.HandleCount, StringFormat={}{0:N0}}" />
                     </Grid>
                     <TextBlock Text="A climb here with no single process responsible (compare against the Processes tab's own Handles column) points at a kernel object leak rather than one runaway app. Windows doesn't publish a single system-wide handle cap - the practical ceiling is available kernel pool memory, shown in the Nonpaged/Paged pool cards above; the figure below is the one documented per-process reference point, for scale only."
                                Style="{StaticResource SubStat}" Margin="0,0,0,10" TextWrapping="Wrap" />
@@ -550,8 +550,8 @@
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="Documented per-process theoretical max (16,777,216)" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" />
-                        <TextBlock Grid.Column="1" Text="{Binding Performance.HandleCountPercentOfPerProcessMax, StringFormat={}{0:0.00}%}" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        <TextBlock Grid.Column="0" Text="Documented per-process theoretical max (16,777,216)" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        <TextBlock Grid.Column="1" Text="{Binding Performance.HandleCountPercentOfPerProcessMax, StringFormat={}{0:0.00}%}" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
                     </Grid>
                 </StackPanel>
             </Border>
@@ -576,7 +576,7 @@
                 <StackPanel>
                     <TextBlock Text="Top memory consumers" Style="{StaticResource CardTitle}" />
                     <CheckBox Content="Rank by private working set (excludes memory shared with other processes)"
-                              IsChecked="{Binding SortTopMemoryByPrivateWorkingSet}" Margin="0,4,0,10" FontSize="11.5" />
+                              IsChecked="{Binding SortTopMemoryByPrivateWorkingSet}" Margin="0,4,0,10" FontSize="{StaticResource FontBody}" />
                     <ItemsControl ItemsSource="{Binding TopMemoryProcesses}" MaxHeight="240">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
@@ -586,16 +586,16 @@
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <StackPanel Grid.Column="0" Margin="0,0,8,0">
-                                        <TextBlock Text="{Binding Name}" FontSize="12.5" TextTrimming="CharacterEllipsis" />
-                                        <TextBlock Style="{StaticResource SubStat}" FontSize="10.5">
+                                        <TextBlock Text="{Binding Name}" FontSize="{StaticResource FontStrong}" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Style="{StaticResource SubStat}" FontSize="{StaticResource FontCaption}">
                                             <Run Text="PID " /><Run Text="{Binding Pid, Mode=OneWay}" />
                                             <Run Text=" · " /><Run Text="{Binding CpuPercent, StringFormat={}{0:0.0}% CPU, Mode=OneWay}" />
                                         </TextBlock>
                                     </StackPanel>
                                     <StackPanel Grid.Column="1" HorizontalAlignment="Right">
                                         <TextBlock Text="{Binding MemoryMb, StringFormat={}{0:0} MB}"
-                                                   FontSize="12.5" FontWeight="SemiBold" HorizontalAlignment="Right" />
-                                        <TextBlock Style="{StaticResource SubStat}" FontSize="10" HorizontalAlignment="Right">
+                                                   FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" HorizontalAlignment="Right" />
+                                        <TextBlock Style="{StaticResource SubStat}" FontSize="{StaticResource FontCaption}" HorizontalAlignment="Right">
                                             <Run Text="{Binding PrivateWorkingSetBytes, Converter={StaticResource BytesToReadableConverter}, Mode=OneWay}" />
                                             <Run Text=" private" />
                                         </TextBlock>
@@ -624,13 +624,13 @@
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <StackPanel Grid.Column="0" Margin="0,0,8,0">
-                                        <TextBlock Text="{Binding Name}" FontSize="12.5" TextTrimming="CharacterEllipsis" />
-                                        <TextBlock Style="{StaticResource SubStat}" FontSize="10.5">
+                                        <TextBlock Text="{Binding Name}" FontSize="{StaticResource FontStrong}" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Style="{StaticResource SubStat}" FontSize="{StaticResource FontCaption}">
                                             <Run Text="PID " /><Run Text="{Binding Pid, Mode=OneWay}" />
                                         </TextBlock>
                                     </StackPanel>
                                     <TextBlock Grid.Column="1" Text="{Binding PrivateBytes, Converter={StaticResource BytesToReadableConverter}}"
-                                               FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                               FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" VerticalAlignment="Center" />
                                 </Grid>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
@@ -655,14 +655,14 @@
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <StackPanel Grid.Column="0" Margin="0,0,8,0">
-                                        <TextBlock Text="{Binding Name}" FontSize="12.5" TextTrimming="CharacterEllipsis" />
-                                        <TextBlock Style="{StaticResource SubStat}" FontSize="10.5">
+                                        <TextBlock Text="{Binding Name}" FontSize="{StaticResource FontStrong}" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Style="{StaticResource SubStat}" FontSize="{StaticResource FontCaption}">
                                             <Run Text="PID " /><Run Text="{Binding Pid, Mode=OneWay}" />
                                             <Run Text=" · paged " /><Run Text="{Binding PagedPoolBytes, Converter={StaticResource BytesToReadableConverter}, Mode=OneWay}" />
                                         </TextBlock>
                                     </StackPanel>
                                     <TextBlock Grid.Column="1" Text="{Binding NonpagedPoolBytes, Converter={StaticResource BytesToReadableConverter}}"
-                                               FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                               FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" VerticalAlignment="Center" />
                                 </Grid>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
@@ -700,14 +700,14 @@
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <StackPanel Grid.Column="0" Margin="0,0,8,0">
-                                        <TextBlock Text="{Binding Name}" FontSize="12.5" TextTrimming="CharacterEllipsis" />
-                                        <TextBlock Style="{StaticResource SubStat}" FontSize="10.5">
+                                        <TextBlock Text="{Binding Name}" FontSize="{StaticResource FontStrong}" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Style="{StaticResource SubStat}" FontSize="{StaticResource FontCaption}">
                                             <Run Text="PID " /><Run Text="{Binding Pid, Mode=OneWay}" />
                                             <Run Text=" · slope " /><Run Text="{Binding LeakSlopeMbPerHour, StringFormat={}{0:0.00} MB/hr, Mode=OneWay}" />
                                         </TextBlock>
                                     </StackPanel>
                                     <TextBlock Grid.Column="1" Text="{Binding HandleCount, StringFormat={}{0:N0} handles}"
-                                               FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="{DynamicResource WarningBrush}" />
+                                               FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="{DynamicResource WarningBrush}" />
                                 </Grid>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
@@ -742,12 +742,12 @@
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <StackPanel Grid.Column="0" Margin="0,0,8,0">
-                                        <TextBlock Text="{Binding Name}" FontSize="12.5" TextTrimming="CharacterEllipsis" />
-                                        <TextBlock Style="{StaticResource SubStat}" FontSize="10.5">
+                                        <TextBlock Text="{Binding Name}" FontSize="{StaticResource FontStrong}" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Style="{StaticResource SubStat}" FontSize="{StaticResource FontCaption}">
                                             <Run Text="PID " /><Run Text="{Binding Pid, Mode=OneWay}" />
                                         </TextBlock>
                                     </StackPanel>
-                                    <TextBlock Grid.Column="1" FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="{DynamicResource WarningBrush}">
+                                    <TextBlock Grid.Column="1" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="{DynamicResource WarningBrush}">
                                         <Run Text="{Binding GdiHandleCount, Mode=OneWay, StringFormat={}GDI {0:N0}}" />
                                         <Run Text=" · " />
                                         <Run Text="{Binding UserHandleCount, Mode=OneWay, StringFormat={}USER {0:N0}}" />
@@ -788,13 +788,13 @@
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <StackPanel Grid.Column="0" Margin="0,0,8,0">
-                                        <TextBlock Text="{Binding Name}" FontSize="12.5" TextTrimming="CharacterEllipsis" />
-                                        <TextBlock Style="{StaticResource SubStat}" FontSize="10.5">
+                                        <TextBlock Text="{Binding Name}" FontSize="{StaticResource FontStrong}" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Style="{StaticResource SubStat}" FontSize="{StaticResource FontCaption}">
                                             <Run Text="PID " /><Run Text="{Binding Pid, Mode=OneWay}" />
                                         </TextBlock>
                                     </StackPanel>
                                     <TextBlock Grid.Column="1" Text="{Binding WorkingSetPrivateGapBytes, Converter={StaticResource BytesToReadableConverter}, StringFormat={}{0} paged out}"
-                                               FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="{DynamicResource WarningBrush}" />
+                                               FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="{DynamicResource WarningBrush}" />
                                 </Grid>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
@@ -840,13 +840,13 @@
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <StackPanel Grid.Column="0" Margin="0,0,8,0">
-                                        <TextBlock Text="{Binding ImageName}" FontSize="12.5" TextTrimming="CharacterEllipsis" />
-                                        <TextBlock Style="{StaticResource SubStat}" FontSize="10.5" Text="{Binding RSquared, StringFormat=fit R² {0:0.00}}" />
+                                        <TextBlock Text="{Binding ImageName}" FontSize="{StaticResource FontStrong}" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Style="{StaticResource SubStat}" FontSize="{StaticResource FontCaption}" Text="{Binding RSquared, StringFormat=fit R² {0:0.00}}" />
                                     </StackPanel>
                                     <StackPanel Grid.Column="1" HorizontalAlignment="Right">
                                         <TextBlock Text="{Binding GrowthMbPerDay, StringFormat={}{0:0.0} MB/day}"
-                                                   FontSize="12.5" FontWeight="SemiBold" HorizontalAlignment="Right" Foreground="{DynamicResource WarningBrush}" />
-                                        <TextBlock FontSize="10.5" HorizontalAlignment="Right" Foreground="{DynamicResource TextSecondaryBrush}">
+                                                   FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" HorizontalAlignment="Right" Foreground="{DynamicResource WarningBrush}" />
+                                        <TextBlock FontSize="{StaticResource FontCaption}" HorizontalAlignment="Right" Foreground="{DynamicResource TextSecondaryBrush}">
                                             <TextBlock.Style>
                                                 <Style TargetType="TextBlock">
                                                     <Setter Property="Text" Value="{Binding HoursToCommitExhaustion, StringFormat=~{0:0} hrs to commit exhaustion (projected)}" />
@@ -903,8 +903,8 @@
                                                 <ColumnDefinition Width="*" />
                                                 <ColumnDefinition Width="Auto" />
                                             </Grid.ColumnDefinitions>
-                                            <TextBlock Grid.Column="0" Text="{Binding Name}" FontSize="11.5" FontFamily="Consolas" TextTrimming="CharacterEllipsis" Margin="0,0,8,0" />
-                                            <TextBlock Grid.Column="1" FontSize="12.5" FontWeight="SemiBold">
+                                            <TextBlock Grid.Column="0" Text="{Binding Name}" FontSize="{StaticResource FontBody}" FontFamily="Consolas" TextTrimming="CharacterEllipsis" Margin="0,0,8,0" />
+                                            <TextBlock Grid.Column="1" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold">
                                                 <TextBlock.Style>
                                                     <Style TargetType="TextBlock">
                                                         <Setter Property="Text" Value="{Binding SizeBytes, Converter={StaticResource BytesToReadableConverter}}" />
@@ -917,7 +917,7 @@
                                                 </TextBlock.Style>
                                             </TextBlock>
                                         </Grid>
-                                        <TextBlock FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,0" TextWrapping="Wrap">
+                                        <TextBlock FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,0" TextWrapping="Wrap">
                                             <Run Text="{Binding HandleCount, StringFormat={}{0} handle(s), Mode=OneWay}" />
                                             <Run Text=" across: " />
                                             <Run Text="{Binding ProcessNames, Converter={StaticResource StringListJoinConverter}, Mode=OneWay}" />
@@ -960,8 +960,8 @@
                                                 <ColumnDefinition Width="*" />
                                                 <ColumnDefinition Width="Auto" />
                                             </Grid.ColumnDefinitions>
-                                            <TextBlock Grid.Column="0" Text="{Binding ImageName}" FontSize="12.5" FontWeight="SemiBold" />
-                                            <TextBlock Grid.Column="1" Text="{Binding LatestValueText}" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                            <TextBlock Grid.Column="0" Text="{Binding ImageName}" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" />
+                                            <TextBlock Grid.Column="1" Text="{Binding LatestValueText}" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
                                         </Grid>
                                         <lvc:CartesianChart Series="{Binding Series}"
                                                              XAxes="{Binding DataContext.LeakWatch.HiddenXAxes, RelativeSource={RelativeSource AncestorType=UserControl}}"
@@ -1011,14 +1011,14 @@
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <StackPanel Grid.Column="0" Margin="0,0,8,0">
-                                        <TextBlock Text="{Binding ProcessName}" FontSize="12.5" TextTrimming="CharacterEllipsis" />
-                                        <TextBlock Style="{StaticResource SubStat}" FontSize="10.5">
+                                        <TextBlock Text="{Binding ProcessName}" FontSize="{StaticResource FontStrong}" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Style="{StaticResource SubStat}" FontSize="{StaticResource FontCaption}">
                                             <Run Text="PID " /><Run Text="{Binding Pid, Mode=OneWay}" />
                                             <Run Text=" · peak " /><Run Text="{Binding PeakPageFaultsPerSec, StringFormat={}{0:0} faults/s, Mode=OneWay}" />
                                         </TextBlock>
                                     </StackPanel>
                                     <TextBlock Grid.Column="1" Text="{Binding AvgPageFaultsPerSec, StringFormat={}{0:0} faults/s avg}"
-                                               FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                               FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" VerticalAlignment="Center" />
                                 </Grid>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
@@ -1035,10 +1035,10 @@
                     <TextBlock Text="RAMMap-style actions via the same undocumented NtSetSystemInformation(SystemMemoryListInformation) API RAMMap.exe itself uses. Each one trades a temporary free-RAM gain for slower reads/rebuilding afterwards - not a pure win, so each asks for confirmation first."
                                Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
                     <WrapPanel>
-                        <Button Content="Empty standby list" Command="{Binding PurgeStandbyListCommand}" Margin="0,0,8,8" Padding="10,5" />
-                        <Button Content="Empty low-priority standby list" Command="{Binding PurgeLowPriorityStandbyListCommand}" Margin="0,0,8,8" Padding="10,5" />
-                        <Button Content="Flush modified page list" Command="{Binding FlushModifiedListCommand}" Margin="0,0,8,8" Padding="10,5" />
-                        <Button Content="Empty working sets (all processes)" Command="{Binding EmptyWorkingSetsCommand}" Margin="0,0,8,8" Padding="10,5" />
+                        <Button Content="Empty standby list" Command="{Binding PurgeStandbyListCommand}" Margin="0,0,8,8" Padding="10,4" />
+                        <Button Content="Empty low-priority standby list" Command="{Binding PurgeLowPriorityStandbyListCommand}" Margin="0,0,8,8" Padding="10,4" />
+                        <Button Content="Flush modified page list" Command="{Binding FlushModifiedListCommand}" Margin="0,0,8,8" Padding="10,4" />
+                        <Button Content="Empty working sets (all processes)" Command="{Binding EmptyWorkingSetsCommand}" Margin="0,0,8,8" Padding="10,4" />
                     </WrapPanel>
                     <TextBlock Text="{Binding MemoryPurgeStatusText}" Margin="0,4,0,0" TextWrapping="Wrap">
                         <TextBlock.Style>
@@ -1074,8 +1074,8 @@
                         <TextBlock Grid.Column="1" Text="{Binding PatternTestSizeMb, StringFormat={}{0:0} MB}" VerticalAlignment="Center" FontWeight="SemiBold" Width="80" />
                     </Grid>
                     <WrapPanel Margin="0,0,0,10">
-                        <Button Content="Start test" Command="{Binding StartPatternTestCommand}" Margin="0,0,8,0" Padding="10,5" />
-                        <Button Content="Abort" Command="{Binding AbortPatternTestCommand}" Padding="10,5" />
+                        <Button Content="Start test" Command="{Binding StartPatternTestCommand}" Margin="0,0,8,0" Padding="10,4" />
+                        <Button Content="Abort" Command="{Binding AbortPatternTestCommand}" Padding="10,4" />
                     </WrapPanel>
                     <ProgressBar Height="8" Minimum="0" Maximum="100" Value="{Binding PatternTestProgressPercent, Mode=OneWay}" Margin="0,0,0,8">
                         <ProgressBar.Style>
@@ -1213,16 +1213,16 @@
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <StackPanel Grid.Column="0" Margin="0,0,8,0">
-                                        <TextBlock FontSize="12.5" FontFamily="Consolas" FontWeight="SemiBold">
+                                        <TextBlock FontSize="{StaticResource FontStrong}" FontFamily="Consolas" FontWeight="SemiBold">
                                             <Run Text="{Binding Tag, Mode=OneWay}" /><Run Text="  " /><Run Text="{Binding Description, Mode=OneWay}" FontFamily="Segoe UI" FontWeight="Normal" />
                                         </TextBlock>
-                                        <TextBlock Style="{StaticResource SubStat}" FontSize="10.5">
+                                        <TextBlock Style="{StaticResource SubStat}" FontSize="{StaticResource FontCaption}">
                                             <Run Text="{Binding LikelyDriver, TargetNullValue=Unknown, Mode=OneWay}" />
                                             <Run Text=" · outstanding allocs " /><Run Text="{Binding OutstandingAllocDelta, StringFormat=+{0:N0}, Mode=OneWay}" />
                                         </TextBlock>
                                     </StackPanel>
                                     <TextBlock Grid.Column="1" Text="{Binding TotalByteDelta, Converter={StaticResource BytesToReadableConverter}, StringFormat={}+{0}}"
-                                               FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="{DynamicResource WarningBrush}" />
+                                               FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="{DynamicResource WarningBrush}" />
                                 </Grid>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
@@ -1312,14 +1312,14 @@
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <StackPanel Grid.Column="0" Margin="0,0,8,0">
-                                        <TextBlock Text="{Binding TypeName}" FontSize="12.5" FontWeight="SemiBold" />
-                                        <TextBlock Style="{StaticResource SubStat}" FontSize="10.5">
+                                        <TextBlock Text="{Binding TypeName}" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" />
+                                        <TextBlock Style="{StaticResource SubStat}" FontSize="{StaticResource FontCaption}">
                                             <Run Text="handles " /><Run Text="{Binding TotalNumberOfHandles, StringFormat=N0, Mode=OneWay}" />
                                             <Run Text=" · high-water " /><Run Text="{Binding HighWaterNumberOfObjects, StringFormat=N0, Mode=OneWay}" />
                                         </TextBlock>
                                     </StackPanel>
                                     <TextBlock Grid.Column="1" Text="{Binding TotalNumberOfObjects, StringFormat={}{0:N0}}"
-                                               FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center">
+                                               FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" VerticalAlignment="Center">
                                         <TextBlock.Style>
                                             <Style TargetType="TextBlock">
                                                 <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />

@@ -25,7 +25,7 @@
                         </Style.Triggers>
                     </Style>
                 </Border.Style>
-                <TextBlock Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" FontSize="12.5"
+                <TextBlock Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" FontSize="{StaticResource FontStrong}"
                            Text="DPC/ISR latency capture unavailable — logman.exe/tracerpt.exe weren't found on this system." />
             </Border>
 
@@ -45,19 +45,19 @@
                                 AccentBrush="{DynamicResource DangerBrush}" />
             </UniformGrid>
             <TextBlock Text="Quick flag, not a verdict: high DPC/ISR time points at a driver as the most likely cause of stutter, not a confirmed diagnosis."
-                       Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" FontStyle="Italic" Margin="0,0,0,16" TextWrapping="Wrap" />
+                       Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" FontStyle="Italic" Margin="0,0,0,16" TextWrapping="Wrap" />
 
             <!-- #204: DPC watchdog headroom. -->
             <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
                 <StackPanel>
                     <TextBlock Text="DPC watchdog headroom" FontWeight="SemiBold" Margin="0,0,0,6" />
-                    <TextBlock Text="{Binding Watchdog.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8" />
-                    <Border Height="10" CornerRadius="5" Background="{DynamicResource BgElevatedBrush}">
-                        <Border HorizontalAlignment="Left" Height="10" CornerRadius="5" Background="{DynamicResource DangerBrush}"
+                    <TextBlock Text="{Binding Watchdog.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,8" />
+                    <Border Height="10" CornerRadius="6" Background="{DynamicResource BgElevatedBrush}">
+                        <Border HorizontalAlignment="Left" Height="10" CornerRadius="6" Background="{DynamicResource DangerBrush}"
                                 Width="{Binding WatchdogHeadroomPercent, Converter={StaticResource PercentToWidthConverter}, ConverterParameter=300}" />
                     </Border>
                     <TextBlock Text="{Binding WatchdogHeadroomPercent, StringFormat={}{0:0.##}% of the DPC_WATCHDOG_VIOLATION threshold — see the Stability tab for any 0x133 bugchecks.}"
-                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" Margin="0,6,0,0" />
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" Margin="0,6,0,0" />
                 </StackPanel>
             </Border>
 
@@ -69,10 +69,10 @@
                         <Button Content="Start" Command="{Binding StartMeasurementCommand}" Style="{StaticResource SuccessButton}" Margin="0,0,8,4" />
                         <Button Content="Stop" Command="{Binding StopMeasurementCommand}" Style="{StaticResource DangerButton}" Margin="0,0,8,4" />
                         <Button Content="Copy summary" Command="{Binding CopySummaryCommand}" Margin="0,0,8,4" />
-                        <TextBlock Text="{Binding MeasurementStatusText}" VerticalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" Margin="0,0,0,4" />
+                        <TextBlock Text="{Binding MeasurementStatusText}" VerticalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" Margin="0,0,0,4" />
                     </WrapPanel>
                     <TextBox Text="{Binding SessionSummaryText, Mode=OneWay}" IsReadOnly="True" TextWrapping="NoWrap"
-                             FontFamily="Consolas" FontSize="11" MaxHeight="160" VerticalScrollBarVisibility="Auto"
+                             FontFamily="Consolas" FontSize="{StaticResource FontBody}" MaxHeight="160" VerticalScrollBarVisibility="Auto"
                              HorizontalScrollBarVisibility="Auto" Margin="0,8,0,0" Background="Transparent" BorderThickness="0">
                         <TextBox.Style>
                             <Style TargetType="TextBox">
@@ -197,7 +197,7 @@
                 </Border.Style>
                 <StackPanel>
                     <TextBlock Text="Interrupt storm detector" FontWeight="SemiBold" Margin="0,0,0,6" />
-                    <TextBlock Text="{Binding InterruptStormStatusText}" TextWrapping="Wrap" FontSize="12" Margin="0,0,0,8">
+                    <TextBlock Text="{Binding InterruptStormStatusText}" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Margin="0,0,0,8">
                         <TextBlock.Style>
                             <Style TargetType="TextBlock">
                                 <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
@@ -217,7 +217,7 @@
                         </DataGrid.Columns>
                     </DataGrid>
                     <TextBlock Text="Quick flag, not a verdict: a core sustaining an interrupt rate far above its siblings (or above an absolute ceiling) points at a possible interrupt storm, not a confirmed diagnosis."
-                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" FontStyle="Italic" Margin="0,8,0,0" TextWrapping="Wrap" />
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" FontStyle="Italic" Margin="0,8,0,0" TextWrapping="Wrap" />
                 </StackPanel>
             </Border>
 
@@ -236,9 +236,9 @@
                         <TextBlock Grid.Column="0" Text="Device / IRQ topology" FontWeight="SemiBold" VerticalAlignment="Center" />
                         <Button Grid.Column="1" Content="Refresh" Command="{Binding LoadDeviceTopologyCommand}" Padding="10,4" />
                     </Grid>
-                    <TextBlock Text="{Binding DeviceTopologyStatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,10" />
+                    <TextBlock Text="{Binding DeviceTopologyStatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,10" />
 
-                    <TextBlock Text="#217: IRQ sharing map — lines with 3+ sharers are flagged." FontWeight="SemiBold" FontSize="12.5" Margin="0,0,0,4" />
+                    <TextBlock Text="#217: IRQ sharing map — lines with 3+ sharers are flagged." FontWeight="SemiBold" FontSize="{StaticResource FontStrong}" Margin="0,0,0,4" />
                     <DataGrid ItemsSource="{Binding IrqShareRows}" MaxHeight="180" Margin="0,0,0,14">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="IRQ" Binding="{Binding IrqNumber}" Width="60" />
@@ -248,7 +248,7 @@
                         </DataGrid.Columns>
                     </DataGrid>
 
-                    <TextBlock Text="#218/#219: MSI/MSI-X status and interrupt-affinity policy per device — a high-traffic device (GPU/NIC/NVMe/USB controller) still on line-based interrupts is flagged, but this is worth a manual check, not a confirmed misconfiguration." FontWeight="SemiBold" FontSize="12.5" TextWrapping="Wrap" Margin="0,0,0,4" />
+                    <TextBlock Text="#218/#219: MSI/MSI-X status and interrupt-affinity policy per device — a high-traffic device (GPU/NIC/NVMe/USB controller) still on line-based interrupts is flagged, but this is worth a manual check, not a confirmed misconfiguration." FontWeight="SemiBold" FontSize="{StaticResource FontStrong}" TextWrapping="Wrap" Margin="0,0,0,4" />
                     <DataGrid ItemsSource="{Binding DeviceInterruptRows}" MaxHeight="220">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="Device" Binding="{Binding DeviceName}" Width="2*" />
@@ -279,11 +279,11 @@
                                             <ColumnDefinition Width="*" />
                                             <ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0" Text="{Binding SettingName}" FontSize="12.5" VerticalAlignment="Center" />
-                                        <TextBlock Grid.Column="1" Text="{Binding ValueText}" FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                        <TextBlock Grid.Column="0" Text="{Binding SettingName}" FontSize="{StaticResource FontStrong}" VerticalAlignment="Center" />
+                                        <TextBlock Grid.Column="1" Text="{Binding ValueText}" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" VerticalAlignment="Center" />
                                     </Grid>
                                     <TextBlock Text="{Binding Note}" Foreground="{DynamicResource TextSecondaryBrush}"
-                                               FontSize="11" FontStyle="Italic" TextWrapping="Wrap" Margin="0,2,0,0">
+                                               FontSize="{StaticResource FontBody}" FontStyle="Italic" TextWrapping="Wrap" Margin="0,2,0,0">
                                         <TextBlock.Style>
                                             <Style TargetType="TextBlock">
                                                 <Setter Property="Visibility" Value="Collapsed" />
@@ -329,15 +329,15 @@
                                         SubText="{Binding TimerResolution.CoarsestMs, StringFormat={}up to {0:0.###} ms coarsest}"
                                         AccentBrush="{DynamicResource TextSecondaryBrush}" />
                     </UniformGrid>
-                    <TextBlock Text="{Binding TimerResolution.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,4" />
-                    <TextBlock Text="{Binding TimerResolution.CoalescingInferenceText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" FontStyle="Italic" TextWrapping="Wrap" Margin="0,0,0,10" />
+                    <TextBlock Text="{Binding TimerResolution.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,4" />
+                    <TextBlock Text="{Binding TimerResolution.CoalescingInferenceText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" FontStyle="Italic" TextWrapping="Wrap" Margin="0,0,0,10" />
 
                     <WrapPanel Margin="0,0,0,4">
                         <Button Content="Check QPC" Command="{Binding CheckQpcCommand}" Padding="10,4" Margin="0,0,8,4" />
                         <TextBlock Text="A quick ~1.5s check that the QPC clock this whole tab's microsecond readings are built on isn't drifting against the system clock." VerticalAlignment="Center"
-                                   Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,4" />
+                                   Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,4" />
                     </WrapPanel>
-                    <TextBlock Text="{Binding QpcDrift.StatusText}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,10">
+                    <TextBlock Text="{Binding QpcDrift.StatusText}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,10">
                         <TextBlock.Style>
                             <Style TargetType="TextBlock">
                                 <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
@@ -352,11 +352,11 @@
 
                     <Separator Margin="0,0,0,10" />
 
-                    <TextBlock Text="#226: who raised it" FontWeight="SemiBold" FontSize="12.5" Margin="0,0,0,4" />
+                    <TextBlock Text="#226: who raised it" FontWeight="SemiBold" FontSize="{StaticResource FontStrong}" Margin="0,0,0,4" />
                     <TextBlock Text="Runs a short (~15s) powercfg /energy scan for the &quot;Platform Timer Resolution&quot; finding, plus a best-effort read of the (undocumented, not present on every Windows build) GlobalTimerResolutionRequests registry value."
-                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,8" />
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,8" />
                     <Button Content="Check now (~15s)" Command="{Binding CheckTimerRequestersCommand}" HorizontalAlignment="Left" Padding="10,4" Margin="0,0,0,8" />
-                    <TextBlock Text="{Binding TimerRequestersStatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8" />
+                    <TextBlock Text="{Binding TimerRequestersStatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,8" />
                     <DataGrid ItemsSource="{Binding TimerResolutionRequesters}" MaxHeight="160">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="Process" Binding="{Binding ProcessName}" Width="1.4*" />
@@ -372,12 +372,12 @@
                 <StackPanel>
                     <TextBlock Text="Energy &amp; latency report" FontWeight="SemiBold" Margin="0,0,0,6" />
                     <TextBlock Text="Runs powercfg /energy's full system diagnostic and parses its Errors/Warnings rows (USB selective-suspend violations, outstanding power requests, timer resolution, disabled processor idle, device sleep-blockers, and more)."
-                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8" />
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,8" />
                     <WrapPanel Margin="0,0,0,8">
                         <Button Content="Run report (~60 seconds)" Command="{Binding RunEnergyReportCommand}" Style="{StaticResource SuccessButton}" Margin="0,0,8,4" />
                         <Button Content="Open full report" Command="{Binding OpenEnergyReportCommand}" Margin="0,0,8,4" />
                     </WrapPanel>
-                    <TextBlock Text="{Binding EnergyReportStatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8" />
+                    <TextBlock Text="{Binding EnergyReportStatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,8" />
                     <DataGrid ItemsSource="{Binding EnergyReportFindings}" MaxHeight="240">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="Severity" Binding="{Binding Severity}" Width="80" />
@@ -402,7 +402,7 @@
                         <TextBlock Grid.Column="0" Text="Outstanding power requests" FontWeight="SemiBold" VerticalAlignment="Center" />
                         <Button Grid.Column="1" Content="Refresh" Command="{Binding LoadPowerRequestsCommand}" Padding="10,4" />
                     </Grid>
-                    <TextBlock Text="{Binding PowerRequestsStatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8" />
+                    <TextBlock Text="{Binding PowerRequestsStatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,8" />
                     <DataGrid ItemsSource="{Binding PowerRequestRows}" MaxHeight="200">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="Type" Binding="{Binding Type}" Width="110" />
@@ -429,12 +429,12 @@
                 <StackPanel>
                     <TextBlock Text="Modern-standby drain" FontWeight="SemiBold" Margin="0,0,0,6" />
                     <TextBlock Text="Runs powercfg /sleepstudy (falling back to /systemsleepdiagnostics if unsupported) and lists the top activators — components that kept the system from idling during modern standby, the classic 'feels sluggish after waking a laptop' cause."
-                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8" />
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,8" />
                     <WrapPanel Margin="0,0,0,8">
                         <Button Content="Run sleep study" Command="{Binding RunSleepStudyCommand}" Margin="0,0,8,4" />
                         <Button Content="Open full report" Command="{Binding OpenSleepStudyReportCommand}" Margin="0,0,8,4" />
                     </WrapPanel>
-                    <TextBlock Text="{Binding SleepStudyStatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8" />
+                    <TextBlock Text="{Binding SleepStudyStatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,8" />
                     <DataGrid ItemsSource="{Binding SleepStudyActivators}" MaxHeight="200">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="Activator" Binding="{Binding Name}" Width="1.6*" />
@@ -475,9 +475,9 @@
                 <StackPanel>
                     <TextBlock Text="Wi-Fi background scan storm" FontWeight="SemiBold" Margin="0,0,0,6" />
                     <TextBlock Text="Checks whether a Wi-Fi adapter is still associated (and therefore still periodically scanning/roaming) while the machine is actually getting its traffic over Ethernet."
-                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8" />
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,8" />
                     <Button Content="Check now" Command="{Binding CheckWifiScanStormCommand}" HorizontalAlignment="Left" Padding="10,4" Margin="0,0,0,8" />
-                    <TextBlock Text="{Binding WifiScanStorm.StatusText}" TextWrapping="Wrap" FontSize="12.5">
+                    <TextBlock Text="{Binding WifiScanStorm.StatusText}" TextWrapping="Wrap" FontSize="{StaticResource FontStrong}">
                         <TextBlock.Style>
                             <Style TargetType="TextBlock">
                                 <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
@@ -497,9 +497,9 @@
                 <StackPanel>
                     <TextBlock Text="USB re-enumeration churn" FontWeight="SemiBold" Margin="0,0,0,6" />
                     <TextBlock Text="Repeated device arrive/remove cycling from one device is the classic 'the whole PC hitches every few seconds' symptom - scans the last 30 minutes of PnP events."
-                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8" />
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,8" />
                     <Button Content="Scan now" Command="{Binding ScanUsbChurnCommand}" HorizontalAlignment="Left" Padding="10,4" Margin="0,0,0,8" />
-                    <TextBlock Text="{Binding UsbChurnStatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8" />
+                    <TextBlock Text="{Binding UsbChurnStatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,8" />
                     <DataGrid ItemsSource="{Binding UsbChurnRows}" MaxHeight="200">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="Device instance" Binding="{Binding DeviceInstanceId}" Width="2*" />
@@ -519,7 +519,7 @@
                 <StackPanel>
                     <TextBlock Text="Hung windows" FontWeight="SemiBold" Margin="0,0,0,6" />
                     <TextBlock Text="Every top-level window, probed the same way Explorer/Task Manager detect &quot;(Not Responding)&quot; - per window, so a multi-window app with one stuck dialog isn't hidden behind its other, responsive windows."
-                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8" />
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,8" />
                     <DataGrid ItemsSource="{Binding HungWindowRows}" SelectedItem="{Binding SelectedHungWindow}"
                               MaxHeight="260" IsReadOnly="True" AutoGenerateColumns="False"
                               RowDetailsVisibilityMode="VisibleWhenSelected">
@@ -549,7 +549,7 @@
                         <DataGrid.RowDetailsTemplate>
                             <DataTemplate>
                                 <StackPanel Margin="24,2,4,6">
-                                    <TextBlock Text="{Binding WaitHintText}" FontSize="11.5" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}">
+                                    <TextBlock Text="{Binding WaitHintText}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}">
                                         <TextBlock.Style>
                                             <Style TargetType="TextBlock">
                                                 <Setter Property="Visibility" Value="Collapsed" />
@@ -561,7 +561,7 @@
                                             </Style>
                                         </TextBlock.Style>
                                     </TextBlock>
-                                    <TextBlock Text="{Binding ChainText}" FontSize="11.5" TextWrapping="Wrap" Foreground="{DynamicResource WarningBrush}" Margin="0,2,0,0">
+                                    <TextBlock Text="{Binding ChainText}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Foreground="{DynamicResource WarningBrush}" Margin="0,2,0,0">
                                         <TextBlock.Style>
                                             <Style TargetType="TextBlock">
                                                 <Setter Property="Visibility" Value="Collapsed" />
@@ -573,7 +573,7 @@
                                             </Style>
                                         </TextBlock.Style>
                                     </TextBlock>
-                                    <TextBlock Text="Not currently hung, or no detail resolved yet." FontSize="11" FontStyle="Italic" Foreground="{DynamicResource TextSecondaryBrush}">
+                                    <TextBlock Text="Not currently hung, or no detail resolved yet." FontSize="{StaticResource FontBody}" FontStyle="Italic" Foreground="{DynamicResource TextSecondaryBrush}">
                                         <TextBlock.Style>
                                             <Style TargetType="TextBlock">
                                                 <Setter Property="Visibility" Value="Collapsed" />
@@ -592,10 +592,10 @@
                                     <!-- #271: Wait Chain Traversal against this window's own owning
                                          thread - the same in-box API Resource Monitor's own
                                          "Analyze Wait Chain" action uses. -->
-                                    <Button Content="Analyze wait chain..." HorizontalAlignment="Left" FontSize="11" Padding="8,3" Margin="0,6,0,0"
+                                    <Button Content="Analyze wait chain..." HorizontalAlignment="Left" FontSize="{StaticResource FontBody}" Padding="8,3" Margin="0,6,0,0"
                                             Command="{Binding DataContext.AnalyzeHungWindowWaitChainCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" />
                                     <TextBlock Text="{Binding DataContext.HungWindowWaitChainStatusText, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                                               FontSize="11" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,0">
+                                               FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,0">
                                         <TextBlock.Style>
                                             <Style TargetType="TextBlock">
                                                 <Setter Property="Visibility" Value="Collapsed" />
@@ -610,7 +610,7 @@
                                     <ItemsControl ItemsSource="{Binding DataContext.HungWindowWaitChainNodes, RelativeSource={RelativeSource AncestorType=UserControl}}" Margin="0,2,0,0">
                                         <ItemsControl.ItemTemplate>
                                             <DataTemplate>
-                                                <TextBlock FontSize="11" FontFamily="Consolas" TextWrapping="Wrap" Margin="0,0,0,2">
+                                                <TextBlock FontSize="{StaticResource FontBody}" FontFamily="Consolas" TextWrapping="Wrap" Margin="0,0,0,2">
                                                     <Run Text="{Binding IndentLevel, Mode=OneWay, StringFormat=\{0\}: }" Foreground="{DynamicResource TextSecondaryBrush}" />
                                                     <Run Text="{Binding Description, Mode=OneWay}" />
                                                 </TextBlock>
@@ -621,7 +621,7 @@
                             </DataTemplate>
                         </DataGrid.RowDetailsTemplate>
                     </DataGrid>
-                    <TextBlock Text="{Binding DumpStatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5" Margin="0,6,0,0" TextWrapping="Wrap">
+                    <TextBlock Text="{Binding DumpStatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" Margin="0,6,0,0" TextWrapping="Wrap">
                         <TextBlock.Style>
                             <Style TargetType="TextBlock">
                                 <Setter Property="Visibility" Value="Collapsed" />
@@ -642,11 +642,11 @@
                 <StackPanel>
                     <TextBlock Text="Foreground stalls by app" FontWeight="SemiBold" Margin="0,0,0,6" />
                     <WrapPanel Margin="0,0,0,8">
-                        <TextBlock Text="Stall threshold (ms):" VerticalAlignment="Center" Margin="0,0,6,0" FontSize="12" />
+                        <TextBlock Text="Stall threshold (ms):" VerticalAlignment="Center" Margin="0,0,6,0" FontSize="{StaticResource FontBody}" />
                         <TextBox Text="{Binding ForegroundStallThresholdMs, StringFormat={}{0:0}}" Width="70" VerticalAlignment="Center" />
                     </WrapPanel>
                     <TextBlock Text="Only counts a stall while its app was the one in focus - a correlation, not proof that app caused it (quick flag, not a verdict)."
-                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" FontStyle="Italic" TextWrapping="Wrap" Margin="0,0,0,8" />
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" FontStyle="Italic" TextWrapping="Wrap" Margin="0,0,0,8" />
                     <DataGrid ItemsSource="{Binding ForegroundStalls}" MaxHeight="200" IsReadOnly="True">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="App" Binding="{Binding ProcessName}" Width="1.4*" />
@@ -708,9 +708,9 @@
                 </Border.Style>
                 <StackPanel>
                     <TextBlock Text="Desktop heap &amp; USER/GDI handles" FontWeight="SemiBold" Margin="0,0,0,6" />
-                    <TextBlock Text="{Binding DesktopHeap.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,10" />
+                    <TextBlock Text="{Binding DesktopHeap.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,10" />
 
-                    <TextBlock FontSize="12" Margin="0,0,0,2">
+                    <TextBlock FontSize="{StaticResource FontBody}" Margin="0,0,0,2">
                         <Run Text="USER handles: " /><Run Text="{Binding DesktopHeap.TotalUserHandles, StringFormat={}{0:N0}, Mode=OneWay}" /><Run Text=" / 10,000" />
                     </TextBlock>
                     <Border Height="8" CornerRadius="4" Background="{DynamicResource BgElevatedBrush}" Margin="0,0,0,8">
@@ -718,7 +718,7 @@
                                 Width="{Binding DesktopHeap.UserHandlePercent, Converter={StaticResource PercentToWidthConverter}, ConverterParameter=300}" />
                     </Border>
 
-                    <TextBlock FontSize="12" Margin="0,0,0,2">
+                    <TextBlock FontSize="{StaticResource FontBody}" Margin="0,0,0,2">
                         <Run Text="GDI handles: " /><Run Text="{Binding DesktopHeap.TotalGdiHandles, StringFormat={}{0:N0}, Mode=OneWay}" /><Run Text=" / 65,536" />
                     </TextBlock>
                     <Border Height="8" CornerRadius="4" Background="{DynamicResource BgElevatedBrush}">
@@ -726,7 +726,7 @@
                                 Width="{Binding DesktopHeap.GdiHandlePercent, Converter={StaticResource PercentToWidthConverter}, ConverterParameter=300}" />
                     </Border>
                     <TextBlock Text="Quick flag, not a verdict: Windows exposes no live desktop-heap-usage counter, only the configured size - a near-limit handle total is worth investigating, not a confirmed exhaustion."
-                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" FontStyle="Italic" TextWrapping="Wrap" Margin="0,8,0,0" />
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" FontStyle="Italic" TextWrapping="Wrap" Margin="0,8,0,0" />
                 </StackPanel>
             </Border>
 
@@ -736,7 +736,7 @@
             <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
                 <StackPanel>
                     <TextBlock Text="Shell responsiveness" FontWeight="SemiBold" Margin="0,0,0,6" />
-                    <TextBlock Text="{Binding ShellExtensionNoteText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8" />
+                    <TextBlock Text="{Binding ShellExtensionNoteText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,8" />
                     <DataGrid ItemsSource="{Binding ShellResponsivenessRows}" MaxHeight="180" IsReadOnly="True">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="Window" Binding="{Binding WindowName}" Width="2.4*" />
@@ -751,7 +751,7 @@
                 <StackPanel>
                     <TextBlock Text="Offline capture (wpr.exe)" FontWeight="SemiBold" Margin="0,0,0,6" />
                     <TextBlock Text="Records a 30-second general-purpose WPR trace and converts it to a browsable HTML report — reproduce the stutter while it runs."
-                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8" />
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,8" />
                     <Border Background="{DynamicResource DangerMutedBrush}" BorderBrush="{DynamicResource DangerBrush}"
                             BorderThickness="1" CornerRadius="8" Padding="10,6" Margin="0,0,0,8">
                         <Border.Style>
@@ -764,13 +764,13 @@
                                 </Style.Triggers>
                             </Style>
                         </Border.Style>
-                        <TextBlock Text="wpr.exe/tracerpt.exe weren't found on this system." Foreground="{DynamicResource DangerBrush}" FontSize="12" />
+                        <TextBlock Text="wpr.exe/tracerpt.exe weren't found on this system." Foreground="{DynamicResource DangerBrush}" FontSize="{StaticResource FontBody}" />
                     </Border>
                     <WrapPanel>
                         <Button Content="Start 30s capture" Command="{Binding CaptureWprCommand}" Margin="0,0,8,4" />
                         <Button Content="Open trace (.etl)" Command="{Binding OpenCaptureCommand}" Margin="0,0,8,4" />
                         <Button Content="Open report" Command="{Binding OpenReportCommand}" Margin="0,0,8,4" />
-                        <TextBlock Text="{Binding WprStatusText}" VerticalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" Margin="0,0,0,4" />
+                        <TextBlock Text="{Binding WprStatusText}" VerticalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" Margin="0,0,0,4" />
                     </WrapPanel>
                 </StackPanel>
             </Border>
@@ -786,7 +786,7 @@
                  #268's Win32PrioritySeparation row appends onto the existing "Platform latency
                  settings" card above, no separate card needed. -->
             <Separator Margin="0,4,0,20" />
-            <TextBlock Text="Scheduler &amp; thread-wait analysis" FontWeight="Bold" FontSize="18" Margin="0,0,0,12" />
+            <TextBlock Text="Scheduler &amp; thread-wait analysis" FontWeight="Bold" FontSize="{StaticResource FontTitle}" Margin="0,0,0,12" />
 
             <!-- #260/#265: run-queue pressure meter, with context-switch-storm attribution ranked
                  underneath per the item's own framing. -->
@@ -794,7 +794,7 @@
                 <StackPanel>
                     <TextBlock Text="Run-queue pressure" FontWeight="SemiBold" Margin="0,0,0,6" />
                     <TextBlock Text="A sustained processor queue length well above the logical processor count means threads are waiting for CPU even when total CPU% looks fine."
-                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,10" />
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,10" />
                     <UniformGrid Columns="3" Margin="0,0,0,10">
                         <views:VfdMeter Title="Queue length" Glow="True" Margin="0,0,8,0"
                                         ValueText="{Binding RunQueuePressure.ProcessorQueueLength, StringFormat={}{0:0.#}}"
@@ -818,12 +818,12 @@
                                         AccentBrush="{DynamicResource AccentBrush}" />
                     </UniformGrid>
                     <TextBlock Text="&quot;Ready threads/core&quot; is an explicit approximation (queue length ÷ logical processor count) - Windows exposes no true per-core ready-queue counter."
-                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" FontStyle="Italic" TextWrapping="Wrap" Margin="0,0,0,10" />
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" FontStyle="Italic" TextWrapping="Wrap" Margin="0,0,0,10" />
                     <lvc:CartesianChart Series="{Binding RunQueuePressureSeries}" XAxes="{Binding HiddenXAxes}" YAxes="{Binding RunQueuePressureYAxes}"
                                          Height="140" TooltipPosition="Hidden" LegendPosition="Hidden" Background="Transparent" />
 
                     <Separator Margin="0,14,0,10" />
-                    <TextBlock Text="#265: who's driving the context-switch rate" FontWeight="SemiBold" FontSize="12.5" Margin="0,0,0,4" />
+                    <TextBlock Text="#265: who's driving the context-switch rate" FontWeight="SemiBold" FontSize="{StaticResource FontStrong}" Margin="0,0,0,4" />
                     <DataGrid ItemsSource="{Binding ContextSwitchAttribution}" MaxHeight="200" IsReadOnly="True">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="Process" Binding="{Binding ProcessName}" Width="1.4*" />
@@ -852,7 +852,7 @@
                 <StackPanel>
                     <TextBlock Text="Kernel synchronization contention" FontWeight="SemiBold" Margin="0,0,0,6" />
                     <TextBlock Text="The optional &quot;Synchronization&quot; performance-counter category is enabled on this system - spinlock and executive-resource contention, straight from the kernel."
-                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,10" />
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,10" />
                     <UniformGrid Columns="3" Margin="0,0,0,10">
                         <views:VfdMeter Title="Spinlock acquires/sec" Glow="True" Margin="0,0,8,0"
                                         ValueText="{Binding SynchronizationCounters.SpinlockAcquiresPerSec, StringFormat={}{0:N0}}"
@@ -874,9 +874,9 @@
             <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
                 <StackPanel>
                     <TextBlock Text="Thread wait &amp; context-switch analysis" FontWeight="SemiBold" Margin="0,0,0,6" />
-                    <TextBlock Text="{Binding SchedulerStatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,10" />
+                    <TextBlock Text="{Binding SchedulerStatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,10" />
 
-                    <TextBlock Text="#262: longest-blocked threads" FontWeight="SemiBold" FontSize="12.5" Margin="0,0,0,4" />
+                    <TextBlock Text="#262: longest-blocked threads" FontWeight="SemiBold" FontSize="{StaticResource FontStrong}" Margin="0,0,0,4" />
                     <DataGrid ItemsSource="{Binding LongestBlockedThreads}" MaxHeight="220" IsReadOnly="True" Margin="0,0,0,14">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="Process" Binding="{Binding ProcessName}" Width="1.3*" />
@@ -888,7 +888,7 @@
                         </DataGrid.Columns>
                     </DataGrid>
 
-                    <TextBlock Text="#263: busiest threads (context-switch rate)" FontWeight="SemiBold" FontSize="12.5" Margin="0,0,0,4" />
+                    <TextBlock Text="#263: busiest threads (context-switch rate)" FontWeight="SemiBold" FontSize="{StaticResource FontStrong}" Margin="0,0,0,4" />
                     <DataGrid ItemsSource="{Binding BusiestThreads}" MaxHeight="220" IsReadOnly="True">
                         <DataGrid.RowStyle>
                             <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
@@ -908,9 +908,9 @@
                         </DataGrid.Columns>
                     </DataGrid>
                     <TextBlock Text="Quick flag, not a verdict: a very high context-switch rate on one thread is the signature of a spin-wait or livelock, not a confirmed diagnosis. Waiting/duration figures use an approximate clock-tick conversion, not a certified measurement."
-                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" FontStyle="Italic" TextWrapping="Wrap" Margin="0,8,0,0" />
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" FontStyle="Italic" TextWrapping="Wrap" Margin="0,8,0,0" />
                     <TextBlock Text="#261: per-process thread wait-reason breakdown is on the Processes tab - select a process there to see its breakdown."
-                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" FontStyle="Italic" TextWrapping="Wrap" Margin="0,4,0,0" />
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" FontStyle="Italic" TextWrapping="Wrap" Margin="0,4,0,0" />
                 </StackPanel>
             </Border>
 
@@ -919,11 +919,11 @@
                 <StackPanel>
                     <TextBlock Text="Possible priority inversion" FontWeight="SemiBold" Margin="0,0,0,6" />
                     <TextBlock Text="A high-priority thread has been sitting ready-to-run (not running) across several consecutive samples while a lower-priority thread keeps running - a sampled pattern over a few ticks, not a traced/proven verdict."
-                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8" />
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,8" />
                     <ItemsControl ItemsSource="{Binding PriorityInversionHints}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <TextBlock Text="{Binding SummaryText}" FontSize="12" TextWrapping="Wrap" Foreground="{DynamicResource WarningBrush}" Margin="0,0,0,6" />
+                                <TextBlock Text="{Binding SummaryText}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Foreground="{DynamicResource WarningBrush}" Margin="0,0,0,6" />
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
@@ -946,7 +946,7 @@
             <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
                 <StackPanel>
                     <TextBlock Text="MMCSS &amp; multimedia scheduling" FontWeight="SemiBold" Margin="0,0,0,6" />
-                    <TextBlock Text="{Binding MmcssAudit.StatusText}" TextWrapping="Wrap" FontSize="12" Margin="0,0,0,10">
+                    <TextBlock Text="{Binding MmcssAudit.StatusText}" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Margin="0,0,0,10">
                         <TextBlock.Style>
                             <Style TargetType="TextBlock">
                                 <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
@@ -958,17 +958,17 @@
                             </Style>
                         </TextBlock.Style>
                     </TextBlock>
-                    <TextBlock FontSize="12.5" Margin="0,0,0,2">
+                    <TextBlock FontSize="{StaticResource FontStrong}" Margin="0,0,0,2">
                         <Run Text="Service status: " FontWeight="SemiBold" /><Run Text="{Binding MmcssAudit.ServiceStatusText, Mode=OneWay}" />
                     </TextBlock>
-                    <TextBlock FontSize="12.5" Margin="0,0,0,2">
+                    <TextBlock FontSize="{StaticResource FontStrong}" Margin="0,0,0,2">
                         <Run Text="SystemResponsiveness: " FontWeight="SemiBold" /><Run Text="{Binding MmcssAudit.SystemResponsivenessText, Mode=OneWay}" />
                     </TextBlock>
-                    <TextBlock FontSize="12.5" Margin="0,0,0,10">
+                    <TextBlock FontSize="{StaticResource FontStrong}" Margin="0,0,0,10">
                         <Run Text="NetworkThrottlingIndex: " FontWeight="SemiBold" /><Run Text="{Binding MmcssAudit.NetworkThrottlingText, Mode=OneWay}" />
                     </TextBlock>
                     <TextBlock Text="NetworkThrottlingIndex throttles non-multimedia network traffic whenever a registered multimedia task is active - a common, invisible cause of &quot;the network gets slow while gaming/watching video&quot; reports."
-                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" FontStyle="Italic" TextWrapping="Wrap" Margin="0,0,0,10" />
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" FontStyle="Italic" TextWrapping="Wrap" Margin="0,0,0,10" />
                     <DataGrid ItemsSource="{Binding MmcssAudit.TaskProfiles}" MaxHeight="160" IsReadOnly="True">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="Task" Binding="{Binding TaskName}" Width="1*" />
@@ -990,7 +990,7 @@
                 <StackPanel>
                     <TextBlock Text=".NET GC pause monitor" FontWeight="SemiBold" Margin="0,0,0,6" />
                     <TextBlock Text="Aggregate %Time-in-GC and collection counts per managed process, via the .NET CLR Memory performance counters - not a real per-pause millisecond duration (that would need the optional ETW-based deep mode, which isn't implemented here). A sustained high %Time in GC is still a strong signal of GC-driven stalls."
-                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,10" />
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,10" />
                     <views:VfdMeter Title="Worst %Time in GC right now" Glow="True" HorizontalAlignment="Left" MinWidth="260" Margin="0,0,0,10"
                                     ValueText="{Binding WorstGcPercentTimeInGc, StringFormat={}{0:0.#}%}" Unit="%"
                                     SubText="{Binding WorstGcProcessName}"
@@ -1027,7 +1027,7 @@
                  jitter, a per-process present monitor (frame time/FPS/present mode/stutter),
                  display-mode/HAGS/Game-DVR audits, and raw-input latency/polling-rate. -->
             <Separator Margin="0,4,0,20" />
-            <TextBlock Text="Display &amp; frames" FontWeight="Bold" FontSize="18" Margin="0,0,0,12" />
+            <TextBlock Text="Display &amp; frames" FontWeight="Bold" FontSize="{StaticResource FontTitle}" Margin="0,0,0,12" />
 
             <!-- #247/#248: DWM composition timing readout + dropped/missed-frames chart - an
                  in-box, no-ETW view of whether the compositor is keeping up. Rides the cheap
@@ -1035,7 +1035,7 @@
             <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
                 <StackPanel>
                     <TextBlock Text="DWM composition timing" FontWeight="SemiBold" Margin="0,0,0,6" />
-                    <TextBlock Text="{Binding DwmComposition.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,10" />
+                    <TextBlock Text="{Binding DwmComposition.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,10" />
                     <UniformGrid Columns="2" Margin="0,0,0,10">
                         <views:VfdMeter Title="Refresh rate" Glow="True" Margin="0,0,8,0"
                                         ValueText="{Binding DwmComposition.RefreshRateHz, StringFormat={}{0:0.##}}" Unit="Hz"
@@ -1046,7 +1046,7 @@
                                         SubText="{Binding DwmComposition.FramesDisplayed, StringFormat={}{0:N0} frame(s) displayed this session}"
                                         AccentBrush="{DynamicResource WarningBrush}" />
                     </UniformGrid>
-                    <TextBlock FontSize="12" Margin="0,0,0,8">
+                    <TextBlock FontSize="{StaticResource FontBody}" Margin="0,0,0,8">
                         <Run Text="Dropped: " FontWeight="SemiBold" /><Run Text="{Binding DwmComposition.FramesDropped, Mode=OneWay}" />
                         <Run Text="    Missed: " FontWeight="SemiBold" /><Run Text="{Binding DwmComposition.FramesMissed, Mode=OneWay}" />
                         <Run Text="    Late: " FontWeight="SemiBold" /><Run Text="{Binding DwmComposition.FramesLate, Mode=OneWay}" />
@@ -1064,7 +1064,7 @@
                 <StackPanel>
                     <TextBlock Text="VBlank jitter probe" FontWeight="SemiBold" Margin="0,0,0,6" />
                     <TextBlock Text="Loops on DwmFlush() and times the interval between vblanks - a healthy system shows a tight distribution around the refresh period; compositor stalls show up as a long tail."
-                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8" />
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,8" />
                     <WrapPanel Margin="0,0,0,8">
                         <Button Content="Start" Command="{Binding StartVBlankCommand}" Style="{StaticResource SuccessButton}" Margin="0,0,8,4" />
                         <Button Content="Stop" Command="{Binding StopVBlankCommand}" Style="{StaticResource DangerButton}" Margin="0,0,8,4" />
@@ -1080,7 +1080,7 @@
                                         ValueText="{Binding VBlankSnapshot.MaxMs, StringFormat={}{0:0.###}}" Unit="ms"
                                         AccentBrush="{DynamicResource DangerBrush}" />
                     </UniformGrid>
-                    <TextBlock Text="{Binding VBlankSnapshot.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding VBlankSnapshot.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" />
                 </StackPanel>
             </Border>
 
@@ -1090,7 +1090,7 @@
                 <StackPanel>
                     <TextBlock Text="Present monitor (per-app frame time)" FontWeight="SemiBold" Margin="0,0,0,6" />
                     <TextBlock Text="Real-time ETW capture of Microsoft-Windows-DxgKrnl/Dwm-Core present/flip/vsync/queue-packet events, correlated per process - actual frame times for whatever is rendering, not just an average FPS."
-                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8" />
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,8" />
                     <Border Background="{DynamicResource DangerMutedBrush}" BorderBrush="{DynamicResource DangerBrush}"
                             BorderThickness="1" CornerRadius="8" Padding="10,6" Margin="0,0,0,8">
                         <Border.Style>
@@ -1103,17 +1103,17 @@
                                 </Style.Triggers>
                             </Style>
                         </Border.Style>
-                        <TextBlock Text="logman.exe/tracerpt.exe weren't found on this system." Foreground="{DynamicResource DangerBrush}" FontSize="12" />
+                        <TextBlock Text="logman.exe/tracerpt.exe weren't found on this system." Foreground="{DynamicResource DangerBrush}" FontSize="{StaticResource FontBody}" />
                     </Border>
                     <WrapPanel Margin="0,0,0,8">
                         <Button Content="Start" Command="{Binding StartPresentMonitorCommand}" Style="{StaticResource SuccessButton}" Margin="0,0,8,4" />
                         <Button Content="Stop" Command="{Binding StopPresentMonitorCommand}" Style="{StaticResource DangerButton}" Margin="0,0,8,4" />
-                        <TextBlock Text="{Binding PresentStatusText}" VerticalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" Margin="0,0,0,4" />
+                        <TextBlock Text="{Binding PresentStatusText}" VerticalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" Margin="0,0,0,4" />
                     </WrapPanel>
 
                     <!-- #251: headline stutter numbers for the busiest captured app. -->
                     <TextBlock Text="{Binding HeadlinePresentRow.ProcessName, StringFormat=Headline app: {0}, TargetNullValue=No app captured yet - press Start and let it render.}"
-                               FontWeight="SemiBold" FontSize="12.5" Margin="0,0,0,6" />
+                               FontWeight="SemiBold" FontSize="{StaticResource FontStrong}" Margin="0,0,0,6" />
                     <UniformGrid Columns="4" Margin="0,0,0,4">
                         <views:VfdMeter Title="Avg FPS" Glow="True" Margin="0,0,8,0"
                                         ValueText="{Binding HeadlinePresentRow.AvgFps, StringFormat={}{0:0.#}}"
@@ -1131,7 +1131,7 @@
                                         AccentBrush="{DynamicResource TextSecondaryBrush}" />
                     </UniformGrid>
                     <TextBlock Text="1%-low/0.1%-low/hitch-count are the numbers that actually correspond to felt stutter, unlike a single average-FPS figure."
-                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" FontStyle="Italic" TextWrapping="Wrap" Margin="0,0,0,10" />
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" FontStyle="Italic" TextWrapping="Wrap" Margin="0,0,0,10" />
 
                     <!-- #258: click-to-photon estimate - hidden whenever the present monitor isn't
                          currently running, per the item's own framing. -->
@@ -1141,7 +1141,7 @@
                                         SubText="Click-to-photon estimate, excluding display panel latency"
                                         AccentBrush="{DynamicResource AccentBrush}" />
                         <TextBlock Text="Only available while both this present monitor and the input-latency probe below are running - an estimate, not a certified measurement."
-                                   Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" FontStyle="Italic" TextWrapping="Wrap" Margin="0,4,0,0" />
+                                   Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" FontStyle="Italic" TextWrapping="Wrap" Margin="0,4,0,0" />
                     </StackPanel>
 
                     <!-- #251 (nice-to-have): frame-time-vs-index scatter for the headline app. -->
@@ -1168,7 +1168,7 @@
                     <!-- #259: long-running GPU packets / preemption events, named to their owning
                          process - a plain-text cross-link to the Stability tab's own TDR history
                          satisfies this item's ask without new cross-tab plumbing. -->
-                    <TextBlock Text="GPU packet &amp; preemption stalls" FontWeight="SemiBold" FontSize="12.5" Margin="0,0,0,4" />
+                    <TextBlock Text="GPU packet &amp; preemption stalls" FontWeight="SemiBold" FontSize="{StaticResource FontStrong}" Margin="0,0,0,4" />
                     <DataGrid ItemsSource="{Binding GpuStallRows}" MaxHeight="180" IsReadOnly="True">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="Time" Binding="{Binding Timestamp, StringFormat={}{0:T}}" Width="90" />
@@ -1178,7 +1178,7 @@
                         </DataGrid.Columns>
                     </DataGrid>
                     <TextBlock Text="Quick flag, not a verdict: a long GPU packet or a preemption event is a near-miss for a TDR (GPU driver reset), not a confirmed one - see the Stability tab's own TDR event history for actual driver-reset counts."
-                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" FontStyle="Italic" TextWrapping="Wrap" Margin="0,8,0,0" />
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" FontStyle="Italic" TextWrapping="Wrap" Margin="0,8,0,0" />
                 </StackPanel>
             </Border>
 
@@ -1197,9 +1197,9 @@
                     </Grid>
 
                     <!-- #253 -->
-                    <TextBlock Text="#253: refresh rate &amp; display mode" FontWeight="SemiBold" FontSize="12.5" Margin="0,4,0,4" />
-                    <TextBlock Text="{Binding DisplayModeAudit.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,6" />
-                    <TextBlock Text="Multiple monitors are running at different refresh rates." Foreground="{DynamicResource WarningBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,6">
+                    <TextBlock Text="#253: refresh rate &amp; display mode" FontWeight="SemiBold" FontSize="{StaticResource FontStrong}" Margin="0,4,0,4" />
+                    <TextBlock Text="{Binding DisplayModeAudit.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,6" />
+                    <TextBlock Text="Multiple monitors are running at different refresh rates." Foreground="{DynamicResource WarningBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,6">
                         <TextBlock.Style>
                             <Style TargetType="TextBlock">
                                 <Setter Property="Visibility" Value="Collapsed" />
@@ -1229,25 +1229,25 @@
                     </DataGrid>
 
                     <!-- #254 -->
-                    <TextBlock Text="#254: hardware-accelerated GPU scheduling" FontWeight="SemiBold" FontSize="12.5" Margin="0,0,0,4" />
-                    <TextBlock FontSize="12.5" Margin="0,0,0,2">
+                    <TextBlock Text="#254: hardware-accelerated GPU scheduling" FontWeight="SemiBold" FontSize="{StaticResource FontStrong}" Margin="0,0,0,4" />
+                    <TextBlock FontSize="{StaticResource FontStrong}" Margin="0,0,0,2">
                         <Run Text="HAGS: " FontWeight="SemiBold" /><Run Text="{Binding HardwareScheduling.HwSchModeText, Mode=OneWay}" />
                     </TextBlock>
-                    <TextBlock FontSize="12.5" Margin="0,0,0,2">
+                    <TextBlock FontSize="{StaticResource FontStrong}" Margin="0,0,0,2">
                         <Run Text="TDR delay: " FontWeight="SemiBold" /><Run Text="{Binding HardwareScheduling.TdrDelayText, Mode=OneWay}" />
                     </TextBlock>
-                    <TextBlock FontSize="12.5" Margin="0,0,0,8">
+                    <TextBlock FontSize="{StaticResource FontStrong}" Margin="0,0,0,8">
                         <Run Text="TDR level: " FontWeight="SemiBold" /><Run Text="{Binding HardwareScheduling.TdrLevelText, Mode=OneWay}" />
                     </TextBlock>
-                    <TextBlock Text="{Binding HardwareScheduling.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" FontStyle="Italic" TextWrapping="Wrap" Margin="0,0,0,14" />
+                    <TextBlock Text="{Binding HardwareScheduling.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" FontStyle="Italic" TextWrapping="Wrap" Margin="0,0,0,14" />
 
                     <!-- #255 -->
-                    <TextBlock Text="#255: Game DVR &amp; fullscreen optimisation" FontWeight="SemiBold" FontSize="12.5" Margin="0,0,0,4" />
-                    <TextBlock Text="{Binding GameDvrAudit.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,6" />
-                    <TextBlock FontSize="12.5" Margin="0,0,0,2">
+                    <TextBlock Text="#255: Game DVR &amp; fullscreen optimisation" FontWeight="SemiBold" FontSize="{StaticResource FontStrong}" Margin="0,0,0,4" />
+                    <TextBlock Text="{Binding GameDvrAudit.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,6" />
+                    <TextBlock FontSize="{StaticResource FontStrong}" Margin="0,0,0,2">
                         <Run Text="Game Bar auto-mode: " FontWeight="SemiBold" /><Run Text="{Binding GameDvrAudit.GameBarAutoModeEnabled, Mode=OneWay, TargetNullValue=Unknown}" />
                     </TextBlock>
-                    <TextBlock Text="Apps with fullscreen optimizations force-disabled (compatibility layer):" FontSize="12" Margin="0,4,0,2">
+                    <TextBlock Text="Apps with fullscreen optimizations force-disabled (compatibility layer):" FontSize="{StaticResource FontBody}" Margin="0,4,0,2">
                         <TextBlock.Style>
                             <Style TargetType="TextBlock">
                                 <Setter Property="Visibility" Value="Visible" />
@@ -1262,7 +1262,7 @@
                     <ItemsControl ItemsSource="{Binding GameDvrAudit.FullscreenOptForcedOffApps}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <TextBlock Text="{Binding}" FontSize="11.5" FontFamily="Consolas" TextWrapping="Wrap" Margin="0,0,0,2" />
+                                <TextBlock Text="{Binding}" FontSize="{StaticResource FontBody}" FontFamily="Consolas" TextWrapping="Wrap" Margin="0,0,0,2" />
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
@@ -1275,7 +1275,7 @@
                 <StackPanel>
                     <TextBlock Text="Input latency &amp; polling rate" FontWeight="SemiBold" Margin="0,0,0,6" />
                     <TextBlock Text="Registers for raw mouse/keyboard input on a hidden window and compares each event's arrival against its own OS-queue timestamp - how long input sat in the queue before this app saw it, system-wide."
-                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8" />
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,8" />
                     <WrapPanel Margin="0,0,0,8">
                         <Button Content="Start" Command="{Binding StartInputLatencyCommand}" Style="{StaticResource SuccessButton}" Margin="0,0,8,4" />
                         <Button Content="Stop" Command="{Binding StopInputLatencyCommand}" Style="{StaticResource DangerButton}" Margin="0,0,8,4" />
@@ -1289,22 +1289,22 @@
                                         ValueText="{Binding InputLatencySnapshot.SampleCount}"
                                         AccentBrush="{DynamicResource TextSecondaryBrush}" />
                     </UniformGrid>
-                    <TextBlock Text="{Binding InputLatencySnapshot.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,10" />
+                    <TextBlock Text="{Binding InputLatencySnapshot.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,10" />
 
                     <Separator Margin="0,0,0,10" />
-                    <TextBlock Text="#257: polling rate &amp; input queue size" FontWeight="SemiBold" FontSize="12.5" Margin="0,0,0,4" />
-                    <TextBlock FontSize="12.5" Margin="0,0,0,2">
+                    <TextBlock Text="#257: polling rate &amp; input queue size" FontWeight="SemiBold" FontSize="{StaticResource FontStrong}" Margin="0,0,0,4" />
+                    <TextBlock FontSize="{StaticResource FontStrong}" Margin="0,0,0,2">
                         <Run Text="Mouse: " FontWeight="SemiBold" />
                         <Run Text="{Binding InputLatencySnapshot.MouseReportHz, StringFormat={}{0:0} Hz, TargetNullValue=Unknown - move the mouse while this is running, Mode=OneWay}" />
                         <Run Text="   (queue size: " /><Run Text="{Binding InputLatencySnapshot.MouseQueueSizeText, Mode=OneWay}" /><Run Text=")" />
                     </TextBlock>
-                    <TextBlock FontSize="12.5" Margin="0,0,0,2">
+                    <TextBlock FontSize="{StaticResource FontStrong}" Margin="0,0,0,2">
                         <Run Text="Keyboard: " FontWeight="SemiBold" />
                         <Run Text="{Binding InputLatencySnapshot.KeyboardReportHz, StringFormat={}{0:0} Hz, TargetNullValue=Unknown - type while this is running, Mode=OneWay}" />
                         <Run Text="   (queue size: " /><Run Text="{Binding InputLatencySnapshot.KeyboardQueueSizeText, Mode=OneWay}" /><Run Text=")" />
                     </TextBlock>
                     <TextBlock Text="Report rate is derived from the tightest back-to-back intervals actually observed while running, not a direct hardware read - a &quot;1000Hz&quot; mouse genuinely reporting at 125Hz becomes visible here."
-                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" FontStyle="Italic" TextWrapping="Wrap" Margin="0,6,0,0" />
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" FontStyle="Italic" TextWrapping="Wrap" Margin="0,6,0,0" />
                 </StackPanel>
             </Border>
 
@@ -1315,14 +1315,14 @@
                  memory-compression pressure (#282). #283 (working-set trim detector) lives on the
                  Processes tab instead, directly on the process row. -->
             <Separator Margin="0,4,0,20" />
-            <TextBlock Text="Page-fault storms &amp; memory-driven hitching" FontWeight="Bold" FontSize="18" Margin="0,0,0,12" />
+            <TextBlock Text="Page-fault storms &amp; memory-driven hitching" FontWeight="Bold" FontSize="{StaticResource FontTitle}" Margin="0,0,0,12" />
 
             <!-- #278/#279: hard-fault rate plus per-process/per-file attribution. -->
             <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
                 <StackPanel>
                     <TextBlock Text="Hard-fault rate" FontWeight="SemiBold" Margin="0,0,0,6" />
                     <TextBlock Text="Hard faults (a page actually read from disk) are what stall a thread and freeze the UI for a moment - this is the number behind &quot;the whole PC freezes for a second when I alt-tab&quot;. Soft faults (resolved straight from RAM) dominate Memory\Page Faults/sec and happen harmlessly by the thousand, so they're excluded here."
-                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,10" />
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,10" />
                     <UniformGrid Columns="2" Margin="0,0,0,10">
                         <views:VfdMeter Title="Hard faults (pages read from disk)" Glow="True" Margin="0,0,8,0"
                                         ValueText="{Binding HardFaultRate.PagesInputPerSec, StringFormat={}{0:0}}" Unit="/s"
@@ -1335,7 +1335,7 @@
                     </UniformGrid>
                     <lvc:CartesianChart Series="{Binding HardFaultSeries}" XAxes="{Binding HiddenXAxes}" YAxes="{Binding HardFaultYAxes}"
                                          Height="140" TooltipPosition="Hidden" LegendPosition="Hidden" Background="Transparent" Margin="0,0,0,10" />
-                    <TextBlock Text="Hard-fault performance counters aren't available on this system." Foreground="{DynamicResource WarningBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,10">
+                    <TextBlock Text="Hard-fault performance counters aren't available on this system." Foreground="{DynamicResource WarningBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,10">
                         <TextBlock.Style>
                             <Style TargetType="TextBlock">
                                 <Setter Property="Visibility" Value="Collapsed" />
@@ -1349,9 +1349,9 @@
                     </TextBlock>
 
                     <Separator Margin="0,0,0,10" />
-                    <TextBlock Text="#279: per-process attribution (approximate mode)" FontWeight="SemiBold" FontSize="12.5" Margin="0,0,0,4" />
+                    <TextBlock Text="#279: per-process attribution (approximate mode)" FontWeight="SemiBold" FontSize="{StaticResource FontStrong}" Margin="0,0,0,4" />
                     <TextBlock Text="Process(*)\Page Faults/sec — approximate: this is total (soft+hard) faults per process, since Windows exposes no per-process hard-fault-only counter. Press Start below for genuinely hard-fault-only, per-file attribution."
-                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" FontStyle="Italic" TextWrapping="Wrap" Margin="0,0,0,8" />
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" FontStyle="Italic" TextWrapping="Wrap" Margin="0,0,0,8" />
                     <DataGrid ItemsSource="{Binding TopPageFaultProcesses}" MaxHeight="200" IsReadOnly="True" Margin="0,0,0,14">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="Process" Binding="{Binding ProcessName}" Width="1.4*" />
@@ -1360,9 +1360,9 @@
                         </DataGrid.Columns>
                     </DataGrid>
 
-                    <TextBlock Text="#279: per-file attribution (ETW deep mode)" FontWeight="SemiBold" FontSize="12.5" Margin="0,0,0,4" />
+                    <TextBlock Text="#279: per-file attribution (ETW deep mode)" FontWeight="SemiBold" FontSize="{StaticResource FontStrong}" Margin="0,0,0,4" />
                     <TextBlock Text="An ETW capture of Microsoft-Windows-Kernel-Memory's hard-fault events, which do carry a faulting file name - genuinely hard-fault-only, unlike the approximate mode above."
-                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8" />
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,8" />
                     <Border Background="{DynamicResource DangerMutedBrush}" BorderBrush="{DynamicResource DangerBrush}"
                             BorderThickness="1" CornerRadius="8" Padding="14,10" Margin="0,0,0,8">
                         <Border.Style>
@@ -1375,14 +1375,14 @@
                                 </Style.Triggers>
                             </Style>
                         </Border.Style>
-                        <TextBlock Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" FontSize="12.5"
+                        <TextBlock Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" FontSize="{StaticResource FontStrong}"
                                    Text="Hard-fault ETW capture unavailable — logman.exe/tracerpt.exe weren't found on this system." />
                     </Border>
                     <WrapPanel Margin="0,0,0,8">
                         <Button Content="Start" Command="{Binding StartHardFaultEtwCommand}" Style="{StaticResource SuccessButton}" Margin="0,0,8,4" />
                         <Button Content="Stop" Command="{Binding StopHardFaultEtwCommand}" Style="{StaticResource DangerButton}" Margin="0,0,8,4" />
                     </WrapPanel>
-                    <TextBlock Text="{Binding HardFaultEtwStatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,10" />
+                    <TextBlock Text="{Binding HardFaultEtwStatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,10" />
                     <DataGrid ItemsSource="{Binding HardFaultEtwRows}" MaxHeight="200" IsReadOnly="True">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="Process" Binding="{Binding ProcessName}" Width="1.2*" />
@@ -1400,7 +1400,7 @@
             <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
                 <StackPanel>
                     <TextBlock Text="Standby-list depletion" FontWeight="SemiBold" Margin="0,0,0,6" />
-                    <TextBlock Text="{Binding StandbyListInfo.StatusText}" Foreground="{DynamicResource WarningBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,10">
+                    <TextBlock Text="{Binding StandbyListInfo.StatusText}" Foreground="{DynamicResource WarningBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,10">
                         <TextBlock.Style>
                             <Style TargetType="TextBlock">
                                 <Setter Property="Visibility" Value="Collapsed" />
@@ -1412,7 +1412,7 @@
                             </Style>
                         </TextBlock.Style>
                     </TextBlock>
-                    <TextBlock Text="{Binding StandbyThrashingStatusText}" TextWrapping="Wrap" FontSize="12.5" Margin="0,0,0,10">
+                    <TextBlock Text="{Binding StandbyThrashingStatusText}" TextWrapping="Wrap" FontSize="{StaticResource FontStrong}" Margin="0,0,0,10">
                         <TextBlock.Style>
                             <Style TargetType="TextBlock">
                                 <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
@@ -1451,7 +1451,7 @@
                                         AccentBrush="{DynamicResource TextSecondaryBrush}" />
                     </UniformGrid>
                     <TextBlock Text="See the Memory tab's &quot;Standby list&quot; meter (Diagnostics section) for a simpler at-a-glance view of the same reclaimable-cache figure."
-                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" FontStyle="Italic" TextWrapping="Wrap" Margin="0,4,0,0" />
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" FontStyle="Italic" TextWrapping="Wrap" Margin="0,4,0,0" />
                 </StackPanel>
             </Border>
 
@@ -1461,7 +1461,7 @@
             <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
                 <StackPanel>
                     <TextBlock Text="Page-file placement &amp; latency" FontWeight="SemiBold" Margin="0,0,0,6" />
-                    <TextBlock Text="{Binding PageFileVolumesStatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,10" />
+                    <TextBlock Text="{Binding PageFileVolumesStatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,10" />
                     <UniformGrid Columns="2" Margin="0,0,0,10">
                         <views:VfdMeter Title="System-wide committed" Glow="False" Margin="0,0,8,0"
                                         Percent="{Binding Performance.CommittedPercent}"
@@ -1484,10 +1484,10 @@
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <StackPanel Orientation="Horizontal">
-                                            <Button Content="Check" FontSize="10" Padding="6,1" Margin="0,0,8,0"
+                                            <Button Content="Check" FontSize="{StaticResource FontCaption}" Padding="6,0" Margin="0,0,8,0"
                                                     Command="{Binding DataContext.CheckPageFileFragmentationCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                                     CommandParameter="{Binding}" IsEnabled="{Binding IsMechanical}" />
-                                            <TextBlock Text="{Binding FragmentationStatusText}" VerticalAlignment="Center" FontSize="11.5">
+                                            <TextBlock Text="{Binding FragmentationStatusText}" VerticalAlignment="Center" FontSize="{StaticResource FontBody}">
                                                 <TextBlock.Style>
                                                     <Style TargetType="TextBlock">
                                                         <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
@@ -1506,9 +1506,9 @@
                         </DataGrid.Columns>
                     </DataGrid>
                     <TextBlock Text="&quot;Check&quot; is disabled for an SSD page file - fragmentation isn't meaningful there, matching the Storage tab's own HDD-fragmentation card."
-                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" FontStyle="Italic" TextWrapping="Wrap" Margin="0,8,0,0" />
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" FontStyle="Italic" TextWrapping="Wrap" Margin="0,8,0,0" />
                     <TextBlock Text="Disk read/write latency above is this app's only disk-latency figure - it's aggregated across every physical disk (PhysicalDisk\_Total), not broken out per volume, so it's shown as system-wide context rather than a number specific to whichever drive a page file happens to sit on."
-                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" FontStyle="Italic" TextWrapping="Wrap" Margin="0,4,0,0" />
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" FontStyle="Italic" TextWrapping="Wrap" Margin="0,4,0,0" />
                 </StackPanel>
             </Border>
 
@@ -1517,7 +1517,7 @@
             <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
                 <StackPanel>
                     <TextBlock Text="Memory-compression pressure" FontWeight="SemiBold" Margin="0,0,0,6" />
-                    <TextBlock Text="{Binding MemoryCompression.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,10">
+                    <TextBlock Text="{Binding MemoryCompression.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,10">
                         <TextBlock.Style>
                             <Style TargetType="TextBlock">
                                 <Setter Property="Visibility" Value="Collapsed" />
@@ -1540,7 +1540,7 @@
                                         AccentBrush="{DynamicResource TextSecondaryBrush}" />
                     </UniformGrid>
                     <TextBlock Text="A large compressed-memory pool means decompression is happening constantly under the hood - that cost shows up as CPU spikes/micro-stutter, not as a separate memory warning. See the Memory tab for overall RAM pressure."
-                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" FontStyle="Italic" TextWrapping="Wrap" Margin="0,4,0,0" />
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" FontStyle="Italic" TextWrapping="Wrap" Margin="0,4,0,0" />
                 </StackPanel>
             </Border>
 
@@ -1548,7 +1548,7 @@
 
             <TextBlock Text="Background-activity ribbon" Style="{StaticResource CardTitle}" Margin="0,10,0,4" />
             <TextBlock Text="Known background workloads that commonly cause stutter/hitching - Defender scans, indexing, servicing, cloud sync, and more - summarised as one strip. Green = active, gray = idle, dim = unknown/unavailable."
-                       Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5" TextWrapping="Wrap" Margin="0,0,0,10" />
+                       Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,10" />
             <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
                 <ItemsControl ItemsSource="{Binding BackgroundActivityRows}">
                     <ItemsControl.ItemsPanel>
@@ -1561,9 +1561,9 @@
                                     <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
                                         <Ellipse Width="9" Height="9" VerticalAlignment="Center" Margin="0,0,6,0"
                                                  Fill="{Binding State, Converter={StaticResource BackgroundActivityStateToBrushConverter}}" />
-                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="12" />
+                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="{StaticResource FontBody}" />
                                     </StackPanel>
-                                    <TextBlock Text="{Binding CostText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" TextWrapping="Wrap" MaxWidth="220" />
+                                    <TextBlock Text="{Binding CostText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" MaxWidth="220" />
                                 </StackPanel>
                             </Border>
                         </DataTemplate>
@@ -1576,7 +1576,7 @@
             <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
                 <StackPanel>
                     <TextBlock Text="Windows Defender scan state" FontWeight="SemiBold" Margin="0,0,0,6" />
-                    <TextBlock Text="{Binding DefenderScan.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8">
+                    <TextBlock Text="{Binding DefenderScan.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,8">
                         <TextBlock.Style>
                             <Style TargetType="TextBlock">
                                 <Setter Property="Visibility" Value="Collapsed" />
@@ -1598,7 +1598,7 @@
                                 </Style.Triggers>
                             </Style>
                         </StackPanel.Style>
-                        <TextBlock Text="{Binding DefenderScan.ScanActivityText}" TextWrapping="Wrap" FontSize="12.5" Margin="0,0,0,10">
+                        <TextBlock Text="{Binding DefenderScan.ScanActivityText}" TextWrapping="Wrap" FontSize="{StaticResource FontStrong}" Margin="0,0,0,10">
                             <TextBlock.Style>
                                 <Style TargetType="TextBlock">
                                     <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
@@ -1618,14 +1618,14 @@
                                             ValueText="{Binding DefenderScan.SignatureLastUpdated, StringFormat={}{0:g}, TargetNullValue=Unknown}"
                                             AccentBrush="{DynamicResource TextSecondaryBrush}" />
                         </UniformGrid>
-                        <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}">
+                        <TextBlock TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}">
                             <Run Text="Real-time protection: " /><Run Text="{Binding DefenderScan.RealTimeProtectionEnabled, Mode=OneWay}" />
                             <Run Text=" · Scan only if idle: " /><Run Text="{Binding DefenderScan.ScanOnlyIfIdleEnabled, Mode=OneWay}" />
                             <Run Text=" · Schedule: " /><Run Text="{Binding DefenderScan.ScanScheduleTimeText, TargetNullValue=Unknown, Mode=OneWay}" />
                         </TextBlock>
                     </StackPanel>
                     <TextBlock Text="Quick flag, not a verdict: Windows exposes no documented &quot;a scan is running right now&quot; API - this combines MsMpEng's own CPU usage (already polled on the Processes tab) with the most recent scan start time."
-                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" FontStyle="Italic" TextWrapping="Wrap" Margin="0,8,0,0" />
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" FontStyle="Italic" TextWrapping="Wrap" Margin="0,8,0,0" />
                 </StackPanel>
             </Border>
 
@@ -1654,7 +1654,7 @@
                             </TextBlock>
                         </Button>
                     </Grid>
-                    <TextBlock Text="{Binding DefenderHotPathsStatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,10" />
+                    <TextBlock Text="{Binding DefenderHotPathsStatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,10" />
                     <DataGrid ItemsSource="{Binding DefenderHotPaths}" MaxHeight="220" IsReadOnly="True">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="Directory" Binding="{Binding Directory}" Width="2.5*" />
@@ -1664,7 +1664,7 @@
                         </DataGrid.Columns>
                     </DataGrid>
                     <TextBlock Text="Adding exclusions reduces protection. This is a read-only report - this app makes no automatic changes to Defender exclusions."
-                               Foreground="{DynamicResource WarningBrush}" FontSize="11" FontStyle="Italic" TextWrapping="Wrap" Margin="0,8,0,0" />
+                               Foreground="{DynamicResource WarningBrush}" FontSize="{StaticResource FontBody}" FontStyle="Italic" TextWrapping="Wrap" Margin="0,8,0,0" />
                 </StackPanel>
             </Border>
 
@@ -1700,7 +1700,7 @@
                                         ValueText="{Binding SearchIndexerLive.TotalDiskBytesPerSec, Converter={StaticResource BytesToReadableConverter}}"
                                         AccentBrush="{DynamicResource TextSecondaryBrush}" />
                     </UniformGrid>
-                    <TextBlock Text="{Binding SearchIndexerCrawl.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8" />
+                    <TextBlock Text="{Binding SearchIndexerCrawl.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,8" />
                     <TextBlock Text="Indexed locations" Style="{StaticResource SubStat}" Margin="0,0,0,4" />
                     <ItemsControl ItemsSource="{Binding SearchIndexerCrawl.IndexedLocations}">
                         <ItemsControl.ItemsPanel>
@@ -1709,7 +1709,7 @@
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
                                 <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="8,4" Margin="0,0,6,6">
-                                    <TextBlock Text="{Binding}" FontSize="11" />
+                                    <TextBlock Text="{Binding}" FontSize="{StaticResource FontBody}" />
                                 </Border>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
@@ -1723,8 +1723,8 @@
             <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
                 <StackPanel>
                     <TextBlock Text="SysMain (Superfetch)" FontWeight="SemiBold" Margin="0,0,0,6" />
-                    <TextBlock Text="{Binding SysMain.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12.5" TextWrapping="Wrap" Margin="0,0,0,8" />
-                    <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}">
+                    <TextBlock Text="{Binding SysMain.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontStrong}" TextWrapping="Wrap" Margin="0,0,0,8" />
+                    <TextBlock TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}">
                         <Run Text="Service status: " /><Run Text="{Binding SysMain.ServiceStatusText, Mode=OneWay}" />
                         <Run Text=" · EnablePrefetcher: " /><Run Text="{Binding SysMain.PrefetcherEnabled, TargetNullValue=Unknown, Mode=OneWay}" />
                         <Run Text=" · EnableSuperfetch: " /><Run Text="{Binding SysMain.SuperfetchEnabled, TargetNullValue=Unknown, Mode=OneWay}" />
@@ -1756,10 +1756,10 @@
                             </TextBlock>
                         </Button>
                     </Grid>
-                    <TextBlock Text="{Binding DeliveryOptimization.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12.5" TextWrapping="Wrap" Margin="0,0,0,8" />
-                    <TextBlock Text="{Binding DeliveryOptimizationActivity.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,4" />
+                    <TextBlock Text="{Binding DeliveryOptimization.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontStrong}" TextWrapping="Wrap" Margin="0,0,0,8" />
+                    <TextBlock Text="{Binding DeliveryOptimizationActivity.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,4" />
                     <TextBlock Text="A live transfer-byte-count isn't cheaply readable without the Delivery Optimization COM/PowerShell API - the check above reports recent event-log volume as a proxy instead."
-                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" FontStyle="Italic" TextWrapping="Wrap" Margin="0,4,0,0" />
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" FontStyle="Italic" TextWrapping="Wrap" Margin="0,4,0,0" />
                 </StackPanel>
             </Border>
 
@@ -1788,7 +1788,7 @@
                             </TextBlock>
                         </Button>
                     </Grid>
-                    <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8">
+                    <TextBlock TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8">
                         <Run Text="wuauserv: " /><Run Text="{Binding WindowsUpdateActivity.ServiceStatusText, Mode=OneWay}" />
                     </TextBlock>
                     <DataGrid ItemsSource="{Binding WindowsUpdateActivity.ActiveProcesses}" MaxHeight="140" IsReadOnly="True" Margin="0,0,0,8">
@@ -1799,7 +1799,7 @@
                             <DataGridTextColumn Header="Disk" Binding="{Binding DiskBytesPerSec, Converter={StaticResource BytesToReadableConverter}}" Width="100" />
                         </DataGrid.Columns>
                     </DataGrid>
-                    <TextBlock Text="No servicing processes running is the normal case, not an error." Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" FontStyle="Italic" Margin="0,0,0,8">
+                    <TextBlock Text="No servicing processes running is the normal case, not an error." Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" FontStyle="Italic" Margin="0,0,0,8">
                         <TextBlock.Style>
                             <Style TargetType="TextBlock">
                                 <Setter Property="Visibility" Value="Collapsed" />
@@ -1811,7 +1811,7 @@
                             </Style>
                         </TextBlock.Style>
                     </TextBlock>
-                    <TextBlock Text="{Binding WindowsUpdateEvents.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8" />
+                    <TextBlock Text="{Binding WindowsUpdateEvents.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,8" />
                     <DataGrid ItemsSource="{Binding WindowsUpdateEvents.RecentEvents}" MaxHeight="180" IsReadOnly="True">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="Time" Binding="{Binding TimeCreated, StringFormat={}{0:g}}" Width="150" />
@@ -1846,7 +1846,7 @@
                             </TextBlock>
                         </Button>
                     </Grid>
-                    <TextBlock Text="{Binding BitsTransfersStatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,10" />
+                    <TextBlock Text="{Binding BitsTransfersStatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,10" />
                     <DataGrid ItemsSource="{Binding BitsTransfers}" MaxHeight="220" IsReadOnly="True">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="Job" Binding="{Binding DisplayName}" Width="2*" />
@@ -1887,7 +1887,7 @@
                             </TextBlock>
                         </Button>
                     </Grid>
-                    <TextBlock Text="{Binding ScheduledTasksRunningStatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,10" />
+                    <TextBlock Text="{Binding ScheduledTasksRunningStatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,10" />
                     <DataGrid ItemsSource="{Binding ScheduledTasksRunning}" MaxHeight="200" IsReadOnly="True" Margin="0,0,0,14">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="2.5*" />
@@ -1899,7 +1899,7 @@
                     </DataGrid>
 
                     <TextBlock Text="Automatic Maintenance" Style="{StaticResource SubStat}" Margin="0,0,0,4" />
-                    <TextBlock Text="{Binding AutomaticMaintenance.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8" />
+                    <TextBlock Text="{Binding AutomaticMaintenance.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,8" />
                     <ItemsControl ItemsSource="{Binding AutomaticMaintenance.Settings}">
                         <ItemsControl.ItemsPanel>
                             <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
@@ -1907,7 +1907,7 @@
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
                                 <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,6" Margin="0,0,8,8">
-                                    <TextBlock FontSize="11.5">
+                                    <TextBlock FontSize="{StaticResource FontBody}">
                                         <Run Text="{Binding SettingName, Mode=OneWay}" Foreground="{DynamicResource TextSecondaryBrush}" />
                                         <Run Text=": " />
                                         <Run Text="{Binding ValueText, Mode=OneWay}" FontWeight="SemiBold" />
@@ -1924,7 +1924,7 @@
                 <StackPanel>
                     <TextBlock Text="Cloud sync" FontWeight="SemiBold" Margin="0,0,0,6" />
                     <TextBlock Text="OneDrive.exe / Dropbox.exe / GoogleDriveFS.exe - presence and CPU/disk cost, matched by process name. Not a definitive &quot;is syncing right now&quot; API - none of these vendors expose one to third-party apps."
-                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,8" />
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,8" />
                     <DataGrid ItemsSource="{Binding CloudSyncProcesses}" MaxHeight="140" IsReadOnly="True" Margin="0,0,0,4">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="Process" Binding="{Binding ProcessName}" Width="1.5*" />
@@ -1933,7 +1933,7 @@
                             <DataGridTextColumn Header="Disk" Binding="{Binding DiskBytesPerSec, Converter={StaticResource BytesToReadableConverter}}" Width="100" />
                         </DataGrid.Columns>
                     </DataGrid>
-                    <TextBlock Text="No cloud-sync client currently running." Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" FontStyle="Italic" Margin="0,0,0,14">
+                    <TextBlock Text="No cloud-sync client currently running." Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" FontStyle="Italic" Margin="0,0,0,14">
                         <TextBlock.Style>
                             <Style TargetType="TextBlock">
                                 <Setter Property="Visibility" Value="Collapsed" />
@@ -1948,7 +1948,7 @@
 
                     <TextBlock Text="Game downloads (Steam / Epic)" FontWeight="SemiBold" Margin="0,0,0,6" />
                     <TextBlock Text="steamwebhelper.exe / EpicGamesLauncher.exe are loose proxies - presence and cost, not a definitive &quot;downloading right now&quot; state. Exact download-vs-idle detection isn't cheaply available for either client."
-                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,8" />
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,8" />
                     <DataGrid ItemsSource="{Binding GameClientProcesses}" MaxHeight="140" IsReadOnly="True" Margin="0,0,0,4">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="Process" Binding="{Binding ProcessName}" Width="1.5*" />
@@ -1957,7 +1957,7 @@
                             <DataGridTextColumn Header="Disk" Binding="{Binding DiskBytesPerSec, Converter={StaticResource BytesToReadableConverter}}" Width="100" />
                         </DataGrid.Columns>
                     </DataGrid>
-                    <TextBlock Text="No Steam/Epic helper process currently running." Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" FontStyle="Italic" Margin="0,0,0,14">
+                    <TextBlock Text="No Steam/Epic helper process currently running." Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" FontStyle="Italic" Margin="0,0,0,14">
                         <TextBlock.Style>
                             <Style TargetType="TextBlock">
                                 <Setter Property="Visibility" Value="Collapsed" />
@@ -1972,10 +1972,10 @@
 
                     <TextBlock Text="Disk defrag &amp; System Restore" FontWeight="SemiBold" Margin="0,0,0,6" />
                     <TextBlock Text="Reuses the Scheduled Tasks Running list above (Optimize Drives' &quot;ScheduledDefrag&quot; task and System Restore's &quot;SR&quot; task) rather than a second schtasks query - refresh that list to update this."
-                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,14" />
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,14" />
 
                     <TextBlock Text="Storage Sense" FontWeight="SemiBold" Margin="0,0,0,6" />
-                    <TextBlock Text="{Binding StorageSense.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12.5" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding StorageSense.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontStrong}" TextWrapping="Wrap" />
                 </StackPanel>
             </Border>
 
@@ -1998,9 +1998,9 @@
                         <TextBlock Grid.Column="0" Text="Flight recorder" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
                         <CheckBox Grid.Column="1" Content="Armed" IsChecked="{Binding FlightRecorderArmed}" VerticalAlignment="Center" />
                     </Grid>
-                    <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5" TextWrapping="Wrap" Margin="0,0,0,8"
+                    <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,8"
                                Text="A rolling 60-second, 10Hz buffer of CPU%, max per-core DPC%, run-queue length, hard-fault rate, frame time, input delay, and the foreground/top processes - all already sampled elsewhere on this tab, never resampled independently. The substrate for the trigger rules, ETW capture, and incident export/replay cards below." />
-                    <TextBlock Text="{Binding FlightRecorderStatusText}" FontSize="12.5" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding FlightRecorderStatusText}" FontSize="{StaticResource FontStrong}" TextWrapping="Wrap" />
                 </StackPanel>
             </Border>
 
@@ -2023,7 +2023,7 @@
                             <Button Content="Save rules" Command="{Binding SaveTriggerRulesCommand}" ToolTip="Rule edits (threshold/enabled) aren't auto-saved - click after editing, or Add/Remove which save automatically." />
                         </StackPanel>
                     </Grid>
-                    <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5" TextWrapping="Wrap" Margin="0,0,0,10"
+                    <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,10"
                                Text="When an enabled rule trips, this exports an incident bundle (#299) automatically - the ring buffer, hung windows, top DPC drivers, running scheduled tasks, foreground app, and (if armed below) an ETW capture. An 8-second cooldown keeps one sustained condition from exporting repeatedly." />
                     <ItemsControl ItemsSource="{Binding TriggerRules}">
                         <ItemsControl.ItemTemplate>
@@ -2040,14 +2040,14 @@
                                               ItemsSource="{Binding DataContext.TriggerKinds, RelativeSource={RelativeSource AncestorType=UserControl}}" />
                                     <TextBox Grid.Column="2" Text="{Binding Threshold, UpdateSourceTrigger=PropertyChanged}" VerticalAlignment="Center" Margin="0,0,10,0"
                                              ToolTip="Threshold (ms/µs/faults-per-sec/queue-length depending on the rule kind - ignored for &quot;WindowHung&quot;)." />
-                                    <Button Grid.Column="3" Content="Remove" FontSize="10" Padding="6,1" VerticalAlignment="Center"
+                                    <Button Grid.Column="3" Content="Remove" FontSize="{StaticResource FontCaption}" Padding="6,0" VerticalAlignment="Center"
                                             Command="{Binding DataContext.RemoveTriggerRuleCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                             CommandParameter="{Binding}" />
                                 </Grid>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
-                    <TextBlock Text="{Binding LastTriggerStatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0" />
+                    <TextBlock Text="{Binding LastTriggerStatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,8,0,0" />
                 </StackPanel>
             </Border>
 
@@ -2065,9 +2065,9 @@
                         <TextBlock Grid.Column="0" Text="ETW circular capture" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
                         <CheckBox Grid.Column="1" Content="Keep running" IsChecked="{Binding EtwCircularCaptureEnabled}" IsEnabled="{Binding WprToolsAvailable}" VerticalAlignment="Center" />
                     </Grid>
-                    <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5" TextWrapping="Wrap" Margin="0,0,0,6"
+                    <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,6"
                                Text="Off by default - has real background CPU/disk overhead while running. Keeps an in-memory circular wpr.exe trace so a trigger above can save the moment of a stutter to a real .etl for Windows Performance Analyzer, instead of just this app's own approximate numbers. Only one ETW session is allowed system-wide, so this competes with the DPC/present/hard-fault measurement sessions elsewhere on this tab." />
-                    <TextBlock Foreground="{DynamicResource DangerBrush}" FontSize="11.5" TextWrapping="Wrap" Margin="0,0,0,6"
+                    <TextBlock Foreground="{DynamicResource DangerBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,6"
                                Text="wpr.exe/tracerpt.exe weren't found on this system - ETW circular capture isn't available.">
                         <TextBlock.Style>
                             <Style TargetType="TextBlock">
@@ -2080,7 +2080,7 @@
                             </Style>
                         </TextBlock.Style>
                     </TextBlock>
-                    <TextBlock Text="{Binding EtwCircularCaptureStatusText}" FontSize="12" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding EtwCircularCaptureStatusText}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" />
                 </StackPanel>
             </Border>
 
@@ -2099,9 +2099,9 @@
                             <Button Content="Reveal in Explorer" Command="{Binding RevealIncidentCommand}" />
                         </StackPanel>
                     </Grid>
-                    <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5" TextWrapping="Wrap" Margin="0,0,0,8"
+                    <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,8"
                                Text="Writes a timestamped folder under %AppData%\TaskManagerPlus\IncidentBundles containing the ring-buffer CSV, a JSON snapshot of hung windows/top DPC drivers/running scheduled tasks/the foreground app, any saved ETW capture, and a Markdown summary. Fires automatically on a trigger above, or click Export incident any time." />
-                    <TextBlock Text="{Binding IncidentExportStatusText}" FontSize="12" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding IncidentExportStatusText}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" />
                 </StackPanel>
             </Border>
 
@@ -2119,7 +2119,7 @@
                         <TextBlock Grid.Column="0" Text="Incident timeline replay" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
                         <Button Grid.Column="1" Content="Load incident CSV..." Command="{Binding LoadIncidentReplayCommand}" />
                     </Grid>
-                    <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5" TextWrapping="Wrap" Margin="0,0,0,8"
+                    <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,8"
                                Text="Loads a ring-buffer.csv from an exported incident bundle above and lines CPU/DPC/run-queue/hard-fault-rate up on one shared time axis - a past incident re-examined without reproducing it. Drag the scrubber for the foreground app and top processes at that exact point." />
                     <lvc:CartesianChart Series="{Binding IncidentReplaySeries}" XAxes="{Binding IncidentReplayXAxes}" YAxes="{Binding IncidentReplayYAxes}"
                                          Height="200" TooltipPosition="Top" LegendPosition="Bottom" Background="Transparent" Margin="0,0,0,8">
@@ -2135,8 +2135,8 @@
                         </lvc:CartesianChart.Style>
                     </lvc:CartesianChart>
                     <Slider Minimum="0" Maximum="{Binding IncidentReplayMaxIndex}" Value="{Binding IncidentReplayScrubberIndex}" Margin="0,0,0,6" />
-                    <TextBlock Text="{Binding IncidentReplayScrubberText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5" TextWrapping="Wrap" Margin="0,0,0,6" />
-                    <TextBlock Text="{Binding IncidentReplayStatusText}" FontSize="12" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding IncidentReplayScrubberText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,6" />
+                    <TextBlock Text="{Binding IncidentReplayStatusText}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" />
                 </StackPanel>
             </Border>
 

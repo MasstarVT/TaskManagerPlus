@@ -26,7 +26,7 @@
                         </Style.Triggers>
                     </Style>
                 </Border.Style>
-                <TextBlock Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" FontSize="12.5">
+                <TextBlock Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" FontSize="{StaticResource FontStrong}">
                     <Run Text="Possible thermal throttling: " /><Run Text="{Binding ThrottleText, Mode=OneWay}" />
                 </TextBlock>
             </Border>
@@ -47,7 +47,7 @@
                         </Style.Triggers>
                     </Style>
                 </Border.Style>
-                <TextBlock Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" FontSize="12.5">
+                <TextBlock Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" FontSize="{StaticResource FontStrong}">
                     <Run Text="Possible power limit (not thermal): " /><Run Text="{Binding PowerLimitText, Mode=OneWay}" />
                 </TextBlock>
             </Border>
@@ -86,7 +86,7 @@
                     </Grid>
                     <!-- #141: crash/error markers, reusing whatever the Stability tab last read - toggleable. -->
                     <CheckBox Content="Show crash/error markers" IsChecked="{Binding Performance.ShowEventMarkers}"
-                               FontSize="10.5" HorizontalAlignment="Right" Margin="0,0,0,4" />
+                               FontSize="{StaticResource FontCaption}" HorizontalAlignment="Right" Margin="0,0,0,4" />
                     <lvc:CartesianChart Series="{Binding Performance.CpuSeries}" XAxes="{Binding Performance.HiddenXAxes}" YAxes="{Binding Performance.PercentYAxes}"
                                          Sections="{Binding Performance.EventMarkerSections}"
                                          Height="200" TooltipPosition="Hidden" LegendPosition="Hidden" Background="Transparent" />
@@ -110,7 +110,7 @@
                             <DataTemplate>
                                 <StackPanel>
                                     <TextBlock Text="{Binding NumaNode, StringFormat=NUMA node {0}}"
-                                               FontSize="10.5" FontWeight="SemiBold" Margin="0,4,0,6">
+                                               FontSize="{StaticResource FontCaption}" FontWeight="SemiBold" Margin="0,4,0,6">
                                         <TextBlock.Style>
                                             <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
                                                 <Setter Property="Visibility" Value="Collapsed" />
@@ -279,7 +279,7 @@
                      consecutive ticks in a row. See CpuViewModel.DeepIdleExitLatencySuspected's
                      remarks. -->
                 <TextBlock Text="{Binding DeepIdleExitLatencyText}" Foreground="{DynamicResource WarningBrush}"
-                           FontSize="11" FontStyle="Italic" TextWrapping="Wrap" Margin="0,8,0,0">
+                           FontSize="{StaticResource FontBody}" FontStyle="Italic" TextWrapping="Wrap" Margin="0,8,0,0">
                     <TextBlock.Style>
                         <Style TargetType="TextBlock">
                             <Setter Property="Visibility" Value="Collapsed" />
@@ -366,14 +366,14 @@
                                         <ColumnDefinition Width="220" />
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0" Text="{Binding Label}" VerticalAlignment="Center" FontSize="11.5"
+                                    <TextBlock Grid.Column="0" Text="{Binding Label}" VerticalAlignment="Center" FontSize="{StaticResource FontBody}"
                                                Foreground="{DynamicResource TextSecondaryBrush}" />
-                                    <Border Grid.Column="1" Height="14" CornerRadius="3" Background="{DynamicResource BgElevatedBrush}" HorizontalAlignment="Left" Width="220">
-                                        <Border CornerRadius="3" Background="{DynamicResource AccentBrush}" HorizontalAlignment="Left"
+                                    <Border Grid.Column="1" Height="14" CornerRadius="4" Background="{DynamicResource BgElevatedBrush}" HorizontalAlignment="Left" Width="220">
+                                        <Border CornerRadius="4" Background="{DynamicResource AccentBrush}" HorizontalAlignment="Left"
                                                 Width="{Binding Percent, Converter={StaticResource PercentToWidthConverter}, ConverterParameter=220}" />
                                     </Border>
                                     <TextBlock Grid.Column="2" Text="{Binding Percent, StringFormat={}{0:0.0}%}" Margin="8,0,0,0"
-                                               VerticalAlignment="Center" FontSize="11.5" FontWeight="SemiBold" />
+                                               VerticalAlignment="Center" FontSize="{StaticResource FontBody}" FontWeight="SemiBold" />
                                 </Grid>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
@@ -410,10 +410,10 @@
                                         </Style>
                                     </Border.Style>
                                     <StackPanel>
-                                        <TextBlock Text="{Binding CoreIndex, StringFormat=CPU {0}}" FontSize="10.5"
+                                        <TextBlock Text="{Binding CoreIndex, StringFormat=CPU {0}}" FontSize="{StaticResource FontCaption}"
                                                    Foreground="{DynamicResource TextSecondaryBrush}" />
-                                        <TextBlock Text="{Binding ProcessCount}" FontSize="18" FontWeight="SemiBold" />
-                                        <TextBlock Text="processes" FontSize="9" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        <TextBlock Text="{Binding ProcessCount}" FontSize="{StaticResource FontTitle}" FontWeight="SemiBold" />
+                                        <TextBlock Text="processes" FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextSecondaryBrush}" />
                                     </StackPanel>
                                 </Border>
                             </DataTemplate>
@@ -424,7 +424,7 @@
                          simplification, see CpuViewModel.HybridMisplacementText's remarks). Only
                          ever shown on genuinely hybrid systems, matching this whole card's own
                          HasHybridTopology gating. -->
-                    <TextBlock Text="{Binding HybridMisplacementText}" TextWrapping="Wrap" FontSize="11.5" Margin="0,10,0,0">
+                    <TextBlock Text="{Binding HybridMisplacementText}" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Margin="0,10,0,0">
                         <TextBlock.Style>
                             <Style TargetType="TextBlock">
                                 <Setter Property="Visibility" Value="Collapsed" />
@@ -467,7 +467,7 @@
                         </StackPanel>
                         <StackPanel Margin="3,0,3,0">
                             <TextBlock Text="Instruction sets" Style="{StaticResource SpecLabel}" />
-                            <TextBlock Style="{StaticResource SpecValue}" TextWrapping="Wrap" FontSize="12">
+                            <TextBlock Style="{StaticResource SpecValue}" TextWrapping="Wrap" FontSize="{StaticResource FontBody}">
                                 <Run Text="{Binding Features.Sse42Supported, StringFormat={}SSE4.2: {0}, Mode=OneWay}" />
                                 <Run Text="  ·  " />
                                 <Run Text="{Binding Features.AvxSupported, StringFormat={}AVX: {0}, Mode=OneWay}" />
@@ -485,7 +485,7 @@
                     <Border BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,1,0,0" Padding="0,10,0,0">
                         <StackPanel>
                             <TextBlock Text="Spectre/Meltdown mitigation override" Style="{StaticResource SpecLabel}" />
-                            <TextBlock Text="{Binding Features.MitigationOverrideText}" Style="{StaticResource SpecValue}" TextWrapping="Wrap" FontSize="12" />
+                            <TextBlock Text="{Binding Features.MitigationOverrideText}" Style="{StaticResource SpecValue}" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" />
                         </StackPanel>
                     </Border>
                 </StackPanel>
@@ -507,14 +507,14 @@
                                         <ColumnDefinition Width="220" />
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0" Text="{Binding Label}" VerticalAlignment="Center" FontSize="11.5"
+                                    <TextBlock Grid.Column="0" Text="{Binding Label}" VerticalAlignment="Center" FontSize="{StaticResource FontBody}"
                                                Foreground="{DynamicResource TextSecondaryBrush}" />
-                                    <Border Grid.Column="1" Height="12" CornerRadius="3" Background="{DynamicResource BgElevatedBrush}" HorizontalAlignment="Left" Width="220">
-                                        <Border CornerRadius="3" Background="{DynamicResource WarningBrush}" HorizontalAlignment="Left"
+                                    <Border Grid.Column="1" Height="12" CornerRadius="4" Background="{DynamicResource BgElevatedBrush}" HorizontalAlignment="Left" Width="220">
+                                        <Border CornerRadius="4" Background="{DynamicResource WarningBrush}" HorizontalAlignment="Left"
                                                 Width="{Binding Percent, Converter={StaticResource PercentToWidthConverter}, ConverterParameter=220}" />
                                     </Border>
                                     <TextBlock Grid.Column="2" Text="{Binding Percent, StringFormat={}{0:0.#}%}" Margin="8,0,0,0"
-                                               VerticalAlignment="Center" FontSize="11" />
+                                               VerticalAlignment="Center" FontSize="{StaticResource FontBody}" />
                                 </Grid>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
@@ -627,7 +627,7 @@
                     <ItemsControl ItemsSource="{Binding ProcessorPowerChecklist}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <TextBlock Text="{Binding}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8" />
+                                <TextBlock Text="{Binding}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,8" />
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>

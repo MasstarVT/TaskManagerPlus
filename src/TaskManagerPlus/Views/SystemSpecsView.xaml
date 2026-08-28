@@ -30,7 +30,7 @@
                         <TextBlock Text="{Binding Primary}" FontWeight="SemiBold" TextWrapping="Wrap" />
                         <!-- Disk health badge (SMART / WMI status) - empty and collapsed for
                              rows that don't carry a health concept (memory, GPU). -->
-                        <Border CornerRadius="3" Padding="5,1" Margin="8,0,0,0" VerticalAlignment="Center">
+                        <Border CornerRadius="4" Padding="4,0" Margin="8,0,0,0" VerticalAlignment="Center">
                             <Border.Style>
                                 <Style TargetType="Border">
                                     <Setter Property="Background" Value="{DynamicResource SuccessBrush}" />
@@ -45,7 +45,7 @@
                                     </Style.Triggers>
                                 </Style>
                             </Border.Style>
-                            <TextBlock Text="{Binding HealthText}" FontSize="10" FontWeight="SemiBold" Foreground="White">
+                            <TextBlock Text="{Binding HealthText}" FontSize="{StaticResource FontCaption}" FontWeight="SemiBold" Foreground="White">
                                 <TextBlock.Style>
                                     <Style TargetType="TextBlock">
                                         <Style.Triggers>
@@ -84,7 +84,7 @@
                         <TextBlock Text="{Binding Primary}" FontWeight="SemiBold" />
                         <!-- #29: dirty-bit badge - reuses the disk health badge's visual (colored
                              pill) but keyed off IsDirty instead of HealthText. -->
-                        <Border Background="{DynamicResource DangerBrush}" CornerRadius="3" Padding="5,1" Margin="8,0,0,0" VerticalAlignment="Center">
+                        <Border Background="{DynamicResource DangerBrush}" CornerRadius="4" Padding="4,0" Margin="8,0,0,0" VerticalAlignment="Center">
                             <Border.Style>
                                 <Style TargetType="Border">
                                     <Setter Property="Visibility" Value="Collapsed" />
@@ -95,12 +95,12 @@
                                     </Style.Triggers>
                                 </Style>
                             </Border.Style>
-                            <TextBlock Text="Needs chkdsk" FontSize="10" FontWeight="SemiBold" Foreground="White" />
+                            <TextBlock Text="Needs chkdsk" FontSize="{StaticResource FontCaption}" FontWeight="SemiBold" Foreground="White" />
                         </Border>
                         <!-- Round 9, #37: BitLocker badge - only shown for a confirmed "On" status,
                              not "Off"/"Unknown"/"Not applicable" (a permission gap or an
                              unencryptable volume isn't the same as a real finding). -->
-                        <Border Background="{DynamicResource SuccessBrush}" CornerRadius="3" Padding="5,1" Margin="8,0,0,0" VerticalAlignment="Center">
+                        <Border Background="{DynamicResource SuccessBrush}" CornerRadius="4" Padding="4,0" Margin="8,0,0,0" VerticalAlignment="Center">
                             <Border.Style>
                                 <Style TargetType="Border">
                                     <Setter Property="Visibility" Value="Collapsed" />
@@ -111,7 +111,7 @@
                                     </Style.Triggers>
                                 </Style>
                             </Border.Style>
-                            <TextBlock Text="BitLocker" FontSize="10" FontWeight="SemiBold" Foreground="White" />
+                            <TextBlock Text="BitLocker" FontSize="{StaticResource FontCaption}" FontWeight="SemiBold" Foreground="White" />
                         </Border>
                     </StackPanel>
                     <TextBlock Text="{Binding Secondary}" Style="{StaticResource SecondaryLine}" />
@@ -174,21 +174,21 @@
                 <Border Style="{StaticResource CardStyle}" Margin="0,0,8,16">
                     <StackPanel>
                         <TextBlock Text="Operating System" Style="{StaticResource CardTitle}" />
-                        <TextBlock Text="{Binding OsName}" Style="{StaticResource SpecValue}" FontSize="16" FontWeight="SemiBold" />
+                        <TextBlock Text="{Binding OsName}" Style="{StaticResource SpecValue}" FontSize="{StaticResource FontTitle}" FontWeight="SemiBold" />
                         <TextBlock Text="{Binding OsDetails}" Style="{StaticResource SubStat}" Margin="0,4,0,0" TextWrapping="Wrap" />
                     </StackPanel>
                 </Border>
                 <Border Style="{StaticResource CardStyle}" Margin="4,0,4,16">
                     <StackPanel>
                         <TextBlock Text="Processor" Style="{StaticResource CardTitle}" />
-                        <TextBlock Text="{Binding CpuName}" Style="{StaticResource SpecValue}" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" />
+                        <TextBlock Text="{Binding CpuName}" Style="{StaticResource SpecValue}" FontSize="{StaticResource FontTitle}" FontWeight="SemiBold" TextWrapping="Wrap" />
                         <TextBlock Text="{Binding CpuDetails}" Style="{StaticResource SubStat}" Margin="0,4,0,0" TextWrapping="Wrap" />
                     </StackPanel>
                 </Border>
                 <Border Style="{StaticResource CardStyle}" Margin="8,0,0,16">
                     <StackPanel>
                         <TextBlock Text="Memory" Style="{StaticResource CardTitle}" />
-                        <TextBlock Text="{Binding RamTotal}" Style="{StaticResource SpecValue}" FontSize="16" FontWeight="SemiBold" />
+                        <TextBlock Text="{Binding RamTotal}" Style="{StaticResource SpecValue}" FontSize="{StaticResource FontTitle}" FontWeight="SemiBold" />
                         <TextBlock Text="{Binding RamDetails}" Style="{StaticResource SubStat}" Margin="0,4,0,0" />
                         <!-- #441: CAS latency/primary timings, next to the speed figures above -
                              "Unknown" on almost every system today (LibreHardwareMonitorLib
@@ -285,7 +285,7 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" Text="RAM health" Style="{StaticResource CardTitle}" Margin="0" />
-                        <TextBlock Grid.Column="1" Text="{Binding RamHealthVerdictText}" FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center">
+                        <TextBlock Grid.Column="1" Text="{Binding RamHealthVerdictText}" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" VerticalAlignment="Center">
                             <TextBlock.Style>
                                 <Style TargetType="TextBlock">
                                     <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
@@ -303,7 +303,7 @@
                     <ItemsControl ItemsSource="{Binding RamHealthFindings}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <TextBlock Text="{Binding}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,4" />
+                                <TextBlock Text="{Binding}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,4" />
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
@@ -329,9 +329,9 @@
                                         <StackPanel Grid.Column="0" Margin="0,0,12,0">
                                             <StackPanel Orientation="Horizontal">
                                                 <TextBlock Text="{Binding Location}" FontWeight="SemiBold" />
-                                                <TextBlock Text="{Binding ChannelText}" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="8,0,0,0" VerticalAlignment="Center" />
+                                                <TextBlock Text="{Binding ChannelText}" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" Margin="8,0,0,0" VerticalAlignment="Center" />
                                                 <!-- #443: mismatch badge - "quick flag, not a verdict". -->
-                                                <Border Background="{DynamicResource WarningBrush}" CornerRadius="3" Padding="5,1" Margin="8,0,0,0" VerticalAlignment="Center">
+                                                <Border Background="{DynamicResource WarningBrush}" CornerRadius="4" Padding="4,0" Margin="8,0,0,0" VerticalAlignment="Center">
                                                     <Border.Style>
                                                         <Style TargetType="Border">
                                                             <Setter Property="Visibility" Value="Collapsed" />
@@ -342,7 +342,7 @@
                                                             </Style.Triggers>
                                                         </Style>
                                                     </Border.Style>
-                                                    <TextBlock Text="Mismatch" FontSize="10" FontWeight="SemiBold" Foreground="White" />
+                                                    <TextBlock Text="Mismatch" FontSize="{StaticResource FontCaption}" FontWeight="SemiBold" Foreground="White" />
                                                 </Border>
                                             </StackPanel>
                                             <TextBlock Style="{StaticResource SecondaryLine}">
@@ -357,7 +357,7 @@
                                             <TextBlock Text="{Binding XmpHintText}" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" Margin="0,4,0,0">
                                                 <TextBlock.Style>
                                                     <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
-                                                        <Setter Property="FontSize" Value="11" />
+                                                        <Setter Property="FontSize" Value="{StaticResource FontBody}" />
                                                         <Setter Property="Visibility" Value="Visible" />
                                                         <Style.Triggers>
                                                             <DataTrigger Binding="{Binding XmpHintText}" Value="">
@@ -371,7 +371,7 @@
                                             <TextBlock Text="{Binding MismatchText}" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" Margin="0,4,0,0">
                                                 <TextBlock.Style>
                                                     <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
-                                                        <Setter Property="FontSize" Value="11" />
+                                                        <Setter Property="FontSize" Value="{StaticResource FontBody}" />
                                                         <Setter Property="Visibility" Value="Visible" />
                                                         <Style.Triggers>
                                                             <DataTrigger Binding="{Binding IsMismatched}" Value="False">
@@ -414,7 +414,7 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" Text="Slot map" Style="{StaticResource CardTitle}" Margin="0" />
-                        <TextBlock Grid.Column="1" Text="{Binding MemoryArrayMaxCapacityText}" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="1" Text="{Binding MemoryArrayMaxCapacityText}" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" />
                     </Grid>
                     <ItemsControl ItemsSource="{Binding MemorySlots}" Margin="0,8,0,0">
                         <ItemsControl.ItemsPanel>
@@ -436,8 +436,8 @@
                                         </Style>
                                     </Border.Style>
                                     <StackPanel>
-                                        <TextBlock Text="{Binding SlotNumber, StringFormat=Slot {0}}" FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" />
-                                        <TextBlock Text="{Binding SummaryText}" FontSize="11.5" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,2,0,0">
+                                        <TextBlock Text="{Binding SlotNumber, StringFormat=Slot {0}}" FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        <TextBlock Text="{Binding SummaryText}" FontSize="{StaticResource FontBody}" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,2,0,0">
                                             <TextBlock.Style>
                                                 <Style TargetType="TextBlock">
                                                     <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
@@ -468,7 +468,7 @@
                             <TextBlock Text="{Binding MemoryChannelText}" TextWrapping="Wrap">
                                 <TextBlock.Style>
                                     <Style TargetType="TextBlock" BasedOn="{StaticResource SpecValue}">
-                                        <Setter Property="FontSize" Value="12.5" />
+                                        <Setter Property="FontSize" Value="{StaticResource FontStrong}" />
                                         <Style.Triggers>
                                             <DataTrigger Binding="{Binding MemoryChannelWarning}" Value="True">
                                                 <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
@@ -480,7 +480,7 @@
                         </StackPanel>
                         <StackPanel Margin="8,0,0,0">
                             <TextBlock Text="ECC" Style="{StaticResource SpecLabel}" />
-                            <TextBlock Text="{Binding MemoryEccStatusText}" Style="{StaticResource SpecValue}" FontSize="12.5" TextWrapping="Wrap" />
+                            <TextBlock Text="{Binding MemoryEccStatusText}" Style="{StaticResource SpecValue}" FontSize="{StaticResource FontStrong}" TextWrapping="Wrap" />
                         </StackPanel>
                     </UniformGrid>
                 </StackPanel>
@@ -496,7 +496,7 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" Text="{Binding CorrectedMemoryErrorCount, StringFormat={}{0} in the last 30 days}" Style="{StaticResource SpecValue}" />
-                        <TextBlock Grid.Column="1" Text="{Binding LastCorrectedMemoryErrorText}" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="1" Text="{Binding LastCorrectedMemoryErrorText}" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" />
                     </Grid>
                     <TextBlock Text="Occasional corrected errors happen on healthy ECC systems - a high or climbing count is worth a closer look. See the Stability tab for per-event DIMM/address hints."
                                Style="{StaticResource SubStat}" Margin="0,4,0,0" TextWrapping="Wrap" />
@@ -596,7 +596,7 @@
                             <TextBlock Text="{Binding PageFileLocationText}">
                                 <TextBlock.Style>
                                     <Style TargetType="TextBlock" BasedOn="{StaticResource SpecValue}">
-                                        <Setter Property="FontSize" Value="12" />
+                                        <Setter Property="FontSize" Value="{StaticResource FontBody}" />
                                         <Style.Triggers>
                                             <DataTrigger Binding="{Binding PageFileLocationWarning}" Value="True">
                                                 <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
@@ -657,7 +657,7 @@
                                     <StackPanel>
                                         <StackPanel Orientation="Horizontal">
                                             <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextWrapping="Wrap" />
-                                            <TextBlock Text="{Binding ConnectionType}" FontSize="10.5" Margin="8,0,0,0" VerticalAlignment="Center"
+                                            <TextBlock Text="{Binding ConnectionType}" FontSize="{StaticResource FontCaption}" Margin="8,0,0,0" VerticalAlignment="Center"
                                                        Foreground="{DynamicResource TextTertiaryBrush}" />
                                         </StackPanel>
                                         <TextBlock Style="{StaticResource SubStat}" Margin="0,2,0,8">
@@ -669,7 +669,7 @@
                                         </TextBlock>
 
                                         <!-- #686: refresh-rate-vs-EDID mismatch. -->
-                                        <TextBlock Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" FontSize="11.5" Margin="0,0,0,6">
+                                        <TextBlock Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Margin="0,0,0,6">
                                             <TextBlock.Style>
                                                 <Style TargetType="TextBlock">
                                                     <Setter Property="Visibility" Value="Collapsed" />
@@ -685,7 +685,7 @@
                                         </TextBlock>
 
                                         <!-- #687: cable bandwidth sufficiency. -->
-                                        <TextBlock Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" FontSize="11.5" Margin="0,0,0,6"
+                                        <TextBlock Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Margin="0,0,0,6"
                                                    Text="{Binding BandwidthWarningText}">
                                             <TextBlock.Style>
                                                 <Style TargetType="TextBlock">
@@ -718,7 +718,7 @@
                                         </TextBlock>
 
                                         <!-- #685: raw-EDID identity panel. -->
-                                        <Expander Header="EDID details" Foreground="{DynamicResource TextSecondaryBrush}" Background="Transparent" FontSize="11.5">
+                                        <Expander Header="EDID details" Foreground="{DynamicResource TextSecondaryBrush}" Background="Transparent" FontSize="{StaticResource FontBody}">
                                             <Expander.Style>
                                                 <Style TargetType="Expander">
                                                     <Setter Property="Visibility" Value="Visible" />
@@ -783,8 +783,8 @@
                                         <Run Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}" />
                                         <Run Text=" — " /><Run Text="{Binding Description, Mode=OneWay}" />
                                     </TextBlock>
-                                    <Border Grid.Column="1" Background="{DynamicResource AccentMutedBrush}" CornerRadius="3" Padding="5,1" VerticalAlignment="Top">
-                                        <TextBlock Text="{Binding Source}" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource AccentBrush}" />
+                                    <Border Grid.Column="1" Background="{DynamicResource AccentMutedBrush}" CornerRadius="4" Padding="4,0" VerticalAlignment="Top">
+                                        <TextBlock Text="{Binding Source}" FontSize="{StaticResource FontCaption}" FontWeight="SemiBold" Foreground="{DynamicResource AccentBrush}" />
                                     </Border>
                                 </Grid>
                             </DataTemplate>
@@ -817,7 +817,7 @@
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
                                 <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="4" Padding="8,4" Margin="0,0,8,8">
-                                    <TextBlock Text="{Binding}" FontSize="12" />
+                                    <TextBlock Text="{Binding}" FontSize="{StaticResource FontBody}" />
                                 </Border>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
@@ -847,7 +847,7 @@
                     <ItemsControl ItemsSource="{Binding DefenderExclusions}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <TextBlock Text="{Binding}" FontSize="12.5" Margin="0,0,0,6" TextTrimming="CharacterEllipsis" />
+                                <TextBlock Text="{Binding}" FontSize="{StaticResource FontStrong}" Margin="0,0,0,6" TextTrimming="CharacterEllipsis" />
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
@@ -1005,7 +1005,7 @@
                          Platform security section - plain text, not a live navigation link (this
                          app has no cross-tab navigation plumbing yet), so this stays a small,
                          honest deviation from a literal clickable "link" per the item's own text. -->
-                    <TextBlock Margin="0,10,0,0" TextWrapping="Wrap" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}"
+                    <TextBlock Margin="0,10,0,0" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}"
                                Text="More detail - HVCI/VBS prerequisites, LSA protection, Secure Boot setup mode, extended TPM info, and more - is on the Security tab's Platform security section." />
 
                     <Border Background="{DynamicResource DangerMutedBrush}" BorderBrush="{DynamicResource DangerBrush}"
@@ -1020,7 +1020,7 @@
                                 </Style.Triggers>
                             </Style>
                         </Border.Style>
-                        <TextBlock Foreground="{DynamicResource DangerBrush}" FontSize="11.5" TextWrapping="Wrap"
+                        <TextBlock Foreground="{DynamicResource DangerBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap"
                                    Text="This system disk uses the legacy MBR partition style - that's a hard blocker for both Windows 11 and Secure Boot, which both require a GPT system disk. Converting in place requires a disk-to-GPT conversion (e.g. mbr2gpt.exe) before either will work." />
                     </Border>
                 </StackPanel>

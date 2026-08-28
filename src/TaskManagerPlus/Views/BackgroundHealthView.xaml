@@ -17,8 +17,8 @@
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
-                <TextBlock Grid.Column="0" Text="{Binding TimestampLocal, StringFormat={}{0:g}}" FontSize="12" />
-                <TextBlock Grid.Column="1" FontSize="12" FontWeight="SemiBold" Margin="10,0,10,0">
+                <TextBlock Grid.Column="0" Text="{Binding TimestampLocal, StringFormat={}{0:g}}" FontSize="{StaticResource FontBody}" />
+                <TextBlock Grid.Column="1" FontSize="{StaticResource FontBody}" FontWeight="SemiBold" Margin="10,0,10,0">
                     <Run Text="{Binding Value, StringFormat={}{0:0.#}, Mode=OneWay}" />
                     <Run Text=" " /><Run Text="{Binding MetricLabel, Mode=OneWay}" />
                 </TextBlock>
@@ -36,9 +36,9 @@
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
-                <TextBlock Grid.Column="0" Text="{Binding TimestampLocal, StringFormat={}{0:g}}" FontSize="12" />
-                <TextBlock Grid.Column="1" Text="{Binding Title}" FontSize="12" TextWrapping="Wrap" Margin="10,0,10,0" />
-                <TextBlock Grid.Column="2" FontSize="10.5" Foreground="{DynamicResource TextTertiaryBrush}">
+                <TextBlock Grid.Column="0" Text="{Binding TimestampLocal, StringFormat={}{0:g}}" FontSize="{StaticResource FontBody}" />
+                <TextBlock Grid.Column="1" Text="{Binding Title}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="10,0,10,0" />
+                <TextBlock Grid.Column="2" FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextTertiaryBrush}">
                     <Run Text="{Binding Channel, Mode=OneWay}" />
                     <Run Text=" (quiet-hours suppressed)">
                         <Run.Style>
@@ -75,9 +75,9 @@
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="130" />
                 </Grid.ColumnDefinitions>
-                <TextBlock Grid.Column="0" Text="{Binding Title}" FontSize="12" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,10,0" />
+                <TextBlock Grid.Column="0" Text="{Binding Title}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,10,0" />
                 <ComboBox Grid.Column="1" ItemsSource="{Binding Source={x:Static vm:BackgroundHealthViewModel.AvailableChannels}}"
-                          SelectedItem="{Binding Channel}" FontSize="11" />
+                          SelectedItem="{Binding Channel}" FontSize="{StaticResource FontBody}" />
             </Grid>
         </DataTemplate>
     </UserControl.Resources>
@@ -96,7 +96,7 @@
                 <Button Grid.Column="0" Content="&#8592; Back"
                         Command="{Binding DataContext.HideBackgroundHealthCommand, RelativeSource={RelativeSource AncestorType=UserControl, AncestorLevel=2}}"
                         Padding="10,4" Margin="0,0,14,0" VerticalAlignment="Center" />
-                <TextBlock Grid.Column="1" Text="Background Health" FontSize="17" FontWeight="SemiBold" VerticalAlignment="Center" />
+                <TextBlock Grid.Column="1" Text="Background Health" FontSize="{StaticResource FontTitle}" FontWeight="SemiBold" VerticalAlignment="Center" />
                 <!-- The chart/worst-moments/alert-digest below are on-demand (initial load + this
                      button), not a periodic re-parse of health-history.jsonl - see
                      BackgroundHealthViewModel.OnCollectorTicked's remarks. -->
@@ -170,7 +170,7 @@
             <Border Style="{StaticResource CardStyle}" Margin="0,0,0,14">
                 <StackPanel>
                     <TextBlock Text="Alert digest" Style="{StaticResource CardTitle}" Margin="0,0,0,8" />
-                    <TextBlock Text="{Binding AlertDigestText}" TextWrapping="Wrap" FontSize="12.5" Margin="0,0,0,10" />
+                    <TextBlock Text="{Binding AlertDigestText}" TextWrapping="Wrap" FontSize="{StaticResource FontStrong}" Margin="0,0,0,10" />
                     <ItemsControl ItemsSource="{Binding RecentAlerts}" ItemTemplate="{StaticResource AlertHistoryTemplate}" />
                 </StackPanel>
             </Border>

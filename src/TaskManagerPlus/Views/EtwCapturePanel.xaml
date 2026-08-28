@@ -31,7 +31,7 @@
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
             <StackPanel Grid.Column="0">
-                <TextBlock Text="ETW trace capture" Style="{StaticResource CardTitle}" FontSize="14" Margin="0" />
+                <TextBlock Text="ETW trace capture" Style="{StaticResource CardTitle}" FontSize="{StaticResource FontSection}" Margin="0" />
                 <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,2,0,0"
                             Text="Running ETW sessions, boot-start autologgers, the ETW provider registration catalog, and WPR capture workflows - shells out to logman.exe/wpr.exe/tracerpt.exe, the same known-tool approach the rest of this app uses." />
             </StackPanel>
@@ -46,7 +46,7 @@
                 <Border Background="{DynamicResource AccentMutedBrush}" CornerRadius="8" Padding="10,8" Margin="0,0,0,12"
                          Visibility="{Binding IsBootTracePending, Converter={StaticResource BoolToVisibilityConverter}}">
                     <StackPanel>
-                        <TextBlock Text="{Binding BootTracePendingText}" TextWrapping="Wrap" FontSize="11.5" />
+                        <TextBlock Text="{Binding BootTracePendingText}" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" />
                         <WrapPanel Margin="0,8,0,0">
                             <Button Content="Collect boot trace" Command="{Binding CollectBootTraceCommand}" Padding="8,3" Margin="0,0,8,0" />
                             <Button Content="Cancel (discard)" Command="{Binding CancelBootTraceCommand}" Padding="8,3" Margin="0,0,8,0" />
@@ -56,14 +56,14 @@
                 </Border>
 
                 <!-- #146: ETW session inspector -->
-                <Expander Header="ETW sessions" IsExpanded="True" FontSize="11.5" Margin="0,0,0,10">
+                <Expander Header="ETW sessions" IsExpanded="True" FontSize="{StaticResource FontBody}" Margin="0,0,0,10">
                     <StackPanel Margin="0,10,0,0">
-                        <TextBlock TextWrapping="Wrap" FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8"
+                        <TextBlock TextWrapping="Wrap" FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8"
                                     Text="Every running kernel/user ETW session, with provider count, buffer size/count, the real-time flag, its log file, and - the actual point of this card - events lost and buffers lost. A lossy or runaway session is a genuine and usually invisible cause of background CPU/disk load." />
                         <WrapPanel Margin="0,0,0,8">
                             <Button Content="Refresh sessions" Command="{Binding RefreshSessionsCommand}" Padding="8,3" Margin="0,0,8,0" />
                             <ProgressBar Width="110" Height="6" IsIndeterminate="{Binding IsSessionsLoading}" VerticalAlignment="Center" Margin="0,0,8,0" />
-                            <TextBlock Text="{Binding SessionsStatusText}" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" FontSize="11" />
+                            <TextBlock Text="{Binding SessionsStatusText}" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" FontSize="{StaticResource FontBody}" />
                         </WrapPanel>
                         <DataGrid ItemsSource="{Binding Sessions}" SelectedItem="{Binding SelectedSession}"
                                    IsReadOnly="True" AutoGenerateColumns="False" MaxHeight="220" Margin="0,0,0,8">
@@ -93,23 +93,23 @@
                         </DataGrid>
                         <StackPanel Visibility="{Binding SelectedSession, Converter={StaticResource NullToVisibilityConverter}}">
                             <TextBlock Text="Raw session detail (logman query &quot;name&quot; -ets) - the source for every parsed field above; shown here since logman's exact wording isn't a stable contract across Windows releases."
-                                        TextWrapping="Wrap" FontSize="10" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4" />
+                                        TextWrapping="Wrap" FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4" />
                             <TextBox Text="{Binding SelectedSession.RawDetailText, Mode=OneWay}" IsReadOnly="True"
                                       TextWrapping="NoWrap" AcceptsReturn="True" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
-                                      FontFamily="Consolas" FontSize="10" MaxHeight="140" Background="{DynamicResource BgElevatedBrush}" BorderThickness="0" Padding="6" />
+                                      FontFamily="Consolas" FontSize="{StaticResource FontCaption}" MaxHeight="140" Background="{DynamicResource BgElevatedBrush}" BorderThickness="0" Padding="6" />
                         </StackPanel>
                     </StackPanel>
                 </Expander>
 
                 <!-- #147: autologger inspector -->
-                <Expander Header="Autologgers (boot-start tracing)" FontSize="11.5" Margin="0,0,0,10">
+                <Expander Header="Autologgers (boot-start tracing)" FontSize="{StaticResource FontBody}" Margin="0,0,0,10">
                     <StackPanel Margin="0,10,0,0">
-                        <TextBlock TextWrapping="Wrap" FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8"
+                        <TextBlock TextWrapping="Wrap" FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8"
                                     Text="Boot-start trace sessions configured under HKLM\SYSTEM\CurrentControlSet\Control\WMI\Autologger - these aren't live ETW sessions, they're dormant configuration the kernel reads and starts tracing from before Windows finishes booting. Explains persistent background tracing (DiagTrack, WdiContextLog, SleepStudy, EventLog-* itself, third-party vendor loggers) that silently re-arms on every reboot." />
                         <WrapPanel Margin="0,0,0,8">
                             <Button Content="Refresh autologgers" Command="{Binding RefreshAutologgersCommand}" Padding="8,3" Margin="0,0,8,0" />
                             <ProgressBar Width="110" Height="6" IsIndeterminate="{Binding IsAutologgersLoading}" VerticalAlignment="Center" Margin="0,0,8,0" />
-                            <TextBlock Text="{Binding AutologgersStatusText}" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" FontSize="11" />
+                            <TextBlock Text="{Binding AutologgersStatusText}" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" FontSize="{StaticResource FontBody}" />
                         </WrapPanel>
                         <DataGrid ItemsSource="{Binding Autologgers}" SelectedItem="{Binding SelectedAutologger}"
                                    IsReadOnly="True" AutoGenerateColumns="False" MaxHeight="200" Margin="0,0,0,8">
@@ -132,17 +132,17 @@
                             </DataGrid.Columns>
                         </DataGrid>
                         <StackPanel Visibility="{Binding SelectedAutologger, Converter={StaticResource NullToVisibilityConverter}}">
-                            <TextBlock Text="{Binding SelectedAutologger.ProviderNames.Count, StringFormat='Enabled providers ({0})'}" FontSize="11" FontWeight="SemiBold" Margin="0,0,0,4" />
-                            <ListBox ItemsSource="{Binding SelectedAutologger.ProviderNames}" MaxHeight="120" FontSize="10.5" FontFamily="Consolas"
+                            <TextBlock Text="{Binding SelectedAutologger.ProviderNames.Count, StringFormat='Enabled providers ({0})'}" FontSize="{StaticResource FontBody}" FontWeight="SemiBold" Margin="0,0,0,4" />
+                            <ListBox ItemsSource="{Binding SelectedAutologger.ProviderNames}" MaxHeight="120" FontSize="{StaticResource FontCaption}" FontFamily="Consolas"
                                       BorderThickness="0" Background="{DynamicResource BgElevatedBrush}" />
                         </StackPanel>
                     </StackPanel>
                 </Expander>
 
                 <!-- #148: ETW provider catalog ("ETW Providers" - distinct from #113's "Event Providers") -->
-                <Expander Header="ETW providers - who's listening" FontSize="11.5" Margin="0,0,0,10">
+                <Expander Header="ETW providers - who's listening" FontSize="{StaticResource FontBody}" Margin="0,0,0,10">
                     <StackPanel Margin="0,10,0,0">
-                        <TextBlock TextWrapping="Wrap" FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8"
+                        <TextBlock TextWrapping="Wrap" FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8"
                                     Text="logman's own ETW provider-registration catalog (name + GUID) - a different, smaller catalog than the Events tab's own &quot;Event Providers&quot; panel, which reads message/level/keyword metadata for building readable event descriptions. This one answers a different question: is anything tracing this provider right now, and at what level/keywords." />
                         <Grid>
                             <Grid.ColumnDefinitions>
@@ -153,13 +153,13 @@
 
                             <DockPanel Grid.Column="0">
                                 <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,6">
-                                    <Button Content="Load providers" Command="{Binding LoadEtwProvidersCommand}" Padding="6,2" Margin="0,0,6,0" FontSize="11" />
+                                    <Button Content="Load providers" Command="{Binding LoadEtwProvidersCommand}" Padding="6,2" Margin="0,0,6,0" FontSize="{StaticResource FontBody}" />
                                     <ProgressBar Width="70" Height="6" IsIndeterminate="{Binding IsEtwProvidersLoading}" VerticalAlignment="Center" />
                                 </WrapPanel>
                                 <TextBox DockPanel.Dock="Top" Text="{Binding EtwProviderSearchText, UpdateSourceTrigger=PropertyChanged}"
                                           Margin="0,0,0,6" ToolTip="Filter by provider name or GUID" />
                                 <ListBox ItemsSource="{Binding EtwProvidersView}" SelectedItem="{Binding SelectedEtwProvider}"
-                                          BorderThickness="0" Background="Transparent" FontSize="11">
+                                          BorderThickness="0" Background="Transparent" FontSize="{StaticResource FontBody}">
                                     <ListBox.ItemTemplate>
                                         <DataTemplate DataType="{x:Type models:EtwProviderRow}">
                                             <TextBlock Text="{Binding Name}" ToolTip="{Binding Guid}" TextTrimming="CharacterEllipsis" />
@@ -169,8 +169,8 @@
                             </DockPanel>
 
                             <StackPanel Grid.Column="2">
-                                <TextBlock Text="{Binding SelectedEtwProvider.Guid}" FontFamily="Consolas" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,6" />
-                                <TextBlock Text="{Binding ListeningSessionsStatusText}" TextWrapping="Wrap" FontSize="11" Margin="0,0,0,6" />
+                                <TextBlock Text="{Binding SelectedEtwProvider.Guid}" FontFamily="Consolas" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,6" />
+                                <TextBlock Text="{Binding ListeningSessionsStatusText}" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Margin="0,0,0,6" />
                                 <DataGrid ItemsSource="{Binding ListeningSessions}" IsReadOnly="True" AutoGenerateColumns="False" MaxHeight="180">
                                     <DataGrid.Columns>
                                         <DataGridTextColumn Header="Session" Binding="{Binding SessionName}" Width="*" />
@@ -184,9 +184,9 @@
                 </Expander>
 
                 <!-- #155: real-time provider tail without WPA -->
-                <Expander Header="Real-time provider tail (no WPA needed)" FontSize="11.5" Margin="0,0,0,10">
+                <Expander Header="Real-time provider tail (no WPA needed)" FontSize="{StaticResource FontBody}" Margin="0,0,0,10">
                     <StackPanel Margin="0,10,0,0">
-                        <TextBlock TextWrapping="Wrap" FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8"
+                        <TextBlock TextWrapping="Wrap" FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8"
                                     Text="Watches one provider's events live, without needing Windows Performance Analyzer - creates a throwaway real-time session (logman create trace -rt) and streams tracerpt's live output into the scrolling pane below. Stopping (or closing the app) always tears the session down, whichever happens first." />
                         <Grid Margin="0,0,0,8">
                             <Grid.ColumnDefinitions>
@@ -195,7 +195,7 @@
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <TextBox Grid.Column="0" Text="{Binding TailProviderName, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,8,0"
-                                      IsReadOnly="{Binding IsTailing}" VerticalAlignment="Center" FontSize="11"
+                                      IsReadOnly="{Binding IsTailing}" VerticalAlignment="Center" FontSize="{StaticResource FontBody}"
                                       ToolTip="Provider name - picking one above (ETW providers) fills this in automatically" />
                             <Button Grid.Column="1" Content="Start tail" Command="{Binding StartTailCommand}" Padding="10,4" Margin="0,0,8,0" />
                             <Button Grid.Column="2" Content="Stop" Command="{Binding StopTailCommand}" Padding="10,4" />
@@ -205,29 +205,29 @@
                                      Visibility="{Binding IsTailing, Converter={StaticResource BoolToVisibilityConverter}}">
                                 <StackPanel Orientation="Horizontal">
                                     <Ellipse Width="8" Height="8" Fill="{DynamicResource DangerBrush}" VerticalAlignment="Center" Margin="0,0,6,0" />
-                                    <TextBlock Text="Tailing live" FontSize="11" VerticalAlignment="Center" />
+                                    <TextBlock Text="Tailing live" FontSize="{StaticResource FontBody}" VerticalAlignment="Center" />
                                 </StackPanel>
                             </Border>
-                            <TextBlock Text="{Binding TailStatusText}" TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" />
+                            <TextBlock Text="{Binding TailStatusText}" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" />
                         </WrapPanel>
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0" Text="Live output" FontSize="10" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" />
-                            <Button Grid.Column="1" Content="Clear" Command="{Binding ClearTailOutputCommand}" Padding="6,2" FontSize="10" />
+                            <TextBlock Grid.Column="0" Text="Live output" FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" />
+                            <Button Grid.Column="1" Content="Clear" Command="{Binding ClearTailOutputCommand}" Padding="6,2" FontSize="{StaticResource FontCaption}" />
                         </Grid>
                         <TextBox Text="{Binding TailOutputText, Mode=OneWay}" IsReadOnly="True"
                                   TextWrapping="NoWrap" AcceptsReturn="True" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
-                                  FontFamily="Consolas" FontSize="10" Height="160" Background="{DynamicResource BgElevatedBrush}" BorderThickness="0" Padding="6" Margin="0,4,0,0" />
+                                  FontFamily="Consolas" FontSize="{StaticResource FontCaption}" Height="160" Background="{DynamicResource BgElevatedBrush}" BorderThickness="0" Padding="6" Margin="0,4,0,0" />
                     </StackPanel>
                 </Expander>
 
                 <!-- #156: extract one provider's events from an .etl to CSV -->
-                <Expander Header="Extract a provider's events to CSV" FontSize="11.5" Margin="0,0,0,10">
+                <Expander Header="Extract a provider's events to CSV" FontSize="{StaticResource FontBody}" Margin="0,0,0,10">
                     <StackPanel Margin="0,10,0,0">
-                        <TextBlock TextWrapping="Wrap" FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8"
+                        <TextBlock TextWrapping="Wrap" FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8"
                                     Text="Re-parses a saved .etl to CSV (tracerpt -of CSV), keeping only the rows for one chosen provider - handy for handing a trace off to a spreadsheet or attaching to a bug report without the whole file." />
                         <Grid Margin="0,0,0,6">
                             <Grid.ColumnDefinitions>
@@ -235,7 +235,7 @@
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <TextBox Grid.Column="0" Text="{Binding ExtractSourceEtlPath, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,8,0"
-                                      IsReadOnly="{Binding IsExtracting}" VerticalAlignment="Center" FontSize="11"
+                                      IsReadOnly="{Binding IsExtracting}" VerticalAlignment="Center" FontSize="{StaticResource FontBody}"
                                       ToolTip="Source .etl file - defaults to the most recently captured/collected trace" />
                             <Button Grid.Column="1" Content="Browse..." Command="{Binding BrowseExtractSourceCommand}" Padding="8,3" />
                         </Grid>
@@ -245,19 +245,19 @@
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <TextBox Grid.Column="0" Text="{Binding ExtractProviderName, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,8,0"
-                                      IsReadOnly="{Binding IsExtracting}" VerticalAlignment="Center" FontSize="11"
+                                      IsReadOnly="{Binding IsExtracting}" VerticalAlignment="Center" FontSize="{StaticResource FontBody}"
                                       ToolTip="Provider name - picking one above (ETW providers) fills this in automatically" />
                             <Button Grid.Column="1" Content="Extract to CSV..." Command="{Binding ExtractProviderCsvCommand}" Padding="8,3" />
                         </Grid>
                         <WrapPanel>
                             <ProgressBar Width="110" Height="6" IsIndeterminate="{Binding IsExtracting}" VerticalAlignment="Center" Margin="0,0,8,0" />
-                            <TextBlock Text="{Binding ExtractStatusText}" TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" />
+                            <TextBlock Text="{Binding ExtractStatusText}" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" />
                         </WrapPanel>
                     </StackPanel>
                 </Expander>
 
                 <!-- #149/#150: record a trace -->
-                <Expander Header="Record a trace" FontSize="11.5" Margin="0,0,0,10">
+                <Expander Header="Record a trace" FontSize="{StaticResource FontBody}" Margin="0,0,0,10">
                     <StackPanel Margin="0,10,0,0">
                         <Grid Margin="0,0,0,8">
                             <Grid.ColumnDefinitions>
@@ -265,7 +265,7 @@
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <TextBox Grid.Column="0" Text="{Binding CaptureOutputPath, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,8,0"
-                                      IsReadOnly="{Binding IsCapturing}" VerticalAlignment="Center" FontSize="11" />
+                                      IsReadOnly="{Binding IsCapturing}" VerticalAlignment="Center" FontSize="{StaticResource FontBody}" />
                             <Button Grid.Column="1" Content="Choose..." Command="{Binding BrowseCaptureOutputCommand}" Padding="8,3" />
                         </Grid>
 
@@ -277,44 +277,44 @@
                                      Visibility="{Binding IsCapturing, Converter={StaticResource BoolToVisibilityConverter}}">
                                 <StackPanel Orientation="Horizontal">
                                     <Ellipse Width="8" Height="8" Fill="{DynamicResource DangerBrush}" VerticalAlignment="Center" Margin="0,0,6,0" />
-                                    <TextBlock Text="{Binding ActiveCaptureName, StringFormat='Recording: {0}'}" FontSize="11" VerticalAlignment="Center" Margin="0,0,10,0" />
-                                    <TextBlock Text="{Binding ElapsedText}" FontFamily="Consolas" FontSize="11" VerticalAlignment="Center" />
+                                    <TextBlock Text="{Binding ActiveCaptureName, StringFormat='Recording: {0}'}" FontSize="{StaticResource FontBody}" VerticalAlignment="Center" Margin="0,0,10,0" />
+                                    <TextBlock Text="{Binding ElapsedText}" FontFamily="Consolas" FontSize="{StaticResource FontBody}" VerticalAlignment="Center" />
                                 </StackPanel>
                             </Border>
                         </WrapPanel>
-                        <TextBlock Text="{Binding CaptureStatusText}" TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,10"
+                        <TextBlock Text="{Binding CaptureStatusText}" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,10"
                                     Visibility="{Binding CaptureStatusText, Converter={StaticResource NullToVisibilityConverter}}" />
 
                         <!-- #157: trace-file growth watchdog - only meaningful while a capture is running -->
                         <StackPanel Visibility="{Binding IsCapturing, Converter={StaticResource BoolToVisibilityConverter}}" Margin="0,0,0,10">
-                            <TextBlock Text="Growth watchdog" FontSize="11" FontWeight="SemiBold" Margin="0,0,0,6" />
+                            <TextBlock Text="Growth watchdog" FontSize="{StaticResource FontBody}" FontWeight="SemiBold" Margin="0,0,0,6" />
                             <WrapPanel Margin="0,0,0,6">
                                 <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="8,4" Margin="0,0,8,4">
                                     <StackPanel>
-                                        <TextBlock Text="Current size" FontSize="10" Foreground="{DynamicResource TextSecondaryBrush}" />
-                                        <TextBlock Text="{Binding CaptureSizeText}" FontSize="13" FontWeight="SemiBold" />
+                                        <TextBlock Text="Current size" FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        <TextBlock Text="{Binding CaptureSizeText}" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" />
                                     </StackPanel>
                                 </Border>
                                 <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="8,4" Margin="0,0,8,4">
                                     <StackPanel>
-                                        <TextBlock Text="Growth rate" FontSize="10" Foreground="{DynamicResource TextSecondaryBrush}" />
-                                        <TextBlock Text="{Binding CaptureGrowthRateText}" FontSize="13" FontWeight="SemiBold" />
+                                        <TextBlock Text="Growth rate" FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        <TextBlock Text="{Binding CaptureGrowthRateText}" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" />
                                     </StackPanel>
                                 </Border>
                                 <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="8,4" Margin="0,0,8,4">
                                     <StackPanel>
-                                        <TextBlock Text="Projected" FontSize="10" Foreground="{DynamicResource TextSecondaryBrush}" />
-                                        <TextBlock Text="{Binding CaptureProjectedSizeText}" FontSize="11" FontWeight="SemiBold" TextWrapping="Wrap" MaxWidth="160" />
+                                        <TextBlock Text="Projected" FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        <TextBlock Text="{Binding CaptureProjectedSizeText}" FontSize="{StaticResource FontBody}" FontWeight="SemiBold" TextWrapping="Wrap" MaxWidth="160" />
                                     </StackPanel>
                                 </Border>
                             </WrapPanel>
                             <Border Background="{DynamicResource DangerBrush}" Opacity="0.85" CornerRadius="6" Padding="8,4"
                                      Visibility="{Binding CaptureSpaceWarningText, Converter={StaticResource NullToVisibilityConverter}}">
-                                <TextBlock Text="{Binding CaptureSpaceWarningText}" TextWrapping="Wrap" FontSize="11" Foreground="White" />
+                                <TextBlock Text="{Binding CaptureSpaceWarningText}" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Foreground="White" />
                             </Border>
                         </StackPanel>
 
-                        <TextBlock Text="Scenario presets - pick the one closest to the symptom you're chasing:" FontSize="11" FontWeight="SemiBold" Margin="0,0,0,6" />
+                        <TextBlock Text="Scenario presets - pick the one closest to the symptom you're chasing:" FontSize="{StaticResource FontBody}" FontWeight="SemiBold" Margin="0,0,0,6" />
                         <ItemsControl ItemsSource="{Binding Presets}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate DataType="{x:Type models:EtwCapturePreset}">
@@ -325,9 +325,9 @@
                                                 <ColumnDefinition Width="Auto" />
                                             </Grid.ColumnDefinitions>
                                             <StackPanel Grid.Column="0">
-                                                <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="11.5" />
-                                                <TextBlock Text="{Binding Description}" TextWrapping="Wrap" FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,2,0,0" />
-                                                <TextBlock Text="{Binding DiskEstimate}" FontSize="10" Foreground="{DynamicResource TextSecondaryBrush}" FontStyle="Italic" Margin="0,2,0,0" />
+                                                <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="{StaticResource FontBody}" />
+                                                <TextBlock Text="{Binding Description}" TextWrapping="Wrap" FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,2,0,0" />
+                                                <TextBlock Text="{Binding DiskEstimate}" FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextSecondaryBrush}" FontStyle="Italic" Margin="0,2,0,0" />
                                             </StackPanel>
                                             <Button Grid.Column="1" Content="Start" Padding="10,4" VerticalAlignment="Center"
                                                      Command="{Binding DataContext.StartPresetCaptureCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
@@ -341,9 +341,9 @@
                 </Expander>
 
                 <!-- #158: user-editable capture recipes -->
-                <Expander Header="Custom capture recipes" FontSize="11.5" Margin="0,0,0,10">
+                <Expander Header="Custom capture recipes" FontSize="{StaticResource FontBody}" Margin="0,0,0,10">
                     <StackPanel Margin="0,10,0,0">
-                        <TextBlock TextWrapping="Wrap" FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8"
+                        <TextBlock TextWrapping="Wrap" FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8"
                                     Text="A separate, tool-agnostic list from the WPR scenario presets above - stored in etw-recipes.json (%AppData%\TaskManagerPlus), editable here or by hand, so you can add your own wpr/logman/netsh trace recipes (e.g. netsh trace start scenario=NetConnection capture=yes) without touching code. %OUTPUT% in a recipe's arguments is replaced with a generated output path when run." />
                         <DataGrid ItemsSource="{Binding Recipes}" SelectedItem="{Binding SelectedRecipe}"
                                    IsReadOnly="True" AutoGenerateColumns="False" MaxHeight="180" Margin="0,0,0,8">
@@ -360,49 +360,49 @@
                             <Button Content="Remove selected" Command="{Binding RemoveRecipeCommand}" Padding="8,3" Margin="0,0,8,0" />
                             <Button Content="Reset to defaults" Command="{Binding ResetRecipesToDefaultsCommand}" Padding="8,3" Margin="0,0,8,0" />
                             <ProgressBar Width="90" Height="6" IsIndeterminate="{Binding IsRunningRecipe}" VerticalAlignment="Center" Margin="0,0,8,0" />
-                            <TextBlock Text="{Binding RecipeStatusText}" TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" />
+                            <TextBlock Text="{Binding RecipeStatusText}" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" />
                         </WrapPanel>
 
-                        <TextBlock Text="Add a recipe" FontSize="11" FontWeight="SemiBold" Margin="0,0,0,6" />
+                        <TextBlock Text="Add a recipe" FontSize="{StaticResource FontBody}" FontWeight="SemiBold" Margin="0,0,0,6" />
                         <Grid Margin="0,0,0,6">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="120" />
                             </Grid.ColumnDefinitions>
-                            <TextBox Grid.Column="0" Text="{Binding RecipeEditName, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,8,0" FontSize="11" ToolTip="Name" />
-                            <TextBox Grid.Column="1" Text="{Binding RecipeEditTool, UpdateSourceTrigger=PropertyChanged}" FontSize="11" ToolTip="Tool (e.g. wpr.exe, logman.exe, netsh.exe)" />
+                            <TextBox Grid.Column="0" Text="{Binding RecipeEditName, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,8,0" FontSize="{StaticResource FontBody}" ToolTip="Name" />
+                            <TextBox Grid.Column="1" Text="{Binding RecipeEditTool, UpdateSourceTrigger=PropertyChanged}" FontSize="{StaticResource FontBody}" ToolTip="Tool (e.g. wpr.exe, logman.exe, netsh.exe)" />
                         </Grid>
-                        <TextBox Text="{Binding RecipeEditDescription, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,6" FontSize="11" ToolTip="Description" />
-                        <TextBox Text="{Binding RecipeEditArguments, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,6" FontSize="11" FontFamily="Consolas"
+                        <TextBox Text="{Binding RecipeEditDescription, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,6" FontSize="{StaticResource FontBody}" ToolTip="Description" />
+                        <TextBox Text="{Binding RecipeEditArguments, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,6" FontSize="{StaticResource FontBody}" FontFamily="Consolas"
                                   ToolTip="Arguments - %OUTPUT% is replaced with a generated output path when run" />
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
-                            <TextBox Grid.Column="0" Text="{Binding RecipeEditSizeEstimate, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,8,0" FontSize="11" ToolTip="Expected size/minute (optional, free text)" />
+                            <TextBox Grid.Column="0" Text="{Binding RecipeEditSizeEstimate, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,8,0" FontSize="{StaticResource FontBody}" ToolTip="Expected size/minute (optional, free text)" />
                             <Button Grid.Column="1" Content="Add recipe" Command="{Binding AddRecipeCommand}" Padding="10,4" />
                         </Grid>
                     </StackPanel>
                 </Expander>
 
                 <!-- #151: boot trace -->
-                <Expander Header="Trace the next boot" FontSize="11.5" Margin="0,0,0,10">
+                <Expander Header="Trace the next boot" FontSize="{StaticResource FontBody}" Margin="0,0,0,10">
                     <StackPanel Margin="0,10,0,0">
-                        <TextBlock TextWrapping="Wrap" FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8"
+                        <TextBlock TextWrapping="Wrap" FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8"
                                     Text="Arms a one-time trace of the next boot (wpr -addboot). This does NOT start recording immediately and does NOT reboot the computer for you - you'll see a confirmation dialog explaining exactly that, and a reminder to come back and collect the trace after you restart." />
                         <WrapPanel>
                             <Button Content="Arm boot trace..." Command="{Binding ArmBootTraceCommand}" Padding="8,3" Margin="0,0,8,0" />
                             <ProgressBar Width="90" Height="6" IsIndeterminate="{Binding IsBootTraceBusy}" VerticalAlignment="Center" Margin="0,0,8,0" />
-                            <TextBlock Text="{Binding BootTraceStatusText}" TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" />
+                            <TextBlock Text="{Binding BootTraceStatusText}" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" />
                         </WrapPanel>
                     </StackPanel>
                 </Expander>
 
                 <!-- #152: trace status & rescue -->
-                <Expander Header="Trace status &amp; rescue" FontSize="11.5" Margin="0,0,0,10">
+                <Expander Header="Trace status &amp; rescue" FontSize="{StaticResource FontBody}" Margin="0,0,0,10">
                     <StackPanel Margin="0,10,0,0">
-                        <TextBlock TextWrapping="Wrap" FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8"
+                        <TextBlock TextWrapping="Wrap" FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8"
                                     Text="wpr -status - and a Cancel button for a capture left running from an earlier session (a very common way for a machine to mysteriously fill its disk and slow down). This is independent of the Stop button above, which only knows about a capture this panel itself started." />
                         <WrapPanel Margin="0,0,0,8">
                             <Button Content="Refresh status" Command="{Binding RefreshWprStatusCommand}" Padding="8,3" Margin="0,0,8,0" />
@@ -411,18 +411,18 @@
                         </WrapPanel>
                         <Border Background="{DynamicResource AccentMutedBrush}" CornerRadius="6" Padding="8,4" Margin="0,0,0,8"
                                  Visibility="{Binding IsWprRecording, Converter={StaticResource BoolToVisibilityConverter}}">
-                            <TextBlock Text="WPR reports a capture is currently recording (see raw status below)." FontSize="11" TextWrapping="Wrap" />
+                            <TextBlock Text="WPR reports a capture is currently recording (see raw status below)." FontSize="{StaticResource FontBody}" TextWrapping="Wrap" />
                         </Border>
                         <TextBox Text="{Binding WprStatus.RawText, Mode=OneWay}" IsReadOnly="True"
                                   TextWrapping="NoWrap" AcceptsReturn="True" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
-                                  FontFamily="Consolas" FontSize="10" MaxHeight="160" Background="{DynamicResource BgElevatedBrush}" BorderThickness="0" Padding="6" />
+                                  FontFamily="Consolas" FontSize="{StaticResource FontCaption}" MaxHeight="160" Background="{DynamicResource BgElevatedBrush}" BorderThickness="0" Padding="6" />
                     </StackPanel>
                 </Expander>
 
                 <!-- #153: tracerpt summary -->
-                <Expander Header="Trace summary" IsExpanded="True" FontSize="11.5" Margin="0,0,0,10">
+                <Expander Header="Trace summary" IsExpanded="True" FontSize="{StaticResource FontBody}" Margin="0,0,0,10">
                     <StackPanel Margin="0,10,0,0">
-                        <TextBlock TextWrapping="Wrap" FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8"
+                        <TextBlock TextWrapping="Wrap" FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8"
                                     Text="Runs automatically right after Stop or Collect boot trace above (tracerpt -summary -report), or pick an existing .etl to summarize manually. Output files land in this app's own settings folder, not next to the trace itself, to avoid clutter." />
                         <WrapPanel Margin="0,0,0,8">
                             <Button Content="Summarize last trace" Command="{Binding SummarizeLastTraceCommand}" Padding="8,3" Margin="0,0,8,0" />
@@ -432,25 +432,25 @@
                         </WrapPanel>
 
                         <StackPanel Visibility="{Binding LastSummary, Converter={StaticResource NullToVisibilityConverter}}">
-                            <TextBlock Text="{Binding LastSummary.ErrorMessage}" TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource DangerBrush}" Margin="0,0,0,8"
+                            <TextBlock Text="{Binding LastSummary.ErrorMessage}" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource DangerBrush}" Margin="0,0,0,8"
                                         Visibility="{Binding LastSummary.ErrorMessage, Converter={StaticResource NullToVisibilityConverter}}" />
                             <WrapPanel Margin="0,0,0,8">
                                 <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="8,4" Margin="0,0,8,4">
                                     <StackPanel>
-                                        <TextBlock Text="Total events" FontSize="10" Foreground="{DynamicResource TextSecondaryBrush}" />
-                                        <TextBlock Text="{Binding LastSummary.TotalEvents}" FontSize="14" FontWeight="SemiBold" />
+                                        <TextBlock Text="Total events" FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        <TextBlock Text="{Binding LastSummary.TotalEvents}" FontSize="{StaticResource FontSection}" FontWeight="SemiBold" />
                                     </StackPanel>
                                 </Border>
                                 <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="8,4" Margin="0,0,8,4">
                                     <StackPanel>
-                                        <TextBlock Text="Lost events" FontSize="10" Foreground="{DynamicResource TextSecondaryBrush}" />
-                                        <TextBlock Text="{Binding LastSummary.LostEvents}" FontSize="14" FontWeight="SemiBold" />
+                                        <TextBlock Text="Lost events" FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        <TextBlock Text="{Binding LastSummary.LostEvents}" FontSize="{StaticResource FontSection}" FontWeight="SemiBold" />
                                     </StackPanel>
                                 </Border>
                                 <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="8,4" Margin="0,0,8,4">
                                     <StackPanel>
-                                        <TextBlock Text="Trace duration" FontSize="10" Foreground="{DynamicResource TextSecondaryBrush}" />
-                                        <TextBlock Text="{Binding LastSummary.TraceDurationText}" FontSize="14" FontWeight="SemiBold" />
+                                        <TextBlock Text="Trace duration" FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        <TextBlock Text="{Binding LastSummary.TraceDurationText}" FontSize="{StaticResource FontSection}" FontWeight="SemiBold" />
                                     </StackPanel>
                                 </Border>
                             </WrapPanel>
@@ -458,10 +458,10 @@
                             <!-- #154: "what dominated this trace" - purely derived from EventsPerProvider,
                                  which EtwTraceService.ParseTracerptSummary already sorts descending with
                                  PercentOfTotal filled in. -->
-                            <TextBlock Text="{Binding LastSummary.DominantProviderSummary}" TextWrapping="Wrap" FontSize="11.5" FontWeight="SemiBold"
+                            <TextBlock Text="{Binding LastSummary.DominantProviderSummary}" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" FontWeight="SemiBold"
                                         Foreground="{DynamicResource WarningBrush}" Margin="0,0,0,8"
                                         Visibility="{Binding LastSummary.DominantProviderSummary, Converter={StaticResource NullToVisibilityConverter}}" />
-                            <TextBlock Text="What dominated this trace - ranked by event count:" FontSize="11" FontWeight="SemiBold" Margin="0,0,0,6" />
+                            <TextBlock Text="What dominated this trace - ranked by event count:" FontSize="{StaticResource FontBody}" FontWeight="SemiBold" Margin="0,0,0,6" />
                             <ItemsControl ItemsSource="{Binding LastSummary.EventsPerProvider}" Margin="0,0,0,10">
                                 <ItemsControl.ItemsPanel>
                                     <ItemsPanelTemplate>
@@ -477,13 +477,13 @@
                                                 <ColumnDefinition Width="60" />
                                                 <ColumnDefinition Width="70" />
                                             </Grid.ColumnDefinitions>
-                                            <TextBlock Grid.Column="0" Text="{Binding ProviderName}" FontSize="10.5" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" ToolTip="{Binding ProviderName}" />
-                                            <Border Grid.Column="1" Height="10" Background="{DynamicResource BgElevatedBrush}" CornerRadius="3" Margin="6,0" VerticalAlignment="Center">
+                                            <TextBlock Grid.Column="0" Text="{Binding ProviderName}" FontSize="{StaticResource FontCaption}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" ToolTip="{Binding ProviderName}" />
+                                            <Border Grid.Column="1" Height="10" Background="{DynamicResource BgElevatedBrush}" CornerRadius="4" Margin="6,0" VerticalAlignment="Center">
                                                 <Border Width="{Binding PercentOfTotal, Converter={StaticResource PercentToWidthConverter}, ConverterParameter=200}"
-                                                         Height="10" Background="{DynamicResource AccentBrush}" CornerRadius="3" HorizontalAlignment="Left" />
+                                                         Height="10" Background="{DynamicResource AccentBrush}" CornerRadius="4" HorizontalAlignment="Left" />
                                             </Border>
-                                            <TextBlock Grid.Column="2" Text="{Binding PercentOfTotal, StringFormat='{}{0:0.#}%'}" FontSize="10.5" VerticalAlignment="Center" />
-                                            <TextBlock Grid.Column="3" Text="{Binding EventCount}" FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" />
+                                            <TextBlock Grid.Column="2" Text="{Binding PercentOfTotal, StringFormat='{}{0:0.#}%'}" FontSize="{StaticResource FontCaption}" VerticalAlignment="Center" />
+                                            <TextBlock Grid.Column="3" Text="{Binding EventCount}" FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" />
                                         </Grid>
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
@@ -492,51 +492,51 @@
                             <Expander Header="Raw summary.txt">
                                 <TextBox Text="{Binding LastSummary.RawSummaryText, Mode=OneWay}" IsReadOnly="True"
                                           TextWrapping="NoWrap" AcceptsReturn="True" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
-                                          FontFamily="Consolas" FontSize="10" MaxHeight="180" Background="{DynamicResource BgElevatedBrush}" BorderThickness="0" Padding="6" Margin="0,6,0,0" />
+                                          FontFamily="Consolas" FontSize="{StaticResource FontCaption}" MaxHeight="180" Background="{DynamicResource BgElevatedBrush}" BorderThickness="0" Padding="6" Margin="0,6,0,0" />
                             </Expander>
                         </StackPanel>
                     </StackPanel>
                 </Expander>
 
                 <!-- #160: trace handoff helper (WPA + notes.md stub) -->
-                <Expander Header="Hand off this trace" FontSize="11.5" Margin="0,0,0,10">
+                <Expander Header="Hand off this trace" FontSize="{StaticResource FontBody}" Margin="0,0,0,10">
                     <StackPanel Margin="0,10,0,0">
-                        <TextBlock TextWrapping="Wrap" FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8"
+                        <TextBlock TextWrapping="Wrap" FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8"
                                     Text="Opens the last trace in Windows Performance Analyzer if it's installed, or generates a notes.md stub next to the trace (symptom + timestamps + machine specs) for whoever picks it up next - a colleague, a vendor support case, or your own future self." />
 
                         <WrapPanel Margin="0,0,0,10">
                             <Border Background="{DynamicResource AccentMutedBrush}" CornerRadius="6" Padding="8,4" Margin="0,0,8,4"
                                      Visibility="{Binding IsWpaInstalled, Converter={StaticResource BoolToVisibilityConverter}}">
-                                <TextBlock Text="{Binding WpaPath, StringFormat='WPA found: {0}'}" FontSize="10.5" TextWrapping="Wrap" MaxWidth="320" />
+                                <TextBlock Text="{Binding WpaPath, StringFormat='WPA found: {0}'}" FontSize="{StaticResource FontCaption}" TextWrapping="Wrap" MaxWidth="320" />
                             </Border>
                             <Button Content="Open last trace in WPA" Command="{Binding OpenInWpaCommand}" Padding="8,3" Margin="0,0,8,0" />
                             <Button Content="Check again" Command="{Binding DetectWpaCommand}" Padding="8,3" />
                         </WrapPanel>
-                        <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,10"
+                        <TextBlock TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,10"
                                     Visibility="{Binding IsWpaNotInstalled, Converter={StaticResource BoolToVisibilityConverter}}"
                                     Text="Windows Performance Analyzer wasn't found. It's part of the free Windows ADK's &quot;Windows Performance Toolkit&quot; component (search: Windows ADK download) - install that, then click &quot;Check again&quot;." />
 
-                        <TextBlock Text="Symptom (optional - included in notes.md):" FontSize="11" FontWeight="SemiBold" Margin="0,0,0,4" />
+                        <TextBlock Text="Symptom (optional - included in notes.md):" FontSize="{StaticResource FontBody}" FontWeight="SemiBold" Margin="0,0,0,4" />
                         <TextBox Text="{Binding NotesSymptomText, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" TextWrapping="Wrap"
-                                  Height="60" VerticalScrollBarVisibility="Auto" FontSize="11" Margin="0,0,0,8"
+                                  Height="60" VerticalScrollBarVisibility="Auto" FontSize="{StaticResource FontBody}" Margin="0,0,0,8"
                                   ToolTip="What were you seeing when you captured this trace?" />
                         <WrapPanel>
                             <Button Content="Generate notes.md" Command="{Binding GenerateNotesCommand}" Padding="8,3" Margin="0,0,8,0" />
                             <ProgressBar Width="90" Height="6" IsIndeterminate="{Binding IsGeneratingNotes}" VerticalAlignment="Center" Margin="0,0,8,0" />
-                            <TextBlock Text="{Binding NotesStatusText}" TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" />
+                            <TextBlock Text="{Binding NotesStatusText}" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" />
                         </WrapPanel>
                     </StackPanel>
                 </Expander>
 
                 <!-- #159: stale trace-artifact finder -->
-                <Expander Header="Stale trace artifacts" FontSize="11.5" Margin="0,0,0,10">
+                <Expander Header="Stale trace artifacts" FontSize="{StaticResource FontBody}" Margin="0,0,0,10">
                     <StackPanel Margin="0,10,0,0">
-                        <TextBlock TextWrapping="Wrap" FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8"
+                        <TextBlock TextWrapping="Wrap" FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8"
                                     Text="Scans System32\LogFiles\WMI (including RtBackup), Windows\Logs\SleepStudy, Windows\Logs\WdiContextLog, and the WPR temp scratch folder for leftover .etl files - these routinely accumulate many gigabytes and keep tracing overhead alive long after anyone was actively debugging anything." />
                         <WrapPanel Margin="0,0,0,8">
                             <Button Content="Scan for stale artifacts" Command="{Binding ScanStaleArtifactsCommand}" Padding="8,3" Margin="0,0,8,0" />
                             <ProgressBar Width="110" Height="6" IsIndeterminate="{Binding IsScanningStaleArtifacts}" VerticalAlignment="Center" Margin="0,0,8,0" />
-                            <TextBlock Text="{Binding StaleArtifactsStatusText}" TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" />
+                            <TextBlock Text="{Binding StaleArtifactsStatusText}" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" />
                         </WrapPanel>
                         <DataGrid ItemsSource="{Binding StaleArtifacts}" IsReadOnly="True" AutoGenerateColumns="False" MaxHeight="240">
                             <DataGrid.RowStyle>
@@ -560,7 +560,7 @@
                                 <DataGridTemplateColumn Header="" Width="90">
                                     <DataGridTemplateColumn.CellTemplate>
                                         <DataTemplate DataType="{x:Type models:EtwStaleArtifact}">
-                                            <Button Content="Reveal" Padding="6,2" FontSize="10"
+                                            <Button Content="Reveal" Padding="6,2" FontSize="{StaticResource FontCaption}"
                                                      Command="{Binding DataContext.RevealStaleArtifactCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                                      CommandParameter="{Binding}" />
                                         </DataTemplate>

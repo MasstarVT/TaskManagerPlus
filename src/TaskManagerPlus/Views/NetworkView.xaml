@@ -23,7 +23,7 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <StackPanel Grid.Column="0" Style="{StaticResource TitleRow}" Margin="0">
-                            <Border Width="9" Height="9" CornerRadius="4.5" Margin="0,0,8,0" VerticalAlignment="Center">
+                            <Border Width="9" Height="9" CornerRadius="4" Margin="0,0,8,0" VerticalAlignment="Center">
                                 <Border.Style>
                                     <Style TargetType="Border">
                                         <Setter Property="Background" Value="{DynamicResource TextSecondaryBrush}" />
@@ -38,7 +38,7 @@
                             <TextBlock Text="Latency" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
                         </StackPanel>
                         <StackPanel Grid.Column="1" Orientation="Horizontal">
-                            <TextBlock Text="Interval (s)" VerticalAlignment="Center" Margin="0,0,6,0" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" />
+                            <TextBlock Text="Interval (s)" VerticalAlignment="Center" Margin="0,0,6,0" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
                             <TextBox Width="46" Margin="0,0,10,0" VerticalContentAlignment="Center"
                                      Text="{Binding LatencyIntervalSeconds, UpdateSourceTrigger=LostFocus, StringFormat={}{0:0.#}}" />
                             <Button Padding="10,4">
@@ -77,10 +77,10 @@
                         <TextBlock Text="{Binding ResolverDeviationText}" Style="{StaticResource SubStat}" Foreground="{DynamicResource WarningBrush}"
                                    TextWrapping="Wrap" Visibility="{Binding ResolverDeviationText, Converter={StaticResource NullToVisibilityConverter}}" />
                         <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
-                            <TextBlock Text="Flag when over" VerticalAlignment="Center" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" />
+                            <TextBlock Text="Flag when over" VerticalAlignment="Center" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
                             <TextBox Width="40" Margin="6,0,4,0" VerticalContentAlignment="Center"
                                      Text="{Binding DeviationMultiplier, UpdateSourceTrigger=LostFocus, StringFormat={}{0:0.#}}" />
-                            <TextBlock Text="x your usual latency" VerticalAlignment="Center" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" />
+                            <TextBlock Text="x your usual latency" VerticalAlignment="Center" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
                         </StackPanel>
                     </StackPanel>
 
@@ -92,14 +92,14 @@
                     <StackPanel Margin="0,14,0,0">
                         <TextBlock Text="Packet loss" Style="{StaticResource SpecLabel}" Margin="0,0,0,6" />
                         <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
-                            <TextBlock Text="Gateway" Width="70" VerticalAlignment="Center" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+                            <TextBlock Text="Gateway" Width="70" VerticalAlignment="Center" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
                             <ItemsControl ItemsSource="{Binding GatewayLossStrip}">
                                 <ItemsControl.ItemsPanel>
                                     <ItemsPanelTemplate><WrapPanel Orientation="Horizontal" /></ItemsPanelTemplate>
                                 </ItemsControl.ItemsPanel>
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
-                                        <Border Width="5" Height="14" Margin="1,0,0,0" CornerRadius="1">
+                                        <Border Width="5" Height="14" Margin="0,0,0,0" CornerRadius="1">
                                             <Border.Style>
                                                 <Style TargetType="Border">
                                                     <Setter Property="Background" Value="{DynamicResource SuccessBrush}" />
@@ -119,14 +119,14 @@
                             </ItemsControl>
                         </StackPanel>
                         <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
-                            <TextBlock Text="First hop" Width="70" VerticalAlignment="Center" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+                            <TextBlock Text="First hop" Width="70" VerticalAlignment="Center" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
                             <ItemsControl ItemsSource="{Binding FirstHopLossStrip}">
                                 <ItemsControl.ItemsPanel>
                                     <ItemsPanelTemplate><WrapPanel Orientation="Horizontal" /></ItemsPanelTemplate>
                                 </ItemsControl.ItemsPanel>
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
-                                        <Border Width="5" Height="14" Margin="1,0,0,0" CornerRadius="1">
+                                        <Border Width="5" Height="14" Margin="0,0,0,0" CornerRadius="1">
                                             <Border.Style>
                                                 <Style TargetType="Border">
                                                     <Setter Property="Background" Value="{DynamicResource SuccessBrush}" />
@@ -146,14 +146,14 @@
                             </ItemsControl>
                         </StackPanel>
                         <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
-                            <TextBlock Text="Resolver" Width="70" VerticalAlignment="Center" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+                            <TextBlock Text="Resolver" Width="70" VerticalAlignment="Center" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
                             <ItemsControl ItemsSource="{Binding ResolverLossStrip}">
                                 <ItemsControl.ItemsPanel>
                                     <ItemsPanelTemplate><WrapPanel Orientation="Horizontal" /></ItemsPanelTemplate>
                                 </ItemsControl.ItemsPanel>
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
-                                        <Border Width="5" Height="14" Margin="1,0,0,0" CornerRadius="1">
+                                        <Border Width="5" Height="14" Margin="0,0,0,0" CornerRadius="1">
                                             <Border.Style>
                                                 <Style TargetType="Border">
                                                     <Setter Property="Background" Value="{DynamicResource SuccessBrush}" />
@@ -214,8 +214,8 @@
                                             <ColumnDefinition Width="Auto" />
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0" Text="{Binding BucketStartLocal, StringFormat='{}{0:MM/dd HH:mm}'}" FontSize="12" Margin="0,0,10,0" />
-                                        <TextBlock Grid.Column="1" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}">
+                                        <TextBlock Grid.Column="0" Text="{Binding BucketStartLocal, StringFormat='{}{0:MM/dd HH:mm}'}" FontSize="{StaticResource FontBody}" Margin="0,0,10,0" />
+                                        <TextBlock Grid.Column="1" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}">
                                             <Run Text="avg " /><Run Text="{Binding AvgMs, StringFormat={}{0:0.#} ms, Mode=OneWay}" />
                                             <Run Text="  ·  max " /><Run Text="{Binding MaxMs, StringFormat={}{0:0.#} ms, Mode=OneWay}" />
                                             <Run Text="  ·  loss " /><Run Text="{Binding LossPercent, StringFormat={}{0:0.#}%, Mode=OneWay}" />
@@ -322,7 +322,7 @@
                          and Performance.EventMarkerSections is the established cross-tab convention already
                          used identically on the CPU/Memory/Storage charts, kept for consistency. -->
                     <CheckBox Content="Show crash/error markers" IsChecked="{Binding Performance.ShowEventMarkers}"
-                               FontSize="10.5" HorizontalAlignment="Right" Margin="0,0,0,4" />
+                               FontSize="{StaticResource FontCaption}" HorizontalAlignment="Right" Margin="0,0,0,4" />
                     <lvc:CartesianChart Series="{Binding Performance.NetworkSeries}" XAxes="{Binding Performance.HiddenXAxes}" YAxes="{Binding Performance.NetworkYAxes}"
                                          Sections="{Binding Performance.EventMarkerSections}"
                                          Height="200" TooltipPosition="Top" LegendPosition="Bottom" Background="Transparent"
@@ -364,12 +364,12 @@
                     <TextBlock Text="{Binding SpeedTestStatusText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,4" />
                     <UniformGrid Columns="2" Margin="0,4,0,10">
                         <StackPanel Margin="0,0,8,0" Visibility="{Binding LastDownloadResult, Converter={StaticResource NullToVisibilityConverter}}">
-                            <TextBlock Text="Download" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" />
-                            <TextBlock Text="{Binding LastDownloadResult.Mbps, StringFormat={}{0:0.#} Mbps}" Style="{StaticResource BigStat}" FontSize="20" />
+                            <TextBlock Text="Download" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                            <TextBlock Text="{Binding LastDownloadResult.Mbps, StringFormat={}{0:0.#} Mbps}" Style="{StaticResource BigStat}" FontSize="{StaticResource FontDisplay}" />
                         </StackPanel>
                         <StackPanel Margin="8,0,0,0" Visibility="{Binding LastUploadResult, Converter={StaticResource NullToVisibilityConverter}}">
-                            <TextBlock Text="Upload" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" />
-                            <TextBlock Text="{Binding LastUploadResult.Mbps, StringFormat={}{0:0.#} Mbps}" Style="{StaticResource BigStat}" FontSize="20" />
+                            <TextBlock Text="Upload" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                            <TextBlock Text="{Binding LastUploadResult.Mbps, StringFormat={}{0:0.#} Mbps}" Style="{StaticResource BigStat}" FontSize="{StaticResource FontDisplay}" />
                         </StackPanel>
                     </UniformGrid>
 
@@ -409,10 +409,10 @@
                                     </Style.Triggers>
                                 </Style>
                             </Border.Style>
-                            <TextBlock Text="{Binding BufferbloatResult.Grade}" FontSize="20" FontWeight="Bold" Foreground="White" />
+                            <TextBlock Text="{Binding BufferbloatResult.Grade}" FontSize="{StaticResource FontDisplay}" FontWeight="Bold" Foreground="White" />
                         </Border>
                         <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                            <TextBlock FontSize="12.5">
+                            <TextBlock FontSize="{StaticResource FontStrong}">
                                 <Run Text="Idle " /><Run Text="{Binding BufferbloatResult.IdleLatencyMs, StringFormat={}{0:0.#} ms, Mode=OneWay}" />
                                 <Run Text="  →  Loaded " /><Run Text="{Binding BufferbloatResult.LoadedLatencyMs, StringFormat={}{0:0.#} ms, Mode=OneWay}" />
                                 <Run Text="  (+" /><Run Text="{Binding BufferbloatResult.DeltaMs, StringFormat={}{0:0.#} ms, Mode=OneWay}" /><Run Text=")" />
@@ -452,13 +452,13 @@
                     <ItemsControl ItemsSource="{Binding NetworkTestHistory}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <Grid Margin="0,0,0,5">
+                                <Grid Margin="0,0,0,4">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="Auto" />
                                         <ColumnDefinition Width="*" />
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0" Text="{Binding TimestampUtc, StringFormat='{}{0:MM/dd HH:mm}'}" FontSize="11.5" Margin="0,0,10,0" Foreground="{DynamicResource TextSecondaryBrush}" />
-                                    <TextBlock Grid.Column="1" FontSize="12" TextWrapping="Wrap">
+                                    <TextBlock Grid.Column="0" Text="{Binding TimestampUtc, StringFormat='{}{0:MM/dd HH:mm}'}" FontSize="{StaticResource FontBody}" Margin="0,0,10,0" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                    <TextBlock Grid.Column="1" FontSize="{StaticResource FontBody}" TextWrapping="Wrap">
                                         <Run Text="{Binding TestKind, Mode=OneWay}" FontWeight="SemiBold" />
                                         <Run Text=" — " />
                                         <Run Text="{Binding Summary, Mode=OneWay}" />
@@ -506,7 +506,7 @@
                     <UniformGrid Columns="4">
                         <StackPanel Margin="0,0,8,0">
                             <StackPanel Orientation="Horizontal">
-                                <Border Width="8" Height="8" CornerRadius="4" Margin="0,0,7,0" VerticalAlignment="Center">
+                                <Border Width="8" Height="8" CornerRadius="4" Margin="0,0,6,0" VerticalAlignment="Center">
                                     <Border.Style>
                                         <Style TargetType="Border">
                                             <Setter Property="Background" Value="{DynamicResource TextSecondaryBrush}" />
@@ -527,7 +527,7 @@
                         </StackPanel>
                         <StackPanel Margin="8,0,8,0">
                             <StackPanel Orientation="Horizontal">
-                                <Border Width="8" Height="8" CornerRadius="4" Margin="0,0,7,0" VerticalAlignment="Center">
+                                <Border Width="8" Height="8" CornerRadius="4" Margin="0,0,6,0" VerticalAlignment="Center">
                                     <Border.Style>
                                         <Style TargetType="Border">
                                             <Setter Property="Background" Value="{DynamicResource TextSecondaryBrush}" />
@@ -551,7 +551,7 @@
                              IP answers ICMP, not that name resolution itself is fast/working). -->
                         <StackPanel Margin="8,0,0,0">
                             <StackPanel Orientation="Horizontal">
-                                <Border Width="8" Height="8" CornerRadius="4" Margin="0,0,7,0" VerticalAlignment="Center" Background="{DynamicResource AccentBrush}" />
+                                <Border Width="8" Height="8" CornerRadius="4" Margin="0,0,6,0" VerticalAlignment="Center" Background="{DynamicResource AccentBrush}" />
                                 <TextBlock Text="DNS resolution" Style="{StaticResource CardTitle}" Margin="0" />
                             </StackPanel>
                             <TextBlock Text="{Binding DnsLookupText}" Style="{StaticResource SubStat}" Margin="0,4,0,0" />
@@ -561,7 +561,7 @@
                              the expected NCSI body). -->
                         <StackPanel Margin="8,0,0,0">
                             <StackPanel Orientation="Horizontal">
-                                <Border Width="8" Height="8" CornerRadius="4" Margin="0,0,7,0" VerticalAlignment="Center">
+                                <Border Width="8" Height="8" CornerRadius="4" Margin="0,0,6,0" VerticalAlignment="Center">
                                     <Border.Style>
                                         <Style TargetType="Border">
                                             <Setter Property="Background" Value="{DynamicResource TextSecondaryBrush}" />
@@ -625,13 +625,13 @@
                                 <DataTemplate>
                                     <Border Padding="8" Margin="0,0,0,6" CornerRadius="4" Background="{DynamicResource BgElevatedBrush}">
                                         <StackPanel>
-                                            <TextBlock FontSize="12.5" FontWeight="SemiBold" Text="{Binding Description}" TextWrapping="Wrap" />
-                                            <TextBlock FontSize="12" Margin="0,2,0,0" TextWrapping="Wrap">
+                                            <TextBlock FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" Text="{Binding Description}" TextWrapping="Wrap" />
+                                            <TextBlock FontSize="{StaticResource FontBody}" Margin="0,2,0,0" TextWrapping="Wrap">
                                                 <Run Text="DHCP: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding DhcpEnabledText, Mode=OneWay}" />
                                                 <Run Text="   DNS servers: " Foreground="{DynamicResource TextSecondaryBrush}" />
                                                 <Run Text="{Binding ConfiguredServers, Converter={StaticResource StringListJoinConverter}, Mode=OneWay}" />
                                             </TextBlock>
-                                            <TextBlock FontSize="11.5" Margin="0,4,0,0" TextWrapping="Wrap" Foreground="{DynamicResource WarningBrush}"
+                                            <TextBlock FontSize="{StaticResource FontBody}" Margin="0,4,0,0" TextWrapping="Wrap" Foreground="{DynamicResource WarningBrush}"
                                                        Visibility="{Binding StaticDnsOnDhcpAdapter, Converter={StaticResource BoolToVisibilityConverter}}"
                                                        Text="Static DNS set on an otherwise-DHCP adapter - the shape a DNS hijack leaves (also common as a deliberate choice, e.g. 1.1.1.1/8.8.8.8/a Pi-hole). Mirrored to the Security tab's Network exposure section." />
                                         </StackPanel>
@@ -647,7 +647,7 @@
                         <ItemsControl ItemsSource="{Binding DnsPosture.DohServers}" Margin="0,2,0,0">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <TextBlock FontSize="11.5" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}">
+                                    <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}">
                                         <Run Text="{Binding ServerAddress, Mode=OneWay}" /><Run Text=" - template: " /><Run Text="{Binding DohTemplate, Mode=OneWay}" /><Run Text=" - auto-upgrade: " /><Run Text="{Binding AutoUpgradeText, Mode=OneWay}" />
                                     </TextBlock>
                                 </DataTemplate>
@@ -694,12 +694,12 @@
                             <StackPanel Margin="8,0,8,0">
                                 <TextBlock Text="DNS probe" Style="{StaticResource SpecLabel}" Margin="0" />
                                 <TextBlock Text="{Binding NcsiResult.DnsProbeOkText}" Style="{StaticResource SubStat}" Margin="0,4,0,0" FontWeight="SemiBold" />
-                                <TextBlock Text="{Binding NcsiResult.DnsProbeDetail}" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,2,0,0" />
+                                <TextBlock Text="{Binding NcsiResult.DnsProbeDetail}" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,2,0,0" />
                             </StackPanel>
                             <StackPanel Margin="8,0,0,0">
                                 <TextBlock Text="HTTP probe" Style="{StaticResource SpecLabel}" Margin="0" />
                                 <TextBlock Text="{Binding NcsiResult.WebProbeOkText}" Style="{StaticResource SubStat}" Margin="0,4,0,0" FontWeight="SemiBold" />
-                                <TextBlock Text="{Binding NcsiResult.WebProbeDetail}" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,2,0,0" />
+                                <TextBlock Text="{Binding NcsiResult.WebProbeDetail}" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,2,0,0" />
                             </StackPanel>
                         </UniformGrid>
                     </StackPanel>
@@ -727,11 +727,11 @@
                     <ItemsControl ItemsSource="{Binding Ipv6DisabledComponents.SetFlags}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <TextBlock Text="{Binding Description}" FontSize="11.5" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" Margin="0,0,0,2" />
+                                <TextBlock Text="{Binding Description}" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" Margin="0,0,0,2" />
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
-                    <TextBlock TextWrapping="Wrap" FontSize="11.5" Foreground="{DynamicResource WarningBrush}" Margin="0,0,0,2"
+                    <TextBlock TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource WarningBrush}" Margin="0,0,0,2"
                                Visibility="{Binding Ipv6DisabledComponents.UnrecognizedBitsHex, Converter={StaticResource NullToVisibilityConverter}}">
                         <Run Text="Also has unrecognized bit(s) set: " /><Run Text="{Binding Ipv6DisabledComponents.UnrecognizedBitsHex, Mode=OneWay}" FontFamily="Consolas" />
                     </TextBlock>
@@ -769,8 +769,8 @@
                                             <ColumnDefinition Width="*" />
                                             <ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0" Text="{Binding Kind}" FontWeight="SemiBold" FontSize="12.5" />
-                                        <TextBlock Grid.Column="1" Text="{Binding StateText}" FontSize="12.5">
+                                        <TextBlock Grid.Column="0" Text="{Binding Kind}" FontWeight="SemiBold" FontSize="{StaticResource FontStrong}" />
+                                        <TextBlock Grid.Column="1" Text="{Binding StateText}" FontSize="{StaticResource FontStrong}">
                                             <TextBlock.Style>
                                                 <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
                                                     <Style.Triggers>
@@ -848,11 +848,11 @@
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0" FontSize="12.5" TextTrimming="CharacterEllipsis">
+                                    <TextBlock Grid.Column="0" FontSize="{StaticResource FontStrong}" TextTrimming="CharacterEllipsis">
                                         <Run Text="{Binding AdapterName, Mode=OneWay}" FontWeight="SemiBold" />
                                         <Run Text=" — " /><Run Text="{Binding ResolverIp, Mode=OneWay}" FontFamily="Consolas" />
                                     </TextBlock>
-                                    <TextBlock Grid.Column="1" Text="answered first" FontSize="11" FontWeight="SemiBold" Margin="8,0,0,0"
+                                    <TextBlock Grid.Column="1" Text="answered first" FontSize="{StaticResource FontBody}" FontWeight="SemiBold" Margin="8,0,0,0"
                                                Foreground="{DynamicResource SuccessBrush}"
                                                Visibility="{Binding IsFirstResponder, Converter={StaticResource BoolToVisibilityConverter}}" />
                                 </Grid>
@@ -926,7 +926,7 @@
                         </DataGrid.Columns>
                     </DataGrid>
                     <TextBox Text="{Binding DohRawOutput, Mode=OneWay}" Margin="0,8,0,0" MaxHeight="110"
-                             IsReadOnly="True" TextWrapping="NoWrap" FontFamily="Consolas" FontSize="11"
+                             IsReadOnly="True" TextWrapping="NoWrap" FontFamily="Consolas" FontSize="{StaticResource FontBody}"
                              VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" Background="Transparent" BorderThickness="0" />
 
                     <!-- #521: NRPT split-DNS rules - hidden entirely when none exist. -->
@@ -942,7 +942,7 @@
                             </Style>
                         </Expander.Style>
                         <Expander.Header>
-                            <TextBlock Text="Split-DNS policy (NRPT)" Style="{StaticResource CardTitle}" Margin="0" FontSize="13" />
+                            <TextBlock Text="Split-DNS policy (NRPT)" Style="{StaticResource CardTitle}" Margin="0" FontSize="{StaticResource FontStrong}" />
                         </Expander.Header>
                         <StackPanel Margin="0,10,0,0">
                             <TextBlock Text="Namespace rules pushed by a VPN or group policy that route specific suffixes to specific servers - the reason internal hostnames resolve on VPN and nothing else does, or vice versa."
@@ -963,7 +963,7 @@
                     <!-- #523: suffix/search list - collapsed by default. -->
                     <Expander Margin="0,16,0,0" Background="Transparent" BorderThickness="0" Foreground="{DynamicResource TextPrimaryBrush}" IsExpanded="False">
                         <Expander.Header>
-                            <TextBlock Text="DNS suffix &amp; search list" Style="{StaticResource CardTitle}" Margin="0" FontSize="13" />
+                            <TextBlock Text="DNS suffix &amp; search list" Style="{StaticResource CardTitle}" Margin="0" FontSize="{StaticResource FontStrong}" />
                         </Expander.Header>
                         <StackPanel Margin="0,10,0,0">
                             <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,6">
@@ -1087,7 +1087,7 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" Text="Failure / timeout scan" Style="{StaticResource SpecLabel}" Margin="0" VerticalAlignment="Center" />
-                        <TextBlock Grid.Column="1" Text="Window (h)" VerticalAlignment="Center" Margin="0,0,6,0" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        <TextBlock Grid.Column="1" Text="Window (h)" VerticalAlignment="Center" Margin="0,0,6,0" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
                         <TextBox Grid.Column="2" Width="50" Margin="0,0,8,0" VerticalContentAlignment="Center"
                                  Text="{Binding DnsScanWindowHours, UpdateSourceTrigger=LostFocus, StringFormat={}{0:0.#}}" />
                         <Button Grid.Column="3" Content="Scan" Padding="10,4" Command="{Binding ScanDnsFailuresCommand}" />
@@ -1158,8 +1158,8 @@
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Row="0" Grid.Column="0" Text="{Binding Name}" FontSize="12.5" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
-                                    <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding SpeedMbps, StringFormat={}{0:0} Mbps}" FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center">
+                                    <TextBlock Grid.Row="0" Grid.Column="0" Text="{Binding Name}" FontSize="{StaticResource FontStrong}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                    <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding SpeedMbps, StringFormat={}{0:0} Mbps}" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" VerticalAlignment="Center">
                                         <TextBlock.Style>
                                             <Style TargetType="TextBlock">
                                                 <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
@@ -1177,7 +1177,7 @@
                                          colors the negotiated-speed value above; hidden entirely
                                          when the driver doesn't register a `*SpeedDuplex` keyword at
                                          all (most Wi-Fi adapters). -->
-                                    <TextBlock Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,2,0,0" FontSize="11.5"
+                                    <TextBlock Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,2,0,0" FontSize="{StaticResource FontBody}"
                                                Visibility="{Binding ConfiguredSpeedDuplex, Converter={StaticResource NullToVisibilityConverter}}">
                                         <Run Text="Configured: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding ConfiguredSpeedDuplex, Mode=OneWay}" FontWeight="SemiBold">
                                             <Run.Style>
@@ -1310,7 +1310,7 @@
                                     <ItemsControl ItemsSource="{Binding StagedPackages}" Margin="12,2,0,0">
                                         <ItemsControl.ItemTemplate>
                                             <DataTemplate>
-                                                <TextBlock FontSize="11.5" Margin="0,1,0,0" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}">
+                                                <TextBlock FontSize="{StaticResource FontBody}" Margin="0,0,0,0" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}">
                                                     <Run Text="•" /> <Run Text="{Binding PublishedName, Mode=OneWay}" FontFamily="Consolas" />
                                                     <Run Text=" (" /><Run Text="{Binding OriginalName, Mode=OneWay}" /><Run Text=") — " />
                                                     <Run Text="{Binding ProviderName, Mode=OneWay}" /><Run Text=", " />
@@ -1332,7 +1332,7 @@
                                             </DataTemplate>
                                         </ItemsControl.ItemTemplate>
                                     </ItemsControl>
-                                    <TextBlock Text="No other packages for this class found in the Driver Store." FontSize="11.5" Margin="12,1,0,0"
+                                    <TextBlock Text="No other packages for this class found in the Driver Store." FontSize="{StaticResource FontBody}" Margin="12,0,0,0"
                                                Foreground="{DynamicResource TextSecondaryBrush}" Opacity="0.7">
                                         <TextBlock.Style>
                                             <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
@@ -1366,7 +1366,7 @@
                                         <Run Text="   Category: " /><Run Text="{Binding CategoryText, Mode=OneWay}" FontWeight="SemiBold" />
                                     </TextBlock>
                                     <TextBlock Text="Public network - discovery, printer sharing and inbound SMB are blocked while this is set. If this is actually a home or office network, you can change it in Settings &gt; Network &amp; Internet."
-                                               FontSize="11" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" Margin="0,2,0,0">
+                                               FontSize="{StaticResource FontBody}" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" Margin="0,2,0,0">
                                         <TextBlock.Style>
                                             <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
                                                 <Setter Property="Visibility" Value="Collapsed" />
@@ -1419,7 +1419,7 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" Text="Link-flap / reset scan" Style="{StaticResource SpecLabel}" Margin="0" VerticalAlignment="Center" />
-                        <TextBlock Grid.Column="1" Text="Window (h)" VerticalAlignment="Center" Margin="0,0,6,0" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        <TextBlock Grid.Column="1" Text="Window (h)" VerticalAlignment="Center" Margin="0,0,6,0" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
                         <TextBox Grid.Column="2" Width="50" Margin="0,0,8,0" VerticalContentAlignment="Center"
                                  Text="{Binding LinkFlapScanWindowHours, UpdateSourceTrigger=LostFocus, StringFormat={}{0:0.#}}" />
                         <Button Grid.Column="3" Content="Scan" Padding="10,4" Command="{Binding ScanLinkFlapsCommand}" />
@@ -1477,8 +1477,8 @@
                                                 <ColumnDefinition Width="*" />
                                                 <ColumnDefinition Width="Auto" />
                                             </Grid.ColumnDefinitions>
-                                            <TextBlock Grid.Column="0" Text="{Binding AdapterName}" FontWeight="SemiBold" FontSize="13.5" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
-                                            <Border Grid.Column="1" CornerRadius="4" Padding="9,3">
+                                            <TextBlock Grid.Column="0" Text="{Binding AdapterName}" FontWeight="SemiBold" FontSize="{StaticResource FontSection}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                            <Border Grid.Column="1" CornerRadius="4" Padding="8,3">
                                                 <Border.Style>
                                                     <Style TargetType="Border">
                                                         <Setter Property="Background" Value="{DynamicResource WarningBrush}" />
@@ -1492,7 +1492,7 @@
                                                         </Style.Triggers>
                                                     </Style>
                                                 </Border.Style>
-                                                <TextBlock Text="{Binding LinkQualityLabel}" FontSize="11" FontWeight="Bold" Foreground="White" />
+                                                <TextBlock Text="{Binding LinkQualityLabel}" FontSize="{StaticResource FontBody}" FontWeight="Bold" Foreground="White" />
                                             </Border>
                                         </Grid>
                                         <TextBlock Text="{Binding LinkQualityReason}" Style="{StaticResource SubStat}" Margin="0,3,0,2" TextWrapping="Wrap" Opacity="0.85" />
@@ -1569,7 +1569,7 @@
                                             <ItemsControl ItemsSource="{Binding ProblemFlags}">
                                                 <ItemsControl.ItemTemplate>
                                                     <DataTemplate>
-                                                        <TextBlock TextWrapping="Wrap" Margin="0,0,0,4" FontSize="11.5" Foreground="{DynamicResource WarningBrush}">
+                                                        <TextBlock TextWrapping="Wrap" Margin="0,0,0,4" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource WarningBrush}">
                                                             <Run Text="{Binding Title, Mode=OneWay}" FontWeight="SemiBold" /><Run Text=" — " /><Run Text="{Binding Detail, Mode=OneWay}" />
                                                         </TextBlock>
                                                     </DataTemplate>
@@ -1581,7 +1581,7 @@
                                              subset of the same list - both collapsed by default. -->
                                         <Expander Background="Transparent" BorderThickness="0" Foreground="{DynamicResource TextPrimaryBrush}" IsExpanded="False">
                                             <Expander.Header>
-                                                <TextBlock Text="Advanced properties" Style="{StaticResource CardTitle}" Margin="0" FontSize="12.5" />
+                                                <TextBlock Text="Advanced properties" Style="{StaticResource CardTitle}" Margin="0" FontSize="{StaticResource FontStrong}" />
                                             </Expander.Header>
                                             <StackPanel Margin="0,8,0,0">
                                                 <TextBlock Text="The Device Manager &quot;Advanced&quot; tab for this adapter - read-only here."
@@ -1594,8 +1594,8 @@
                                                                     <ColumnDefinition Width="*" />
                                                                     <ColumnDefinition Width="Auto" />
                                                                 </Grid.ColumnDefinitions>
-                                                                <TextBlock Grid.Column="0" Text="{Binding FriendlyName}" FontSize="11.5" TextTrimming="CharacterEllipsis" />
-                                                                <TextBlock Grid.Column="1" Text="{Binding ValueText}" FontSize="11.5" FontWeight="SemiBold" Margin="8,0,0,0" />
+                                                                <TextBlock Grid.Column="0" Text="{Binding FriendlyName}" FontSize="{StaticResource FontBody}" TextTrimming="CharacterEllipsis" />
+                                                                <TextBlock Grid.Column="1" Text="{Binding ValueText}" FontSize="{StaticResource FontBody}" FontWeight="SemiBold" Margin="8,0,0,0" />
                                                             </Grid>
                                                         </DataTemplate>
                                                     </ItemsControl.ItemTemplate>
@@ -1623,8 +1623,8 @@
                                                                     <ColumnDefinition Width="*" />
                                                                     <ColumnDefinition Width="Auto" />
                                                                 </Grid.ColumnDefinitions>
-                                                                <TextBlock Grid.Column="0" Text="{Binding FriendlyName}" FontSize="11.5" TextTrimming="CharacterEllipsis" />
-                                                                <TextBlock Grid.Column="1" Text="{Binding ValueText}" FontSize="11.5" FontWeight="SemiBold" Margin="8,0,0,0" />
+                                                                <TextBlock Grid.Column="0" Text="{Binding FriendlyName}" FontSize="{StaticResource FontBody}" TextTrimming="CharacterEllipsis" />
+                                                                <TextBlock Grid.Column="1" Text="{Binding ValueText}" FontSize="{StaticResource FontBody}" FontWeight="SemiBold" Margin="8,0,0,0" />
                                                             </Grid>
                                                         </DataTemplate>
                                                     </ItemsControl.ItemTemplate>
@@ -1690,9 +1690,9 @@
                     <ItemsControl ItemsSource="{Binding OrphanedAdapters}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <Border Margin="0,0,0,8" Padding="9" CornerRadius="6" BorderThickness="1" BorderBrush="{DynamicResource WarningBrush}">
+                                <Border Margin="0,0,0,8" Padding="8" CornerRadius="6" BorderThickness="1" BorderBrush="{DynamicResource WarningBrush}">
                                     <StackPanel>
-                                        <TextBlock Text="{Binding AdapterName}" FontWeight="SemiBold" FontSize="13" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Text="{Binding AdapterName}" FontWeight="SemiBold" FontSize="{StaticResource FontStrong}" TextTrimming="CharacterEllipsis" />
                                         <TextBlock Text="{Binding Description}" Style="{StaticResource SubStat}" Margin="0,2,0,4" TextWrapping="Wrap" Opacity="0.85" />
                                         <TextBlock Text="{Binding Reason}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Foreground="{DynamicResource WarningBrush}" />
                                     </StackPanel>
@@ -1825,7 +1825,7 @@
                         <Button Grid.Column="1" Content="Traceroute" Padding="10,4" Command="{Binding RunTracerouteCommand}" />
                     </Grid>
                     <TextBox Text="{Binding TracerouteOutput, Mode=OneWay}" Margin="0,8,0,0" MaxHeight="240"
-                             IsReadOnly="True" TextWrapping="NoWrap" FontFamily="Consolas" FontSize="11.5"
+                             IsReadOnly="True" TextWrapping="NoWrap" FontFamily="Consolas" FontSize="{StaticResource FontBody}"
                              VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" Background="Transparent" BorderThickness="0" />
 
                     <!-- #516: save the run above as a named baseline, or diff it against one
@@ -1865,10 +1865,10 @@
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0" Text="{Binding BaselineHop, TargetNullValue=—, StringFormat=hop {0}}" FontSize="11.5" FontFamily="Consolas" />
-                                    <TextBlock Grid.Column="1" Text="{Binding CurrentHop, TargetNullValue=—, StringFormat=hop {0}}" FontSize="11.5" FontFamily="Consolas" />
-                                    <TextBlock Grid.Column="2" Text="{Binding Ip}" FontSize="11.5" FontFamily="Consolas" TextTrimming="CharacterEllipsis" />
-                                    <TextBlock Grid.Column="3" Text="{Binding Kind}" FontSize="11" FontWeight="SemiBold">
+                                    <TextBlock Grid.Column="0" Text="{Binding BaselineHop, TargetNullValue=—, StringFormat=hop {0}}" FontSize="{StaticResource FontBody}" FontFamily="Consolas" />
+                                    <TextBlock Grid.Column="1" Text="{Binding CurrentHop, TargetNullValue=—, StringFormat=hop {0}}" FontSize="{StaticResource FontBody}" FontFamily="Consolas" />
+                                    <TextBlock Grid.Column="2" Text="{Binding Ip}" FontSize="{StaticResource FontBody}" FontFamily="Consolas" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Grid.Column="3" Text="{Binding Kind}" FontSize="{StaticResource FontBody}" FontWeight="SemiBold">
                                         <TextBlock.Style>
                                             <Style TargetType="TextBlock">
                                                 <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
@@ -2104,7 +2104,7 @@
                                         </Style>
                                     </Border.Style>
                                     <StackPanel>
-                                        <TextBlock FontSize="13">
+                                        <TextBlock FontSize="{StaticResource FontStrong}">
                                             <Run Text="{Binding AdapterName, Mode=OneWay}" FontWeight="SemiBold" />
                                             <Run Text=" — " /><Run Text="{Binding IpAddress, Mode=OneWay}" FontFamily="Consolas" />
                                             <Run Text="/" /><Run Text="{Binding SubnetMask, Mode=OneWay}" FontFamily="Consolas" />
@@ -2203,7 +2203,7 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" Text="DHCP lease event timeline" Style="{StaticResource SpecLabel}" Margin="0" VerticalAlignment="Center" />
-                        <TextBlock Grid.Column="1" Text="Window (h)" VerticalAlignment="Center" Margin="0,0,6,0" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        <TextBlock Grid.Column="1" Text="Window (h)" VerticalAlignment="Center" Margin="0,0,6,0" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
                         <TextBox Grid.Column="2" Width="50" Margin="0,0,8,0" VerticalContentAlignment="Center"
                                  Text="{Binding DhcpScanWindowHours, UpdateSourceTrigger=LostFocus, StringFormat={}{0:0.#}}" />
                         <Button Grid.Column="3" Content="Scan" Padding="10,4" Command="{Binding ScanDhcpEventsCommand}" />
@@ -2212,7 +2212,7 @@
                     <ItemsControl ItemsSource="{Binding DhcpEvents}" Margin="0,8,0,0">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,4" TextWrapping="Wrap" FontSize="11.5">
+                                <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,4" TextWrapping="Wrap" FontSize="{StaticResource FontBody}">
                                     <Run Text="{Binding TimeUtc, StringFormat={}{0:g}, Mode=OneWay}" FontFamily="Consolas" />
                                     <Run Text=" [" /><Run Text="{Binding Channel, Mode=OneWay}" /><Run Text="/" /><Run Text="{Binding Category, Mode=OneWay}" FontWeight="SemiBold" /><Run Text="] " />
                                     <Run Text="{Binding Message, Mode=OneWay}" />
@@ -2230,7 +2230,7 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" Text="IP address conflicts" Style="{StaticResource SpecLabel}" Margin="0" VerticalAlignment="Center" />
-                        <TextBlock Grid.Column="1" Text="Window (h)" VerticalAlignment="Center" Margin="0,0,6,0" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        <TextBlock Grid.Column="1" Text="Window (h)" VerticalAlignment="Center" Margin="0,0,6,0" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
                         <TextBox Grid.Column="2" Width="50" Margin="0,0,8,0" VerticalContentAlignment="Center"
                                  Text="{Binding IpConflictScanWindowHours, UpdateSourceTrigger=LostFocus, StringFormat={}{0:0.#}}" />
                         <Button Grid.Column="3" Content="Scan log" Padding="10,4" Command="{Binding ScanIpConflictsCommand}" />
@@ -2239,7 +2239,7 @@
                     <ItemsControl ItemsSource="{Binding IpConflictEvents}" Margin="0,8,0,0">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <TextBlock Margin="0,0,0,4" TextWrapping="Wrap" FontSize="11.5">
+                                <TextBlock Margin="0,0,0,4" TextWrapping="Wrap" FontSize="{StaticResource FontBody}">
                                     <TextBlock.Style>
                                         <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
                                             <Style.Triggers>
@@ -2349,7 +2349,7 @@
                 </Border.Style>
                 <StackPanel>
                     <TextBlock Text="Wi-Fi" Style="{StaticResource CardTitle}" />
-                    <TextBlock FontSize="12.5">
+                    <TextBlock FontSize="{StaticResource FontStrong}">
                         <Run Text="{Binding Wifi.Ssid, Mode=OneWay}" FontWeight="SemiBold" />
                         <Run Text=" · " /><Run Text="{Binding WifiRadio.PhyType, TargetNullValue='', Mode=OneWay}" />
                     </TextBlock>
@@ -2417,7 +2417,7 @@
                     <!-- #538/#539/#546: Airspace - on-demand neighbour/channel scan. -->
                     <Expander Margin="0,16,0,0" Background="Transparent" BorderThickness="0" Foreground="{DynamicResource TextPrimaryBrush}" IsExpanded="False">
                         <Expander.Header>
-                            <TextBlock Text="Airspace (channel congestion scan)" Style="{StaticResource CardTitle}" Margin="0" FontSize="13" />
+                            <TextBlock Text="Airspace (channel congestion scan)" Style="{StaticResource CardTitle}" Margin="0" FontSize="{StaticResource FontStrong}" />
                         </Expander.Header>
                         <StackPanel Margin="0,10,0,0">
                             <Grid>
@@ -2504,7 +2504,7 @@
                                     <DataTemplate>
                                         <Border Margin="0,0,0,8" Padding="8" CornerRadius="6" BorderThickness="1" BorderBrush="{DynamicResource BorderSubtleBrush}">
                                             <StackPanel>
-                                                <TextBlock Text="{Binding Ssid}" FontWeight="SemiBold" FontSize="12.5" />
+                                                <TextBlock Text="{Binding Ssid}" FontWeight="SemiBold" FontSize="{StaticResource FontStrong}" />
                                                 <ItemsControl ItemsSource="{Binding Bssids}" Margin="0,4,0,0">
                                                     <ItemsControl.ItemTemplate>
                                                         <DataTemplate>
@@ -2552,7 +2552,7 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" Text="Wi-Fi events" Style="{StaticResource SpecLabel}" Margin="0" VerticalAlignment="Center" />
-                        <TextBlock Grid.Column="1" Text="Window (h)" VerticalAlignment="Center" Margin="0,0,6,0" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        <TextBlock Grid.Column="1" Text="Window (h)" VerticalAlignment="Center" Margin="0,0,6,0" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
                         <TextBox Grid.Column="2" Width="50" Margin="0,0,8,0" VerticalContentAlignment="Center"
                                  Text="{Binding WifiEventScanWindowHours, UpdateSourceTrigger=LostFocus, StringFormat={}{0:0.#}}" />
                         <Button Grid.Column="3" Content="Scan" Padding="10,4" Command="{Binding ScanWifiEventsCommand}" />
@@ -2586,7 +2586,7 @@
                     <!-- #544: saved-profile audit. -->
                     <Expander Margin="0,16,0,0" Background="Transparent" BorderThickness="0" Foreground="{DynamicResource TextPrimaryBrush}" IsExpanded="False">
                         <Expander.Header>
-                            <TextBlock Text="Saved Wi-Fi profiles" Style="{StaticResource CardTitle}" Margin="0" FontSize="13" />
+                            <TextBlock Text="Saved Wi-Fi profiles" Style="{StaticResource CardTitle}" Margin="0" FontSize="{StaticResource FontStrong}" />
                         </Expander.Header>
                         <StackPanel Margin="0,10,0,0">
                             <Grid>
@@ -2610,11 +2610,11 @@
                                         <DataGridTemplateColumn.CellTemplate>
                                             <DataTemplate>
                                                 <StackPanel VerticalAlignment="Center">
-                                                    <TextBlock Text="Hidden SSID" FontSize="11.5" TextWrapping="Wrap" Foreground="{DynamicResource WarningBrush}"
+                                                    <TextBlock Text="Hidden SSID" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Foreground="{DynamicResource WarningBrush}"
                                                                Visibility="{Binding IsHiddenSsid, Converter={StaticResource BoolToVisibilityConverter}}" />
-                                                    <TextBlock Text="Weak security (WEP/TKIP)" FontSize="11.5" TextWrapping="Wrap" Foreground="{DynamicResource WarningBrush}"
+                                                    <TextBlock Text="Weak security (WEP/TKIP)" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Foreground="{DynamicResource WarningBrush}"
                                                                Visibility="{Binding IsWeakSecurity, Converter={StaticResource BoolToVisibilityConverter}}" />
-                                                    <TextBlock Text="Auto-connects to any open network" FontSize="11.5" TextWrapping="Wrap" Foreground="{DynamicResource WarningBrush}"
+                                                    <TextBlock Text="Auto-connects to any open network" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Foreground="{DynamicResource WarningBrush}"
                                                                Visibility="{Binding AutoConnectsToOpenNetwork, Converter={StaticResource BoolToVisibilityConverter}}" />
                                                 </StackPanel>
                                             </DataTemplate>
@@ -2662,7 +2662,7 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <StackPanel Grid.Column="0" Style="{StaticResource TitleRow}" Margin="0">
-                            <Border Width="9" Height="9" CornerRadius="4.5" Margin="0,0,8,0" VerticalAlignment="Center">
+                            <Border Width="9" Height="9" CornerRadius="4" Margin="0,0,8,0" VerticalAlignment="Center">
                                 <Border.Style>
                                     <Style TargetType="Border">
                                         <Setter Property="Background" Value="{DynamicResource TextSecondaryBrush}" />
@@ -2721,11 +2721,11 @@
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0" FontSize="12.5">
+                                    <TextBlock Grid.Column="0" FontSize="{StaticResource FontStrong}">
                                         <Run Text="{Binding ProcessName, Mode=OneWay}" FontWeight="SemiBold" />
                                         <Run Text=" (PID " /><Run Text="{Binding Pid, Mode=OneWay}" /><Run Text=")" />
                                     </TextBlock>
-                                    <TextBlock Grid.Column="1" FontSize="12.5" Foreground="{DynamicResource TextSecondaryBrush}">
+                                    <TextBlock Grid.Column="1" FontSize="{StaticResource FontStrong}" Foreground="{DynamicResource TextSecondaryBrush}">
                                         <Run Text="{Binding BytesSent, Converter={StaticResource BytesToReadableConverter}, StringFormat='↑ {0}', Mode=OneWay}" />
                                         <Run Text="   " />
                                         <Run Text="{Binding BytesReceived, Converter={StaticResource BytesToReadableConverter}, StringFormat='↓ {0}', Mode=OneWay}" />
@@ -2767,11 +2767,11 @@
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0" FontSize="12.5">
+                                    <TextBlock Grid.Column="0" FontSize="{StaticResource FontStrong}">
                                         <Run Text="{Binding ProcessName, Mode=OneWay}" FontWeight="SemiBold" />
                                         <Run Text=" (PID " /><Run Text="{Binding Pid, Mode=OneWay}" /><Run Text=")" />
                                     </TextBlock>
-                                    <TextBlock Grid.Column="1" FontSize="12.5" Foreground="{DynamicResource TextSecondaryBrush}">
+                                    <TextBlock Grid.Column="1" FontSize="{StaticResource FontStrong}" Foreground="{DynamicResource TextSecondaryBrush}">
                                         <Run Text="{Binding ConnectionCount, Mode=OneWay}" /><Run Text=" connections (" />
                                         <Run Text="{Binding EstablishedCount, Mode=OneWay}" /><Run Text=" established)" />
                                     </TextBlock>
@@ -2957,7 +2957,7 @@
                                             </Style.Triggers>
                                         </Style>
                                     </Border.Style>
-                                    <TextBlock ToolTip="{Binding FlagReason}" FontSize="12">
+                                    <TextBlock ToolTip="{Binding FlagReason}" FontSize="{StaticResource FontBody}">
                                         <Run Text="{Binding State, Mode=OneWay}" FontWeight="SemiBold" /><Run Text=": " /><Run Text="{Binding Count, Mode=OneWay}" />
                                     </TextBlock>
                                 </Border>
@@ -3020,7 +3020,7 @@
                             <DataGridTemplateColumn Header="" Width="90">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
-                                        <Button Content="End process" Padding="6,2" FontSize="11"
+                                        <Button Content="End process" Padding="6,2" FontSize="{StaticResource FontBody}"
                                                 Command="{Binding DataContext.EndPortLookupProcessCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                                 CommandParameter="{Binding}" />
                                     </DataTemplate>
@@ -3253,8 +3253,8 @@
                                         </Style>
                                     </Border.Style>
                                     <StackPanel>
-                                        <TextBlock Text="{Binding AdapterName}" FontWeight="SemiBold" FontSize="12.5" TextWrapping="Wrap" />
-                                        <TextBlock FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,0" TextWrapping="Wrap">
+                                        <TextBlock Text="{Binding AdapterName}" FontWeight="SemiBold" FontSize="{StaticResource FontStrong}" TextWrapping="Wrap" />
+                                        <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,0" TextWrapping="Wrap">
                                             <Run Text="Interrupt moderation: " /><Run Text="{Binding InterruptModerationEnabled, TargetNullValue=Unknown, Mode=OneWay}" />
                                             <Run Text="  •  RSS: " /><Run Text="{Binding RssEnabled, TargetNullValue=Unknown, Mode=OneWay}" />
                                             <Run Text=" (" /><Run Text="{Binding RssQueueCount, TargetNullValue=unknown, Mode=OneWay}" /><Run Text=" queues)" />
@@ -3277,7 +3277,7 @@
                             </Style>
                         </TextBlock.Style>
                     </TextBlock>
-                    <TextBlock Text="{Binding NdisDpcCrossLinkText}" Foreground="{DynamicResource WarningBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0">
+                    <TextBlock Text="{Binding NdisDpcCrossLinkText}" Foreground="{DynamicResource WarningBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,8,0,0">
                         <TextBlock.Style>
                             <Style TargetType="TextBlock">
                                 <Setter Property="Visibility" Value="Visible" />
@@ -3370,11 +3370,11 @@
                     <Expander Background="Transparent" BorderThickness="0" Foreground="{DynamicResource TextPrimaryBrush}" IsExpanded="False"
                               Visibility="{Binding PacBody, Converter={StaticResource NullToVisibilityConverter}}">
                         <Expander.Header>
-                            <TextBlock Text="View PAC script body" Style="{StaticResource CardTitle}" Margin="0" FontSize="12.5" />
+                            <TextBlock Text="View PAC script body" Style="{StaticResource CardTitle}" Margin="0" FontSize="{StaticResource FontStrong}" />
                         </Expander.Header>
                         <Border Margin="0,8,0,0" Padding="8" CornerRadius="6" BorderThickness="1" BorderBrush="{DynamicResource BorderSubtleBrush}" MaxHeight="240">
                             <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto">
-                                <TextBlock Text="{Binding PacBody}" FontFamily="Consolas" FontSize="11.5" TextWrapping="NoWrap" />
+                                <TextBlock Text="{Binding PacBody}" FontFamily="Consolas" FontSize="{StaticResource FontBody}" TextWrapping="NoWrap" />
                             </ScrollViewer>
                         </Border>
                     </Expander>
@@ -3388,11 +3388,11 @@
                         </Grid.ColumnDefinitions>
                         <StackPanel Grid.Column="0" Margin="0,0,8,0">
                             <TextBlock Text="Per-user (this account)" Style="{StaticResource SubStat}" Opacity="0.7" Margin="0,0,0,2" />
-                            <TextBlock Text="{Binding ProxyDivergence.PerUserSummary}" FontWeight="SemiBold" FontSize="12.5" TextWrapping="Wrap" />
+                            <TextBlock Text="{Binding ProxyDivergence.PerUserSummary}" FontWeight="SemiBold" FontSize="{StaticResource FontStrong}" TextWrapping="Wrap" />
                         </StackPanel>
                         <StackPanel Grid.Column="1">
                             <TextBlock Text="Machine-wide (WinHTTP)" Style="{StaticResource SubStat}" Opacity="0.7" Margin="0,0,0,2" />
-                            <TextBlock Text="{Binding ProxyDivergence.SystemWideSummary}" FontWeight="SemiBold" FontSize="12.5" TextWrapping="Wrap" />
+                            <TextBlock Text="{Binding ProxyDivergence.SystemWideSummary}" FontWeight="SemiBold" FontSize="{StaticResource FontStrong}" TextWrapping="Wrap" />
                         </StackPanel>
                     </Grid>
                     <TextBlock Text="{Binding ProxyDivergence.MismatchReason}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,8,0,0"
@@ -3409,8 +3409,8 @@
                         </ItemsControl.ItemsPanel>
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <Border Margin="0,0,6,6" Padding="7,3" CornerRadius="4" BorderThickness="1" BorderBrush="{DynamicResource BorderSubtleBrush}">
-                                    <TextBlock Text="{Binding}" FontFamily="Consolas" FontSize="11.5" />
+                                <Border Margin="0,0,6,6" Padding="6,3" CornerRadius="4" BorderThickness="1" BorderBrush="{DynamicResource BorderSubtleBrush}">
+                                    <TextBlock Text="{Binding}" FontFamily="Consolas" FontSize="{StaticResource FontBody}" />
                                 </Border>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
@@ -3498,8 +3498,8 @@
                                                 <ColumnDefinition Width="*" />
                                                 <ColumnDefinition Width="Auto" />
                                             </Grid.ColumnDefinitions>
-                                            <TextBlock Grid.Column="0" Text="{Binding ProfileName}" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" />
-                                            <Border Grid.Column="1" CornerRadius="4" Padding="7,2">
+                                            <TextBlock Grid.Column="0" Text="{Binding ProfileName}" FontWeight="SemiBold" FontSize="{StaticResource FontStrong}" VerticalAlignment="Center" />
+                                            <Border Grid.Column="1" CornerRadius="4" Padding="6,2">
                                                 <Border.Style>
                                                     <Style TargetType="Border">
                                                         <Setter Property="Background" Value="{DynamicResource SuccessBrush}" />
@@ -3513,7 +3513,7 @@
                                                         </Style.Triggers>
                                                     </Style>
                                                 </Border.Style>
-                                                <TextBlock Text="{Binding EnabledText}" FontSize="10.5" FontWeight="Bold" Foreground="White" />
+                                                <TextBlock Text="{Binding EnabledText}" FontSize="{StaticResource FontCaption}" FontWeight="Bold" Foreground="White" />
                                             </Border>
                                         </Grid>
                                         <TextBlock Style="{StaticResource SubStat}" Margin="0,4,0,0" TextWrapping="Wrap">
@@ -3521,7 +3521,7 @@
                                             <Run Text="  Out: " /><Run Text="{Binding OutboundPolicy, Mode=OneWay}" FontWeight="SemiBold" />
                                         </TextBlock>
                                         <TextBlock Text="{Binding FlagReason}" Style="{StaticResource SubStat}" Foreground="{DynamicResource WarningBrush}"
-                                                   TextWrapping="Wrap" Margin="0,4,0,0" FontSize="11"
+                                                   TextWrapping="Wrap" Margin="0,4,0,0" FontSize="{StaticResource FontBody}"
                                                    Visibility="{Binding FlagReason, Converter={StaticResource NullToVisibilityConverter}}" />
                                     </StackPanel>
                                 </Border>
@@ -3532,7 +3532,7 @@
                     <!-- #567: full rule browser, filter box, "this executable only" mode. -->
                     <Expander Background="Transparent" BorderThickness="0" Foreground="{DynamicResource TextPrimaryBrush}" IsExpanded="False" Margin="0,0,0,4">
                         <Expander.Header>
-                            <TextBlock Text="Rule browser" Style="{StaticResource CardTitle}" Margin="0" FontSize="13" />
+                            <TextBlock Text="Rule browser" Style="{StaticResource CardTitle}" Margin="0" FontSize="{StaticResource FontStrong}" />
                         </Expander.Header>
                         <StackPanel Margin="0,8,0,0">
                             <Grid Margin="0,0,0,6">
@@ -3595,7 +3595,7 @@
                     <!-- #568: blocked-connection (pfirewall.log) log reader. -->
                     <Expander Background="Transparent" BorderThickness="0" Foreground="{DynamicResource TextPrimaryBrush}" IsExpanded="False" Margin="0,0,0,4">
                         <Expander.Header>
-                            <TextBlock Text="Blocked-connection log" Style="{StaticResource CardTitle}" Margin="0" FontSize="13" />
+                            <TextBlock Text="Blocked-connection log" Style="{StaticResource CardTitle}" Margin="0" FontSize="{StaticResource FontStrong}" />
                         </Expander.Header>
                         <StackPanel Margin="0,8,0,0">
                             <TextBlock Text="The only first-party record of what the firewall actually blocked, from %SystemRoot%\System32\LogFiles\Firewall\pfirewall.log - disabled by default."
@@ -3639,7 +3639,7 @@
                     <!-- #569: WFP drop auditing with filter attribution. -->
                     <Expander Background="Transparent" BorderThickness="0" Foreground="{DynamicResource TextPrimaryBrush}" IsExpanded="False" Margin="0,0,0,4">
                         <Expander.Header>
-                            <TextBlock Text="WFP drop auditing (which rule blocked it)" Style="{StaticResource CardTitle}" Margin="0" FontSize="13" />
+                            <TextBlock Text="WFP drop auditing (which rule blocked it)" Style="{StaticResource CardTitle}" Margin="0" FontSize="{StaticResource FontStrong}" />
                         </Expander.Header>
                         <StackPanel Margin="0,8,0,0">
                             <TextBlock Text="Answers &quot;which rule blocked it&quot;, which the plain blocked-connection log above can't - resolves each drop's Filter Run-Time ID to a rule name via `netsh wfp show filters`."
@@ -3655,7 +3655,7 @@
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0" Text="Scan Security log for drops" Style="{StaticResource SpecLabel}" Margin="0" VerticalAlignment="Center" />
-                                <TextBlock Grid.Column="1" Text="Window (h)" VerticalAlignment="Center" Margin="0,0,6,0" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                <TextBlock Grid.Column="1" Text="Window (h)" VerticalAlignment="Center" Margin="0,0,6,0" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
                                 <TextBox Grid.Column="2" Width="50" Margin="0,0,8,0" VerticalContentAlignment="Center"
                                          Text="{Binding WfpScanWindowHours, UpdateSourceTrigger=LostFocus, StringFormat={}{0:0.#}}" />
                                 <Button Grid.Column="3" Padding="8,3" Command="{Binding ScanWfpDropsCommand}">
@@ -3692,7 +3692,7 @@
                     <!-- #571: read-only filter-driver/security-product stack inventory. -->
                     <Expander Background="Transparent" BorderThickness="0" Foreground="{DynamicResource TextPrimaryBrush}" IsExpanded="False" Margin="0,0,0,4">
                         <Expander.Header>
-                            <TextBlock Text="Filter-driver / security-product stack" Style="{StaticResource CardTitle}" Margin="0" FontSize="13" />
+                            <TextBlock Text="Filter-driver / security-product stack" Style="{StaticResource CardTitle}" Margin="0" FontSize="{StaticResource FontStrong}" />
                         </Expander.Header>
                         <StackPanel Margin="0,8,0,0">
                             <Grid Margin="0,0,0,6">
@@ -3740,7 +3740,7 @@
                             <ItemsControl ItemsSource="{Binding WfpProviders}" Margin="0,0,0,10">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
-                                        <TextBlock FontSize="11.5" Margin="0,0,0,2" TextWrapping="Wrap">
+                                        <TextBlock FontSize="{StaticResource FontBody}" Margin="0,0,0,2" TextWrapping="Wrap">
                                             <Run Text="{Binding Name, Mode=OneWay}" FontWeight="SemiBold" />
                                             <Run Text=" — " /><Run Text="{Binding Description, Mode=OneWay}" Foreground="{DynamicResource TextSecondaryBrush}" />
                                         </TextBlock>
@@ -3752,7 +3752,7 @@
                             <ItemsControl ItemsSource="{Binding WfpCallouts}">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
-                                        <TextBlock FontSize="11.5" Margin="0,0,0,2" TextWrapping="Wrap">
+                                        <TextBlock FontSize="{StaticResource FontBody}" Margin="0,0,0,2" TextWrapping="Wrap">
                                             <Run Text="{Binding Name, Mode=OneWay}" FontWeight="SemiBold" />
                                             <Run Text=" — " /><Run Text="{Binding Description, Mode=OneWay}" Foreground="{DynamicResource TextSecondaryBrush}" />
                                         </TextBlock>
@@ -3765,7 +3765,7 @@
                     <!-- #570: "This app can't reach the network" guided wizard. -->
                     <Expander Background="Transparent" BorderThickness="0" Foreground="{DynamicResource TextPrimaryBrush}" IsExpanded="False" Margin="0,4,0,0">
                         <Expander.Header>
-                            <TextBlock Text="Wizard: &quot;This app can't reach the network&quot;" Style="{StaticResource CardTitle}" Margin="0" FontSize="13" />
+                            <TextBlock Text="Wizard: &quot;This app can't reach the network&quot;" Style="{StaticResource CardTitle}" Margin="0" FontSize="{StaticResource FontStrong}" />
                         </Expander.Header>
                         <StackPanel Margin="0,8,0,0">
                             <TextBlock Text="Pick a process (name or full executable path) and get one panel combining its firewall rules, any WFP drops naming it, whether a proxy applies, whether a VPN holds the default route, and its current connections - signals this tab otherwise scatters across several cards."
@@ -3797,7 +3797,7 @@
                                 <ItemsControl ItemsSource="{Binding WizardReport.MatchingFirewallRules}" Margin="0,0,0,10">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
-                                            <TextBlock FontSize="11.5" Margin="0,0,0,2" TextWrapping="Wrap">
+                                            <TextBlock FontSize="{StaticResource FontBody}" Margin="0,0,0,2" TextWrapping="Wrap">
                                                 <Run Text="{Binding Name, Mode=OneWay}" FontWeight="SemiBold" />
                                                 <Run Text=" — " /><Run Text="{Binding Direction, Mode=OneWay}" /><Run Text="/" /><Run Text="{Binding Action, Mode=OneWay}" />
                                                 <Run Text=", " /><Run Text="{Binding Protocol, Mode=OneWay}" />
@@ -3822,7 +3822,7 @@
                                 <ItemsControl ItemsSource="{Binding WizardReport.MatchingWfpDrops}" Margin="0,0,0,4">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
-                                            <TextBlock FontSize="11.5" Margin="0,0,0,2" TextWrapping="Wrap" Foreground="{DynamicResource WarningBrush}">
+                                            <TextBlock FontSize="{StaticResource FontBody}" Margin="0,0,0,2" TextWrapping="Wrap" Foreground="{DynamicResource WarningBrush}">
                                                 <Run Text="{Binding TimeUtc, StringFormat={}{0:g}, Mode=OneWay}" />
                                                 <Run Text=" — " /><Run Text="{Binding DestAddress, Mode=OneWay}" /><Run Text=":" /><Run Text="{Binding DestPort, Mode=OneWay}" />
                                                 <Run Text=" (" /><Run Text="{Binding MatchedRuleName, TargetNullValue='unresolved rule', Mode=OneWay}" /><Run Text=")" />
@@ -3853,7 +3853,7 @@
                                 <ItemsControl ItemsSource="{Binding WizardReport.MatchingConnections}">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
-                                            <TextBlock FontSize="11.5" Margin="0,0,0,2" TextWrapping="Wrap">
+                                            <TextBlock FontSize="{StaticResource FontBody}" Margin="0,0,0,2" TextWrapping="Wrap">
                                                 <Run Text="{Binding ProcessName, Mode=OneWay}" FontWeight="SemiBold" />
                                                 <Run Text=" — " /><Run Text="{Binding RemoteAddress, Mode=OneWay}" /><Run Text=":" /><Run Text="{Binding RemotePort, Mode=OneWay}" />
                                                 <Run Text=" (" /><Run Text="{Binding State, Mode=OneWay}" /><Run Text=")" />
@@ -3959,10 +3959,10 @@
                                Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,10" Opacity="0.7" />
 
                     <UniformGrid Columns="2" Margin="0,0,0,4">
-                        <Button Content="Reset TCP/IP stack" Margin="0,0,8,8" Padding="8,5" Command="{Binding ResetIpStackCommand}" />
-                        <Button Content="Flush DNS resolver cache" Margin="0,0,0,8" Padding="8,5" Command="{Binding FlushDnsResolverCacheCommand}" />
-                        <Button Content="Clear ARP cache" Margin="0,0,8,0" Padding="8,5" Command="{Binding ClearArpCacheCommand}" />
-                        <Button Content="Reset NetBIOS name cache" Padding="8,5" Command="{Binding ResetNetBiosCacheCommand}" />
+                        <Button Content="Reset TCP/IP stack" Margin="0,0,8,8" Padding="8,4" Command="{Binding ResetIpStackCommand}" />
+                        <Button Content="Flush DNS resolver cache" Margin="0,0,0,8" Padding="8,4" Command="{Binding FlushDnsResolverCacheCommand}" />
+                        <Button Content="Clear ARP cache" Margin="0,0,8,0" Padding="8,4" Command="{Binding ClearArpCacheCommand}" />
+                        <Button Content="Reset NetBIOS name cache" Padding="8,4" Command="{Binding ResetNetBiosCacheCommand}" />
                     </UniformGrid>
                     <TextBlock Text="{Binding StackResetStatusText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,10,0,0" />
                 </StackPanel>
@@ -3999,7 +3999,7 @@
                             <DataGridTemplateColumn Header="" Width="0.7*">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
-                                        <TextBlock Text="Slow" Foreground="{DynamicResource WarningBrush}" FontWeight="SemiBold" FontSize="11.5" VerticalAlignment="Center"
+                                        <TextBlock Text="Slow" Foreground="{DynamicResource WarningBrush}" FontWeight="SemiBold" FontSize="{StaticResource FontBody}" VerticalAlignment="Center"
                                                    Visibility="{Binding LooksSlow, Converter={StaticResource BoolToVisibilityConverter}}" />
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
@@ -4069,11 +4069,11 @@
                                         <ColumnDefinition Width="Auto" />
                                         <ColumnDefinition Width="*" />
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0" Text="SMB1" FontSize="10.5" FontWeight="Bold" Foreground="White" VerticalAlignment="Top"
-                                               Padding="5,1" Margin="0,1,8,0" Background="{DynamicResource DangerBrush}"
+                                    <TextBlock Grid.Column="0" Text="SMB1" FontSize="{StaticResource FontCaption}" FontWeight="Bold" Foreground="White" VerticalAlignment="Top"
+                                               Padding="4,0" Margin="0,0,8,0" Background="{DynamicResource DangerBrush}"
                                                Visibility="{Binding IsSmb1, Converter={StaticResource BoolToVisibilityConverter}}" />
                                     <StackPanel Grid.Column="1">
-                                        <TextBlock FontSize="12.5">
+                                        <TextBlock FontSize="{StaticResource FontStrong}">
                                             <Run Text="{Binding ServerName, Mode=OneWay}" FontWeight="SemiBold" />
                                             <Run Text=" \ " /><Run Text="{Binding ShareName, Mode=OneWay}" />
                                             <Run Text="   dialect " /><Run Text="{Binding Dialect, Mode=OneWay}" FontWeight="SemiBold" />
@@ -4103,7 +4103,7 @@
                     <!-- #589: on-demand SMBClient Connectivity/Operational event scan. -->
                     <Expander Background="Transparent" BorderThickness="0" Foreground="{DynamicResource TextPrimaryBrush}" IsExpanded="False" Margin="0,16,0,0">
                         <Expander.Header>
-                            <TextBlock Text="SMB session events (drops, reconnects, timeouts)" Style="{StaticResource CardTitle}" Margin="0" FontSize="13" />
+                            <TextBlock Text="SMB session events (drops, reconnects, timeouts)" Style="{StaticResource CardTitle}" Margin="0" FontSize="{StaticResource FontStrong}" />
                         </Expander.Header>
                         <StackPanel Margin="0,8,0,0">
                             <TextBlock Text="Scans Microsoft-Windows-SMBClient/Connectivity and /Operational for session-drop, reconnect, and timeout events - a timeline of when a share actually went away."
@@ -4114,7 +4114,7 @@
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
-                                    <TextBlock Text="Lookback (hours)" VerticalAlignment="Center" Margin="0,0,6,0" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                    <TextBlock Text="Lookback (hours)" VerticalAlignment="Center" Margin="0,0,6,0" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
                                     <TextBox Width="60" VerticalContentAlignment="Center" Text="{Binding SmbEventScanWindowHours, UpdateSourceTrigger=LostFocus, StringFormat={}{0:0.#}}" />
                                 </StackPanel>
                                 <Button Grid.Column="1" Content="Scan" Padding="10,4" Command="{Binding ScanSmbEventsCommand}" />
@@ -4128,8 +4128,8 @@
                                                 <ColumnDefinition Width="Auto" />
                                                 <ColumnDefinition Width="*" />
                                             </Grid.ColumnDefinitions>
-                                            <TextBlock Grid.Column="0" Text="{Binding TimeUtc, StringFormat='{}{0:MM/dd HH:mm:ss}'}" FontSize="11" Margin="0,0,10,0" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Top" />
-                                            <TextBlock Grid.Column="1" FontSize="12" TextWrapping="Wrap">
+                                            <TextBlock Grid.Column="0" Text="{Binding TimeUtc, StringFormat='{}{0:MM/dd HH:mm:ss}'}" FontSize="{StaticResource FontBody}" Margin="0,0,10,0" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Top" />
+                                            <TextBlock Grid.Column="1" FontSize="{StaticResource FontBody}" TextWrapping="Wrap">
                                                 <Run Text="{Binding Category, Mode=OneWay}" FontWeight="SemiBold" />
                                                 <Run Text=" (ID " /><Run Text="{Binding EventId, Mode=OneWay}" /><Run Text=")  " />
                                                 <Run Text="{Binding Message, Mode=OneWay}" Foreground="{DynamicResource TextSecondaryBrush}" />
@@ -4176,9 +4176,9 @@
                                             <ColumnDefinition Width="*" />
                                             <ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0" Text="{Binding Name}" FontSize="12.5" TextWrapping="Wrap" VerticalAlignment="Center" />
-                                        <TextBlock Grid.Column="1" Text="Offline" FontSize="10.5" FontWeight="Bold" Foreground="White"
-                                                   Padding="5,1" Background="{DynamicResource WarningBrush}" VerticalAlignment="Center">
+                                        <TextBlock Grid.Column="0" Text="{Binding Name}" FontSize="{StaticResource FontStrong}" TextWrapping="Wrap" VerticalAlignment="Center" />
+                                        <TextBlock Grid.Column="1" Text="Offline" FontSize="{StaticResource FontCaption}" FontWeight="Bold" Foreground="White"
+                                                   Padding="4,0" Background="{DynamicResource WarningBrush}" VerticalAlignment="Center">
                                             <TextBlock.Style>
                                                 <Style TargetType="TextBlock">
                                                     <Setter Property="Visibility" Value="Collapsed" />
@@ -4221,7 +4221,7 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" Text="Event scan" Style="{StaticResource SpecLabel}" Margin="0" VerticalAlignment="Center" />
-                        <TextBlock Grid.Column="1" Text="Window (h)" VerticalAlignment="Center" Margin="0,0,6,0" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        <TextBlock Grid.Column="1" Text="Window (h)" VerticalAlignment="Center" Margin="0,0,6,0" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
                         <TextBox Grid.Column="2" Width="50" Margin="0,0,8,0" VerticalContentAlignment="Center"
                                  Text="{Binding NetworkEventScanWindowHours, UpdateSourceTrigger=LostFocus, StringFormat={}{0:0.#}}" />
                         <Button Grid.Column="3" Content="Scan" Padding="10,4" Command="{Binding ScanNetworkEventsCommand}" />
@@ -4243,15 +4243,15 @@
                         </StackPanel.Style>
                         <Border Background="{DynamicResource WarningBrush}" Opacity="0.15" CornerRadius="4" Padding="10,8">
                             <StackPanel>
-                                <TextBlock Text="Possible post-sleep networking issue" FontWeight="Bold" FontSize="12.5" Foreground="{DynamicResource WarningBrush}" />
-                                <TextBlock TextWrapping="Wrap" FontSize="11.5" Margin="0,4,0,6" Foreground="{DynamicResource TextPrimaryBrush}">
+                                <TextBlock Text="Possible post-sleep networking issue" FontWeight="Bold" FontSize="{StaticResource FontStrong}" Foreground="{DynamicResource WarningBrush}" />
+                                <TextBlock TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Margin="0,4,0,6" Foreground="{DynamicResource TextPrimaryBrush}">
                                     <Run Text="{Binding SleepResumeFindings.Count, Mode=OneWay}" FontWeight="SemiBold" />
                                     <Run Text=" resume(s) from sleep were followed within a few minutes by something that looks like a network problem. The most common cause this app can actually detect is the NIC's own &quot;allow the computer to turn off this device&quot; power-management setting - check the Power management section of the Adapter health card above first. This is a timing correlation, not a diagnosis." />
                                 </TextBlock>
                                 <ItemsControl ItemsSource="{Binding SleepResumeFindings}">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
-                                            <TextBlock FontSize="11" Margin="0,0,0,2" TextWrapping="Wrap">
+                                            <TextBlock FontSize="{StaticResource FontBody}" Margin="0,0,0,2" TextWrapping="Wrap">
                                                 <Run Text="{Binding ResumeTimeUtc, StringFormat={}{0:g}, Mode=OneWay}" FontFamily="Consolas" />
                                                 <Run Text=" — " /><Run Text="{Binding IssueSummary, Mode=OneWay}" />
                                             </TextBlock>
@@ -4306,7 +4306,7 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <StackPanel Grid.Column="0" Style="{StaticResource TitleRow}" Margin="0">
-                            <Border Width="9" Height="9" CornerRadius="4.5" Margin="0,0,8,0" VerticalAlignment="Center">
+                            <Border Width="9" Height="9" CornerRadius="4" Margin="0,0,8,0" VerticalAlignment="Center">
                                 <Border.Style>
                                     <Style TargetType="Border">
                                         <Setter Property="Background" Value="{DynamicResource TextSecondaryBrush}" />
@@ -4345,7 +4345,7 @@
                                     <Run Text="{Binding TriggeredAtUtc, StringFormat={}{0:g}, Mode=OneWay}" FontFamily="Consolas" FontWeight="SemiBold" />
                                     <Run Text=" — " /><Run Text="{Binding TriggerReason, Mode=OneWay}" />
                                     <Run Text=" (" /><Run Text="{Binding SampleCount, Mode=OneWay}" /><Run Text=" sample(s)) — " />
-                                    <Run Text="{Binding FilePath, Mode=OneWay}" FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                    <Run Text="{Binding FilePath, Mode=OneWay}" FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextSecondaryBrush}" />
                                 </TextBlock>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>

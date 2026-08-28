@@ -20,10 +20,10 @@
                     </Grid.ColumnDefinitions>
                     <CheckBox Grid.Column="0" IsChecked="{Binding IsSelected}" VerticalAlignment="Top" Margin="0,3,10,0" />
                     <StackPanel Grid.Column="1">
-                        <TextBlock Text="{Binding Title}" FontSize="13" FontWeight="SemiBold" TextWrapping="Wrap" />
+                        <TextBlock Text="{Binding Title}" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" TextWrapping="Wrap" />
                         <TextBlock Text="{Binding Description}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,2,0,0" />
                     </StackPanel>
-                    <TextBlock Grid.Column="2" Text="{Binding EstimatedSizeLabel}" FontSize="11" VerticalAlignment="Top" Margin="10,2,0,0"
+                    <TextBlock Grid.Column="2" Text="{Binding EstimatedSizeLabel}" FontSize="{StaticResource FontBody}" VerticalAlignment="Top" Margin="10,2,0,0"
                                Foreground="{DynamicResource TextTertiaryBrush}" />
                 </Grid>
             </Border>
@@ -39,14 +39,14 @@
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     <StackPanel Grid.Column="0">
-                        <TextBlock FontSize="12.5" FontFamily="Consolas" TextWrapping="Wrap">
+                        <TextBlock FontSize="{StaticResource FontStrong}" FontFamily="Consolas" TextWrapping="Wrap">
                             <Run Text="{Binding OriginalValue, Mode=OneWay}" />
                             <Run Text=" → " Foreground="{DynamicResource TextTertiaryBrush}" />
                             <Run Text="{Binding Placeholder, Mode=OneWay}" Foreground="{DynamicResource AccentBrush}" />
                         </TextBlock>
                         <TextBlock Text="{Binding RuleLabel}" Style="{StaticResource SubStat}" />
                     </StackPanel>
-                    <TextBlock Grid.Column="1" Text="{Binding OccurrenceCount, StringFormat='{}{0}x'}" FontSize="11.5"
+                    <TextBlock Grid.Column="1" Text="{Binding OccurrenceCount, StringFormat='{}{0}x'}" FontSize="{StaticResource FontBody}"
                                VerticalAlignment="Center" Foreground="{DynamicResource TextTertiaryBrush}" />
                 </Grid>
             </Border>
@@ -66,7 +66,7 @@
                 <Button Grid.Column="0" Content="&#8592; Back"
                         Command="{Binding DataContext.HideEvidenceBundleCommand, RelativeSource={RelativeSource AncestorType=UserControl, AncestorLevel=2}}"
                         Padding="10,4" Margin="0,0,14,0" VerticalAlignment="Center" />
-                <TextBlock Grid.Column="1" Text="Evidence Bundle" FontSize="17" FontWeight="SemiBold" VerticalAlignment="Center" />
+                <TextBlock Grid.Column="1" Text="Evidence Bundle" FontSize="{StaticResource FontTitle}" FontWeight="SemiBold" VerticalAlignment="Center" />
                 <!-- #987: independent of the checklist/collection flow below - reuses only cheap,
                      already-live data. -->
                 <Button Grid.Column="2" Content="Copy forum post" Padding="10,4" Command="{Binding CopyForumPostCommand}" />
@@ -90,7 +90,7 @@
             <StackPanel Visibility="{Binding IsSetupStage, Converter={StaticResource BoolToVisibilityConverter}}">
                 <ItemsControl ItemsSource="{Binding Items}" ItemTemplate="{StaticResource EvidenceBundleItemTemplate}" />
 
-                <TextBlock Text="{Binding EstimatedTotalSizeText}" FontSize="12.5" FontWeight="SemiBold" Margin="0,4,0,10" />
+                <TextBlock Text="{Binding EstimatedTotalSizeText}" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" Margin="0,4,0,10" />
 
                 <!-- #984: opt-in - unchecked by default, same "off by default" convention every
                      other opt-in toggle in this app follows. -->
@@ -102,11 +102,11 @@
 
             <!-- ===================== Collecting stage ===================== -->
             <StackPanel Visibility="{Binding IsCollectingStage, Converter={StaticResource BoolToVisibilityConverter}}">
-                <TextBlock Text="Working…" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,10" />
+                <TextBlock Text="Working…" FontSize="{StaticResource FontSection}" FontWeight="SemiBold" Margin="0,0,0,10" />
                 <ItemsControl ItemsSource="{Binding ProgressLines}">
                     <ItemsControl.ItemTemplate>
                         <DataTemplate>
-                            <TextBlock Text="{Binding}" FontSize="11.5" FontFamily="Consolas" TextWrapping="Wrap" Margin="0,0,0,2"
+                            <TextBlock Text="{Binding}" FontSize="{StaticResource FontBody}" FontFamily="Consolas" TextWrapping="Wrap" Margin="0,0,0,2"
                                        Foreground="{DynamicResource TextSecondaryBrush}" />
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>
@@ -115,7 +115,7 @@
 
             <!-- ===================== Scrub review stage: #984/#985 ===================== -->
             <StackPanel Visibility="{Binding IsScrubReviewStage, Converter={StaticResource BoolToVisibilityConverter}}">
-                <TextBlock Text="Review before saving" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,4" />
+                <TextBlock Text="Review before saving" FontSize="{StaticResource FontSection}" FontWeight="SemiBold" Margin="0,0,0,4" />
                 <TextBlock TextWrapping="Wrap" Margin="0,0,0,10" Style="{StaticResource SubStat}"
                            Text="Every value below will be replaced with its placeholder in every text file in this bundle. Nothing is written to the zip until you confirm." />
 
@@ -135,7 +135,7 @@
 
                 <!-- #985: "also redact this text" - a simple type-or-paste-and-add row, not a full
                      text-selection UI over the preview. -->
-                <TextBlock Text="Also redact this text" FontSize="12.5" FontWeight="SemiBold" Margin="0,14,0,4" />
+                <TextBlock Text="Also redact this text" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" Margin="0,14,0,4" />
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
@@ -143,18 +143,18 @@
                     </Grid.ColumnDefinitions>
                     <TextBox Grid.Column="0" Margin="0,0,8,0" VerticalAlignment="Center"
                               Text="{Binding CustomRedactionText, UpdateSourceTrigger=PropertyChanged}" />
-                    <Button Grid.Column="1" Content="Add" Padding="12,5" Command="{Binding AddCustomRedactionCommand}" />
+                    <Button Grid.Column="1" Content="Add" Padding="12,4" Command="{Binding AddCustomRedactionCommand}" />
                 </Grid>
 
-                <StackPanel Orientation="Horizontal" Margin="0,18,0,0">
-                    <Button Content="Looks good - finish bundle" Padding="14,7" Margin="0,0,10,0" Command="{Binding ConfirmScrubCommand}" />
-                    <Button Content="Cancel" Padding="14,7" Command="{Binding CancelScrubCommand}" />
+                <StackPanel Orientation="Horizontal" Margin="0,16,0,0">
+                    <Button Content="Looks good - finish bundle" Padding="14,6" Margin="0,0,10,0" Command="{Binding ConfirmScrubCommand}" />
+                    <Button Content="Cancel" Padding="14,6" Command="{Binding CancelScrubCommand}" />
                 </StackPanel>
             </StackPanel>
 
             <!-- ===================== Done stage ===================== -->
             <StackPanel Visibility="{Binding IsDoneStage, Converter={StaticResource BoolToVisibilityConverter}}">
-                <TextBlock Text="Bundle ready" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,8" Foreground="{DynamicResource SuccessBrush}" />
+                <TextBlock Text="Bundle ready" FontSize="{StaticResource FontSection}" FontWeight="SemiBold" Margin="0,0,0,8" Foreground="{DynamicResource SuccessBrush}" />
                 <TextBlock Text="{Binding ResultSummaryText}" TextWrapping="Wrap" Margin="0,0,0,4" />
                 <TextBlock Text="{Binding ResultPath}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,14" />
                 <StackPanel Orientation="Horizontal">

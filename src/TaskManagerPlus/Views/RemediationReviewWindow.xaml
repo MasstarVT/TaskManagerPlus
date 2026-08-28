@@ -10,9 +10,9 @@
         Title="{Binding FindingTitle, StringFormat='Fix: {0}'}"
         Height="620" Width="620" MinHeight="480" MinWidth="480"
         WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
-    <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="18">
+    <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16">
         <StackPanel>
-            <TextBlock Text="{Binding FindingTitle}" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,0,0,4" />
+            <TextBlock Text="{Binding FindingTitle}" FontSize="{StaticResource FontTitle}" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,0,0,4" />
             <TextBlock Text="Review exactly what this will run before confirming - nothing runs until you click Run below."
                        Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,14" />
 
@@ -74,13 +74,13 @@
                      dialog's whole reason for existing. -->
                 <TextBlock Text="Exact command" Style="{StaticResource CardTitle}" Margin="0,0,0,4" />
                 <TextBox Text="{Binding CommandText, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap"
-                         FontFamily="Consolas" FontSize="12" Margin="0,0,0,14" />
+                         FontFamily="Consolas" FontSize="{StaticResource FontBody}" Margin="0,0,0,14" />
 
                 <!-- #974: precondition block reason - shown inline (and as the Run/Preview
                      buttons' own ToolTip below) whenever a declared precondition currently fails.
                      Advisory notes (System Protection looking off) are informational only and
                      never disable anything. -->
-                <TextBlock Text="{Binding PreconditionBlockReason}" TextWrapping="Wrap" FontSize="12"
+                <TextBlock Text="{Binding PreconditionBlockReason}" TextWrapping="Wrap" FontSize="{StaticResource FontBody}"
                            Foreground="{DynamicResource DangerBrush}" Margin="0,0,0,8">
                     <TextBlock.Style>
                         <Style TargetType="TextBlock">
@@ -93,7 +93,7 @@
                         </Style>
                     </TextBlock.Style>
                 </TextBlock>
-                <TextBlock Text="{Binding PreconditionAdvisoryText}" TextWrapping="Wrap" FontSize="12"
+                <TextBlock Text="{Binding PreconditionAdvisoryText}" TextWrapping="Wrap" FontSize="{StaticResource FontBody}"
                            Foreground="{DynamicResource WarningBrush}" Margin="0,0,0,8">
                     <TextBlock.Style>
                         <Style TargetType="TextBlock">
@@ -117,7 +117,7 @@
                     <Button Grid.Column="1" Content="Preview (dry run)" Command="{Binding RunPreviewCommand}" Padding="10,4"
                             ToolTip="{Binding PreconditionBlockReason}" />
                 </Grid>
-                <TextBlock Text="{Binding PreviewCommandText}" FontFamily="Consolas" FontSize="11"
+                <TextBlock Text="{Binding PreviewCommandText}" FontFamily="Consolas" FontSize="{StaticResource FontBody}"
                            Foreground="{DynamicResource TextTertiaryBrush}" TextWrapping="Wrap" Margin="0,0,0,4">
                     <TextBlock.Style>
                         <Style TargetType="TextBlock">
@@ -131,7 +131,7 @@
                     </TextBlock.Style>
                 </TextBlock>
                 <TextBox Text="{Binding PreviewOutputText, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap"
-                         FontFamily="Consolas" FontSize="11.5" MinHeight="60" MaxHeight="140"
+                         FontFamily="Consolas" FontSize="{StaticResource FontBody}" MinHeight="60" MaxHeight="140"
                          VerticalScrollBarVisibility="Auto" AcceptsReturn="True" Margin="0,0,0,14">
                     <TextBox.Style>
                         <Style TargetType="TextBox">
@@ -175,7 +175,7 @@
                                 </Button.Style>
                             </Button>
                         </StackPanel>
-                        <TextBlock Text="{Binding RestorePointStatus}" TextWrapping="Wrap" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        <TextBlock Text="{Binding RestorePointStatus}" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
                     </StackPanel>
                 </Border>
 
@@ -204,7 +204,7 @@
                             <Button Content="Queue for this time" Command="{Binding QueueForSpecificTimeCommand}" Padding="10,4"
                                     ToolTip="{Binding PreconditionBlockReason}" />
                         </StackPanel>
-                        <TextBlock Text="{Binding DeferredQueueStatusText}" TextWrapping="Wrap" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        <TextBlock Text="{Binding DeferredQueueStatusText}" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
                     </StackPanel>
                 </Border>
 
@@ -230,7 +230,7 @@
                             </Style>
                         </Button.Style>
                     </Button>
-                    <Button Grid.Column="2" Content="Run" Command="{Binding RunActionCommand}" Padding="18,6"
+                    <Button Grid.Column="2" Content="Run" Command="{Binding RunActionCommand}" Padding="16,6"
                             Background="{DynamicResource AccentBrush}" Foreground="{DynamicResource AccentForegroundBrush}" FontWeight="SemiBold"
                             ToolTip="{Binding PreconditionBlockReason}" />
                 </Grid>
@@ -260,7 +260,7 @@
                 <!-- #977: live streamed console output for sfc/DISM/chkdsk - a scrolling read-only
                      list rather than the plain textbox below, so each line appears as it arrives. -->
                 <ListBox ItemsSource="{Binding LiveOutputLines}" Height="180" Margin="0,0,0,10"
-                         FontFamily="Consolas" FontSize="11" Background="{DynamicResource BgElevatedBrush}"
+                         FontFamily="Consolas" FontSize="{StaticResource FontBody}" Background="{DynamicResource BgElevatedBrush}"
                          ScrollViewer.HorizontalScrollBarVisibility="Auto" ScrollViewer.VerticalScrollBarVisibility="Auto">
                     <ListBox.Style>
                         <Style TargetType="ListBox" BasedOn="{StaticResource {x:Type ListBox}}">
@@ -275,7 +275,7 @@
                 </ListBox>
 
                 <TextBox Text="{Binding RunOutputText, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap"
-                         FontFamily="Consolas" FontSize="11.5" MinHeight="80" MaxHeight="220"
+                         FontFamily="Consolas" FontSize="{StaticResource FontBody}" MinHeight="80" MaxHeight="220"
                          VerticalScrollBarVisibility="Auto" AcceptsReturn="True" Margin="0,4,0,0">
                     <TextBox.Style>
                         <Style TargetType="TextBox">
@@ -304,11 +304,11 @@
                             </Style.Triggers>
                         </Style>
                     </Border.Style>
-                    <TextBlock Text="{Binding PostActionVerificationText}" FontSize="12.5" FontWeight="SemiBold" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding PostActionVerificationText}" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" TextWrapping="Wrap" />
                 </Border>
             </StackPanel>
 
-            <Button Content="Close" HorizontalAlignment="Right" Padding="14,5" Margin="0,16,0,0" Click="OnClose" />
+            <Button Content="Close" HorizontalAlignment="Right" Padding="14,4" Margin="0,16,0,0" Click="OnClose" />
         </StackPanel>
     </ScrollViewer>
 </Window>

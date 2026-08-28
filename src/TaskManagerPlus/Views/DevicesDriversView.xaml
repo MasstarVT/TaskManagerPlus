@@ -16,7 +16,7 @@
              from the driver-inventory grid below, so a simple two-button strip switches between
              them rather than restructuring either view. -->
         <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="16,12,16,0">
-            <Button Content="Driver inventory" Padding="10,5" Command="{Binding ShowDriverInventoryViewCommand}">
+            <Button Content="Driver inventory" Padding="10,4" Command="{Binding ShowDriverInventoryViewCommand}">
                 <Button.Style>
                     <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
                         <Style.Triggers>
@@ -28,7 +28,7 @@
                     </Style>
                 </Button.Style>
             </Button>
-            <Button Content="Device tree" Padding="10,5" Margin="8,0,0,0" Command="{Binding ShowDeviceTreeViewCommand}">
+            <Button Content="Device tree" Padding="10,4" Margin="8,0,0,0" Command="{Binding ShowDeviceTreeViewCommand}">
                 <Button.Style>
                     <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
                         <Style.Triggers>
@@ -41,7 +41,7 @@
                 </Button.Style>
             </Button>
             <!-- #479: this tab's third top-level view. -->
-            <Button Content="Driver store" Padding="10,5" Margin="8,0,0,0" Command="{Binding ShowDriverStoreViewCommand}">
+            <Button Content="Driver store" Padding="10,4" Margin="8,0,0,0" Command="{Binding ShowDriverStoreViewCommand}">
                 <Button.Style>
                     <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
                         <Style.Triggers>
@@ -54,7 +54,7 @@
                 </Button.Style>
             </Button>
             <!-- #493-496: this tab's FOURTH top-level view. -->
-            <Button Content="Filter drivers" Padding="10,5" Margin="8,0,0,0" Command="{Binding ShowFilterDriversViewCommand}">
+            <Button Content="Filter drivers" Padding="10,4" Margin="8,0,0,0" Command="{Binding ShowFilterDriversViewCommand}">
                 <Button.Style>
                     <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
                         <Style.Triggers>
@@ -68,7 +68,7 @@
             </Button>
             <!-- #486: jumps to the Summary tab's existing snapshot/diff UI, which now also covers
                  driver inventory + driver store contents - see SnapshotService. -->
-            <Button Content="System snapshot &amp; driver diff..." Padding="10,5" Margin="16,0,0,0"
+            <Button Content="System snapshot &amp; driver diff..." Padding="10,4" Margin="16,0,0,0"
                     Command="{Binding OpenSnapshotUiCommand}"
                     ToolTip="Opens the Summary tab's snapshot/compare UI, which now also diffs driver inventory and driver store contents against a saved baseline." />
         </StackPanel>
@@ -100,7 +100,7 @@
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <StackPanel Grid.Column="0">
-                    <TextBlock Text="Driver inventory" Style="{StaticResource CardTitle}" Margin="0" FontSize="15" />
+                    <TextBlock Text="Driver inventory" Style="{StaticResource CardTitle}" Margin="0" FontSize="{StaticResource FontSection}" />
                     <TextBlock Text="{Binding LastRefreshedText}" Style="{StaticResource SubStat}" Margin="0,2,0,0" />
                 </StackPanel>
                 <!-- #461: hides everything whose file-version company name is Microsoft, leaving
@@ -157,8 +157,8 @@
                                Text="bcdedit boot-configuration flags that relax Driver Signature Enforcement, cross-checked against Microsoft-Windows-CodeIntegrity's own blocked/unverified-image log. A flag here is worth understanding, not necessarily a problem - test signing is sometimes on deliberately during driver development." />
                     <UniformGrid Columns="4" Margin="0,0,0,4">
                         <StackPanel Margin="0,0,10,0">
-                            <TextBlock Text="Test signing" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
-                            <TextBlock FontSize="13.5" FontWeight="SemiBold">
+                            <TextBlock Text="Test signing" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                            <TextBlock FontSize="{StaticResource FontSection}" FontWeight="SemiBold">
                                 <TextBlock.Style>
                                     <Style TargetType="TextBlock">
                                         <Setter Property="Text" Value="Off" />
@@ -174,8 +174,8 @@
                             </TextBlock>
                         </StackPanel>
                         <StackPanel Margin="0,0,10,0">
-                            <TextBlock Text="Integrity checks disabled" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
-                            <TextBlock FontSize="13.5" FontWeight="SemiBold">
+                            <TextBlock Text="Integrity checks disabled" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                            <TextBlock FontSize="{StaticResource FontSection}" FontWeight="SemiBold">
                                 <TextBlock.Style>
                                     <Style TargetType="TextBlock">
                                         <Setter Property="Text" Value="No" />
@@ -191,8 +191,8 @@
                             </TextBlock>
                         </StackPanel>
                         <StackPanel Margin="0,0,10,0">
-                            <TextBlock Text="Signature enforcement disabled" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
-                            <TextBlock FontSize="13.5" FontWeight="SemiBold">
+                            <TextBlock Text="Signature enforcement disabled" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                            <TextBlock FontSize="{StaticResource FontSection}" FontWeight="SemiBold">
                                 <TextBlock.Style>
                                     <Style TargetType="TextBlock">
                                         <Setter Property="Text" Value="No" />
@@ -208,8 +208,8 @@
                             </TextBlock>
                         </StackPanel>
                         <StackPanel>
-                            <TextBlock Text="Blocked/unverified images (30d)" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
-                            <TextBlock Text="{Binding CodeIntegrityBlockedEventCount}" FontSize="13.5" FontWeight="SemiBold">
+                            <TextBlock Text="Blocked/unverified images (30d)" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                            <TextBlock Text="{Binding CodeIntegrityBlockedEventCount}" FontSize="{StaticResource FontSection}" FontWeight="SemiBold">
                                 <TextBlock.Style>
                                     <Style TargetType="TextBlock">
                                         <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
@@ -221,14 +221,14 @@
                                     </Style>
                                 </TextBlock.Style>
                             </TextBlock>
-                            <TextBlock Text="{Binding LastCodeIntegrityBlockedEventText}" FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+                            <TextBlock Text="{Binding LastCodeIntegrityBlockedEventText}" FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextSecondaryBrush}" />
                         </StackPanel>
                     </UniformGrid>
 
                     <ItemsControl ItemsSource="{Binding CodeIntegrityRecentMessages}" Margin="0,8,0,0">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <TextBlock Text="{Binding}" FontSize="10.5" TextWrapping="Wrap" Margin="0,0,0,4"
+                                <TextBlock Text="{Binding}" FontSize="{StaticResource FontCaption}" TextWrapping="Wrap" Margin="0,0,0,4"
                                            Foreground="{DynamicResource TextSecondaryBrush}" />
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
@@ -244,7 +244,7 @@
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <TextBlock Grid.Column="0" Text="{Binding VerifyAllProgressText}" VerticalAlignment="Center"
-                           Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5" />
+                           Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" />
                 <Button Grid.Column="1" Command="{Binding VerifyAllCommand}" Padding="10,4">
                     <TextBlock>
                         <TextBlock.Style>
@@ -348,8 +348,8 @@
                         <DataGridTemplateColumn.CellTemplate>
                             <DataTemplate>
                                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                    <TextBlock Text="{Binding SignerName}" FontSize="11.5" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
-                                    <TextBlock Text=" (WHQL)" FontSize="10.5" FontWeight="SemiBold" VerticalAlignment="Center"
+                                    <TextBlock Text="{Binding SignerName}" FontSize="{StaticResource FontBody}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                    <TextBlock Text=" (WHQL)" FontSize="{StaticResource FontCaption}" FontWeight="SemiBold" VerticalAlignment="Center"
                                                Foreground="{DynamicResource SuccessBrush}"
                                                Visibility="{Binding IsWhql, Converter={StaticResource BoolToVisibilityConverter}}" />
                                 </StackPanel>
@@ -360,7 +360,7 @@
                     <DataGridTemplateColumn Header="" Width="70">
                         <DataGridTemplateColumn.CellTemplate>
                             <DataTemplate>
-                                <Button Content="Verify" Padding="6,2" FontSize="10.5"
+                                <Button Content="Verify" Padding="6,2" FontSize="{StaticResource FontCaption}"
                                         Command="{Binding DataContext.VerifyCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                         CommandParameter="{Binding}" />
                             </DataTemplate>
@@ -392,10 +392,10 @@
                                         <ColumnDefinition Width="110" />
                                         <ColumnDefinition Width="60" />
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0" Text="{Binding FilePath}" FontSize="11.5" TextTrimming="CharacterEllipsis" ToolTip="{Binding FilePath}" VerticalAlignment="Center" />
-                                    <TextBlock Grid.Column="1" Text="{Binding Version, TargetNullValue=Unknown}" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" />
-                                    <TextBlock Grid.Column="2" Text="{Binding SizeBytes, Converter={StaticResource BytesToReadableConverter}, TargetNullValue=Unknown}" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" />
-                                    <TextBlock Grid.Column="3" Text="{Binding SignatureStatus}" FontSize="11" VerticalAlignment="Center">
+                                    <TextBlock Grid.Column="0" Text="{Binding FilePath}" FontSize="{StaticResource FontBody}" TextTrimming="CharacterEllipsis" ToolTip="{Binding FilePath}" VerticalAlignment="Center" />
+                                    <TextBlock Grid.Column="1" Text="{Binding Version, TargetNullValue=Unknown}" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" />
+                                    <TextBlock Grid.Column="2" Text="{Binding SizeBytes, Converter={StaticResource BytesToReadableConverter}, TargetNullValue=Unknown}" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" />
+                                    <TextBlock Grid.Column="3" Text="{Binding SignatureStatus}" FontSize="{StaticResource FontBody}" VerticalAlignment="Center">
                                         <TextBlock.Style>
                                             <Style TargetType="TextBlock">
                                                 <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
@@ -410,7 +410,7 @@
                                             </Style>
                                         </TextBlock.Style>
                                     </TextBlock>
-                                    <Button Grid.Column="4" Content="Verify" Padding="6,2" FontSize="10.5"
+                                    <Button Grid.Column="4" Content="Verify" Padding="6,2" FontSize="{StaticResource FontCaption}"
                                             Command="{Binding DataContext.VerifyFileCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                             CommandParameter="{Binding}" />
                                 </Grid>
@@ -442,8 +442,8 @@
                             <DataTemplate>
                                 <Border Padding="10,8" Margin="0,0,0,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
                                     <StackPanel>
-                                        <TextBlock FontSize="11.5" FontWeight="SemiBold" Text="{Binding HardwareId}" TextTrimming="CharacterEllipsis" />
-                                        <TextBlock FontSize="11" Foreground="{DynamicResource WarningBrush}" Margin="0,2,0,4">
+                                        <TextBlock FontSize="{StaticResource FontBody}" FontWeight="SemiBold" Text="{Binding HardwareId}" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource WarningBrush}" Margin="0,2,0,4">
                                             <Run Text="Versions: " /><Run Text="{Binding DistinctVersionsText, Mode=OneWay}" />
                                         </TextBlock>
                                         <ItemsControl ItemsSource="{Binding Devices}">
@@ -454,8 +454,8 @@
                                                             <ColumnDefinition Width="*" />
                                                             <ColumnDefinition Width="Auto" />
                                                         </Grid.ColumnDefinitions>
-                                                        <TextBlock Grid.Column="0" Text="{Binding DeviceName}" FontSize="11" TextTrimming="CharacterEllipsis" />
-                                                        <TextBlock Grid.Column="1" Text="{Binding DriverVersion, TargetNullValue=Unknown}" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                                        <TextBlock Grid.Column="0" Text="{Binding DeviceName}" FontSize="{StaticResource FontBody}" TextTrimming="CharacterEllipsis" />
+                                                        <TextBlock Grid.Column="1" Text="{Binding DriverVersion, TargetNullValue=Unknown}" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
                                                     </Grid>
                                                 </DataTemplate>
                                             </ItemsControl.ItemTemplate>
@@ -526,7 +526,7 @@
                     <TextBlock Text="Driver install/configure failures - setupapi.dev.log errors (click Load above) and Microsoft-Windows-Kernel-PnP/Configuration events (411/442/400-series; this channel is disabled by default on many systems)."
                                Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
 
-                    <TextBlock Text="setupapi.dev.log failures" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,4" />
+                    <TextBlock Text="setupapi.dev.log failures" FontSize="{StaticResource FontBody}" FontWeight="SemiBold" Margin="0,0,0,4" />
                     <ItemsControl ItemsSource="{Binding InstallFailures}" MaxHeight="180" Margin="0,0,0,10">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
@@ -537,13 +537,13 @@
                                                 <ColumnDefinition Width="*" />
                                                 <ColumnDefinition Width="Auto" />
                                             </Grid.ColumnDefinitions>
-                                            <TextBlock Grid.Column="0" FontSize="11.5" FontWeight="SemiBold" Foreground="{DynamicResource DangerBrush}"
+                                            <TextBlock Grid.Column="0" FontSize="{StaticResource FontBody}" FontWeight="SemiBold" Foreground="{DynamicResource DangerBrush}"
                                                        Text="{Binding Category}" TextTrimming="CharacterEllipsis" />
                                             <TextBlock Grid.Column="1" Text="{Binding Timestamp, StringFormat={}{0:g}, Mode=OneWay}"
-                                                       FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                                       FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
                                         </Grid>
-                                        <TextBlock Text="{Binding Target}" FontSize="10.5" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource TextSecondaryBrush}" />
-                                        <TextBlock FontSize="11" TextWrapping="Wrap" Margin="0,3,0,0">
+                                        <TextBlock Text="{Binding Target}" FontSize="{StaticResource FontCaption}" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,3,0,0">
                                             <Run Text="{Binding ErrorCode, TargetNullValue='Unknown code', Mode=OneWay}" FontWeight="SemiBold" />
                                             <Run Text=" - " /><Run Text="{Binding ErrorText, Mode=OneWay}" />
                                         </TextBlock>
@@ -565,7 +565,7 @@
                         </TextBlock.Style>
                     </TextBlock>
 
-                    <TextBlock Text="Kernel-PnP/Configuration events" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,4" />
+                    <TextBlock Text="Kernel-PnP/Configuration events" FontSize="{StaticResource FontBody}" FontWeight="SemiBold" Margin="0,0,0,4" />
                     <ItemsControl ItemsSource="{Binding PnpConfigurationFailures}" MaxHeight="180">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
@@ -574,13 +574,13 @@
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0" FontSize="11.5" TextWrapping="Wrap" ToolTip="{Binding Message}">
+                                    <TextBlock Grid.Column="0" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" ToolTip="{Binding Message}">
                                         <Run Text="Event " /><Run Text="{Binding EventId, Mode=OneWay}" />
                                         <Run Text=" (" /><Run Text="{Binding Level, Mode=OneWay}" /><Run Text=") - " />
                                         <Run Text="{Binding Message, Mode=OneWay}" />
                                     </TextBlock>
                                     <TextBlock Grid.Column="1" Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}"
-                                               FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                               FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
                                 </Grid>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
@@ -645,10 +645,10 @@
                                                 <ColumnDefinition Width="*" />
                                                 <ColumnDefinition Width="Auto" />
                                             </Grid.ColumnDefinitions>
-                                            <TextBlock Grid.Column="0" FontSize="11.5" FontWeight="SemiBold" Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
-                                            <TextBlock Grid.Column="1" Text="{Binding ValueText}" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                            <TextBlock Grid.Column="0" FontSize="{StaticResource FontBody}" FontWeight="SemiBold" Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Grid.Column="1" Text="{Binding ValueText}" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
                                         </Grid>
-                                        <TextBlock Text="{Binding Description}" FontSize="10.5" TextWrapping="Wrap" Margin="0,2,0,0">
+                                        <TextBlock Text="{Binding Description}" FontSize="{StaticResource FontCaption}" TextWrapping="Wrap" Margin="0,2,0,0">
                                             <TextBlock.Style>
                                                 <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
                                                     <Style.Triggers>
@@ -700,7 +700,7 @@
                             </Button.Style>
                         </Button>
                     </StackPanel>
-                    <TextBlock Margin="0,8,0,0" FontSize="11" TextWrapping="Wrap"
+                    <TextBlock Margin="0,8,0,0" FontSize="{StaticResource FontBody}" TextWrapping="Wrap"
                                Visibility="{Binding DriverLoadTraceFilePath, Converter={StaticResource NullToVisibilityConverter}}">
                         <Run Text="Trace saved: " /><Run Text="{Binding DriverLoadTraceFilePath, Mode=OneWay}" />
                     </TextBlock>
@@ -823,8 +823,8 @@
                     <StackPanel Visibility="{Binding VerifierStatus, Converter={StaticResource NullToVisibilityConverter}}">
                         <UniformGrid Columns="2" Margin="0,0,0,10">
                             <StackPanel Margin="0,0,10,8">
-                                <TextBlock Text="Configured (registry)" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
-                                <TextBlock FontSize="13.5" FontWeight="SemiBold">
+                                <TextBlock Text="Configured (registry)" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                <TextBlock FontSize="{StaticResource FontSection}" FontWeight="SemiBold">
                                     <TextBlock.Style>
                                         <Style TargetType="TextBlock">
                                             <Setter Property="Text" Value="Off" />
@@ -840,8 +840,8 @@
                                 </TextBlock>
                             </StackPanel>
                             <StackPanel Margin="0,0,0,8">
-                                <TextBlock Text="Active this boot" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
-                                <TextBlock FontSize="13.5" FontWeight="SemiBold">
+                                <TextBlock Text="Active this boot" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                <TextBlock FontSize="{StaticResource FontSection}" FontWeight="SemiBold">
                                     <TextBlock.Style>
                                         <Style TargetType="TextBlock">
                                             <Setter Property="Text" Value="No" />
@@ -857,8 +857,8 @@
                                 </TextBlock>
                             </StackPanel>
                             <StackPanel Margin="0,0,10,0">
-                                <TextBlock Text="Configured drivers" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
-                                <TextBlock FontSize="12.5" TextWrapping="Wrap">
+                                <TextBlock Text="Configured drivers" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                <TextBlock FontSize="{StaticResource FontStrong}" TextWrapping="Wrap">
                                     <TextBlock.Style>
                                         <Style TargetType="TextBlock">
                                             <Setter Property="Text" Value="{Binding VerifierStatus.ConfiguredDriverNames, Converter={StaticResource StringListJoinConverter}}" />
@@ -872,8 +872,8 @@
                                 </TextBlock>
                             </StackPanel>
                             <StackPanel>
-                                <TextBlock Text="Active this boot" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
-                                <TextBlock Text="{Binding VerifierStatus.ActiveDriverNames, Converter={StaticResource StringListJoinConverter}}" FontSize="12.5" TextWrapping="Wrap" />
+                                <TextBlock Text="Active this boot" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                <TextBlock Text="{Binding VerifierStatus.ActiveDriverNames, Converter={StaticResource StringListJoinConverter}}" FontSize="{StaticResource FontStrong}" TextWrapping="Wrap" />
                             </StackPanel>
                         </UniformGrid>
                         <ItemsControl ItemsSource="{Binding VerifierStatus.EnabledChecks}">
@@ -884,8 +884,8 @@
                             </ItemsControl.ItemsPanel>
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="4" Padding="7,3" Margin="0,0,6,6">
-                                        <TextBlock Text="{Binding}" FontSize="11" />
+                                    <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="4" Padding="6,3" Margin="0,0,6,6">
+                                        <TextBlock Text="{Binding}" FontSize="{StaticResource FontBody}" />
                                     </Border>
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
@@ -893,7 +893,7 @@
                     </StackPanel>
 
                     <!-- #498: opens the mandatory warning/typed-confirmation setup wizard. -->
-                    <Button Content="Set up Driver Verifier..." Style="{StaticResource DangerButton}" Padding="10,5"
+                    <Button Content="Set up Driver Verifier..." Style="{StaticResource DangerButton}" Padding="10,4"
                             Margin="0,12,0,0" HorizontalAlignment="Left" Command="{Binding OpenVerifierSetupWizardCommand}" />
                 </StackPanel>
             </Border>
@@ -911,7 +911,7 @@
                         </Button>
                     </StackPanel>
 
-                    <TextBlock FontSize="11.5" Margin="0,0,0,6" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}">
+                    <TextBlock FontSize="{StaticResource FontBody}" Margin="0,0,0,6" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}">
                         <Run Text="Forced Safe Mode boot: " />
                         <Run FontWeight="SemiBold">
                             <Run.Style>
@@ -974,12 +974,12 @@
                                                 <ColumnDefinition Width="*" />
                                                 <ColumnDefinition Width="Auto" />
                                             </Grid.ColumnDefinitions>
-                                            <TextBlock Grid.Column="0" FontWeight="SemiBold" FontSize="12.5">
+                                            <TextBlock Grid.Column="0" FontWeight="SemiBold" FontSize="{StaticResource FontStrong}">
                                                 <Run Text="{Binding FileName, Mode=OneWay}" /><Run Text="  -  " /><Run Text="{Binding Category, Mode=OneWay}" Foreground="{DynamicResource TextSecondaryBrush}" />
                                             </TextBlock>
-                                            <TextBlock Grid.Column="1" Text="{Binding MatchSourceText}" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                            <TextBlock Grid.Column="1" Text="{Binding MatchSourceText}" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
                                         </Grid>
-                                        <TextBlock Text="{Binding Description}" FontSize="11.5" TextWrapping="Wrap" Margin="0,4,0,0" />
+                                        <TextBlock Text="{Binding Description}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,4,0,0" />
 
                                         <!-- Evidence link - a plain Button styled as a link (same
                                              OpenUpdateUrlCommand-style "shell out to open a URL"
@@ -988,7 +988,7 @@
                                              the ancestor UserControl - CLAUDE.md's cross-view-model
                                              binding convention. Falls back to plain text when this
                                              match has no evidence link, rather than a dead/fabricated one. -->
-                                        <TextBlock Text="No evidence link available." FontSize="11" Foreground="{DynamicResource TextTertiaryBrush}" Margin="0,4,0,0">
+                                        <TextBlock Text="No evidence link available." FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextTertiaryBrush}" Margin="0,4,0,0">
                                             <TextBlock.Style>
                                                 <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
                                                     <Setter Property="Visibility" Value="Collapsed" />
@@ -1014,7 +1014,7 @@
                                                     </Style.Triggers>
                                                 </Style>
                                             </Button.Style>
-                                            <TextBlock Text="{Binding EvidenceUrl}" FontSize="11" TextDecorations="Underline" TextWrapping="Wrap" />
+                                            <TextBlock Text="{Binding EvidenceUrl}" FontSize="{StaticResource FontBody}" TextDecorations="Underline" TextWrapping="Wrap" />
                                         </Button>
                                     </StackPanel>
                                 </Border>
@@ -1050,7 +1050,7 @@
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <StackPanel Grid.Column="0">
-                    <TextBlock Text="Device tree by class" Style="{StaticResource CardTitle}" Margin="0" FontSize="15" />
+                    <TextBlock Text="Device tree by class" Style="{StaticResource CardTitle}" Margin="0" FontSize="{StaticResource FontSection}" />
                     <TextBlock Text="{Binding DeviceTreeStatusText}" Style="{StaticResource SubStat}" Margin="0,2,0,0" />
                 </StackPanel>
                 <!-- #471: SetupDiGetClassDevs(DIGCF_ALLCLASSES) without DIGCF_PRESENT - the one gap
@@ -1176,7 +1176,7 @@
                                                       Background="{DynamicResource BgElevatedBrush}"
                                                       Foreground="{DynamicResource TextPrimaryBrush}" BorderThickness="0">
                                                 <Expander.Header>
-                                                    <TextBlock FontSize="12.5" FontWeight="SemiBold" Margin="4,2">
+                                                    <TextBlock FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" Margin="4,2">
                                                         <Run Text="{Binding Name, Mode=OneWay}" /><Run Text=" (" /><Run Text="{Binding ItemCount, Mode=OneWay}" /><Run Text=")" />
                                                     </TextBlock>
                                                 </Expander.Header>
@@ -1236,7 +1236,7 @@
                                 </CheckBox.Style>
                             </CheckBox>
                             <StackPanel Grid.Column="1">
-                                <TextBlock FontSize="12" TextTrimming="CharacterEllipsis">
+                                <TextBlock FontSize="{StaticResource FontBody}" TextTrimming="CharacterEllipsis">
                                     <TextBlock.Style>
                                         <Style TargetType="TextBlock">
                                             <Setter Property="Text" Value="{Binding Name}" />
@@ -1249,11 +1249,11 @@
                                         </Style>
                                     </TextBlock.Style>
                                 </TextBlock>
-                                <TextBlock FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" TextTrimming="CharacterEllipsis">
+                                <TextBlock FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextSecondaryBrush}" TextTrimming="CharacterEllipsis">
                                     <Run Text="{Binding Manufacturer, Mode=OneWay}" /><Run Text=" · " /><Run Text="{Binding Service, TargetNullValue='no driver', Mode=OneWay}" />
                                 </TextBlock>
                             </StackPanel>
-                            <Border Grid.Column="2" CornerRadius="10" Padding="7,2" VerticalAlignment="Center" Margin="6,0,0,0">
+                            <Border Grid.Column="2" CornerRadius="10" Padding="6,2" VerticalAlignment="Center" Margin="6,0,0,0">
                                 <Border.Style>
                                     <Style TargetType="Border">
                                         <Setter Property="Visibility" Value="Collapsed" />
@@ -1269,7 +1269,7 @@
                                         </Style.Triggers>
                                     </Style>
                                 </Border.Style>
-                                <TextBlock FontSize="10" FontWeight="SemiBold">
+                                <TextBlock FontSize="{StaticResource FontCaption}" FontWeight="SemiBold">
                                     <TextBlock.Style>
                                         <Style TargetType="TextBlock">
                                             <Setter Property="Text" Value="{Binding ConfigManagerErrorCode, Converter={StaticResource ProblemCodeToDescriptionConverter}}" />
@@ -1297,7 +1297,7 @@
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <TextBlock Grid.Column="0" Text="{Binding DeviceActionStatusText}" VerticalAlignment="Center"
-                           Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5" TextTrimming="CharacterEllipsis" />
+                           Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextTrimming="CharacterEllipsis" />
                 <Button Grid.Column="1" Padding="10,4" Command="{Binding RemoveCheckedDevicesCommand}">
                     <TextBlock>
                         <TextBlock.Style>
@@ -1321,28 +1321,28 @@
                     <TextBlock Text="{Binding SelectedDeviceNode.Name, TargetNullValue='Select a device above for details'}"
                                Style="{StaticResource CardTitle}" TextWrapping="Wrap" />
                     <StackPanel Visibility="{Binding SelectedDeviceNode, Converter={StaticResource NullToVisibilityConverter}}">
-                        <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,2,0,10" TextWrapping="Wrap"
+                        <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,2,0,10" TextWrapping="Wrap"
                                    Text="{Binding SelectedDeviceNode.DeviceId}" />
                         <UniformGrid Columns="2" Margin="0,0,0,10">
                             <StackPanel Margin="0,0,8,6">
-                                <TextBlock Text="Class" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
-                                <TextBlock Text="{Binding SelectedDeviceNode.ClassName}" FontSize="12.5" />
+                                <TextBlock Text="Class" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                <TextBlock Text="{Binding SelectedDeviceNode.ClassName}" FontSize="{StaticResource FontStrong}" />
                             </StackPanel>
                             <StackPanel Margin="0,0,0,6">
-                                <TextBlock Text="Manufacturer" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
-                                <TextBlock Text="{Binding SelectedDeviceNode.Manufacturer}" FontSize="12.5" />
+                                <TextBlock Text="Manufacturer" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                <TextBlock Text="{Binding SelectedDeviceNode.Manufacturer}" FontSize="{StaticResource FontStrong}" />
                             </StackPanel>
                             <StackPanel Margin="0,0,8,6">
-                                <TextBlock Text="Bound driver (service)" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
-                                <TextBlock Text="{Binding SelectedDeviceNode.Service, TargetNullValue=None}" FontSize="12.5" />
+                                <TextBlock Text="Bound driver (service)" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                <TextBlock Text="{Binding SelectedDeviceNode.Service, TargetNullValue=None}" FontSize="{StaticResource FontStrong}" />
                             </StackPanel>
                             <StackPanel Margin="0,0,0,6">
-                                <TextBlock Text="Status" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
-                                <TextBlock Text="{Binding SelectedDeviceNode.Status}" FontSize="12.5" />
+                                <TextBlock Text="Status" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                <TextBlock Text="{Binding SelectedDeviceNode.Status}" FontSize="{StaticResource FontStrong}" />
                             </StackPanel>
                         </UniformGrid>
-                        <TextBlock Text="Hardware IDs" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
-                        <TextBlock Text="{Binding SelectedDeviceNode.HardwareIdsText}" FontSize="11.5" TextWrapping="Wrap" Margin="0,0,0,10" />
+                        <TextBlock Text="Hardware IDs" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        <TextBlock Text="{Binding SelectedDeviceNode.HardwareIdsText}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,10" />
 
                         <!-- #469: decoded problem code + next step - only shown for a device that
                              actually has one. -->
@@ -1358,11 +1358,11 @@
                                 </Style>
                             </Border.Style>
                             <StackPanel>
-                                <TextBlock FontSize="12.5" FontWeight="SemiBold" Foreground="{DynamicResource DangerBrush}"
+                                <TextBlock FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" Foreground="{DynamicResource DangerBrush}"
                                            Text="{Binding SelectedDeviceNode.ConfigManagerErrorCode, Converter={StaticResource ProblemCodeToDescriptionConverter}}" />
-                                <TextBlock FontSize="11.5" TextWrapping="Wrap" Margin="0,4,0,0"
+                                <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,4,0,0"
                                            Text="{Binding SelectedDeviceNode.ConfigManagerErrorCode, Converter={StaticResource ProblemCodeToDescriptionConverter}, ConverterParameter=Cause}" />
-                                <TextBlock FontSize="11.5" TextWrapping="Wrap" Margin="0,4,0,0" FontStyle="Italic">
+                                <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,4,0,0" FontStyle="Italic">
                                     <Run Text="Next step: " />
                                     <Run Text="{Binding SelectedDeviceNode.ConfigManagerErrorCode, Converter={StaticResource ProblemCodeToDescriptionConverter}, ConverterParameter=NextStep, Mode=OneWay}" />
                                 </TextBlock>
@@ -1389,8 +1389,8 @@
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <StackPanel Grid.Column="0">
-                                    <TextBlock FontSize="12.5" FontWeight="SemiBold" Text="A previous driver version may be available to roll back to" />
-                                    <TextBlock FontSize="11" TextWrapping="Wrap" Margin="0,2,0,0"
+                                    <TextBlock FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" Text="A previous driver version may be available to roll back to" />
+                                    <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,2,0,0"
                                                Foreground="{DynamicResource TextSecondaryBrush}"
                                                Text="{Binding SelectedDeviceRollbackReasonText}" />
                                 </StackPanel>
@@ -1402,7 +1402,7 @@
 
                         <!-- #467 (per-device half): UpperFilters/LowerFilters under this device's
                              own Enum key. -->
-                        <TextBlock Text="Per-device filter drivers" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,4" />
+                        <TextBlock Text="Per-device filter drivers" FontSize="{StaticResource FontBody}" FontWeight="SemiBold" Margin="0,0,0,4" />
                         <ItemsControl ItemsSource="{Binding SelectedDeviceFilters}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
@@ -1411,10 +1411,10 @@
                                             <ColumnDefinition Width="*" />
                                             <ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0" FontSize="11.5">
+                                        <TextBlock Grid.Column="0" FontSize="{StaticResource FontBody}">
                                             <Run Text="{Binding FilterName, Mode=OneWay}" /><Run Text=" (" /><Run Text="{Binding FilterKindText, Mode=OneWay}" /><Run Text=")" />
                                         </TextBlock>
-                                        <TextBlock Grid.Column="1" FontSize="11" FontWeight="SemiBold">
+                                        <TextBlock Grid.Column="1" FontSize="{StaticResource FontBody}" FontWeight="SemiBold">
                                             <TextBlock.Style>
                                                 <Style TargetType="TextBlock">
                                                     <Setter Property="Text" Value="OK" />
@@ -1477,7 +1477,7 @@
                     </Grid>
                     <TextBlock Text="{Binding ResourcesStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" />
 
-                    <TextBlock Text="IRQ / I-O / memory / DMA assignments" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,4" />
+                    <TextBlock Text="IRQ / I-O / memory / DMA assignments" FontSize="{StaticResource FontBody}" FontWeight="SemiBold" Margin="0,0,0,4" />
                     <DataGrid Height="220" ItemsSource="{Binding DeviceResources}" IsReadOnly="True" Margin="0,0,0,12">
                         <DataGrid.RowStyle>
                             <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
@@ -1496,7 +1496,7 @@
                             <DataGridTemplateColumn Header="Flag" Width="2.5*" SortMemberPath="FlagText">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
-                                        <TextBlock Text="{Binding FlagText}" FontSize="11" TextWrapping="Wrap" VerticalAlignment="Center"
+                                        <TextBlock Text="{Binding FlagText}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" VerticalAlignment="Center"
                                                    Foreground="{DynamicResource WarningBrush}" />
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
@@ -1517,12 +1517,12 @@
                             </Style>
                         </Border.Style>
                         <StackPanel>
-                            <TextBlock FontSize="12.5" FontWeight="SemiBold" Foreground="{DynamicResource DangerBrush}"
+                            <TextBlock FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" Foreground="{DynamicResource DangerBrush}"
                                        Text="Devices reporting insufficient resources (problem code 12)" TextWrapping="Wrap" />
                             <ItemsControl ItemsSource="{Binding InsufficientResourceDevices}" Margin="0,4,0,0">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
-                                        <TextBlock FontSize="11" TextWrapping="Wrap" Margin="0,0,0,2">
+                                        <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,2">
                                             <Run Text="{Binding Name, Mode=OneWay}" FontWeight="SemiBold" /><Run Text=" - " /><Run Text="{Binding ClassName, Mode=OneWay}" />
                                         </TextBlock>
                                     </DataTemplate>
@@ -1533,7 +1533,7 @@
 
                     <!-- #477: MSI vs. line-based interrupt mode - read-only, only devices with
                          something actually configured under Interrupt Management are listed. -->
-                    <TextBlock Text="Interrupt mode (MSI vs. line-based)" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,4" />
+                    <TextBlock Text="Interrupt mode (MSI vs. line-based)" FontSize="{StaticResource FontBody}" FontWeight="SemiBold" Margin="0,0,0,4" />
                     <TextBlock Style="{StaticResource SubStat}" Margin="0,-2,0,8" TextWrapping="Wrap"
                                Text="Read-only - changing either of these is a manual registry edit outside this app's scope. Only devices with an Interrupt Management value actually set are listed here." />
                     <DataGrid Height="200" ItemsSource="{Binding InterruptModes}" IsReadOnly="True">
@@ -1644,7 +1644,7 @@
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <StackPanel Grid.Column="0">
-                    <TextBlock Text="Driver store" Style="{StaticResource CardTitle}" Margin="0" FontSize="15" />
+                    <TextBlock Text="Driver store" Style="{StaticResource CardTitle}" Margin="0" FontSize="{StaticResource FontSection}" />
                     <TextBlock Text="{Binding DriverStoreStatusText}" Style="{StaticResource SubStat}" Margin="0,2,0,0" TextWrapping="Wrap" />
                 </StackPanel>
                 <Button Grid.Column="1" Style="{StaticResource PrimaryButton}" Command="{Binding LoadDriverStoreCommand}">
@@ -1759,7 +1759,7 @@
                             </Style>
                         </Expander.Style>
                         <TextBox Text="{Binding InstallDriverOutputText, Mode=OneWay}" IsReadOnly="True"
-                                 TextWrapping="Wrap" FontFamily="Consolas" FontSize="11" MaxHeight="220"
+                                 TextWrapping="Wrap" FontFamily="Consolas" FontSize="{StaticResource FontBody}" MaxHeight="220"
                                  VerticalScrollBarVisibility="Auto" Background="{DynamicResource BgElevatedBrush}"
                                  BorderThickness="0" Padding="8" Margin="0,6,0,0" />
                     </Expander>
@@ -1774,7 +1774,7 @@
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <TextBlock Grid.Column="0" Text="{Binding DriverStoreActionStatusText}" VerticalAlignment="Center"
-                           Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5" TextTrimming="CharacterEllipsis" />
+                           Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextTrimming="CharacterEllipsis" />
                 <Button Grid.Column="1" Padding="10,4" Command="{Binding DeleteCheckedDriverPackagesCommand}">
                     <TextBlock>
                         <TextBlock.Style>
@@ -1851,7 +1851,7 @@
                     <DataGridTemplateColumn Header="In use" Width="1.8*" SortMemberPath="IsInUse">
                         <DataGridTemplateColumn.CellTemplate>
                             <DataTemplate>
-                                <TextBlock Text="{Binding InUseText}" FontSize="11" TextTrimming="CharacterEllipsis"
+                                <TextBlock Text="{Binding InUseText}" FontSize="{StaticResource FontBody}" TextTrimming="CharacterEllipsis"
                                            ToolTip="{Binding InUseText}" VerticalAlignment="Center">
                                     <TextBlock.Style>
                                         <Style TargetType="TextBlock">
@@ -1888,7 +1888,7 @@
         </ScrollViewer.Style>
         <StackPanel>
 
-            <TextBlock Text="Filter drivers" Style="{StaticResource CardTitle}" Margin="0,0,0,12" FontSize="15" />
+            <TextBlock Text="Filter drivers" Style="{StaticResource CardTitle}" Margin="0,0,0,12" FontSize="{StaticResource FontSection}" />
 
             <!-- #493/#494: minifilter stack + AV-altitude-range flag. -->
             <Border Margin="0,0,0,16">
@@ -2090,7 +2090,7 @@
                     </Grid>
                     <TextBlock Text="{Binding NetworkFiltersStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" />
 
-                    <TextBlock Text="Network components bound to adapters (filters + less-common protocols)" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4" />
+                    <TextBlock Text="Network components bound to adapters (filters + less-common protocols)" FontSize="{StaticResource FontBody}" FontWeight="SemiBold" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4" />
                     <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,6" TextWrapping="Wrap"
                                Text="Everything bound directly above each adapter (NDIS UpperBind), minus the expected base protocols (TCP/IP, NetBT, ...) - the registry doesn't cleanly distinguish a lightweight filter from a less-common protocol driver, so this list can include both." />
                     <DataGrid Height="150" ItemsSource="{Binding NetworkFilters}" IsReadOnly="True" Margin="0,0,0,16">
@@ -2132,7 +2132,7 @@
                         </DataGrid.Columns>
                     </DataGrid>
 
-                    <TextBlock Text="Winsock catalog (netsh winsock show catalog)" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4" />
+                    <TextBlock Text="Winsock catalog (netsh winsock show catalog)" FontSize="{StaticResource FontBody}" FontWeight="SemiBold" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4" />
                     <DataGrid Height="180" ItemsSource="{Binding WinsockCatalog}" IsReadOnly="True">
                         <DataGrid.RowStyle>
                             <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
