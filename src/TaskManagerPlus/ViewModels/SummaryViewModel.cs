@@ -315,23 +315,26 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>#72: fires a toast the moment a metric crosses above its configured threshold -
-    /// edge-triggered so a sustained excursion produces one toast, not one every 2s tick.</summary>
+    /// edge-triggered so a sustained excursion produces one toast, not one every 2s tick. #963:
+    /// each firing is also persisted to alerts-history.jsonl (via AlertDeliveryService, the same
+    /// path a rule-engine finding's alert goes through in RecordFindingsHistory below), respecting
+    /// #964's quiet hours.</summary>
     private void CheckThresholdAlerts()
     {
-        CheckOne(CpuAlertEnabled, Performance.CpuCurrentPercent, CpuAlertThreshold, ref _cpuAlerted,
+        CheckOne("builtin.threshold.cpu", CpuAlertEnabled, Performance.CpuCurrentPercent, CpuAlertThreshold, ref _cpuAlerted,
             "CPU usage threshold", v => $"CPU usage is {v:0}% (threshold {CpuAlertThreshold:0}%)");
 
-        CheckOne(MemoryAlertEnabled, Performance.RamPercent, MemoryAlertThreshold, ref _memoryAlerted,
+        CheckOne("builtin.threshold.memory", MemoryAlertEnabled, Performance.RamPercent, MemoryAlertThreshold, ref _memoryAlerted,
             "Memory usage threshold", v => $"Memory usage is {v:0}% (threshold {MemoryAlertThreshold:0}%)");
 
         if (_energyThermals.CpuPackageTempC is { } temp)
         {
-            CheckOne(TempAlertEnabled, temp, TempAlertThreshold, ref _tempAlerted,
+            CheckOne("builtin.threshold.temperature", TempAlertEnabled, temp, TempAlertThreshold, ref _tempAlerted,
                 "CPU temperature threshold", v => $"CPU temperature is {v:0}°C (threshold {TempAlertThreshold:0}°C)");
         }
     }
 
-    private static void CheckOne(bool enabled, double value, double threshold, ref bool alerted, string title, Func<double, string> message)
+    private static void CheckOne(string alertId, bool enabled, double value, double threshold, ref bool alerted, string title, Func<double, string> message)
     {
         if (!enabled) { alerted = false; return; }
 
@@ -340,7 +343,13 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
             if (!alerted)
             {
                 alerted = true;
-                ToastService.Show(title, message(value), isCritical: true);
+                string text = message(value);
+                // #963/#964: these three fixed thresholds have no Rule behind them to carry a
+                // channel/escalation setting - always Toast as the default channel, still subject
+                // to quiet-hours suppression (log line always written) and never escalated (no
+                // EscalateAfterRepeats/EscalateWindowSeconds to escalate against).
+                AlertDeliveryService.Deliver(alertId, title, text, RuleSeverity.High, AlertChannel.Toast,
+                    escalateAfterRepeats: null, escalateWindowSeconds: null);
             }
         }
         else
@@ -977,7 +986,20 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
             string title = issue.Title ?? issue.Message;
             _lastKnownRuleTitles[id] = title;
             if (!_previousFiredRuleIds.Contains(id))
+            {
                 FindingsHistoryService.Append(new FindingsHistoryEntry { RuleId = id, Title = title, Transition = "first-seen" });
+
+                // #963/#964/#965: a newly-fired rule-engine finding is exactly the same "first-
+                // seen" signal #963 wants persisted as an alert - deliver it through the rule's own
+                // AlertChannel/escalation settings (RulesEngineService.Rules carries the loaded
+                // Rule, including any #923 severity override already applied as EffectiveSeverity).
+                var loaded = _rulesEngine.Rules.FirstOrDefault(r => string.Equals(r.Rule.Id, id, StringComparison.OrdinalIgnoreCase));
+                if (loaded is not null)
+                {
+                    AlertDeliveryService.Deliver(id, title, issue.Message, loaded.EffectiveSeverity, loaded.Rule.AlertChannel,
+                        loaded.Rule.EscalateAfterRepeats, loaded.Rule.EscalateWindowSeconds);
+                }
+            }
         }
 
         foreach (var id in _previousFiredRuleIds)

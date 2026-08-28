@@ -170,6 +170,10 @@
                              before-after-change tracking. -->
                         <Button Content="Baselines" Padding="10,4" Margin="0,0,8,0" VerticalAlignment="Center"
                                 Command="{Binding ShowBaselinesCommand}" />
+                        <!-- #959-966: the always-on background health collector's history browser,
+                             cost readout, and alerting settings. -->
+                        <Button Content="Background Health" Padding="10,4" Margin="0,0,8,0" VerticalAlignment="Center"
+                                Command="{Binding ShowBackgroundHealthCommand}" />
                         <!-- #915: reopen a saved run's transcript, or re-run its symptom fresh. -->
                         <Button Content="Past runs" Padding="10,4" VerticalAlignment="Center"
                                 Command="{Binding ShowPastRunsCommand}" />
@@ -226,6 +230,11 @@
              page. -->
         <views:BaselineView DataContext="{Binding Baselines}"
                              Visibility="{Binding DataContext.ShowBaselines, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource BoolToVisibilityConverter}}" />
+
+        <!-- #959-966: the Background Health panel - visible only when explicitly opened from the
+             landing page. -->
+        <views:BackgroundHealthView DataContext="{Binding BackgroundHealth}"
+                             Visibility="{Binding DataContext.ShowBackgroundHealth, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource BoolToVisibilityConverter}}" />
 
         <!-- Run view - ordered step list plus a verdict card. Visible only once a run exists. -->
         <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16"

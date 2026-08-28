@@ -25,7 +25,7 @@ public partial class MainWindow : Window
         InitializeComponent();
         DataContext = _viewModel;
         Closing += (_, _) => _viewModel.Summary.GenerateReportOnExitIfEnabled();
-        Closed += (_, _) => { _viewModel.Dispose(); _trayIcon?.Dispose(); };
+        Closed += (_, _) => { _viewModel.Dispose(); _trayIcon?.Dispose(); TaskManagerPlus.Services.TrayBalloonService.Icon = null; };
         SourceInitialized += (_, _) => { ApplyNativeWindowChrome(); InitializeTrayIcon(); InitializeGlobalHotkey(); };
         StateChanged += MainWindow_StateChanged;
         PreviewKeyDown += MainWindow_PreviewKeyDown;
@@ -71,6 +71,11 @@ public partial class MainWindow : Window
             _trayIcon.DoubleClick += (_, _) => RestoreFromTray();
             UpdateTrayTooltip();
             _viewModel.Performance.PropertyChanged += (_, _) => UpdateTrayTooltip();
+
+            // #964: lets AlertDeliveryService (Services/, no window reference of its own) show a
+            // genuine tray balloon for the "TrayBalloon" alert channel - see TrayBalloonService's
+            // remarks.
+            TaskManagerPlus.Services.TrayBalloonService.Icon = _trayIcon;
         }
         catch
         {

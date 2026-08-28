@@ -260,6 +260,10 @@ public sealed class RulesEngineService : IDisposable
         "services.failedCount",
         "system.rebootPending", "system.outdatedDriverCount", "system.multipleAvActive",
         "process.defenderCpuPercent", "process.defenderRunning",
+        // #961: history-only keys an Aggregate leaf can read from health-history.jsonl via
+        // BackgroundHealthStoreService.GetMetricValue - not present in the live metric bag itself,
+        // but a legitimate metric key on an aggregate condition, so listed here too.
+        "disk.queueLength", "disk.latencyMs",
     };
 
     private static bool IsKnownMetric(string metric) =>
@@ -435,9 +439,47 @@ public sealed class RulesEngineService : IDisposable
             return false;
         }
 
+        // #961: an aggregate-over-history leaf reads BackgroundHealthStoreService's
+        // health-history.jsonl instead of the live bag - see RuleCondition.Aggregate's remarks.
+        if (!string.IsNullOrWhiteSpace(cond.Aggregate))
+            return EvaluateAggregateLeaf(cond, out error);
+
         bool exists = bag.TryGetValue(cond.Metric, out var raw) && raw is not null;
         string op = cond.Op.Trim().ToLowerInvariant();
         return EvaluateLeafOp(op, exists, raw, cond.Value, out error);
+    }
+
+    /// <summary>#961: evaluates one aggregate leaf (Metric/Aggregate/OverSeconds/AggregateThreshold)
+    /// against BackgroundHealthStoreService's on-demand (short-TTL-memoized) aggregate computation,
+    /// then compares the resulting number via Op/Value exactly like any other leaf's numeric
+    /// comparison. A window with no stored data at all reads as "not exists" (op=="exists" false,
+    /// every comparison op false) rather than a fabricated 0 - degrade to Unknown, never fabricate.</summary>
+    private static bool EvaluateAggregateLeaf(RuleCondition cond, out string? error)
+    {
+        error = null;
+        double? aggregateValue = BackgroundHealthStoreService.ComputeAggregateCached(
+            cond.Metric!, cond.Aggregate!, cond.OverSeconds ?? 86400, cond.AggregateThreshold);
+
+        string op = cond.Op!.Trim().ToLowerInvariant();
+        if (op == "exists") return aggregateValue.HasValue;
+        if (aggregateValue is not { } value) return false;
+
+        return op switch
+        {
+            "eq" => TryNum(cond.Value, out var eqv) && Math.Abs(value - eqv) < 1e-9,
+            "ne" => !(TryNum(cond.Value, out var nev) && Math.Abs(value - nev) < 1e-9),
+            "lt" => TryNum(cond.Value, out var ltv) && value < ltv,
+            "lte" => TryNum(cond.Value, out var ltev) && value <= ltev,
+            "gt" => TryNum(cond.Value, out var gtv) && value > gtv,
+            "gte" => TryNum(cond.Value, out var gtev) && value >= gtev,
+            _ => Fail(out error, $"unknown operator '{op}'"),
+        };
+    }
+
+    private static bool Fail(out string? error, string message)
+    {
+        error = message;
+        return false;
     }
 
     /// <summary>Shared by EvaluateCondition (the hot evaluation path - PreviewAll runs this for
@@ -487,6 +529,28 @@ public sealed class RulesEngineService : IDisposable
         {
             error = "leaf condition missing metric/op";
             return false;
+        }
+
+        // #961: an aggregate leaf's drill-down reading shows the computed aggregate value itself
+        // (e.g. "3" for a countAbove rule), not a live-bag lookup.
+        if (!string.IsNullOrWhiteSpace(cond.Aggregate))
+        {
+            double? aggregateValue = BackgroundHealthStoreService.ComputeAggregateCached(
+                cond.Metric, cond.Aggregate!, cond.OverSeconds ?? 86400, cond.AggregateThreshold);
+            bool aggResult = EvaluateAggregateLeaf(cond, out error);
+            string aggOp = cond.Op.Trim().ToLowerInvariant();
+            if (!string.Equals(aggOp, "exists", StringComparison.OrdinalIgnoreCase))
+            {
+                readings.Add(new ConditionReading
+                {
+                    Metric = $"{cond.Metric} ({cond.Aggregate})",
+                    Op = aggOp,
+                    ActualValueText = aggregateValue is { } av ? FormatValue(av) : "(unavailable)",
+                    ThresholdText = FormatValue(cond.Value),
+                    WasUnavailable = aggregateValue is null,
+                });
+            }
+            return aggResult;
         }
 
         bool exists = bag.TryGetValue(cond.Metric, out var raw) && raw is not null;
@@ -1176,6 +1240,16 @@ public sealed class RulesEngineService : IDisposable
             { "Metric": "finding.builtin.disk.volume-full-critical.fired", "Op": "eq", "Value": true },
             { "Metric": "finding.builtin.system.reboot-pending.fired", "Op": "eq", "Value": true }
           ] }
+        },
+        {
+          "Id": "builtin.thermal.cpu-hot-repeated-days",
+          "Title": "CPU has run critically hot on multiple days recently",
+          "Body": "CPU package temperature has exceeded 95C on 3 or more separate days in the last 30 days, per the background health history - worth checking cooling/dust if this keeps happening",
+          "Severity": "Medium",
+          "Confidence": 55,
+          "Category": "Thermals",
+          "CounterEvidence": "A demanding sustained workload (rendering, compiling, gaming) on those specific days can also explain this, not necessarily a cooling problem.",
+          "Condition": { "Metric": "thermal.cpuPackageC", "Aggregate": "countAbove", "AggregateThreshold": 95, "OverSeconds": 2592000, "Op": "gte", "Value": 3 }
         }
       ]
     }

@@ -35,6 +35,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     // thermal-events.jsonl for the Timeline panel's Thermal events lane.
     private readonly ThermalEventLogService _thermalEventLog = new();
 
+    // #959-966: the always-on background health collector - started once here (alongside every
+    // other always-on piece MainViewModel owns), independent of LoggingViewModel's user-started
+    // CSV logger. Exposed publicly only so App-level code could reach it if ever needed; the
+    // Background Health panel (Troubleshoot.BackgroundHealth) is its actual consumer.
+    public BackgroundHealthCollectorService BackgroundHealthCollector { get; }
+
     // Thin wrappers over the shared Performance sampler (see CpuViewModel's remarks) - the
     // CPU/Memory/Storage/Network tabs are split views of one underlying data source, not four
     // independent pollers.
@@ -221,7 +227,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Summary = new SummaryViewModel(Performance, Processes, Services, EnergyThermals, SystemSpecs, Network, Stability, RulesEngine);
         RulesEditor = new RulesEditorViewModel(RulesEngine, Performance, EnergyThermals, SystemSpecs, Services, Processes);
         Search = new GlobalSearchViewModel(Processes, Services, Startup, SystemSpecs);
-        Troubleshoot = new TroubleshootViewModel(Performance, Processes, Logging, EnergyThermals, SystemSpecs, Services, RulesEngine);
+        BackgroundHealthCollector = new BackgroundHealthCollectorService(Performance, EnergyThermals, Services, Processes);
+        Troubleshoot = new TroubleshootViewModel(Performance, Processes, Logging, EnergyThermals, SystemSpecs, Services, RulesEngine, BackgroundHealthCollector);
 
         // #943: edge-triggered thermal/throttle event logging for the Timeline panel - a
         // PropertyChanged subscription on the already-constructed Cpu/EnergyThermals view-models,
@@ -263,6 +270,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         ApplyAxisThemeToBaselines();
         Theme.ThemeModeChanged += ApplyAxisThemeToBaselines;
+
+        ApplyAxisThemeToBackgroundHealth();
+        Theme.ThemeModeChanged += ApplyAxisThemeToBackgroundHealth;
     }
 
     private void ApplyThemeToPerformance()
@@ -321,6 +331,14 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Color TextOf(string key) => (resources[key] as SolidColorBrush)?.Color ?? Colors.Gray;
 
         Troubleshoot.Baselines.ApplyAxisTheme(TextOf("TextSecondaryBrush"), TextOf("BorderBrush2"));
+    }
+
+    private void ApplyAxisThemeToBackgroundHealth()
+    {
+        var resources = Application.Current.Resources;
+        Color TextOf(string key) => (resources[key] as SolidColorBrush)?.Color ?? Colors.Gray;
+
+        Troubleshoot.BackgroundHealth.ApplyAxisTheme(TextOf("TextSecondaryBrush"), TextOf("BorderBrush2"));
     }
 
     private RemoteMetricsSnapshot BuildRemoteMetricsSnapshot() => new()
@@ -396,6 +414,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Theme.ThemeModeChanged -= ApplyAxisThemeToStartup;
         Theme.ThemeModeChanged -= ApplyAxisThemeToLogging;
         Theme.ThemeModeChanged -= ApplyAxisThemeToBaselines;
+        Theme.ThemeModeChanged -= ApplyAxisThemeToBackgroundHealth;
+        BackgroundHealthCollector.Dispose();
         Processes.Dispose();
         Performance.Dispose();
         Services.Dispose();

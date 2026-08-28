@@ -68,4 +68,19 @@ public sealed class Rule
     public bool ImportedFromFile { get; set; }
 
     public string? ImportSourceFileName { get; set; }
+
+    /// <summary>#964: default delivery channel for a finding fired by this rule - a per-rule
+    /// override can still take precedence (see AlertingSettings.RuleChannelOverrides), the same
+    /// "pack default + user override" layering #923's severity override already uses. Default
+    /// Toast matches every rule that predates #964.</summary>
+    public AlertChannel AlertChannel { get; set; } = AlertChannel.Toast;
+
+    /// <summary>#965: if this rule fires at least this many times within
+    /// <see cref="EscalateWindowSeconds"/> (counted from alerts-history.jsonl), the notification is
+    /// forced through even if its effective channel is SilentLogOnly, and its severity is bumped
+    /// one level for that one notification. Null (either field) disables escalation entirely - the
+    /// default for every rule that doesn't opt in.</summary>
+    public int? EscalateAfterRepeats { get; set; }
+
+    public int? EscalateWindowSeconds { get; set; }
 }

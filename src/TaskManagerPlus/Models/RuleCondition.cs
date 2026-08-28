@@ -26,4 +26,31 @@ public sealed class RuleCondition
     public List<RuleCondition>? All { get; set; }
     public List<RuleCondition>? Any { get; set; }
     public RuleCondition? Not { get; set; }
+
+    // ----- #961: aggregate-over-history leaf shape -----------------------------------------
+    //
+    // When Aggregate is set, this leaf reads BackgroundHealthStoreService's health-history.jsonl
+    // instead of the live metric bag: Metric names one of the compact fields
+    // BackgroundHealthStoreService.GetMetricValue knows how to read off a HealthHistoryRow (the
+    // same "cpu.percent"/"mem.percent"/"thermal.cpuPackageC"/... key style the live bag uses, plus
+    // a couple of history-only keys - see that method), Aggregate computes one number over the
+    // trailing OverSeconds window (max/mean/p95/countAbove), and Op/Value then compare that one
+    // number exactly like any other leaf. Example (#961's own demonstration rule):
+    // {"Metric":"thermal.cpuPackageC","Aggregate":"countAbove","AggregateThreshold":95,
+    //  "OverSeconds":2592000,"Op":"gte","Value":3}
+    // reads as "on how many distinct days in the last 30 days did the CPU package exceed 95C -
+    // fire if that's >= 3 days".
+
+    /// <summary>One of max/mean/p95/countAbove (case-insensitive) - null means "not an aggregate
+    /// leaf, read the live metric bag as normal" (RulesEngineService.EvaluateCondition).</summary>
+    public string? Aggregate { get; set; }
+
+    /// <summary>The trailing window, in seconds, the aggregate is computed over. Defaults to one
+    /// day (86400s) if unset on an aggregate leaf, rather than silently reading "all history".</summary>
+    public int? OverSeconds { get; set; }
+
+    /// <summary>Only meaningful for the "countAbove" aggregate - the per-sample threshold a row's
+    /// value must exceed to count. (Op/Value below then compare the resulting *count*, not this
+    /// threshold, to whatever the rule considers "fire-worthy".)</summary>
+    public double? AggregateThreshold { get; set; }
 }

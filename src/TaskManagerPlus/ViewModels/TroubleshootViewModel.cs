@@ -56,6 +56,10 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
     // ShowBaselines/IsShowingBaselines).
     public BaselineViewModel Baselines { get; }
 
+    // #959-966: the Background Health panel - a fourth sibling "page", same shape as Timeline/
+    // Baselines above (see ShowBackgroundHealth/IsShowingBackgroundHealth).
+    public BackgroundHealthViewModel BackgroundHealth { get; }
+
     public ObservableCollection<SymptomCard> Symptoms { get; } = new();
 
     /// <summary>#915: saved run transcripts, newest first - populated on demand when the "Past
@@ -75,6 +79,7 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
                 OnPropertyChanged(nameof(ShowPastRuns));
                 OnPropertyChanged(nameof(ShowTimeline));
                 OnPropertyChanged(nameof(ShowBaselines));
+                OnPropertyChanged(nameof(ShowBackgroundHealth));
             }
         }
     }
@@ -123,8 +128,23 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
         }
     }
 
+    // #959-966: landing page <-> Background Health panel, mirroring IsShowingBaselines above.
+    private bool _isShowingBackgroundHealth;
+    public bool IsShowingBackgroundHealth
+    {
+        get => _isShowingBackgroundHealth;
+        private set
+        {
+            if (SetProperty(ref _isShowingBackgroundHealth, value))
+            {
+                OnPropertyChanged(nameof(ShowLanding));
+                OnPropertyChanged(nameof(ShowBackgroundHealth));
+            }
+        }
+    }
+
     /// <summary>True for the symptom-card landing grid.</summary>
-    public bool ShowLanding => SelectedRun is null && !IsShowingPastRuns && !IsShowingTimeline && !IsShowingBaselines;
+    public bool ShowLanding => SelectedRun is null && !IsShowingPastRuns && !IsShowingTimeline && !IsShowingBaselines && !IsShowingBackgroundHealth;
 
     /// <summary>True for the "Past runs" list.</summary>
     public bool ShowPastRuns => SelectedRun is null && IsShowingPastRuns;
@@ -134,6 +154,9 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
 
     /// <summary>True for the Baselines panel.</summary>
     public bool ShowBaselines => SelectedRun is null && IsShowingBaselines;
+
+    /// <summary>True for the Background Health panel.</summary>
+    public bool ShowBackgroundHealth => SelectedRun is null && IsShowingBackgroundHealth;
 
     public bool IsRunning { get => _isRunning; private set => SetProperty(ref _isRunning, value); }
 
@@ -153,13 +176,19 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
     public RelayCommand ShowBaselinesCommand { get; }
     public RelayCommand HideBaselinesCommand { get; }
 
+    // #959-966: landing page <-> Background Health panel, mirroring ShowBaselinesCommand/HideBaselinesCommand.
+    public RelayCommand ShowBackgroundHealthCommand { get; }
+    public RelayCommand HideBackgroundHealthCommand { get; }
+
     public TroubleshootViewModel(PerformanceViewModel performance, ProcessesViewModel processes, LoggingViewModel logging,
-        EnergyThermalsViewModel energyThermals, SystemSpecsViewModel systemSpecs, ServicesViewModel services, RulesEngineService rulesEngine)
+        EnergyThermalsViewModel energyThermals, SystemSpecsViewModel systemSpecs, ServicesViewModel services, RulesEngineService rulesEngine,
+        BackgroundHealthCollectorService backgroundHealthCollector)
     {
         _performance = performance;
         _processes = processes;
         Timeline = new TimelineViewModel(logging);
         Baselines = new BaselineViewModel(performance, energyThermals, systemSpecs, services, processes, rulesEngine);
+        BackgroundHealth = new BackgroundHealthViewModel(backgroundHealthCollector, rulesEngine);
 
         RegisterBranch("slow", "My PC is slow right now", "Checks CPU/RAM/disk load, top offenders, and background maintenance work.", BuildSlowPcSteps, BuildSlowPcVerdict);
         RegisterBranch("crash", "It crashes or blue-screens", "Checks crash events, minidumps, reliability records, hardware errors, and recent driver installs.", BuildCrashSteps, BuildCrashVerdict);
@@ -189,6 +218,8 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
         HideTimelineCommand = new RelayCommand(_ => IsShowingTimeline = false);
         ShowBaselinesCommand = new RelayCommand(_ => IsShowingBaselines = true, _ => !IsRunning && SelectedRun is null);
         HideBaselinesCommand = new RelayCommand(_ => IsShowingBaselines = false);
+        ShowBackgroundHealthCommand = new RelayCommand(_ => IsShowingBackgroundHealth = true, _ => !IsRunning && SelectedRun is null);
+        HideBackgroundHealthCommand = new RelayCommand(_ => IsShowingBackgroundHealth = false);
         OpenSavedRunCommand = new RelayCommand(param =>
         {
             if (param is not TroubleshootRunRecord record) return;
@@ -995,5 +1026,9 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
         return "No device currently reports a problem in Device Manager, and USB root hub power settings look fine.";
     }
 
-    public void Dispose() => Baselines.Dispose();
+    public void Dispose()
+    {
+        Baselines.Dispose();
+        BackgroundHealth.Dispose();
+    }
 }
