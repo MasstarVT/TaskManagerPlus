@@ -347,6 +347,19 @@
                     </TabItem.Tag>
                     <views:StabilityView DataContext="{Binding Stability}" />
                 </TabItem>
+
+                <!-- #769-800: new 13th top-level tab - a simple heartbeat-pulse glyph, distinct
+                     from Stability's jagged crash-spike icon above. -->
+                <TabItem Header="Windows Health">
+                    <TabItem.Tag>
+                        <Viewbox Width="16" Height="16">
+                            <Canvas Width="16" Height="16">
+                                <Path Style="{StaticResource NavIconStroke}" Data="M 1,8.5 L 4.5,8.5 L 6,4.5 L 8.5,12.5 L 10,6.5 L 11.5,8.5 L 15,8.5" />
+                            </Canvas>
+                        </Viewbox>
+                    </TabItem.Tag>
+                    <views:WindowsHealthView DataContext="{Binding WindowsHealth}" />
+                </TabItem>
             </TabControl>
 
             <views:SettingsPanel Grid.Column="1" DataContext="{Binding Theme}">

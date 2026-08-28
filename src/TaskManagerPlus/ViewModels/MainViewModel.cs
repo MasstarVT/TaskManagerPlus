@@ -16,6 +16,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public StartupViewModel Startup { get; } = new();
     public SystemSpecsViewModel SystemSpecs { get; } = new();
     public StabilityViewModel Stability { get; } = new();
+
+    // #769-800: new 13th top-level tab - modeled directly on StabilityViewModel (on-demand, no
+    // DispatcherTimer) since event-log scans/registry sweeps/DISM calls aren't cheap enough to
+    // repeat on a tick, the same tradeoff every other on-demand tab in this app already makes.
+    public WindowsHealthViewModel WindowsHealth { get; } = new();
+
     public SummaryViewModel Summary { get; }
 
     // Thin wrappers over the shared Performance sampler (see CpuViewModel's remarks) - the
@@ -190,9 +196,17 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     /// <summary>#80: the tab header each of Ctrl+1..Ctrl+9 jumps to, in order - falls back to this
     /// app's first nine tabs (in their normal strip order) when the user hasn't customized
-    /// ui-preferences.json's TabShortcuts list.</summary>
+    /// ui-preferences.json's TabShortcuts list. Only indices 0-8 are ever read (MainWindow.xaml.cs's
+    /// PreviewKeyDown handler only maps Ctrl+1..Ctrl+9), so "Windows Health" appended here past
+    /// Startup/System/Stability (already unreachable past index 8, same as this new tab) is inert
+    /// for the default order - kept anyway per this app's existing convention of listing every tab
+    /// header here, and so a customized ui-preferences.json that reorders past nine still has the
+    /// full tab-name list to choose from.</summary>
     public static readonly string[] DefaultTabShortcutOrder =
-        { "Summary", "CPU", "Memory", "Storage", "Network", "GPU", "Energy & Thermals", "Processes", "Services" };
+        {
+            "Summary", "CPU", "Memory", "Storage", "Network", "GPU", "Energy & Thermals", "Processes", "Services",
+            "Startup", "System", "Stability", "Windows Health",
+        };
 
     public IReadOnlyList<string> TabShortcutOrder =>
         _uiPreferences.TabShortcuts.Count > 0 ? _uiPreferences.TabShortcuts : DefaultTabShortcutOrder;
