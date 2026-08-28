@@ -5,14 +5,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 Task Manager Plus — a Windows Task Manager replacement written in C# / WPF
-(.NET 8). Twelve top-level tabs (Summary, CPU, Memory, Storage, Network, GPU,
-Energy & Thermals, Processes, Services, Startup, System Specs, Stability),
-live color-theming (six palette families + saturation + high-contrast +
-color-blind-safe alerts), a CSV/HTML/Markdown logging & reporting system, a
-system tray icon with a global hotkey, and an optional LAN-visible remote
-monitor endpoint. Navigation is a TMOG-style top horizontal tab strip
-(`TabStripPlacement="Top"`), matching the visual/IA style of
-[tmog.org](https://tmog.org), not a left sidebar rail.
+(.NET 8). Thirteen top-level tabs (Summary, CPU, Memory, Storage, Network,
+GPU, Energy & Thermals, Processes, Services, Startup, System Specs,
+Stability, Security), live color-theming (six palette families + saturation
++ high-contrast + color-blind-safe alerts), a CSV/HTML/Markdown logging &
+reporting system, a system tray icon with a global hotkey, and an optional
+LAN-visible remote monitor endpoint. Navigation is a TMOG-style top
+horizontal tab strip (`TabStripPlacement="Top"`), matching the visual/IA
+style of [tmog.org](https://tmog.org), not a left sidebar rail.
 
 The project has gone through many incremental rounds of feature additions
 (see `suggestions.md` for the backlog and git history for the detailed
@@ -75,10 +75,30 @@ container — everything is `new`'d directly). Layers:
   — `EnergyThermalsViewModel` and `GpuViewModel` don't fit the shared-sampler
   pattern because sensor/GPU-engine enumeration is a genuinely separate,
   heavier data source than the fixed `HardwareMonitorService` counter array.
-  `StartupViewModel`, `SystemSpecsViewModel`, and `StabilityViewModel` are
-  on-demand instead (an initial load plus a manual Refresh command, no
-  timer) since their underlying queries (registry/WMI inventory sweeps,
-  event-log scans) aren't cheap enough to repeat on a tick.
+  `StartupViewModel`, `SystemSpecsViewModel`, `StabilityViewModel`, and
+  `SecurityViewModel` are on-demand instead (an initial load plus a manual
+  Refresh command, no timer) since their underlying queries (registry/WMI
+  inventory sweeps, event-log scans) aren't cheap enough to repeat on a
+  tick. `SecurityViewModel` (Round 14, #801-900) is the most extreme case of
+  this — a single large on-demand ViewModel piling up one
+  `ObservableCollection`/`IsLoading` flag/`AsyncRelayCommand` trio per
+  section (Persistence, File trust, Process activity, Protection status,
+  Platform security, Network exposure, Accounts, Bloatware, Cleanup, ...),
+  each gated behind its own explicit Scan/Refresh button rather than one
+  shared timer, matching `StartupViewModel`'s precedent of several
+  unrelated on-demand sections coexisting in one VM. Its backing services
+  live under `Services/` with no single umbrella class — `AutorunsService`
+  (persistence-location enumeration), `DefenderService`,
+  `PlatformSecurityService`, `FirewallService`/`ShareAuditService`/
+  `RemoteManagementExposureService`/`HostsFileAuditService`/
+  `DnsPostureService`/`CertificateStoreAuditService`, `AccountSecurityService`,
+  `BloatwareInventoryService`/`OemCleanupService`,
+  `BrowserHijackCheckService`, plus supporting services for hashing
+  (`FileHashService`), quarantine (`QuarantineService`), the action journal
+  (`SecurityActionJournalService`), System Restore points
+  (`RestorePointService`), and evidence bundles (`EvidenceBundleService`).
+  Every heuristic in this tab is explicitly framed as "quick flag, not a
+  verdict" in both code comments and UI copy — see the house rule below.
   `LoggingViewModel` owns a timer but samples nothing itself — it just reads
   already-polled state off `PerformanceViewModel`/`EnergyThermalsViewModel`.
   `MainViewModel` composes all of them plus settings-drawer state, tray/
@@ -225,6 +245,14 @@ per file:
   `Services/AppPaths.cs`, initialized once from `App.xaml.cs` before any
   other service runs). Each settings file fails silently to its type's
   defaults on a missing/corrupt file, same as `ThemeService`/`theme.json`.
+  The Security tab added several more under the same directory:
+  `autoruns-baseline.json` (known-good persistence snapshot, #803),
+  `signature-cache.json` (per-path signature verification cache keyed by
+  path+size+last-write-time, #844), and `security-actions.json` (the
+  owner-initiated-cleanup action journal, #899) — plus two subfolders,
+  `Quarantine\<timestamp>\` (moved-never-deleted flagged files, #899) and
+  `EvidenceBundles\<timestamp>\` (exported report+diff+hashes+event
+  excerpts for a helper/forum post, #900).
 - **On-demand vs. polled**: anything that takes more than a trivial
   registry/perf-counter read (event-log scans, recursive file-system
   walks, registry-tree sweeps, network calls) is gated behind an explicit
