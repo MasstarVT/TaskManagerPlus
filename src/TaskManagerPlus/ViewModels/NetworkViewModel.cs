@@ -11,6 +11,17 @@ using TaskManagerPlus.Services;
 
 namespace TaskManagerPlus.ViewModels;
 
+/// <summary>#519's flattened "one row per configured resolver IP" view of DnsResolverService's
+/// per-adapter list - a mutable class (not a record), same "annotate after the fact" shape
+/// RouteEntry/HostsFileEntry already use, since <see cref="IsFirstResponder"/> is only known once a
+/// #517 comparison run has actually completed.</summary>
+public sealed class DnsAdapterResolverRow
+{
+    public string AdapterName { get; init; } = string.Empty;
+    public string ResolverIp { get; init; } = string.Empty;
+    public bool IsFirstResponder { get; set; }
+}
+
 /// <summary>
 /// Backs the Network tab. Mostly a thin composition over the shared PerformanceViewModel sampler
 /// - see CpuViewModel's remarks - but also owns one deliberate exception: a gateway/DNS
@@ -323,6 +334,115 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
     public RelayCommand SaveTracerouteBaselineCommand { get; }
     public RelayCommand CompareTracerouteBaselineCommand { get; }
 
+    // #525: on-demand reverse-DNS enrichment for the existing #21 connections grid above.
+    private bool _isResolvingConnectionNames;
+    public bool IsResolvingConnectionNames { get => _isResolvingConnectionNames; private set => SetProperty(ref _isResolvingConnectionNames, value); }
+
+    public AsyncRelayCommand ResolveConnectionNamesCommand { get; }
+
+    // ---- suggestions.md #517-526: DNS resolution, cache and configuration ----------------------
+    // New "DNS" card. #517/#519 share one underlying test run (CompareAsync already queries every
+    // adapter-configured resolver, so #519's "who answered first" is read straight off that run's
+    // timings rather than a second probe); #520/#521/#523 are three independent read-only
+    // configuration snapshots; #518/#522/#524 are three independent on-demand scans; #526 shares
+    // the Latency card's own start/stop toggle rather than getting a new one - see
+    // ToggleLatencyMonitor's remarks below.
+
+    // #517/#519: multi-resolver comparison + configured-resolvers-per-adapter/"who answered".
+    private string _dnsCompareHostname = string.Empty;
+    public string DnsCompareHostname { get => _dnsCompareHostname; set => SetProperty(ref _dnsCompareHostname, value); }
+
+    private bool _isComparingDns;
+    public bool IsComparingDns { get => _isComparingDns; private set => SetProperty(ref _isComparingDns, value); }
+
+    private string _dnsCompareStatusText = "Enter a host name above and click Compare.";
+    public string DnsCompareStatusText { get => _dnsCompareStatusText; private set => SetProperty(ref _dnsCompareStatusText, value); }
+
+    public ObservableCollection<DnsResolverAnswer> DnsCompareAnswers { get; } = new();
+    public ObservableCollection<DnsAdapterResolverRow> ConfiguredResolvers { get; } = new();
+
+    public AsyncRelayCommand RunDnsCompareCommand { get; }
+
+    // #518: DNS cache viewer with flush.
+    private string _dnsCacheSearchText = string.Empty;
+    public string DnsCacheSearchText
+    {
+        get => _dnsCacheSearchText;
+        set { if (SetProperty(ref _dnsCacheSearchText, value)) ApplyDnsCacheFilter(); }
+    }
+
+    public ObservableCollection<DnsCacheEntry> DnsCacheEntries { get; } = new();
+    private List<DnsCacheEntry> _allDnsCacheEntries = new();
+
+    private bool _isLoadingDnsCache;
+    public bool IsLoadingDnsCache { get => _isLoadingDnsCache; private set => SetProperty(ref _isLoadingDnsCache, value); }
+
+    private string _dnsCacheStatusText = "Not loaded yet.";
+    public string DnsCacheStatusText { get => _dnsCacheStatusText; private set => SetProperty(ref _dnsCacheStatusText, value); }
+
+    public AsyncRelayCommand RefreshDnsCacheCommand { get; }
+    public AsyncRelayCommand FlushDnsCacheCommand { get; }
+
+    // #520: DNS-over-HTTPS configuration read - read-only.
+    public ObservableCollection<DohServerStatus> DohStatuses { get; } = new();
+
+    private string _dohRawOutput = string.Empty;
+    public string DohRawOutput { get => _dohRawOutput; private set => SetProperty(ref _dohRawOutput, value); }
+
+    private string _dohSummaryText = "Not loaded yet.";
+    public string DohSummaryText { get => _dohSummaryText; private set => SetProperty(ref _dohSummaryText, value); }
+
+    public AsyncRelayCommand RefreshDohConfigCommand { get; }
+
+    // #521: NRPT rules - expander hidden entirely (view-side DataTrigger) when this is empty.
+    public ObservableCollection<NrptRule> NrptRules { get; } = new();
+
+    // #522: hosts-file parser with shadowing flags.
+    public ObservableCollection<HostsFileEntry> HostsEntries { get; } = new();
+
+    private bool _isLoadingHostsFile;
+    public bool IsLoadingHostsFile { get => _isLoadingHostsFile; private set => SetProperty(ref _isLoadingHostsFile, value); }
+
+    public AsyncRelayCommand RefreshHostsFileCommand { get; }
+
+    // #523: suffix/search list - collapsed by default (view-side Expander).
+    private string _primaryDnsSuffixText = "(none)";
+    public string PrimaryDnsSuffixText { get => _primaryDnsSuffixText; private set => SetProperty(ref _primaryDnsSuffixText, value); }
+
+    public ObservableCollection<string> DnsSearchList { get; } = new();
+    public ObservableCollection<AdapterSuffixInfo> AdapterDnsSuffixes { get; } = new();
+
+    // #524: DNS-Client event log failure/timeout scan - behind an explicit Scan button per the
+    // on-demand-for-event-logs convention.
+    private double _dnsScanWindowHours = 24.0;
+    public double DnsScanWindowHours { get => _dnsScanWindowHours; set => SetProperty(ref _dnsScanWindowHours, Math.Clamp(value, 1.0, 720.0)); }
+
+    private bool _isScanningDnsFailures;
+    public bool IsScanningDnsFailures { get => _isScanningDnsFailures; private set => SetProperty(ref _isScanningDnsFailures, value); }
+
+    private string _dnsScanStatusText = "Not scanned yet - the DNS-Client Operational log is disabled by default on most machines.";
+    public string DnsScanStatusText { get => _dnsScanStatusText; private set => SetProperty(ref _dnsScanStatusText, value); }
+
+    public ObservableCollection<DnsFailureGroup> DnsFailuresByName { get; } = new();
+    public ObservableCollection<DnsFailureGroup> DnsFailuresByResolver { get; } = new();
+
+    public AsyncRelayCommand ScanDnsFailuresCommand { get; }
+
+    // #526: per-resolver DNS response-time chart, sharing the #501 Latency card's start/stop
+    // toggle - see ToggleLatencyMonitor's remarks.
+    private readonly DnsResponseTimeMonitorService _dnsResponseMonitor = new();
+    private const int DnsResponseHistoryLength = 60;
+    private readonly List<(string ResolverIp, ObservableCollection<double> History)> _dnsResponseLines = new();
+
+    private static readonly SKColor[] DnsResponsePalette =
+    {
+        SKColors.Gold, SKColors.Orchid, SKColors.Turquoise, SKColors.LimeGreen, SKColors.DeepPink, SKColors.DodgerBlue,
+    };
+
+    public ISeries[] DnsResponseSeries { get; private set; } = Array.Empty<ISeries>();
+    public Axis[] DnsResponseHiddenXAxes { get; }
+    public Axis[] DnsResponseMsYAxes { get; }
+
     public NetworkViewModel(PerformanceViewModel performance)
     {
         Performance = performance;
@@ -418,6 +538,61 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         LoadTracerouteBaselineNames();
         _ = RefreshInterfaceMtusAsync();
         _ = RefreshRoutingAsync();
+
+        // #525: reverse-DNS enrichment for the existing #21 connections grid.
+        ResolveConnectionNamesCommand = new AsyncRelayCommand(ResolveConnectionNamesAsync, () => !IsResolvingConnectionNames && Connections.Count > 0);
+
+        // #517-526: DNS card wiring.
+        RunDnsCompareCommand = new AsyncRelayCommand(RunDnsCompareAsync, () => !IsComparingDns && !string.IsNullOrWhiteSpace(DnsCompareHostname));
+        RefreshDnsCacheCommand = new AsyncRelayCommand(RefreshDnsCacheAsync, () => !IsLoadingDnsCache);
+        FlushDnsCacheCommand = new AsyncRelayCommand(FlushDnsCacheAsync, () => !IsLoadingDnsCache);
+        RefreshDohConfigCommand = new AsyncRelayCommand(RefreshDohConfigAsync);
+        RefreshHostsFileCommand = new AsyncRelayCommand(RefreshHostsFileAsync, () => !IsLoadingHostsFile);
+        ScanDnsFailuresCommand = new AsyncRelayCommand(ScanDnsFailuresAsync, () => !IsScanningDnsFailures);
+
+        DnsResponseHiddenXAxes = new[]
+        {
+            new Axis { IsVisible = false, MinLimit = 0, MaxLimit = DnsResponseHistoryLength - 1, ShowSeparatorLines = false },
+        };
+        DnsResponseMsYAxes = new[]
+        {
+            new Axis
+            {
+                MinLimit = 0,
+                Labeler = v => $"{v:0} ms",
+                LabelsPaint = LatencyAxisTextPaint(),
+                SeparatorsPaint = LatencyAxisSeparatorPaint(),
+            },
+        };
+        _dnsResponseMonitor.CycleCompleted += OnDnsResponseCycleCompleted;
+
+        // #519: configured resolvers per adapter - cheap NetworkInterface enumeration, loaded
+        // immediately (no test resolution yet, so IsFirstResponder starts false everywhere).
+        foreach (var adapter in DnsResolverService.ReadConfiguredResolvers())
+            foreach (var ip in adapter.ResolverIps)
+                ConfiguredResolvers.Add(new DnsAdapterResolverRow { AdapterName = adapter.AdapterName, ResolverIp = ip });
+
+        // #521/#523: one-time-per-launch registry/API reads, same "queried once" tradeoff
+        // AdapterDrivers above already takes - neither can change without an external action
+        // (group policy refresh, network reconfiguration) this app would need a restart to see
+        // anyway.
+        _ = Task.Run(() =>
+        {
+            var nrpt = DnsConfigService.ReadNrptRules();
+            var suffixInfo = DnsConfigService.ReadSuffixInfo();
+            System.Windows.Application.Current?.Dispatcher.Invoke(() =>
+            {
+                foreach (var r in nrpt) NrptRules.Add(r);
+
+                PrimaryDnsSuffixText = string.IsNullOrWhiteSpace(suffixInfo.PrimarySuffix) ? "(none)" : suffixInfo.PrimarySuffix;
+                foreach (var s in suffixInfo.SearchList) DnsSearchList.Add(s);
+                foreach (var a in suffixInfo.AdapterSuffixes) AdapterDnsSuffixes.Add(a);
+            });
+        });
+
+        _ = RefreshDnsCacheAsync();
+        _ = RefreshDohConfigAsync();
+        _ = RefreshHostsFileAsync();
     }
 
     private async Task CheckConnectivityAsync()
@@ -470,6 +645,10 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
             VpnStatusText = HasActiveVpn ? string.Join(", ", vpnAdapters) : "None detected";
 
             var connections = await Task.Run(() => NetworkConnectionsService.Sample());
+            // #525: reapply whatever's already cached from a previous "Resolve names" click - no
+            // I/O, so this is safe on every 15s refresh even though the fresh names themselves
+            // only come from an explicit user action.
+            ReverseDnsService.ApplyCached(connections);
             Connections.Clear();
             foreach (var c in connections.OrderByDescending(c => c.State == "ESTABLISHED").ThenBy(c => c.ProcessName, StringComparer.OrdinalIgnoreCase))
                 Connections.Add(c);
@@ -641,14 +820,59 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         if (IsLatencyMonitoring)
         {
             _latencyMonitor.Stop();
+            _dnsResponseMonitor.Stop(); // #526: shares this toggle rather than getting its own - see StartDnsResponseMonitor's remarks.
             IsLatencyMonitoring = false;
         }
         else
         {
             _latencyMonitor.Start(LatencyIntervalSeconds);
+            StartDnsResponseMonitor();
             IsLatencyMonitoring = true;
         }
     }
+
+    /// <summary>#526: (re)builds the per-resolver glow/core chart series for whichever resolvers
+    /// are configured right now (the OS-configured ones plus the same three fixed public resolvers
+    /// #517/#519 use, deduplicated, capped so the chart's legend stays readable) and starts the
+    /// probe loop against them. Re-picking the resolver set on every Start (rather than caching it
+    /// once) means a VPN connect/disconnect between monitoring sessions is picked up for free.</summary>
+    private void StartDnsResponseMonitor()
+    {
+        var resolvers = DnsResolverService.ReadConfiguredResolvers()
+            .SelectMany(a => a.ResolverIps)
+            .Concat(DnsResolverService.FixedPublicResolvers)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(DnsResponsePalette.Length)
+            .ToList();
+
+        _dnsResponseLines.Clear();
+        var series = new List<ISeries>();
+        for (int i = 0; i < resolvers.Count; i++)
+        {
+            var history = NewLatencyHistory(); // zero-filled, same length/shape helper the Latency card's own charts already use
+            var (glow, core) = LatencyLineOf(history, DnsResponsePalette[i % DnsResponsePalette.Length], resolvers[i]);
+            _dnsResponseLines.Add((resolvers[i], history));
+            series.Add(glow);
+            series.Add(core);
+        }
+        DnsResponseSeries = series.ToArray();
+        OnPropertyChanged(nameof(DnsResponseSeries));
+
+        _dnsResponseMonitor.Start(resolvers, LatencyIntervalSeconds);
+    }
+
+    /// <summary>Fired on DnsResponseTimeMonitorService's own background probe-loop thread - marshal
+    /// to the UI thread before touching any bound collection, same pattern OnLatencyCycleCompleted/
+    /// OnMtrCycleCompleted already use.</summary>
+    private void OnDnsResponseCycleCompleted() => System.Windows.Application.Current?.Dispatcher.Invoke(() =>
+    {
+        foreach (var (resolverIp, history) in _dnsResponseLines)
+        {
+            double value = _dnsResponseMonitor.TryGetLatest(resolverIp, out var latest) && latest.Success ? latest.Ms : 0;
+            history.Add(value);
+            if (history.Count > DnsResponseHistoryLength) history.RemoveAt(0);
+        }
+    });
 
     /// <summary>Fired on LatencyMonitorService's own background probe-loop thread - marshal to
     /// the UI thread before touching any bound property/collection.</summary>
@@ -928,6 +1152,225 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
             TracerouteBaselineNames.Add(b.Name);
     }
 
+    // ---- #525 helper -----------------------------------------------------------------------
+
+    /// <summary>#525: PTR-resolves every not-yet-cached remote address currently in the
+    /// connections grid, then force-refreshes the grid so the newly filled-in
+    /// <see cref="TcpConnectionInfo.RemoteHostName"/> values actually show - same clear+rebuild
+    /// trick RecomputeInterfaceMtuMismatches already uses, since TcpConnectionInfo isn't
+    /// INotifyPropertyChanged.</summary>
+    private async Task ResolveConnectionNamesAsync()
+    {
+        if (IsResolvingConnectionNames || Connections.Count == 0) return;
+        IsResolvingConnectionNames = true;
+        try
+        {
+            await ReverseDnsService.ResolveNamesAsync(Connections.ToList());
+
+            var snapshot = Connections.ToList();
+            Connections.Clear();
+            foreach (var c in snapshot) Connections.Add(c);
+        }
+        finally
+        {
+            IsResolvingConnectionNames = false;
+        }
+    }
+
+    // ---- #517-526 helpers -------------------------------------------------------------------
+
+    /// <summary>#517/#519: resolves DnsCompareHostname against every configured + fixed public
+    /// resolver, populates the comparison table, and marks #519's "who answered first" among the
+    /// configured resolvers from the same run.</summary>
+    private async Task RunDnsCompareAsync()
+    {
+        if (IsComparingDns || string.IsNullOrWhiteSpace(DnsCompareHostname)) return;
+        IsComparingDns = true;
+        DnsCompareStatusText = "Comparing (querying every configured + public resolver)...";
+        try
+        {
+            var result = await DnsResolverService.CompareAsync(DnsCompareHostname);
+
+            if (result.ValidationError is not null)
+            {
+                DnsCompareAnswers.Clear();
+                DnsCompareStatusText = result.ValidationError;
+                return;
+            }
+
+            DnsCompareAnswers.Clear();
+            foreach (var r in result.Resolvers.OrderByDescending(r => r.IsConfiguredResolver).ThenBy(r => r.ElapsedMs))
+                DnsCompareAnswers.Add(r);
+
+            int successCount = result.Resolvers.Count(r => r.Success);
+            DnsCompareStatusText = result.Resolvers.Count == 0
+                ? "No resolvers to query - no adapter has a configured resolver, and the fixed public resolvers weren't reachable."
+                : $"{successCount}/{result.Resolvers.Count} resolver(s) answered for '{result.Hostname}'. " +
+                  (result.AnswersDiverge
+                      ? "Answers diverge between resolvers - could be a hijacking/filtering resolver, a stale cache, or just normal GeoDNS/CDN load-balancing. Quick flag, not a verdict."
+                      : "All answering resolvers agree.");
+
+            // #519: mark which configured resolver answered first (fastest successful reply) -
+            // clear+rebuild so the DataGrid's IsFirstResponder DataTrigger re-evaluates, same
+            // "not INotifyPropertyChanged" tradeoff RecomputeInterfaceMtuMismatches already takes.
+            var rows = ConfiguredResolvers.ToList();
+            foreach (var row in rows)
+                row.IsFirstResponder = result.FirstRespondingConfiguredResolver is not null &&
+                    row.ResolverIp.Equals(result.FirstRespondingConfiguredResolver, StringComparison.OrdinalIgnoreCase);
+            ConfiguredResolvers.Clear();
+            foreach (var row in rows) ConfiguredResolvers.Add(row);
+        }
+        catch (Exception ex)
+        {
+            DnsCompareStatusText = $"Comparison failed: {ex.Message}";
+        }
+        finally
+        {
+            IsComparingDns = false;
+
+            // #522: the hosts-file card flags any entry that shadows the hostname the user just
+            // tried to resolve here - refresh it now that there's a new "just resolved" target.
+            _ = RefreshHostsFileAsync();
+        }
+    }
+
+    /// <summary>#518: loads/reloads the full DNS cache, then reapplies whatever search filter is
+    /// currently active.</summary>
+    private async Task RefreshDnsCacheAsync()
+    {
+        if (IsLoadingDnsCache) return;
+        IsLoadingDnsCache = true;
+        try
+        {
+            _allDnsCacheEntries = await DnsCacheService.ReadCacheAsync();
+            ApplyDnsCacheFilter();
+            DnsCacheStatusText = _allDnsCacheEntries.Count == 0
+                ? "Cache is empty (or couldn't be read)."
+                : $"{_allDnsCacheEntries.Count} cached record(s).";
+        }
+        catch (Exception ex)
+        {
+            DnsCacheStatusText = $"Couldn't read the DNS cache: {ex.Message}";
+        }
+        finally
+        {
+            IsLoadingDnsCache = false;
+        }
+    }
+
+    /// <summary>#518: case-insensitive substring filter over record name/type/data - runs entirely
+    /// in memory against the already-loaded snapshot, no re-read of the cache itself.</summary>
+    private void ApplyDnsCacheFilter()
+    {
+        DnsCacheEntries.Clear();
+        var matches = string.IsNullOrWhiteSpace(DnsCacheSearchText)
+            ? _allDnsCacheEntries
+            : _allDnsCacheEntries.Where(e =>
+                e.RecordName.Contains(DnsCacheSearchText, StringComparison.OrdinalIgnoreCase) ||
+                e.RecordType.Contains(DnsCacheSearchText, StringComparison.OrdinalIgnoreCase) ||
+                e.Data.Contains(DnsCacheSearchText, StringComparison.OrdinalIgnoreCase));
+        foreach (var e in matches) DnsCacheEntries.Add(e);
+    }
+
+    /// <summary>#518: flushes the resolver cache, then reloads it (should come back empty) so the
+    /// grid reflects the flush immediately rather than waiting for the next manual refresh.</summary>
+    private async Task FlushDnsCacheAsync()
+    {
+        if (IsLoadingDnsCache) return;
+        IsLoadingDnsCache = true;
+        try
+        {
+            bool ok = await DnsCacheService.FlushAsync();
+            DnsCacheStatusText = ok ? "Cache flushed." : "Flush may not have succeeded - check the cache below.";
+        }
+        catch (Exception ex)
+        {
+            DnsCacheStatusText = $"Flush failed: {ex.Message}";
+        }
+        finally
+        {
+            IsLoadingDnsCache = false;
+        }
+        await RefreshDnsCacheAsync();
+    }
+
+    /// <summary>#520: reloads the DoH encryption status table + raw netsh output.</summary>
+    private async Task RefreshDohConfigAsync()
+    {
+        try
+        {
+            var result = await DnsConfigService.ReadDohConfigAsync();
+            DohStatuses.Clear();
+            foreach (var s in result.Parsed) DohStatuses.Add(s);
+            DohRawOutput = result.RawOutput;
+
+            DohSummaryText = !result.CommandSupported
+                ? "`netsh dns show encryption` isn't available on this Windows version - encrypted-DNS status can't be read."
+                : result.Parsed.Count == 0
+                    ? (result.RegistryKeyPresent
+                        ? "No servers reported by netsh, though at least one interface has a DoH registry key present."
+                        : "No DNS-over-HTTPS configuration found - resolvers are used in plaintext.")
+                    : $"{result.Parsed.Count(s => s.EncryptionStatus.Contains("Yes", StringComparison.OrdinalIgnoreCase))}/{result.Parsed.Count} server(s) reporting encrypted DNS.";
+        }
+        catch (Exception ex)
+        {
+            DohSummaryText = $"Couldn't read DoH configuration: {ex.Message}";
+        }
+    }
+
+    /// <summary>#522: reloads the parsed hosts file, flagging any entry that shadows the hostname
+    /// most recently looked up via the #517 compare box above.</summary>
+    private async Task RefreshHostsFileAsync()
+    {
+        if (IsLoadingHostsFile) return;
+        IsLoadingHostsFile = true;
+        try
+        {
+            string? recentLookup = DnsCompareHostname;
+            var entries = await Task.Run(() => HostsFileService.Parse(recentLookup));
+            HostsEntries.Clear();
+            foreach (var e in entries) HostsEntries.Add(e);
+        }
+        finally
+        {
+            IsLoadingHostsFile = false;
+        }
+    }
+
+    /// <summary>#524: scans the DNS-Client Operational + System/Dnscache logs over the chosen
+    /// lookback window - shelled off the UI thread via Task.Run since EventLogReader is
+    /// synchronous, same pattern this app's other event-log reads already take.</summary>
+    private async Task ScanDnsFailuresAsync()
+    {
+        if (IsScanningDnsFailures) return;
+        IsScanningDnsFailures = true;
+        DnsScanStatusText = "Scanning...";
+        try
+        {
+            var window = TimeSpan.FromHours(DnsScanWindowHours);
+            var result = await Task.Run(() => DnsEventLogService.Scan(window));
+
+            DnsFailuresByName.Clear();
+            foreach (var g in result.ByName) DnsFailuresByName.Add(g);
+            DnsFailuresByResolver.Clear();
+            foreach (var g in result.ByResolver) DnsFailuresByResolver.Add(g);
+
+            DnsScanStatusText = !result.OperationalChannelAvailable
+                ? $"DNS-Client Operational log unavailable (it's disabled by default - enable it in Event Viewer's \"Show Analytic and Debug Logs\" to get full results). Found {result.Events.Count} event(s) from the System log only."
+                : result.Events.Count == 0
+                    ? $"No DNS timeout/failure events in the last {DnsScanWindowHours:0.#}h."
+                    : $"{result.Events.Count} event(s) in the last {DnsScanWindowHours:0.#}h across {result.ByName.Count} name(s) and {result.ByResolver.Count} resolver bucket(s).";
+        }
+        catch (Exception ex)
+        {
+            DnsScanStatusText = $"Scan failed: {ex.Message}";
+        }
+        finally
+        {
+            IsScanningDnsFailures = false;
+        }
+    }
+
     public void Dispose()
     {
         _timer.Stop();
@@ -935,5 +1378,7 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         _latencyMonitor.Dispose();
         _mtr.CycleCompleted -= OnMtrCycleCompleted;
         _mtr.Dispose();
+        _dnsResponseMonitor.CycleCompleted -= OnDnsResponseCycleCompleted;
+        _dnsResponseMonitor.Dispose();
     }
 }

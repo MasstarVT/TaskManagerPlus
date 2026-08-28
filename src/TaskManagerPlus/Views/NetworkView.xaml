@@ -382,6 +382,317 @@
                 </StackPanel>
             </Border>
 
+            <!-- suggestions.md #517-526: DNS resolution, cache and configuration - one card
+                 bundling every DNS-focused diagnostic, the same "one card per feature cluster"
+                 shape the Latency card above already uses for #501-509. #525's reverse-DNS
+                 enrichment instead lives on the existing Active connections grid further down,
+                 since it extends that grid directly rather than adding a new one. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="DNS" Style="{StaticResource CardTitle}" />
+
+                    <!-- #519: configured resolvers per adapter - "answered first" is filled in
+                         once a #517 compare run below has actually completed. -->
+                    <TextBlock Text="Configured resolvers" Style="{StaticResource SpecLabel}" Margin="0,10,0,6" />
+                    <ItemsControl ItemsSource="{Binding ConfiguredResolvers}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" FontSize="12.5" TextTrimming="CharacterEllipsis">
+                                        <Run Text="{Binding AdapterName}" FontWeight="SemiBold" />
+                                        <Run Text=" — " /><Run Text="{Binding ResolverIp}" FontFamily="Consolas" />
+                                    </TextBlock>
+                                    <TextBlock Grid.Column="1" Text="answered first" FontSize="11" FontWeight="SemiBold" Margin="8,0,0,0"
+                                               Foreground="{DynamicResource SuccessBrush}"
+                                               Visibility="{Binding IsFirstResponder, Converter={StaticResource BoolToVisibilityConverter}}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="No adapter has a configured resolver.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding ConfiguredResolvers.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
+                    <!-- #517: multi-resolver comparison - the adapter's own resolver(s) plus
+                         1.1.1.1/8.8.8.8/9.9.9.9, side by side. -->
+                    <TextBlock Text="Compare a hostname across resolvers" Style="{StaticResource SpecLabel}" Margin="0,16,0,6" />
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBox Grid.Column="0" Margin="0,0,8,0" VerticalContentAlignment="Center"
+                                 Text="{Binding DnsCompareHostname, UpdateSourceTrigger=PropertyChanged}" />
+                        <Button Grid.Column="1" Content="Compare" Padding="10,4" Command="{Binding RunDnsCompareCommand}" />
+                    </Grid>
+                    <TextBlock Text="{Binding DnsCompareStatusText}" Style="{StaticResource SubStat}" Margin="0,8,0,0" TextWrapping="Wrap" />
+                    <DataGrid ItemsSource="{Binding DnsCompareAnswers}" AutoGenerateColumns="False" IsReadOnly="True" HeadersVisibility="Column" Margin="0,8,0,0" MaxHeight="220">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Resolver" Binding="{Binding ResolverIp}" Width="1*" />
+                            <DataGridTextColumn Header="Adapter" Binding="{Binding AdapterName}" Width="1.1*" />
+                            <DataGridTextColumn Header="Time" Binding="{Binding ElapsedMs, StringFormat={}{0} ms}" Width="0.7*" />
+                            <DataGridTextColumn Header="Answers" Binding="{Binding Answers, Converter={StaticResource StringListJoinConverter}}" Width="2.2*" />
+                            <DataGridTextColumn Header="Error" Binding="{Binding Error}" Width="1.4*" />
+                        </DataGrid.Columns>
+                        <DataGrid.RowStyle>
+                            <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding Success}" Value="False">
+                                        <Setter Property="Opacity" Value="0.55" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </DataGrid.RowStyle>
+                    </DataGrid>
+                    <TextBlock Text="A blank Adapter column means a fixed public resolver added purely for comparison, not one of yours. Divergent answers can mean a hijacking/filtering resolver, a stale cache, or just normal GeoDNS/CDN load-balancing - quick flag, not a verdict."
+                               Style="{StaticResource SubStat}" Margin="0,6,0,0" TextWrapping="Wrap" Opacity="0.7" />
+
+                    <!-- #520: DNS-over-HTTPS configuration - read-only. -->
+                    <Grid Margin="0,16,0,6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Encrypted DNS (DoH)" Style="{StaticResource SpecLabel}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Refresh" Padding="8,3" Command="{Binding RefreshDohConfigCommand}" />
+                    </Grid>
+                    <TextBlock Text="{Binding DohSummaryText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" />
+                    <DataGrid ItemsSource="{Binding DohStatuses}" AutoGenerateColumns="False" IsReadOnly="True" HeadersVisibility="Column" Margin="0,8,0,0" MaxHeight="160">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Interface" Binding="{Binding InterfaceName}" Width="1.3*" />
+                            <DataGridTextColumn Header="Server" Binding="{Binding ServerAddress}" Width="1.1*" />
+                            <DataGridTextColumn Header="Encryption" Binding="{Binding EncryptionStatus}" Width="1*" />
+                            <DataGridTextColumn Header="Auto-upgrade" Binding="{Binding AutoUpgrade}" Width="1*" />
+                            <DataGridTextColumn Header="UDP fallback" Binding="{Binding UdpFallback}" Width="1*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <TextBox Text="{Binding DohRawOutput, Mode=OneWay}" Margin="0,8,0,0" MaxHeight="110"
+                             IsReadOnly="True" TextWrapping="NoWrap" FontFamily="Consolas" FontSize="11"
+                             VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" Background="Transparent" BorderThickness="0" />
+
+                    <!-- #521: NRPT split-DNS rules - hidden entirely when none exist. -->
+                    <Expander Margin="0,16,0,0" Background="Transparent" BorderThickness="0" Foreground="{DynamicResource TextPrimaryBrush}">
+                        <Expander.Style>
+                            <Style TargetType="Expander">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding NrptRules.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Expander.Style>
+                        <Expander.Header>
+                            <TextBlock Text="Split-DNS policy (NRPT)" Style="{StaticResource CardTitle}" Margin="0" FontSize="13" />
+                        </Expander.Header>
+                        <StackPanel Margin="0,10,0,0">
+                            <TextBlock Text="Namespace rules pushed by a VPN or group policy that route specific suffixes to specific servers - the reason internal hostnames resolve on VPN and nothing else does, or vice versa."
+                                       Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,8" Opacity="0.85" />
+                            <ItemsControl ItemsSource="{Binding NrptRules}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,6" TextWrapping="Wrap">
+                                            <Run Text="{Binding Namespaces, Converter={StaticResource StringListJoinConverter}}" FontWeight="SemiBold" />
+                                            <Run Text=" → " /><Run Text="{Binding DnsServers}" />
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </Expander>
+
+                    <!-- #523: suffix/search list - collapsed by default. -->
+                    <Expander Margin="0,16,0,0" Background="Transparent" BorderThickness="0" Foreground="{DynamicResource TextPrimaryBrush}" IsExpanded="False">
+                        <Expander.Header>
+                            <TextBlock Text="DNS suffix &amp; search list" Style="{StaticResource CardTitle}" Margin="0" FontSize="13" />
+                        </Expander.Header>
+                        <StackPanel Margin="0,10,0,0">
+                            <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,6">
+                                <Run Text="Primary suffix: " /><Run Text="{Binding PrimaryDnsSuffixText}" FontWeight="SemiBold" />
+                            </TextBlock>
+                            <TextBlock Text="Search list" Style="{StaticResource SpecLabel}" Margin="0,4,0,4" />
+                            <ItemsControl ItemsSource="{Binding DnsSearchList}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding}" Style="{StaticResource SubStat}" Margin="0,0,0,3" FontFamily="Consolas" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <TextBlock Text="(none configured)">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding DnsSearchList.Count}" Value="0">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                            <TextBlock Text="Per-adapter suffixes" Style="{StaticResource SpecLabel}" Margin="0,10,0,4" />
+                            <ItemsControl ItemsSource="{Binding AdapterDnsSuffixes}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,3">
+                                            <Run Text="{Binding AdapterName}" FontWeight="SemiBold" /><Run Text=": " /><Run Text="{Binding Suffix}" FontFamily="Consolas" />
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </Expander>
+
+                    <!-- #518: DNS cache viewer with flush. -->
+                    <Grid Margin="0,16,0,6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Resolver cache" Style="{StaticResource SpecLabel}" Margin="0" VerticalAlignment="Center" />
+                        <TextBox Grid.Column="1" Margin="10,0,8,0" VerticalContentAlignment="Center"
+                                 Text="{Binding DnsCacheSearchText, UpdateSourceTrigger=PropertyChanged}" />
+                        <Button Grid.Column="2" Content="Refresh" Padding="8,3" Margin="0,0,8,0" Command="{Binding RefreshDnsCacheCommand}" />
+                        <Button Grid.Column="3" Content="Flush cache" Padding="8,3" Command="{Binding FlushDnsCacheCommand}" />
+                    </Grid>
+                    <TextBlock Text="{Binding DnsCacheStatusText}" Style="{StaticResource SubStat}" Margin="0,6,0,0" TextWrapping="Wrap" />
+                    <DataGrid ItemsSource="{Binding DnsCacheEntries}" AutoGenerateColumns="False" IsReadOnly="True" HeadersVisibility="Column" Margin="0,8,0,0" MaxHeight="240">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Name" Binding="{Binding RecordName}" Width="1.6*" />
+                            <DataGridTextColumn Header="Type" Binding="{Binding RecordType}" Width="0.6*" />
+                            <DataGridTextColumn Header="TTL" Binding="{Binding Ttl}" Width="0.6*" />
+                            <DataGridTextColumn Header="Data" Binding="{Binding Data}" Width="1.6*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+
+                    <!-- #522: hosts file parser with shadowing flags - beyond the existing "Open
+                         hosts file" shortcut on the Connectivity card above. -->
+                    <Grid Margin="0,16,0,6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Hosts file" Style="{StaticResource SpecLabel}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Refresh" Padding="8,3" Command="{Binding RefreshHostsFileCommand}" />
+                    </Grid>
+                    <DataGrid ItemsSource="{Binding HostsEntries}" AutoGenerateColumns="False" IsReadOnly="True" HeadersVisibility="Column" MaxHeight="200">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Line" Binding="{Binding LineNumber}" Width="0.5*" />
+                            <DataGridTextColumn Header="IP" Binding="{Binding IpAddress}" Width="1*" />
+                            <DataGridTextColumn Header="Hostname" Binding="{Binding Hostname}" Width="1.6*" />
+                        </DataGrid.Columns>
+                        <DataGrid.RowStyle>
+                            <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsDuplicate}" Value="True">
+                                        <Setter Property="Background" Value="{DynamicResource WarningBrush}" />
+                                        <Setter Property="Opacity" Value="0.85" />
+                                        <Setter Property="ToolTip" Value="This hostname appears more than once in the hosts file - Windows uses whichever line comes first." />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding IsBlackholed}" Value="True">
+                                        <Setter Property="Background" Value="{DynamicResource DangerBrush}" />
+                                        <Setter Property="Opacity" Value="0.85" />
+                                        <Setter Property="ToolTip" Value="A well-known public domain is pointed at a blackhole address - could be an ad-blocker, or could be malware. Quick flag, not a verdict." />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding ShadowsRecentLookup}" Value="True">
+                                        <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+                                        <Setter Property="BorderThickness" Value="2" />
+                                        <Setter Property="ToolTip" Value="This entry overrides the hostname most recently compared above." />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </DataGrid.RowStyle>
+                    </DataGrid>
+                    <TextBlock Text="No entries found (or the hosts file couldn't be read).">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding HostsEntries.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
+                    <!-- #524: DNS-Client event log failure/timeout scan - explicit Scan button per
+                         the on-demand-for-event-logs convention. -->
+                    <Grid Margin="0,16,0,6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Failure / timeout scan" Style="{StaticResource SpecLabel}" Margin="0" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="1" Text="Window (h)" VerticalAlignment="Center" Margin="0,0,6,0" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        <TextBox Grid.Column="2" Width="50" Margin="0,0,8,0" VerticalContentAlignment="Center"
+                                 Text="{Binding DnsScanWindowHours, UpdateSourceTrigger=LostFocus, StringFormat={}{0:0.#}}" />
+                        <Button Grid.Column="3" Content="Scan" Padding="10,4" Command="{Binding ScanDnsFailuresCommand}" />
+                    </Grid>
+                    <TextBlock Text="{Binding DnsScanStatusText}" Style="{StaticResource SubStat}" Margin="0,6,0,0" TextWrapping="Wrap" />
+                    <Grid Margin="0,10,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                            <TextBlock Text="By queried name" Style="{StaticResource SpecLabel}" Margin="0,0,0,4" />
+                            <ItemsControl ItemsSource="{Binding DnsFailuresByName}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,3" TextWrapping="Wrap">
+                                            <Run Text="{Binding Key}" FontWeight="SemiBold" /><Run Text=": " /><Run Text="{Binding Count}" />
+                                            <Run Text=" (last " /><Run Text="{Binding LastSeenUtc, StringFormat={}{0:g}}" /><Run Text=")" />
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Margin="8,0,0,0">
+                            <TextBlock Text="By resolver" Style="{StaticResource SpecLabel}" Margin="0,0,0,4" />
+                            <ItemsControl ItemsSource="{Binding DnsFailuresByResolver}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,3" TextWrapping="Wrap">
+                                            <Run Text="{Binding Key}" FontWeight="SemiBold" /><Run Text=": " /><Run Text="{Binding Count}" />
+                                            <Run Text=" (last " /><Run Text="{Binding LastSeenUtc, StringFormat={}{0:g}}" /><Run Text=")" />
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </Grid>
+
+                    <!-- #526: per-resolver DNS response-time chart, sharing the Latency card's own
+                         Start/Stop monitoring toggle above rather than getting a new one - see
+                         NetworkViewModel.ToggleLatencyMonitor's remarks. -->
+                    <TextBlock Text="Per-resolver response time" Style="{StaticResource SpecLabel}" Margin="0,16,0,6" />
+                    <TextBlock Text="Shares the Latency card's Start/Stop monitoring toggle at the top of this page - start monitoring there to see this chart update."
+                               Style="{StaticResource SubStat}" TextWrapping="Wrap" Opacity="0.85" Margin="0,0,0,8" />
+                    <lvc:CartesianChart Series="{Binding DnsResponseSeries}" XAxes="{Binding DnsResponseHiddenXAxes}" YAxes="{Binding DnsResponseMsYAxes}"
+                                         Height="180" TooltipPosition="Top" LegendPosition="Bottom" Background="Transparent"
+                                         LegendTextPaint="{Binding Performance.LegendTextPaint}" LegendBackgroundPaint="{Binding Performance.LegendBackgroundPaint}"
+                                         TooltipTextPaint="{Binding Performance.TooltipTextPaint}" TooltipBackgroundPaint="{Binding Performance.TooltipBackgroundPaint}" />
+                </StackPanel>
+            </Border>
+
             <!-- Adapters: negotiated link speed per active adapter (#31, flags a "Gigabit"
                  adapter that negotiated down - a classic bad-cable/bad-port symptom) and VPN
                  presence (#37, a heuristic name/type match, not a "traffic is routed through it"
@@ -854,9 +1165,24 @@
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" Text="Active connections" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
-                        <TextBlock Grid.Column="1" Text="{Binding Connections.Count, StringFormat={}{0} total}" Style="{StaticResource SubStat}" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="1" Text="{Binding Connections.Count, StringFormat={}{0} total}" Style="{StaticResource SubStat}" VerticalAlignment="Center" Margin="0,0,10,0" />
+                        <!-- #525: on-demand reverse-DNS (PTR) enrichment - never automatic, since
+                             it's a real DNS lookup per unique remote address. -->
+                        <Button Grid.Column="2" Padding="10,4" Command="{Binding ResolveConnectionNamesCommand}">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                    <Setter Property="Content" Value="Resolve names" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsResolvingConnectionNames}" Value="True">
+                                            <Setter Property="Content" Value="Resolving..." />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
                     </Grid>
                     <DataGrid ItemsSource="{Binding Connections}" Height="260" IsReadOnly="True">
                         <DataGrid.Columns>
@@ -866,9 +1192,12 @@
                             <DataGridTextColumn Header="Local port" Binding="{Binding LocalPort}" Width="80" />
                             <DataGridTextColumn Header="Remote address" Binding="{Binding RemoteAddress}" Width="1.3*" />
                             <DataGridTextColumn Header="Remote port" Binding="{Binding RemotePort}" Width="90" />
+                            <DataGridTextColumn Header="Remote host" Binding="{Binding RemoteHostName, TargetNullValue=''}" Width="1.6*" />
                             <DataGridTextColumn Header="State" Binding="{Binding State}" Width="110" />
                         </DataGrid.Columns>
                     </DataGrid>
+                    <TextBlock Text="PTR-resolves each unique remote address (memory-cached, strict per-lookup timeout) - turns a wall of IPs into recognizable CDN/service names where a reverse record exists."
+                               Style="{StaticResource SubStat}" Margin="0,6,0,0" TextWrapping="Wrap" Opacity="0.7" />
                 </StackPanel>
             </Border>
 

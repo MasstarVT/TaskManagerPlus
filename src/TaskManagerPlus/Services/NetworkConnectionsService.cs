@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
 using System.Runtime.InteropServices;
@@ -5,9 +6,24 @@ using System.Text.RegularExpressions;
 
 namespace TaskManagerPlus.Services;
 
-/// <summary>One active TCP connection, with its owning process (#21 - a themed "netstat -b").</summary>
-public sealed record TcpConnectionInfo(
-    string LocalAddress, int LocalPort, string RemoteAddress, int RemotePort, string State, int Pid, string ProcessName);
+/// <summary>One active TCP connection, with its owning process (#21 - a themed "netstat -b"). A
+/// mutable class rather than a record - same "annotate after the fact" shape RouteEntry already
+/// uses - since #525's reverse-DNS enrichment fills in <see cref="RemoteHostName"/> after a row has
+/// already been created, sometimes from a memory cache with no fresh I/O at all.</summary>
+public sealed class TcpConnectionInfo
+{
+    public string LocalAddress { get; init; } = string.Empty;
+    public int LocalPort { get; init; }
+    public string RemoteAddress { get; init; } = string.Empty;
+    public int RemotePort { get; init; }
+    public string State { get; init; } = string.Empty;
+    public int Pid { get; init; }
+    public string ProcessName { get; init; } = string.Empty;
+
+    /// <summary>#525: the remote address's PTR name, filled in by ReverseDnsService - null until a
+    /// resolution has actually been attempted (cached or fresh), never a guess.</summary>
+    public string? RemoteHostName { get; set; }
+}
 
 /// <summary>
 /// Per-process connection counts (#87 - a "per-process bandwidth" proxy). Windows exposes no
@@ -41,11 +57,16 @@ public static class NetworkConnectionsService
             var processNames = BuildProcessNameCache();
             foreach (var row in ReadTcpTable())
             {
-                results.Add(new TcpConnectionInfo(
-                    new IPAddress(row.LocalAddr).ToString(), ExtractPort(row.LocalPort),
-                    new IPAddress(row.RemoteAddr).ToString(), ExtractPort(row.RemotePort),
-                    StateName(row.State), (int)row.OwningPid,
-                    processNames.TryGetValue((int)row.OwningPid, out var name) ? name : "(unknown)"));
+                results.Add(new TcpConnectionInfo
+                {
+                    LocalAddress = new IPAddress(row.LocalAddr).ToString(),
+                    LocalPort = ExtractPort(row.LocalPort),
+                    RemoteAddress = new IPAddress(row.RemoteAddr).ToString(),
+                    RemotePort = ExtractPort(row.RemotePort),
+                    State = StateName(row.State),
+                    Pid = (int)row.OwningPid,
+                    ProcessName = processNames.TryGetValue((int)row.OwningPid, out var name) ? name : "(unknown)",
+                });
             }
         }
         catch
@@ -126,6 +147,70 @@ public static class NetworkConnectionsService
         public uint RemoteAddr;
         public uint RemotePort;
         public uint OwningPid;
+    }
+}
+
+/// <summary>
+/// Item #525: on-demand reverse-DNS (PTR) enrichment for the existing #21 connections grid, so a
+/// wall of remote IPs becomes recognizable CDN/service names. A plain <see cref="Dns.GetHostEntryAsync"/>
+/// call per unique remote address (the managed API is the right tool here, not a tool shell-out or
+/// raw UDP query - a single PTR lookup per IP has none of the "runs forever" cost profile that
+/// makes DnsResponseTimeMonitorService's #526 raw-socket approach worth the extra code), each
+/// bounded by its own strict timeout so one unresponsive/nonexistent PTR record can't stall the
+/// whole batch. Resolved (and failed) names are cached in memory per remote IP for the lifetime of
+/// the app, so re-resolving after the next 15s connections refresh - or clicking "Resolve names"
+/// again - never re-queries an address already looked up.
+/// </summary>
+public static class ReverseDnsService
+{
+    private const int TimeoutMs = 800;
+
+    // Null is a cached "looked up, nothing came back" result - distinct from "never looked up at
+    // all" (not present in the dictionary), so a failed PTR lookup isn't retried every refresh.
+    private static readonly ConcurrentDictionary<string, string?> Cache = new();
+
+    /// <summary>Applies whatever's already cached to <paramref name="connections"/> - no I/O, safe
+    /// to call on every periodic refresh so a name resolved once via <see cref="ResolveNamesAsync"/>
+    /// stays visible across subsequent polls without needing to be re-resolved.</summary>
+    public static void ApplyCached(IEnumerable<TcpConnectionInfo> connections)
+    {
+        foreach (var c in connections)
+            if (Cache.TryGetValue(c.RemoteAddress, out var name)) c.RemoteHostName = name;
+    }
+
+    /// <summary>#525: resolves every not-yet-cached remote address among <paramref name="connections"/>
+    /// in parallel, then applies the (now fully populated) cache to all of them.</summary>
+    public static async Task ResolveNamesAsync(IEnumerable<TcpConnectionInfo> connections)
+    {
+        var snapshot = connections.ToList();
+        var toResolve = snapshot
+            .Select(c => c.RemoteAddress)
+            .Where(ip => ip != "0.0.0.0" && ip != "::" && !Cache.ContainsKey(ip))
+            .Distinct()
+            .ToList();
+
+        var tasks = toResolve.Select(async ip => Cache[ip] = await ResolveOneAsync(ip));
+        await Task.WhenAll(tasks);
+
+        ApplyCached(snapshot);
+    }
+
+    private static async Task<string?> ResolveOneAsync(string ip)
+    {
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeoutMs);
+            var entry = await Dns.GetHostEntryAsync(ip, cts.Token);
+            return string.IsNullOrWhiteSpace(entry.HostName) || entry.HostName.Equals(ip, StringComparison.OrdinalIgnoreCase)
+                ? null
+                : entry.HostName;
+        }
+        catch
+        {
+            // No PTR record, timed out, or the resolver refused - degrade to null (shown as the
+            // bare IP), never fabricate a name.
+            return null;
+        }
     }
 }
 
