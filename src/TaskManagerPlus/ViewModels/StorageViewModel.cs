@@ -153,6 +153,103 @@ public sealed class VolumeFilesystemRow : ObservableObject
 
     private string _ntfsFactsStatusText = "Loading...";
     public string NtfsFactsStatusText { get => _ntfsFactsStatusText; set => SetProperty(ref _ntfsFactsStatusText, value); }
+
+    // ---- Round 16, #346: USN journal status -------------------------------------------------
+    private UsnJournalStatus? _usnJournalStatus;
+    public UsnJournalStatus? UsnJournalStatus
+    {
+        get => _usnJournalStatus;
+        set
+        {
+            if (SetProperty(ref _usnJournalStatus, value))
+            {
+                OnPropertyChanged(nameof(UsnJournalSummaryText));
+                OnPropertyChanged(nameof(UsnJournalRangeText));
+                OnPropertyChanged(nameof(UsnJournalSizeText));
+                OnPropertyChanged(nameof(ShowUsnJournalWrappedWarning));
+            }
+        }
+    }
+
+    public string UsnJournalSummaryText => UsnJournalStatus switch
+    {
+        null => "Not read",
+        { Available: false } s => $"No active journal - {s.UnavailableReason}",
+        { Available: true } s => $"Active - journal ID 0x{s.JournalId:X16}",
+    };
+
+    public string UsnJournalRangeText => UsnJournalStatus is { Available: true } s
+        ? $"First USN 0x{s.FirstUsn:X} · Next USN 0x{s.NextUsn:X} · Lowest valid USN 0x{s.LowestValidUsn:X}"
+        : string.Empty;
+
+    public string UsnJournalSizeText => UsnJournalStatus is { Available: true } s
+        ? $"Maximum size {(s.MaximumSizeBytes is { } m ? Formatting.FormatBytes(m) : "Unknown")} · Allocation delta {(s.AllocationDeltaBytes is { } a ? Formatting.FormatBytes(a) : "Unknown")}"
+        : string.Empty;
+
+    public bool ShowUsnJournalWrappedWarning => UsnJournalStatus is { Available: true, LikelyWrapped: true };
+
+    // ---- Round 16, #348: create/resize/delete controls ---------------------------------------
+    private string _usnMaxSizeMbInput = string.Empty;
+    public string UsnMaxSizeMbInput { get => _usnMaxSizeMbInput; set => SetProperty(ref _usnMaxSizeMbInput, value); }
+
+    private string _usnAllocationDeltaMbInput = string.Empty;
+    public string UsnAllocationDeltaMbInput { get => _usnAllocationDeltaMbInput; set => SetProperty(ref _usnAllocationDeltaMbInput, value); }
+
+    private bool _isUsnJournalActionRunning;
+    public bool IsUsnJournalActionRunning { get => _isUsnJournalActionRunning; set => SetProperty(ref _isUsnJournalActionRunning, value); }
+
+    private string _usnJournalActionStatusText = string.Empty;
+    public string UsnJournalActionStatusText { get => _usnJournalActionStatusText; set => SetProperty(ref _usnJournalActionStatusText, value); }
+
+    // ---- Round 16, #350: NTFS geometry facts --------------------------------------------------
+    private NtfsGeometryFacts? _geometryFacts;
+    public NtfsGeometryFacts? GeometryFacts
+    {
+        get => _geometryFacts;
+        set
+        {
+            if (SetProperty(ref _geometryFacts, value))
+            {
+                OnPropertyChanged(nameof(GeometryClusterSectorText));
+                OnPropertyChanged(nameof(GeometryMftText));
+                OnPropertyChanged(nameof(GeometryLogFileText));
+            }
+        }
+    }
+
+    public string GeometryClusterSectorText => GeometryFacts switch
+    {
+        null => "Not read",
+        { Available: false } g => $"Unknown - {g.UnavailableReason}",
+        { Available: true } g =>
+            $"Cluster {(g.BytesPerCluster is { } c ? Formatting.FormatBytes(c) : "Unknown")} · " +
+            $"Logical sector {(g.BytesPerSector is { } s ? Formatting.FormatBytes(s) : "Unknown")} · " +
+            $"Physical sector {(g.BytesPerPhysicalSector is { } p ? Formatting.FormatBytes(p) : "Unknown")}",
+    };
+
+    public string GeometryMftText => GeometryFacts is { Available: true } g
+        ? $"MFT start LCN 0x{g.MftStartLcn:X} · Zone 0x{g.MftZoneStart:X}–0x{g.MftZoneEnd:X} · " +
+          $"Valid data length {(g.MftValidDataLengthBytes is { } v ? Formatting.FormatBytes(v) : "Unknown")}"
+        : string.Empty;
+
+    public string GeometryLogFileText => GeometryFacts is { Available: true } g
+        ? $"$LogFile size: {(g.LogFileSizeBytes is { } l ? Formatting.FormatBytes(l) : "Unknown (not reported by fsutil on this Windows version)")}"
+        : string.Empty;
+}
+
+/// <summary>Round 16, #351: wraps one immutable NtfsBehaviorSetting fact with this row's mutable
+/// set-action status - same "wrap the immutable fact, add mutable UI state" shape VolumeFilesystemRow
+/// uses for VolumeFilesystemFacts.</summary>
+public sealed class NtfsBehaviorSettingRow : ObservableObject
+{
+    public NtfsBehaviorSetting Setting { get; }
+    public NtfsBehaviorSettingRow(NtfsBehaviorSetting setting) => Setting = setting;
+
+    private bool _isActionRunning;
+    public bool IsActionRunning { get => _isActionRunning; set => SetProperty(ref _isActionRunning, value); }
+
+    private string _actionStatusText = string.Empty;
+    public string ActionStatusText { get => _actionStatusText; set => SetProperty(ref _actionStatusText, value); }
 }
 
 /// <summary>
@@ -590,6 +687,83 @@ public sealed class StorageViewModel : ObservableObject
 
     public AsyncRelayCommand CheckNtfsCorruptionEventsCommand { get; }
 
+    // ================================================================================
+    // Round 16, #346/#348/#350: USN journal status + create/resize/delete + NTFS geometry facts -
+    // all folded into the existing per-volume VolumeFilesystemRow card above (see
+    // LoadRowNtfsDetailsAsync); the two per-row action commands below are shared across every row,
+    // same shape as ToggleSelfHealingCommand/ScheduleBootCheckCommand.
+    // ================================================================================
+    public AsyncRelayCommand CreateOrResizeUsnJournalCommand { get; }
+    public AsyncRelayCommand DeleteUsnJournalCommand { get; }
+
+    // ================================================================================
+    // #347: USN churn hot spots - "what is writing to this disk", on demand for one selected volume.
+    // ================================================================================
+    public ObservableCollection<UsnHotSpotRow> UsnHotSpots { get; } = new();
+
+    private string? _selectedUsnHotSpotDrive;
+    public string? SelectedUsnHotSpotDrive { get => _selectedUsnHotSpotDrive; set => SetProperty(ref _selectedUsnHotSpotDrive, value); }
+
+    private int _usnHotSpotMinutes = 15;
+    public int UsnHotSpotMinutes { get => _usnHotSpotMinutes; set => SetProperty(ref _usnHotSpotMinutes, value); }
+
+    private bool _isFindingUsnHotSpots;
+    public bool IsFindingUsnHotSpots { get => _isFindingUsnHotSpots; private set => SetProperty(ref _isFindingUsnHotSpots, value); }
+
+    private string _usnHotSpotStatusText = "Not checked";
+    public string UsnHotSpotStatusText { get => _usnHotSpotStatusText; private set => SetProperty(ref _usnHotSpotStatusText, value); }
+
+    public AsyncRelayCommand FindUsnHotSpotsCommand { get; }
+
+    // ================================================================================
+    // #349: NTFS metadata activity - per-second deltas of fsutil fsinfo statistics counters,
+    // sampled every PerformanceViewModel tick (not throttled, unlike #324's WMI check above - a
+    // single small fsutil shell-out is cheap enough for every tick, per this round's brief).
+    // ================================================================================
+    private string? _selectedNtfsActivityDrive;
+    public string? SelectedNtfsActivityDrive
+    {
+        get => _selectedNtfsActivityDrive;
+        set { if (SetProperty(ref _selectedNtfsActivityDrive, value)) { _lastNtfsStats = null; NtfsActivityStatusText = string.Empty; } }
+    }
+
+    private NtfsMetadataStatistics? _lastNtfsStats;
+    private DateTime _lastNtfsStatsTime;
+    private bool _ntfsActivitySampling;
+
+    private double _mftReadsPerSec;
+    public double MftReadsPerSec { get => _mftReadsPerSec; private set => SetProperty(ref _mftReadsPerSec, value); }
+
+    private double _mftWritesPerSec;
+    public double MftWritesPerSec { get => _mftWritesPerSec; private set => SetProperty(ref _mftWritesPerSec, value); }
+
+    private double _metadataReadsPerSec;
+    public double MetadataReadsPerSec { get => _metadataReadsPerSec; private set => SetProperty(ref _metadataReadsPerSec, value); }
+
+    private double _metadataWritesPerSec;
+    public double MetadataWritesPerSec { get => _metadataWritesPerSec; private set => SetProperty(ref _metadataWritesPerSec, value); }
+
+    private double _logFileWritesPerSec;
+    public double LogFileWritesPerSec { get => _logFileWritesPerSec; private set => SetProperty(ref _logFileWritesPerSec, value); }
+
+    private string _ntfsActivityStatusText = string.Empty;
+    public string NtfsActivityStatusText { get => _ntfsActivityStatusText; private set => SetProperty(ref _ntfsActivityStatusText, value); }
+
+    // ================================================================================
+    // #351: NTFS behaviour settings audit - system-wide, read once at Storage-tab load or refresh.
+    // ================================================================================
+    public ObservableCollection<NtfsBehaviorSettingRow> NtfsBehaviorSettings { get; } = new();
+
+    private bool _isLoadingNtfsBehaviorSettings;
+    public bool IsLoadingNtfsBehaviorSettings { get => _isLoadingNtfsBehaviorSettings; private set => SetProperty(ref _isLoadingNtfsBehaviorSettings, value); }
+
+    private string _ntfsBehaviorStatusText = "Not read";
+    public string NtfsBehaviorStatusText { get => _ntfsBehaviorStatusText; private set => SetProperty(ref _ntfsBehaviorStatusText, value); }
+
+    public AsyncRelayCommand RefreshNtfsBehaviorSettingsCommand { get; }
+    public AsyncRelayCommand EnableNtfsBehaviorSettingCommand { get; }
+    public AsyncRelayCommand DisableNtfsBehaviorSettingCommand { get; }
+
     public StorageViewModel(PerformanceViewModel performance, EnergyThermalsViewModel energyThermals)
     {
         Performance = performance;
@@ -657,9 +831,25 @@ public sealed class StorageViewModel : ObservableObject
         // #344
         CheckNtfsCorruptionEventsCommand = new AsyncRelayCommand(CheckNtfsCorruptionEventsAsync, () => !IsCheckingNtfsCorruptionEvents);
 
+        // Round 16, #346/#348/#350: per-row USN journal + geometry actions.
+        CreateOrResizeUsnJournalCommand = new AsyncRelayCommand(param => CreateOrResizeUsnJournalAsync(param as VolumeFilesystemRow));
+        DeleteUsnJournalCommand = new AsyncRelayCommand(param => DeleteUsnJournalAsync(param as VolumeFilesystemRow));
+
+        // #347
+        FindUsnHotSpotsCommand = new AsyncRelayCommand(FindUsnHotSpotsAsync, () => !IsFindingUsnHotSpots && SelectedUsnHotSpotDrive is not null);
+
+        // #351
+        RefreshNtfsBehaviorSettingsCommand = new AsyncRelayCommand(RefreshNtfsBehaviorSettingsAsync, () => !IsLoadingNtfsBehaviorSettings);
+        EnableNtfsBehaviorSettingCommand = new AsyncRelayCommand(param => SetNtfsBehaviorSettingAsync(param as NtfsBehaviorSettingRow, 0));
+        DisableNtfsBehaviorSettingCommand = new AsyncRelayCommand(param => SetNtfsBehaviorSettingAsync(param as NtfsBehaviorSettingRow, 1));
+
         // #324: subscribe to the shared sampler's tick rather than owning a new heavy timer -
         // see PerformanceViewModel.Sampled's remarks.
         Performance.Sampled += OnPerformanceSampled;
+
+        // #349: same event, second independent handler - sampled every tick (no throttle), per
+        // this round's brief.
+        Performance.Sampled += OnPerformanceSampledForNtfsActivity;
 
         _ = Task.Run(() =>
         {
@@ -693,6 +883,10 @@ public sealed class StorageViewModel : ObservableObject
                 foreach (var d in fixedDrives) ChkdskVolumeOptions.Add(d.Name.TrimEnd('\\', ':'));
                 SelectedChkdskVolume = ChkdskVolumeOptions.FirstOrDefault();
 
+                // #347/#349: same bare-letter fixed-drive set - reused rather than duplicated.
+                SelectedUsnHotSpotDrive = ChkdskVolumeOptions.FirstOrDefault();
+                SelectedNtfsActivityDrive = ChkdskVolumeOptions.FirstOrDefault();
+
                 foreach (var (index, model) in disks)
                 {
                     failureFlags.TryGetValue(index, out var flag);
@@ -708,6 +902,9 @@ public sealed class StorageViewModel : ObservableObject
         // into the Task.Run above) since it does its own further per-row async fsutil/chkntfs
         // shell-outs after the initial WMI read, per LoadVolumeFilesystemFactsAsync's remarks.
         _ = LoadVolumeFilesystemFactsAsync();
+
+        // #351: system-wide, independent of any per-volume row above.
+        _ = RefreshNtfsBehaviorSettingsAsync();
     }
 
     /// <summary>#324: fired once per PerformanceViewModel sample tick. Throttled to roughly once
@@ -1928,7 +2125,11 @@ public sealed class StorageViewModel : ObservableObject
             {
                 var repairTask = NtfsFilesystemService.QueryRepairStateAsync(row.DriveLetter);
                 var corruptionTask = NtfsFilesystemService.EnumerateCorruptionRecordsAsync(row.DriveLetter);
-                await Task.WhenAll(dirtyTask, bootCheckTask, repairTask, corruptionTask);
+                // Round 16, #346/#350: same per-row pass - USN journal status and NTFS geometry
+                // facts are both NTFS-only concepts, same tier as repair state/corruption log above.
+                var usnTask = UsnJournalService.QueryStatusAsync(row.DriveLetter);
+                var geometryTask = NtfsFilesystemService.ReadGeometryFactsAsync(row.DriveLetter);
+                await Task.WhenAll(dirtyTask, bootCheckTask, repairTask, corruptionTask, usnTask, geometryTask);
 
                 var (enabled, warnOnly, _) = repairTask.Result;
                 row.SelfHealingEnabled = enabled;
@@ -1936,6 +2137,9 @@ public sealed class StorageViewModel : ObservableObject
 
                 row.CorruptionRecords.Clear();
                 foreach (var rec in corruptionTask.Result) row.CorruptionRecords.Add(rec);
+
+                row.UsnJournalStatus = usnTask.Result;
+                row.GeometryFacts = geometryTask.Result;
             }
             else
             {
@@ -2217,6 +2421,249 @@ public sealed class StorageViewModel : ObservableObject
         finally
         {
             IsCheckingNtfsCorruptionEvents = false;
+        }
+    }
+
+    // ================================================================================
+    // Round 16, #348: USN journal create/resize/delete - confirmed first (same Yes/No
+    // MessageBox.Show pattern #341/#343 already use), since deleting the journal forces every
+    // dependent tool to rescan.
+    // ================================================================================
+
+    private static long? ParseMegabytesInput(string input)
+    {
+        string trimmed = input.Trim();
+        if (trimmed.Length == 0) return null;
+        return long.TryParse(trimmed, out long mb) && mb > 0 ? mb * 1024 * 1024 : null;
+    }
+
+    private async Task CreateOrResizeUsnJournalAsync(VolumeFilesystemRow? row)
+    {
+        if (row is null || row.IsUsnJournalActionRunning) return;
+
+        bool maxSizeValid = row.UsnMaxSizeMbInput.Trim().Length == 0 || ParseMegabytesInput(row.UsnMaxSizeMbInput) is not null;
+        bool deltaValid = row.UsnAllocationDeltaMbInput.Trim().Length == 0 || ParseMegabytesInput(row.UsnAllocationDeltaMbInput) is not null;
+        if (!maxSizeValid || !deltaValid)
+        {
+            row.UsnJournalActionStatusText = "Enter a whole number of MB (or leave a field blank to let fsutil pick its own default).";
+            return;
+        }
+        long? maxSizeBytes = ParseMegabytesInput(row.UsnMaxSizeMbInput);
+        long? allocationDeltaBytes = ParseMegabytesInput(row.UsnAllocationDeltaMbInput);
+
+        string question = row.UsnJournalStatus?.Available == true
+            ? $"Resize the USN journal on {row.DriveLetter}:?\n\nA journal already exists - this updates its maximum size/allocation delta without deleting its recorded history."
+            : $"Create a USN journal on {row.DriveLetter}:?\n\nNo active journal was found on this volume.";
+        var confirm = System.Windows.MessageBox.Show(question, "Create/resize USN journal", System.Windows.MessageBoxButton.YesNo, System.Windows.MessageBoxImage.Question);
+        if (confirm != System.Windows.MessageBoxResult.Yes) return;
+
+        row.IsUsnJournalActionRunning = true;
+        row.UsnJournalActionStatusText = "Working...";
+        try
+        {
+            var (success, message) = await UsnJournalService.CreateOrResizeJournalAsync(row.DriveLetter, maxSizeBytes, allocationDeltaBytes);
+            row.UsnJournalActionStatusText = message;
+            if (success) row.UsnJournalStatus = await UsnJournalService.QueryStatusAsync(row.DriveLetter);
+        }
+        catch (Exception ex)
+        {
+            row.UsnJournalActionStatusText = $"Failed: {ex.Message}";
+        }
+        finally
+        {
+            row.IsUsnJournalActionRunning = false;
+        }
+    }
+
+    private async Task DeleteUsnJournalAsync(VolumeFilesystemRow? row)
+    {
+        if (row is null || row.IsUsnJournalActionRunning) return;
+
+        var confirm = System.Windows.MessageBox.Show(
+            $"Delete the USN journal on {row.DriveLetter}:?\n\n" +
+            "Every tool that tracks its own last-seen USN against this journal (backup software, search indexing, file replication) will be forced into a full rescan the next time it runs, since its recorded position no longer means anything.",
+            "Delete USN journal",
+            System.Windows.MessageBoxButton.YesNo,
+            System.Windows.MessageBoxImage.Warning);
+        if (confirm != System.Windows.MessageBoxResult.Yes) return;
+
+        row.IsUsnJournalActionRunning = true;
+        row.UsnJournalActionStatusText = "Deleting...";
+        try
+        {
+            var (success, message) = await UsnJournalService.DeleteJournalAsync(row.DriveLetter);
+            row.UsnJournalActionStatusText = message;
+            if (success) row.UsnJournalStatus = await UsnJournalService.QueryStatusAsync(row.DriveLetter);
+        }
+        catch (Exception ex)
+        {
+            row.UsnJournalActionStatusText = $"Failed: {ex.Message}";
+        }
+        finally
+        {
+            row.IsUsnJournalActionRunning = false;
+        }
+    }
+
+    // ================================================================================
+    // #347: USN churn hot spots.
+    // ================================================================================
+
+    private async Task FindUsnHotSpotsAsync()
+    {
+        string? drive = SelectedUsnHotSpotDrive;
+        if (drive is null || IsFindingUsnHotSpots) return;
+
+        IsFindingUsnHotSpots = true;
+        UsnHotSpotStatusText = $"Reading the USN journal on {drive}: for the last {UsnHotSpotMinutes} minute(s) (this can take up to a minute on a busy volume)...";
+        UsnHotSpots.Clear();
+        try
+        {
+            var result = await UsnJournalService.FindHotSpotsAsync(drive, UsnHotSpotMinutes);
+            foreach (var row in result.Rows) UsnHotSpots.Add(row);
+            UsnHotSpotStatusText = result.StatusText;
+        }
+        catch (Exception ex)
+        {
+            UsnHotSpotStatusText = $"Failed: {ex.Message}";
+        }
+        finally
+        {
+            IsFindingUsnHotSpots = false;
+        }
+    }
+
+    // ================================================================================
+    // #349: NTFS metadata activity - per-second deltas, sampled every PerformanceViewModel tick.
+    // ================================================================================
+
+    /// <summary>Fired once per PerformanceViewModel sample tick, same event #324's handler
+    /// subscribes to - unlike that handler, this one isn't throttled to every Nth tick: a single
+    /// `fsutil fsinfo statistics` shell-out is cheap enough to run on every tick, per this round's
+    /// brief. A re-entrancy guard still skips a tick if the previous read hasn't finished (e.g. the
+    /// shell-out stalls), so ticks never stack up.</summary>
+    private void OnPerformanceSampledForNtfsActivity()
+    {
+        if (_ntfsActivitySampling) return;
+        string? drive = SelectedNtfsActivityDrive;
+        if (drive is null) return;
+        _ntfsActivitySampling = true;
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var stats = await NtfsFilesystemService.ReadMetadataStatisticsAsync(drive);
+                var now = DateTime.UtcNow;
+                System.Windows.Application.Current?.Dispatcher.Invoke(() => ApplyNtfsActivitySample(stats, now));
+            }
+            finally
+            {
+                _ntfsActivitySampling = false;
+            }
+        });
+    }
+
+    private void ApplyNtfsActivitySample(NtfsMetadataStatistics stats, DateTime now)
+    {
+        if (!stats.Available)
+        {
+            NtfsActivityStatusText = $"Unavailable: {stats.UnavailableReason}";
+            _lastNtfsStats = null;
+            MftReadsPerSec = MftWritesPerSec = MetadataReadsPerSec = MetadataWritesPerSec = LogFileWritesPerSec = 0;
+            return;
+        }
+
+        if (_lastNtfsStats is not null && _lastNtfsStatsTime != default)
+        {
+            double elapsed = (now - _lastNtfsStatsTime).TotalSeconds;
+            if (elapsed > 0.05) // guards against a near-zero interval producing a huge spurious rate
+            {
+                MftReadsPerSec = RatePerSec(_lastNtfsStats.MftReads, stats.MftReads, elapsed);
+                MftWritesPerSec = RatePerSec(_lastNtfsStats.MftWrites, stats.MftWrites, elapsed);
+                MetadataReadsPerSec = RatePerSec(_lastNtfsStats.MetaDataReads, stats.MetaDataReads, elapsed);
+                MetadataWritesPerSec = RatePerSec(_lastNtfsStats.MetaDataWrites, stats.MetaDataWrites, elapsed);
+                LogFileWritesPerSec = RatePerSec(_lastNtfsStats.LogFileWrites, stats.LogFileWrites, elapsed);
+                NtfsActivityStatusText = string.Empty;
+            }
+        }
+        else
+        {
+            NtfsActivityStatusText = "First sample taken - rates will show from the next tick.";
+        }
+
+        _lastNtfsStats = stats;
+        _lastNtfsStatsTime = now;
+    }
+
+    private static double RatePerSec(long previous, long current, double elapsedSeconds)
+    {
+        long delta = current - previous;
+        // A negative delta means the underlying counter reset (these are session-scoped, and can
+        // reset across a remount or a momentary read failure) - treated as "no data for this tick"
+        // rather than shown as a negative rate.
+        return delta < 0 ? 0 : delta / elapsedSeconds;
+    }
+
+    // ================================================================================
+    // #351: NTFS behaviour settings audit.
+    // ================================================================================
+
+    private async Task RefreshNtfsBehaviorSettingsAsync()
+    {
+        if (IsLoadingNtfsBehaviorSettings) return;
+        IsLoadingNtfsBehaviorSettings = true;
+        NtfsBehaviorStatusText = "Reading...";
+        try
+        {
+            var settings = await NtfsFilesystemService.QueryBehaviorSettingsAsync();
+            NtfsBehaviorSettings.Clear();
+            foreach (var s in settings) NtfsBehaviorSettings.Add(new NtfsBehaviorSettingRow(s));
+            NtfsBehaviorStatusText = $"{settings.Count} setting(s) read.";
+        }
+        catch (Exception ex)
+        {
+            NtfsBehaviorStatusText = $"Failed: {ex.Message}";
+        }
+        finally
+        {
+            IsLoadingNtfsBehaviorSettings = false;
+        }
+    }
+
+    /// <summary>Two explicit buttons (Enable=0/Disable=1) rather than one state-flipping toggle -
+    /// disable8dot3 in particular has two other documented values (2 = per-volume default, 3 =
+    /// disabled except system volume) a single "flip the current value" toggle couldn't map back to
+    /// a sensible binary direction from, so this always sets one of the two simple, unambiguous
+    /// values instead of guessing a direction from whatever the current value is.</summary>
+    private async Task SetNtfsBehaviorSettingAsync(NtfsBehaviorSettingRow? row, int value)
+    {
+        if (row is null || row.IsActionRunning) return;
+        string action = value == 0 ? "Enable" : "Disable";
+
+        var confirm = System.Windows.MessageBox.Show(
+            $"{action} '{row.Setting.Label}' (fsutil behavior set {row.Setting.Key} {value})?\n\n" +
+            "This is a system-wide NTFS setting (every volume, not just this app) and typically requires a reboot to take effect.",
+            "Change NTFS behaviour setting",
+            System.Windows.MessageBoxButton.YesNo,
+            System.Windows.MessageBoxImage.Warning);
+        if (confirm != System.Windows.MessageBoxResult.Yes) return;
+
+        row.IsActionRunning = true;
+        row.ActionStatusText = value == 0 ? "Enabling..." : "Disabling...";
+        try
+        {
+            var (success, message) = await NtfsFilesystemService.SetBehaviorAsync(row.Setting.Key, value);
+            row.ActionStatusText = message;
+            if (success) await RefreshNtfsBehaviorSettingsAsync();
+        }
+        catch (Exception ex)
+        {
+            row.ActionStatusText = $"Failed: {ex.Message}";
+        }
+        finally
+        {
+            row.IsActionRunning = false;
         }
     }
 }

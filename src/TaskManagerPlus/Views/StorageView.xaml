@@ -321,6 +321,52 @@
                                         <TextBlock Text="{Binding BootCheckActionStatusText}" Style="{StaticResource SubStat}" Margin="0,2,0,0" TextWrapping="Wrap"
                                                    Visibility="{Binding BootCheckActionStatusText, Converter={StaticResource StringToVisibilityConverter}}" />
 
+                                        <!-- Round 16, #346/#348: USN journal status + create/resize/delete. -->
+                                        <Border BorderThickness="0,1,0,0" BorderBrush="{DynamicResource BorderSubtleBrush}" Margin="0,8,0,8" />
+                                        <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,2" TextWrapping="Wrap">
+                                            <Run Text="USN journal: " /><Run Text="{Binding UsnJournalSummaryText, Mode=OneWay}" FontWeight="SemiBold" />
+                                        </TextBlock>
+                                        <TextBlock Text="{Binding UsnJournalRangeText}" Style="{StaticResource SubStat}" Margin="0,0,0,2" TextWrapping="Wrap"
+                                                   Visibility="{Binding UsnJournalRangeText, Converter={StaticResource StringToVisibilityConverter}}" />
+                                        <TextBlock Text="{Binding UsnJournalSizeText}" Style="{StaticResource SubStat}" Margin="0,0,0,2" TextWrapping="Wrap"
+                                                   Visibility="{Binding UsnJournalSizeText, Converter={StaticResource StringToVisibilityConverter}}" />
+                                        <TextBlock Text="A journal that has already wrapped/been recreated is the usual reason backup, search, and indexing tools keep falling back to a full rescan instead of an incremental one. Quick flag, not a verdict."
+                                                   Foreground="{DynamicResource WarningBrush}" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,4" TextWrapping="Wrap"
+                                                   Visibility="{Binding ShowUsnJournalWrappedWarning, Converter={StaticResource BoolToVisibilityConverter}}" />
+                                        <Grid Margin="0,2,0,2">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBox Grid.Column="0" Margin="0,0,4,0" Padding="4,2" FontSize="11.5" VerticalContentAlignment="Center"
+                                                     Text="{Binding DataContext.UsnMaxSizeMbInput, RelativeSource={RelativeSource AncestorType=UserControl}, UpdateSourceTrigger=PropertyChanged}"
+                                                     ToolTip="Maximum size in MB (blank = fsutil default)" />
+                                            <TextBox Grid.Column="1" Margin="0,0,4,0" Padding="4,2" FontSize="11.5" VerticalContentAlignment="Center"
+                                                     Text="{Binding DataContext.UsnAllocationDeltaMbInput, RelativeSource={RelativeSource AncestorType=UserControl}, UpdateSourceTrigger=PropertyChanged}"
+                                                     ToolTip="Allocation delta in MB (blank = fsutil default)" />
+                                            <Button Grid.Column="2" Content="Create/resize" Padding="8,3" FontSize="11.5" Margin="0,0,8,0"
+                                                    Command="{Binding DataContext.CreateOrResizeUsnJournalCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                    CommandParameter="{Binding}" />
+                                            <Button Grid.Column="3" Content="Delete journal" Padding="8,3" FontSize="11.5"
+                                                    Command="{Binding DataContext.DeleteUsnJournalCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                    CommandParameter="{Binding}" />
+                                        </Grid>
+                                        <TextBlock Text="Sizes are optional (fsutil picks a volume-size-based default when blank). Deleting the journal forces every dependent tool to rescan."
+                                                   Style="{StaticResource SubStat}" Margin="0,0,0,2" TextWrapping="Wrap" />
+                                        <TextBlock Text="{Binding UsnJournalActionStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,4" TextWrapping="Wrap"
+                                                   Visibility="{Binding UsnJournalActionStatusText, Converter={StaticResource StringToVisibilityConverter}}" />
+
+                                        <!-- #350: NTFS geometry facts. -->
+                                        <TextBlock Style="{StaticResource SubStat}" Margin="0,4,0,2" TextWrapping="Wrap">
+                                            <Run Text="Geometry: " /><Run Text="{Binding GeometryClusterSectorText, Mode=OneWay}" />
+                                        </TextBlock>
+                                        <TextBlock Text="{Binding GeometryMftText}" Style="{StaticResource SubStat}" Margin="0,0,0,2" TextWrapping="Wrap"
+                                                   Visibility="{Binding GeometryMftText, Converter={StaticResource StringToVisibilityConverter}}" />
+                                        <TextBlock Text="{Binding GeometryLogFileText}" Style="{StaticResource SubStat}" Margin="0,0,0,4" TextWrapping="Wrap"
+                                                   Visibility="{Binding GeometryLogFileText, Converter={StaticResource StringToVisibilityConverter}}" />
+
                                         <TextBlock Text="{Binding NtfsFactsStatusText}" Style="{StaticResource SubStat}" Margin="0,4,0,0" TextWrapping="Wrap"
                                                    Visibility="{Binding NtfsFactsStatusText, Converter={StaticResource StringToVisibilityConverter}}" />
                                     </StackPanel>
@@ -340,6 +386,131 @@
                             </Style>
                         </TextBlock.Style>
                     </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- Round 16, #349: NTFS metadata activity - per-second deltas, sampled every
+                 PerformanceViewModel tick for the selected volume. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="NTFS metadata activity" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <ComboBox Grid.Column="1" Width="70" ItemsSource="{Binding ChkdskVolumeOptions}" SelectedItem="{Binding SelectedNtfsActivityDrive}" />
+                    </Grid>
+                    <TextBlock Text="`fsutil fsinfo statistics` MFT/metadata/log-file counters, sampled every tick and shown as per-second deltas - not a live kernel event stream, so a very short burst between two ticks can be missed."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+                    <UniformGrid Columns="5">
+                        <views:VfdMeter Title="MFT reads" Glow="False" Margin="0,0,6,0" Percent="0" Unit="/s"
+                                        ValueText="{Binding MftReadsPerSec, StringFormat={}{0:0.0}}" SubText="fsutil fsinfo statistics"
+                                        AccentBrush="{Binding Performance.DiskColor, Converter={StaticResource ColorToBrushConverter}}" />
+                        <views:VfdMeter Title="MFT writes" Glow="False" Margin="0,0,6,0" Percent="0" Unit="/s"
+                                        ValueText="{Binding MftWritesPerSec, StringFormat={}{0:0.0}}" SubText="fsutil fsinfo statistics"
+                                        AccentBrush="{Binding Performance.DiskColor, Converter={StaticResource ColorToBrushConverter}}" />
+                        <views:VfdMeter Title="Metadata reads" Glow="False" Margin="0,0,6,0" Percent="0" Unit="/s"
+                                        ValueText="{Binding MetadataReadsPerSec, StringFormat={}{0:0.0}}" SubText="fsutil fsinfo statistics"
+                                        AccentBrush="{Binding Performance.DiskColor, Converter={StaticResource ColorToBrushConverter}}" />
+                        <views:VfdMeter Title="Metadata writes" Glow="False" Margin="0,0,6,0" Percent="0" Unit="/s"
+                                        ValueText="{Binding MetadataWritesPerSec, StringFormat={}{0:0.0}}" SubText="fsutil fsinfo statistics"
+                                        AccentBrush="{Binding Performance.DiskColor, Converter={StaticResource ColorToBrushConverter}}" />
+                        <views:VfdMeter Title="$LogFile writes" Glow="False" Percent="0" Unit="/s"
+                                        ValueText="{Binding LogFileWritesPerSec, StringFormat={}{0:0.0}}" SubText="fsutil fsinfo statistics"
+                                        AccentBrush="{Binding Performance.DiskColor, Converter={StaticResource ColorToBrushConverter}}" />
+                    </UniformGrid>
+                    <TextBlock Text="{Binding NtfsActivityStatusText}" Style="{StaticResource SubStat}" Margin="0,8,0,0" TextWrapping="Wrap"
+                               Visibility="{Binding NtfsActivityStatusText, Converter={StaticResource StringToVisibilityConverter}}" />
+                </StackPanel>
+            </Border>
+
+            <!-- Round 16, #347: USN churn hot spots - "what is writing to this disk". -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="What is writing to this disk" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Reads the USN change journal and aggregates records by the changed file's own name (not a resolved parent-directory path - see the folder reference column) into a top-20 list by change count, broken down by reason flag."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <ComboBox Grid.Column="0" Width="70" Margin="0,0,8,0" ItemsSource="{Binding ChkdskVolumeOptions}" SelectedItem="{Binding SelectedUsnHotSpotDrive}" />
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="0,0,8,0" VerticalAlignment="Center">
+                            <TextBlock Text="Last" VerticalAlignment="Center" Margin="0,0,4,0" FontSize="12" />
+                            <TextBox Width="40" Text="{Binding UsnHotSpotMinutes, UpdateSourceTrigger=PropertyChanged}" Padding="4,2" FontSize="11.5" VerticalContentAlignment="Center" />
+                            <TextBlock Text="minute(s)" VerticalAlignment="Center" Margin="4,0,0,0" FontSize="12" />
+                        </StackPanel>
+                        <Button Grid.Column="3" Content="Find hot spots" Padding="10,4" Command="{Binding FindUsnHotSpotsCommand}" />
+                    </Grid>
+                    <TextBlock Text="{Binding UsnHotSpotStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" />
+                    <DataGrid ItemsSource="{Binding UsnHotSpots}" IsReadOnly="True" MaxHeight="320" AutoGenerateColumns="False">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="File" Binding="{Binding FileName}" Width="1.6*" />
+                            <DataGridTextColumn Header="Changes" Binding="{Binding ChangeCount}" Width="Auto" />
+                            <DataGridTextColumn Header="Folder ref (FRN)" Binding="{Binding ParentFrnText}" Width="1.4*" />
+                            <DataGridTextColumn Header="Reasons" Binding="{Binding ReasonBreakdownText}" Width="2*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- Round 16, #351: NTFS behaviour settings audit - system-wide, not per volume. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="NTFS behaviour settings" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Refresh" Padding="10,4" Command="{Binding RefreshNtfsBehaviorSettingsCommand}" />
+                    </Grid>
+                    <TextBlock Text="`fsutil behavior query` - system-wide settings, not per volume. Enable/Disable controls are offered only for the two most commonly toggled, safest-to-expose settings; the rest are read-only here."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding NtfsBehaviorStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" />
+                    <ItemsControl ItemsSource="{Binding NtfsBehaviorSettings}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Margin="0,0,0,10" Padding="10" CornerRadius="4" BorderThickness="1" BorderBrush="{DynamicResource BorderSubtleBrush}">
+                                    <StackPanel>
+                                        <Grid Margin="0,0,0,4">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" Text="{Binding Setting.Label}" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" />
+                                            <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                                <StackPanel.Style>
+                                                    <Style TargetType="StackPanel">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding Setting.CanToggle}" Value="True">
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </StackPanel.Style>
+                                                <Button Content="Enable" Padding="8,3" FontSize="11.5" Margin="0,0,6,0"
+                                                        Command="{Binding DataContext.EnableNtfsBehaviorSettingCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                        CommandParameter="{Binding}" />
+                                                <Button Content="Disable" Padding="8,3" FontSize="11.5"
+                                                        Command="{Binding DataContext.DisableNtfsBehaviorSettingCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                        CommandParameter="{Binding}" />
+                                            </StackPanel>
+                                        </Grid>
+                                        <TextBlock Text="{Binding Setting.ValueText}" FontSize="12.5" Margin="0,0,0,4" TextWrapping="Wrap" />
+                                        <TextBlock Text="{Binding Setting.PerformanceImplication}" Style="{StaticResource SubStat}" TextWrapping="Wrap" />
+                                        <TextBlock Text="{Binding ActionStatusText}" Style="{StaticResource SubStat}" Margin="0,4,0,0" TextWrapping="Wrap"
+                                                   Visibility="{Binding ActionStatusText, Converter={StaticResource StringToVisibilityConverter}}" />
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
                 </StackPanel>
             </Border>
 

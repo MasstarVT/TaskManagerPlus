@@ -339,6 +339,195 @@ public static class NtfsFilesystemService
     }
 
     // ================================================================================
+    // Round 16, #350: NTFS geometry facts.
+    // ================================================================================
+
+    // Confirmed field set/wording against Microsoft's own fsutil-fsinfo-ntfsinfo reference examples
+    // - "Label : value" per line, values either decimal (the Bytes Per ... sector/cluster facts) or
+    // 0x-prefixed hex (everything MFT-related). Parsed generically rather than a strict per-field
+    // match so an older/newer build that reorders or adds lines (e.g. the Max Device/Volume Trim
+    // lines some newer builds include) degrades gracefully instead of failing the whole read.
+    private static readonly Regex NtfsInfoLineRegex = new(
+        @"^(?<key>[A-Za-z$][A-Za-z0-9 $]*?)\s*:\s*(?<val>0[xX][0-9A-Fa-f]+|-?\d+)\s*$",
+        RegexOptions.Multiline | RegexOptions.Compiled);
+
+    /// <summary>`fsutil fsinfo ntfsinfo &lt;vol&gt;` - NTFS-only (the command itself is NTFS-
+    /// specific); callers gate this on VolumeFilesystemFacts.IsNtfs the same way they already gate
+    /// #338/#339's repair-state/corruption-log reads.</summary>
+    public static async Task<NtfsGeometryFacts> ReadGeometryFactsAsync(string driveLetter)
+    {
+        var (exitCode, output) = await RunToolAsync("fsutil.exe", $"fsinfo ntfsinfo {driveLetter}:", 8000);
+        string trimmed = output.Trim();
+        if (exitCode != 0)
+            return new NtfsGeometryFacts { Available = false, UnavailableReason = trimmed.Length > 0 ? trimmed : $"fsutil exited with code {exitCode}.", RawText = trimmed };
+
+        var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (Match m in NtfsInfoLineRegex.Matches(trimmed))
+        {
+            string key = Regex.Replace(m.Groups["key"].Value.Trim(), @"\s+", " ");
+            values.TryAdd(key, m.Groups["val"].Value);
+        }
+
+        ulong? GetNumeric(params string[] keys)
+        {
+            foreach (var k in keys)
+            {
+                if (!values.TryGetValue(k, out var raw)) continue;
+                if (raw.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (ulong.TryParse(raw[2..], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out ulong hex)) return hex;
+                }
+                else if (ulong.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out ulong dec))
+                {
+                    return dec;
+                }
+            }
+            return null;
+        }
+
+        ulong? bytesPerCluster = GetNumeric("Bytes Per Cluster");
+        ulong? mftStartLcn = GetNumeric("Mft Start Lcn");
+        if (bytesPerCluster is null && mftStartLcn is null)
+            return new NtfsGeometryFacts { Available = false, UnavailableReason = trimmed.Length > 0 ? trimmed : "No recognizable ntfsinfo fields found.", RawText = trimmed };
+
+        return new NtfsGeometryFacts
+        {
+            Available = true,
+            BytesPerCluster = bytesPerCluster is { } bpc ? (uint)bpc : null,
+            BytesPerSector = GetNumeric("Bytes Per Sector") is { } bps ? (uint)bps : null,
+            BytesPerPhysicalSector = GetNumeric("Bytes Per Physical Sector") is { } bpps ? (uint)bpps : null,
+            MftStartLcn = mftStartLcn,
+            MftZoneStart = GetNumeric("Mft Zone Start"),
+            MftZoneEnd = GetNumeric("Mft Zone End"),
+            MftValidDataLengthBytes = GetNumeric("Mft Valid Data Length"),
+            // Best-effort only - see NtfsGeometryFacts.LogFileSizeBytes's remarks. No build this was
+            // tested against actually reports this field; the lookup is kept so a future/uncommon
+            // build that does include it is picked up automatically rather than needing a code change.
+            LogFileSizeBytes = GetNumeric("Log File Size", "LogFile Size", "$LogFile Size"),
+            RawText = trimmed,
+        };
+    }
+
+    // ================================================================================
+    // Round 16, #349: NTFS metadata operation rates - raw cumulative counters only; StorageViewModel
+    // derives per-second deltas from two samples taken a tick apart (see its remarks).
+    // ================================================================================
+
+    // Field names confirmed against Microsoft's own fsutil-fsinfo-statistics reference (NTFS File
+    // System Statistics section) - "Label:value" tokens, several per line, no reliable per-line
+    // structure to anchor on, so this scans the whole output for every "Word: number" token rather
+    // than parsing line-by-line.
+    private static readonly Regex StatisticsTokenRegex = new(@"([A-Za-z][A-Za-z0-9]*)\s*:\s*(-?\d+)", RegexOptions.Compiled);
+
+    /// <summary>`fsutil fsinfo statistics &lt;vol&gt;` - NTFS-only. Available=false (not zeros) when
+    /// none of the expected counters could be found at all, e.g. a non-NTFS volume or an
+    /// unrecognized output shape on some future build.</summary>
+    public static async Task<NtfsMetadataStatistics> ReadMetadataStatisticsAsync(string driveLetter)
+    {
+        var (exitCode, output) = await RunToolAsync("fsutil.exe", $"fsinfo statistics {driveLetter}:", 8000);
+        string trimmed = output.Trim();
+        if (exitCode != 0)
+            return new NtfsMetadataStatistics { Available = false, UnavailableReason = trimmed.Length > 0 ? trimmed : $"fsutil exited with code {exitCode}." };
+
+        var values = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+        foreach (Match m in StatisticsTokenRegex.Matches(trimmed))
+        {
+            if (long.TryParse(m.Groups[2].Value, out long v))
+                values.TryAdd(m.Groups[1].Value, v);
+        }
+
+        long Get(params string[] keys)
+        {
+            foreach (var k in keys)
+                if (values.TryGetValue(k, out var v)) return v;
+            return 0;
+        }
+
+        if (values.Count == 0 ||
+            (!values.ContainsKey("MftReads") && !values.ContainsKey("MetaDataReads") && !values.ContainsKey("LogFileWrites")))
+        {
+            return new NtfsMetadataStatistics { Available = false, UnavailableReason = trimmed.Length > 0 ? trimmed : "No recognizable statistics fields found." };
+        }
+
+        return new NtfsMetadataStatistics
+        {
+            Available = true,
+            MftReads = Get("MftReads"),
+            MftWrites = Get("MftWrites"),
+            MetaDataReads = Get("MetaDataReads", "MetadataReads"),
+            MetaDataWrites = Get("MetaDataWrites", "MetadataWrites"),
+            LogFileWrites = Get("LogFileWrites"),
+        };
+    }
+
+    // ================================================================================
+    // Round 16, #351: NTFS behaviour settings audit - system-wide (not per volume), so this reads
+    // once for the whole machine rather than once per VolumeFilesystemRow.
+    // ================================================================================
+
+    /// <summary>Key, display label, and one-line performance implication for each of the five
+    /// settings this card audits - CanToggle picks disablelastaccess/disable8dot3 as "the two most
+    /// commonly toggled and safest to expose", per this round's brief; mftzone/memoryusage/
+    /// encryptpagingfile stay read-only since their tradeoffs are more nuanced than a naive on/off.</summary>
+    private static readonly (string Key, string Label, string Implication, bool CanToggle)[] BehaviorSettingDefs =
+    {
+        ("disablelastaccess", "Last-access-time updates",
+            "Disabling last-access-time updates skips a metadata write on every file read - a common performance tweak, at the cost of losing last-accessed-time info some backup/cleanup/audit tools rely on.",
+            true),
+        ("disable8dot3", "8.3 (short) filename creation",
+            "Disabling 8.3 short-name generation skips a metadata write on every file/folder create in large directories - a common performance tweak, but breaks any legacy 16-bit/older app that expects a short name.",
+            true),
+        ("mftzone", "MFT zone reservation size",
+            "A larger MFT zone reservation reduces MFT fragmentation as the volume fills with many files, at the cost of reserving more space up front that user data can't use until the MFT grows into it.",
+            false),
+        ("memoryusage", "NTFS metadata cache memory usage",
+            "Raising this lets NTFS cache more metadata in memory, which can help workloads with huge directories or many small files, at the cost of memory available to everything else.",
+            false),
+        ("encryptpagingfile", "Paging file encryption",
+            "Encrypting the paging file protects data swapped out of memory from being read back off disk, at the cost of a small overhead on every page-in/page-out.",
+            false),
+    };
+
+    /// <summary>`fsutil behavior query &lt;setting&gt;` for each of the five settings above - wording
+    /// genuinely differs between them (confirmed live: disablelastaccess/mftzone/memoryusage/
+    /// encryptpagingfile all read "Name = value  (description)", while disable8dot3 reads "The
+    /// registry state is: value (description)"), so the raw trimmed text is always shown verbatim
+    /// rather than reduced to a single guessed value.</summary>
+    public static async Task<List<NtfsBehaviorSetting>> QueryBehaviorSettingsAsync()
+    {
+        var result = new List<NtfsBehaviorSetting>();
+        foreach (var (key, label, implication, canToggle) in BehaviorSettingDefs)
+        {
+            var (exitCode, output) = await RunToolAsync("fsutil.exe", $"behavior query {key}", 5000);
+            string trimmed = output.Trim();
+            string valueText = trimmed.Length > 0
+                ? Regex.Replace(trimmed, @"\s*\r?\n\s*", " ").Trim()
+                : (exitCode == 0 ? "(no output)" : $"fsutil exited with code {exitCode}.");
+
+            result.Add(new NtfsBehaviorSetting
+            {
+                Key = key,
+                Label = label,
+                ValueText = valueText,
+                PerformanceImplication = implication,
+                CanToggle = canToggle,
+            });
+        }
+        return result;
+    }
+
+    /// <summary>`fsutil behavior set &lt;setting&gt; &lt;value&gt;` - both toggle controls in the UI
+    /// only ever pass the simple, documented 0 (enable) / 1 (disable) values, never the more nuanced
+    /// per-volume/system-managed values some of these settings also support.</summary>
+    public static async Task<(bool Success, string Message)> SetBehaviorAsync(string key, int value)
+    {
+        var (exitCode, output) = await RunToolAsync("fsutil.exe", $"behavior set {key} {value}", 5000);
+        string trimmed = output.Trim();
+        if (exitCode == 0) return (true, trimmed.Length > 0 ? trimmed : "Set. This typically takes effect after a reboot.");
+        return (false, trimmed.Length > 0 ? trimmed : $"fsutil exited with code {exitCode}.");
+    }
+
+    // ================================================================================
     // Shared shell-out helper - see the class remarks for why this is centralized in this file.
     // ================================================================================
 
