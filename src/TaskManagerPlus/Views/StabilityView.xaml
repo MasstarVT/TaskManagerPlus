@@ -26,13 +26,22 @@
                         </Style.Triggers>
                     </Style>
                 </Border.Style>
-                <TextBlock Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" FontSize="12.5">
-                    <Run Text="Last shutdown looks unexpected — " /><Run Text="{Binding LastUnexpectedShutdownText, Mode=OneWay}" />
-                    <Run Text=" (Kernel-Power 41 / unclean shutdown near the last boot time)." />
-                </TextBlock>
+                <StackPanel>
+                    <TextBlock Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" FontSize="12.5">
+                        <Run Text="Last shutdown looks unexpected — " /><Run Text="{Binding LastUnexpectedShutdownText, Mode=OneWay}" />
+                        <Run Text=" (Kernel-Power 41 / unclean shutdown near the last boot time)." />
+                    </TextBlock>
+                    <!-- Round 13, item 3: labelled cause badge instead of just the generic warning
+                         above - see EventLogService.ClassifyPowerEvent. "Quick flag, not a
+                         verdict" (CLAUDE.md): a heuristic over undocumented event-property layout. -->
+                    <Border Background="{DynamicResource DangerBrush}" CornerRadius="10" Padding="8,2"
+                            HorizontalAlignment="Left" Margin="0,6,0,0">
+                        <TextBlock Text="{Binding LastShutdownCauseText}" FontSize="11" FontWeight="SemiBold" Foreground="White" />
+                    </Border>
+                </StackPanel>
             </Border>
 
-            <Grid Margin="0,0,0,16">
+            <Grid Margin="0,0,0,4">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
@@ -40,6 +49,10 @@
                 <TextBlock Grid.Column="0" Text="Crash / stability diagnostics" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" FontSize="15" />
                 <Button Grid.Column="1" Content="Refresh" Command="{Binding RefreshCommand}" Padding="10,4" />
             </Grid>
+
+            <!-- Round 13, item 12: "is the 30-day lookback window even trustworthy" line - see
+                 EventLogService.ReadLogHealth / StabilityViewModel.BuildLogCoverageText. -->
+            <TextBlock Text="{Binding LogCoverageText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,16" />
 
             <!-- #6/#5/#40/#68: uptime-since-last-crash, TDR (GPU driver timeout/reset) count,
                  low-memory resource-exhaustion events, minidumps, and (Round 10) the 0-10 stability
@@ -74,32 +87,90 @@
             <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
                 <StackPanel>
                     <TextBlock Text="Reliability history" Style="{StaticResource CardTitle}" />
-                    <TextBlock Text="Critical/Error events per day, last 30 days." Style="{StaticResource SubStat}" Margin="0,-4,0,10" />
+                    <!-- Round 13, item 11: the bars are this app's own computed daily Critical/
+                         Error count (left axis); the line is Microsoft's own Reliability Monitor
+                         stability index (Win32_ReliabilityStabilityMetrics, right axis, 0-10). -->
+                    <TextBlock Text="Critical/Error events per day (bars) vs. Microsoft's own reliability index (line), last 30 days."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
                     <lvc:CartesianChart Series="{Binding DailyEventSeries}" XAxes="{Binding DailyEventXAxes}" YAxes="{Binding DailyEventYAxes}"
-                                         Height="160" TooltipPosition="Top" LegendPosition="Hidden" Background="Transparent" />
+                                         Height="160" TooltipPosition="Top" LegendPosition="Bottom" Background="Transparent" />
                 </StackPanel>
             </Border>
 
-            <!-- #3: minidump files, timestamp + best-effort bugcheck code correlated from a
-                 nearby Kernel-Power 41 event - see EventLogService.ReadMinidumps. -->
+            <!-- Round 13, items 1/2/7/8: minidump files, backed by the authoritative BugCheck 1001
+                 record when found (falling back to the old nearby-Kernel-Power-41-timestamp guess),
+                 an expandable "Full crash record" (joined WER report), and an inline warning when
+                 volmgr logged a failed dump write - see EventLogService.ReadMinidumps/
+                 ReadBugCheckRecords/ReadDumpFailures. -->
             <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
                 <StackPanel>
                     <TextBlock Text="Minidumps" Style="{StaticResource CardTitle}" />
+
+                    <!-- Item 7: volmgr 161/162 "dump creation failed" - explains "I had a BSOD but
+                         there's no dump file". -->
+                    <Border Background="{DynamicResource BgElevatedBrush}" BorderBrush="{DynamicResource WarningBrush}"
+                            BorderThickness="1" CornerRadius="6" Padding="10,6" Margin="0,8,0,0">
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding DumpFailures.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                        <TextBlock Foreground="{DynamicResource WarningBrush}" FontSize="12" TextWrapping="Wrap">
+                            <Run Text="{Binding DumpFailures.Count, Mode=OneWay}" /><Run Text=" dump-creation failure(s) (volmgr) in the last 30 days — Windows tried to write a crash dump and failed, which explains a BSOD with no matching minidump file." />
+                        </TextBlock>
+                    </Border>
+
                     <ItemsControl ItemsSource="{Binding Minidumps}" Margin="0,8,0,0">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <Grid Margin="0,0,0,6">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0" Text="{Binding FileName}" FontSize="12.5" TextTrimming="CharacterEllipsis" />
-                                    <TextBlock Grid.Column="1" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}">
-                                        <Run Text="{Binding Timestamp, StringFormat={}{0:g}, Mode=OneWay}" />
-                                        <!-- #65: bugcheck-code-to-plain-English lookup, instead of a bare hex code. -->
-                                        <Run Text=" · " /><Run Text="{Binding BugcheckCode, Converter={StaticResource BugcheckCodeToDescriptionConverter}, Mode=OneWay}" />
-                                    </TextBlock>
-                                </Grid>
+                                <Expander Margin="0,0,0,6" IsExpanded="False">
+                                    <Expander.Header>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" Text="{Binding FileName}" FontSize="12.5" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Grid.Column="1" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}">
+                                                <Run Text="{Binding Timestamp, StringFormat={}{0:g}, Mode=OneWay}" />
+                                                <!-- #65: bugcheck-code-to-plain-English lookup, instead of a bare hex code. -->
+                                                <Run Text=" · " /><Run Text="{Binding BugcheckCode, Converter={StaticResource BugcheckCodeToDescriptionConverter}, Mode=OneWay}" />
+                                            </TextBlock>
+                                        </Grid>
+                                    </Expander.Header>
+                                    <StackPanel Margin="0,6,0,0">
+                                        <!-- Item 1: all four bugcheck parameters from the authoritative record. -->
+                                        <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap">
+                                            <Run Text="Parameters: " /><Run Text="{Binding BugcheckParameters, Converter={StaticResource StringListJoinConverter}, Mode=OneWay}" />
+                                        </TextBlock>
+                                        <TextBlock Style="{StaticResource SubStat}" Margin="0,2,0,0">
+                                            <Run Text="Source: " /><Run Text="{Binding IsAuthoritative, Converter={StaticResource BugcheckSourceToTextConverter}, Mode=OneWay}" />
+                                        </TextBlock>
+                                        <!-- Item 2: WER "full crash record" - the joined ReportArchive folder. -->
+                                        <StackPanel Margin="0,4,0,0">
+                                            <StackPanel.Style>
+                                                <Style TargetType="StackPanel">
+                                                    <Setter Property="Visibility" Value="{Binding WerReport, Converter={StaticResource NullToVisibilityConverter}}" />
+                                                </Style>
+                                            </StackPanel.Style>
+                                            <TextBlock Text="Full crash record (WER)" FontSize="11.5" FontWeight="SemiBold" Margin="0,4,0,2" />
+                                            <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap">
+                                                <Run Text="OS version: " /><Run Text="{Binding WerReport.OsVersion, Mode=OneWay, TargetNullValue=Unknown}" />
+                                            </TextBlock>
+                                            <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap">
+                                                <Run Text="Secure Boot state: " /><Run Text="{Binding WerReport.SecureBootState, Mode=OneWay, TargetNullValue=Unknown}" />
+                                            </TextBlock>
+                                            <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap">
+                                                <Run Text="Attached files: " /><Run Text="{Binding WerReport.AttachedFiles, Converter={StaticResource StringListJoinConverter}, Mode=OneWay}" />
+                                            </TextBlock>
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Expander>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
@@ -115,6 +186,170 @@
                             </Style>
                         </TextBlock.Style>
                     </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- Round 13, item 4: every Kernel-Power 41 occurrence in the lookback window, not
+                 just the most recent - see EventLogService.ReadUnexpectedShutdowns. Each row's
+                 cause comes from item 3's ClassifyPowerEvent heuristic. Collapsed entirely when
+                 the window has none. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding UnexpectedShutdowns.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Unexpected shutdowns" Style="{StaticResource CardTitle}" Margin="0" />
+                        <TextBlock Grid.Column="1" FontSize="12.5" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center">
+                            <Run Text="{Binding UnexpectedShutdowns.Count, Mode=OneWay}" /><Run Text=" in last 30 days" />
+                        </TextBlock>
+                    </Grid>
+                    <TextBlock Text="Kernel-Power 41 occurrences, most recent first. Cause is a best-effort classification, not a verdict."
+                               Style="{StaticResource SubStat}" Margin="0,-2,0,8" TextWrapping="Wrap" />
+                    <ItemsControl ItemsSource="{Binding UnexpectedShutdowns}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock FontSize="12.5">
+                                            <Run Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}" />
+                                            <Run Text=" · " /><Run Text="{Binding Cause, Converter={StaticResource ShutdownCauseToTextConverter}, Mode=OneWay}" />
+                                        </TextBlock>
+                                        <TextBlock Style="{StaticResource SubStat}">
+                                            <Run Text="Bugcheck: " /><Run Text="{Binding BugcheckCode, Converter={StaticResource BugcheckCodeToDescriptionConverter}, Mode=OneWay}" />
+                                        </TextBlock>
+                                    </StackPanel>
+                                    <TextBlock Grid.Column="1" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center"
+                                               Text="{Binding UptimeBeforeCrash, StringFormat={}{0:d\\.hh\\:mm} up, TargetNullValue='uptime unknown'}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- Round 13, items 5/6: merged shutdown/restart/boot timeline - who/what initiated
+                 each shutdown or restart (User32 1074), log start/stop markers, and boots flagged
+                 dirty when no matching clean-shutdown marker precedes them - see
+                 EventLogService.ReadShutdownTimeline. Collapsed entirely when empty. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding ShutdownTimeline.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Shutdown &amp; restart timeline" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Who/what initiated each shutdown or restart, plus boots not preceded by a clean shutdown marker (flagged Dirty)."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,8" TextWrapping="Wrap" />
+                    <DataGrid ItemsSource="{Binding ShutdownTimeline}" Height="220" IsReadOnly="True">
+                        <DataGrid.RowStyle>
+                            <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsDirtyBoot}" Value="True">
+                                        <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </DataGrid.RowStyle>
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Time" Binding="{Binding TimeCreated, StringFormat={}{0:g}}" Width="150" />
+                            <DataGridTextColumn Header="Event" Binding="{Binding Kind}" Width="2*" />
+                            <DataGridTextColumn Header="Process" Binding="{Binding Process}" Width="1.5*" />
+                            <DataGridTextColumn Header="User" Binding="{Binding User}" Width="1.5*" />
+                            <DataGridTextColumn Header="Reason" Binding="{Binding Reason}" Width="2*" />
+                            <DataGridTemplateColumn Header="Dirty" Width="55">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="Dirty" Foreground="{DynamicResource DangerBrush}" FontWeight="SemiBold"
+                                                   Visibility="{Binding IsDirtyBoot, Converter={StaticResource BoolToVisibilityConverter}}" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- Round 13, items 9/10: Microsoft-Windows-WHEA-Logger hardware errors (corrected and
+                 uncorrectable machine-check/memory/PCIe), often logged for weeks before a 0x124
+                 bugcheck - see EventLogService.ReadWheaErrors/DecodeWheaErrorRecord. Corrected
+                 counts are framed as an early warning, not a diagnosis ("quick flag, not a
+                 verdict" per CLAUDE.md). Collapsed entirely when none found. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding WheaSummary.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Hardware errors (WHEA)" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Corrected errors are an early warning, not a diagnosis - they can precede a hardware-related bugcheck by weeks."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,8" TextWrapping="Wrap" />
+                    <ItemsControl ItemsSource="{Binding WheaSummary}" Margin="0,0,0,8">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock FontSize="12.5" FontWeight="SemiBold">
+                                            <Run Text="{Binding Severity}" /><Run Text=" — " /><Run Text="{Binding Source}" />
+                                        </TextBlock>
+                                        <TextBlock Style="{StaticResource SubStat}">
+                                            <Run Text="Last seen " /><Run Text="{Binding LastSeen, StringFormat={}{0:g}, Mode=OneWay}" />
+                                        </TextBlock>
+                                    </StackPanel>
+                                    <Border Grid.Column="1" Background="{DynamicResource DangerMutedBrush}" CornerRadius="10" Padding="8,2" VerticalAlignment="Center">
+                                        <TextBlock Foreground="{DynamicResource DangerBrush}" FontSize="11.5" FontWeight="SemiBold">
+                                            <Run Text="{Binding Count, Mode=OneWay}" /><Run Text="×" />
+                                        </TextBlock>
+                                    </Border>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <!-- Item 10: best-effort partial decode of each event's raw ErrorRecord, in a
+                         detail expander (per-event, not the summary above). -->
+                    <Expander Header="Individual events (raw record decode)" IsExpanded="False">
+                        <ItemsControl ItemsSource="{Binding WheaErrors}" Margin="0,8,0,0">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel Margin="0,0,0,8">
+                                        <TextBlock FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}">
+                                            <Run Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}" />
+                                            <Run Text=" (ID " /><Run Text="{Binding EventId, Mode=OneWay}" /><Run Text=")" />
+                                        </TextBlock>
+                                        <TextBlock FontSize="12.5" TextWrapping="Wrap" Text="{Binding Decoded}" />
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </Expander>
                 </StackPanel>
             </Border>
 

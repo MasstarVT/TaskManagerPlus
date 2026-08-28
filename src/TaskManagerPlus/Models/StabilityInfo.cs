@@ -21,13 +21,183 @@ public sealed class StabilityEvent
     public string? BugcheckCode { get; init; }
 }
 
-/// <summary>One file under %SystemRoot%\Minidump (#3) - bugcheck code is filled in only when a
-/// Kernel-Power event 41 was recorded within a few minutes of the dump's timestamp.</summary>
+/// <summary>One file under %SystemRoot%\Minidump. Bugcheck data comes from the authoritative
+/// BugCheck-provider 1001 event when its own dump path matches this file (round 13, item 1 - see
+/// EventLogService.ReadBugCheckRecords), falling back to the old ±10-minute Kernel-Power-41
+/// timestamp correlation only when no matching record was found (an older Windows version without
+/// the provider, or a log that already rolled the event off).</summary>
 public sealed class MinidumpInfo
 {
     public string FileName { get; init; } = string.Empty;
     public DateTime Timestamp { get; init; }
     public string? BugcheckCode { get; init; }
+
+    /// <summary>Round 13, item 1: all four bugcheck parameters from the matched BugCheck 1001 (or
+    /// WER-SystemErrorReporting fallback, item 8) record - empty when no matching record was found
+    /// (the old timestamp-correlation path only ever recovers the stop code, not the parameters).</summary>
+    public string[] BugcheckParameters { get; init; } = Array.Empty<string>();
+
+    /// <summary>Round 13, item 2: the WER ReportArchive record joined via the BugCheck record's
+    /// Report Id GUID - null collapses the "Full crash record" expander entirely on the Stability
+    /// tab (no report folder found, or no matching BugCheck record at all).</summary>
+    public WerReportInfo? WerReport { get; init; }
+
+    /// <summary>True when BugcheckCode came from the BugCheck provider's own 1001 event (item 1)
+    /// rather than the WER-SystemErrorReporting fallback (item 8, FromWerSummary) or the old
+    /// nearby-timestamp guess - shown as a small "confirmed" hint vs. a plainer label.</summary>
+    public bool IsAuthoritative { get; init; }
+}
+
+/// <summary>
+/// Round 13, item 1: one authoritative crash record read directly from the `BugCheck` provider's
+/// System-log event 1001 ("The computer has rebooted from a bugcheck") - the stop code, all four
+/// bugcheck parameters, the dump file path and a WER Report Id, all as insertion strings on a
+/// legacy classic ETW provider (positional access, like EventLogService.ExtractBugcheckCode already
+/// uses for Kernel-Power 41). When the BugCheck provider entry itself isn't present in the log
+/// (older Windows versions, or a log that's already rolled the event off), item 8's
+/// WER-SystemErrorReporting 1001 "BlueScreen" summary entry is used as a second, independent
+/// source instead - <see cref="FromWerSummary"/> distinguishes which source a given record came
+/// from, since the WER summary parse can't recover a Report Id (so <see cref="WerReport"/> is
+/// always null for those).
+/// </summary>
+public sealed class BugCheckRecord
+{
+    public DateTime TimeCreated { get; init; }
+    public string StopCode { get; init; } = string.Empty; // "0x000000EF"
+    public string[] Parameters { get; init; } = Array.Empty<string>();
+    public string? DumpPath { get; init; }
+    public string? ReportId { get; init; }
+    public bool FromWerSummary { get; init; }
+    public WerReportInfo? WerReport { get; init; }
+}
+
+/// <summary>
+/// Round 13, item 2: metadata from the WER ReportArchive folder joined to a BugCheckRecord by its
+/// Report Id GUID (EventLogService.ResolveWerReport) - a best-effort text parse of the folder's own
+/// Report.wer key=value file plus a directory listing of whatever files WER archived alongside it
+/// (typically including the .dmp itself), not a full WER API integration. Null/empty fields when
+/// the folder or a given key isn't present, never a guessed value.
+/// </summary>
+public sealed class WerReportInfo
+{
+    public string ReportFolder { get; init; } = string.Empty;
+    public string? OsVersion { get; init; }
+    public string? SecureBootState { get; init; }
+    public List<string> AttachedFiles { get; init; } = new();
+}
+
+/// <summary>Round 13, item 3: Kernel-Power 41's own named properties, decoded instead of treating
+/// every occurrence as "a crash" - see EventLogService.ClassifyPowerEvent for exactly how (and how
+/// tentatively) each value is read. "Quick flag, not a verdict" per CLAUDE.md: this is a heuristic
+/// over undocumented per-Windows-version property ordering, not a guaranteed classification.</summary>
+public enum ShutdownCause
+{
+    Unknown,
+    Bugcheck,
+    PowerButtonHeld,
+    PowerLoss,
+    HardHang,
+}
+
+/// <summary>Round 13, items 3/4: one occurrence of an unexpected shutdown (Kernel-Power 41) across
+/// the full lookback window, not just the most recent one - see
+/// EventLogService.ReadUnexpectedShutdowns.</summary>
+public sealed class UnexpectedShutdownRecord
+{
+    public DateTime TimeCreated { get; init; }
+    public ShutdownCause Cause { get; init; }
+    public string? BugcheckCode { get; init; }
+
+    /// <summary>Best-effort "minutes powered on before this shutdown" reading - see
+    /// ClassifyPowerEvent's remarks on why this isn't read from one fixed, versioned property
+    /// index. Null when no plausible value was found.</summary>
+    public TimeSpan? UptimeBeforeCrash { get; init; }
+}
+
+/// <summary>
+/// Round 13, items 5/6: one entry in the "shutdown &amp; restart timeline" - either a User32 1074
+/// "initiated" shutdown/restart (with the requesting process/user/reason, item 5), an EventLog
+/// service start/stop marker (6005/6006/6009/6013), or a boot (Kernel-General 12 / Kernel-Boot
+/// 20/27) whose preceding clean-shutdown marker (Kernel-General 13) is missing - flagged dirty
+/// (item 6) even when Kernel-Power 41 itself was never logged for that boot (e.g. a hang held past
+/// the point the OS could log anything at all).
+/// </summary>
+public sealed class ShutdownTimelineEntry
+{
+    public DateTime TimeCreated { get; init; }
+    public string Kind { get; init; } = string.Empty;
+    public string? Process { get; init; }
+    public string? User { get; init; }
+    public string? Reason { get; init; }
+    public bool IsDirtyBoot { get; init; }
+}
+
+/// <summary>Round 13, item 7: a volmgr 161/162 "dump creation failed" System-log event - explains
+/// the common "I had a BSOD but there's no dump file" case that a bare Minidump-folder listing
+/// can't. NtStatus is a best-effort regex pull of the first hex status code out of the event's own
+/// formatted message (the legacy volmgr provider doesn't expose it as a separate named property).</summary>
+public sealed class DumpFailureEvent
+{
+    public DateTime TimeCreated { get; init; }
+    public int EventId { get; init; }
+    public string? NtStatus { get; init; }
+}
+
+/// <summary>
+/// Round 13, items 9/10: one Microsoft-Windows-WHEA-Logger hardware-error event (17/18/19/47) -
+/// corrected and uncorrectable machine-check, memory and PCIe errors, often logged for weeks before
+/// a 0x124 (WHEA_UNCORRECTABLE_ERROR) bugcheck. Severity/Source are pulled from the event's own
+/// formatted message text (item 9); Decoded is a best-effort *partial* decode of the binary
+/// ErrorRecord blob attached to the event - see EventLogService.DecodeWheaErrorRecord for exactly
+/// what is (and, honestly, isn't) decoded with confidence. "Quick flag, not a verdict" per
+/// CLAUDE.md: corrected-error counts are framed in the UI as an early warning, not a diagnosis.
+/// </summary>
+public sealed class WheaErrorEvent
+{
+    public DateTime TimeCreated { get; init; }
+    public int EventId { get; init; }
+    public string Severity { get; init; } = string.Empty;
+    public string Source { get; init; } = string.Empty;
+    public string Decoded { get; init; } = "Unknown hardware error section";
+}
+
+/// <summary>Round 13, item 9: WheaErrorEvent rows grouped by (Severity, Source) with a count and
+/// last-seen time - the same "flat list -&gt; grouped summary" shape FaultingModuleSummary already
+/// uses for repeated app crashes, applied to hardware errors instead. A pure derived aggregation
+/// over the already-read WHEA event list, no new query.</summary>
+public sealed class WheaSummaryRow
+{
+    public string Severity { get; init; } = string.Empty;
+    public string Source { get; init; } = string.Empty;
+    public int Count { get; init; }
+    public DateTime LastSeen { get; init; }
+}
+
+/// <summary>Round 13, item 11: one day's Microsoft-computed Reliability Monitor stability index
+/// (Win32_ReliabilityStabilityMetrics.SystemStabilityIndex, 0-10) - plotted as a second series on
+/// the existing Reliability History chart alongside this app's own computed daily Critical/Error
+/// count, so the two "how stable has this PC been" views sit side by side instead of the app's
+/// heuristic being the only number shown.</summary>
+public sealed class ReliabilityMetricPoint
+{
+    public DateTime Date { get; init; }
+    public double Index { get; init; }
+}
+
+/// <summary>
+/// Round 13, item 12: "is the 30-day lookback window even trustworthy" event-log health check - a
+/// log that was cleared recently, or is small enough that its actual retention doesn't cover the
+/// full lookback window, means "no crashes found" elsewhere on this tab can be a hollow result
+/// rather than a clean bill of health. WasClearedRecently/LastClearedTime come from System-log
+/// event 104 (Eventlog provider, "The System log file was cleared"); OldestRecordTime is read
+/// directly off the log's own oldest record; MaxSizeBytes comes from `wevtutil gl System`.
+/// </summary>
+public sealed class EventLogHealth
+{
+    public DateTime? OldestRecordTime { get; init; }
+    public long? MaxSizeBytes { get; init; }
+    public bool WasClearedRecently { get; init; }
+    public DateTime? LastClearedTime { get; init; }
 }
 
 /// <summary>One day's worth of Critical/Error event counts (#1 - Reliability History) - bucketed
@@ -76,6 +246,39 @@ public sealed class StabilitySnapshot
     /// bucket of RecentEvents above.</summary>
     public int LowMemoryEventCount { get; init; }
     public DateTime? LastLowMemoryEvent { get; init; }
+
+    /// <summary>Round 13, items 1/2/8: the most recent authoritative bugcheck record (BugCheck
+    /// provider 1001, or the WER-SystemErrorReporting fallback) - null when neither source found
+    /// anything in the lookback window (not necessarily "no crash", just "no record of one").</summary>
+    public BugCheckRecord? LatestBugCheck { get; init; }
+
+    /// <summary>Round 13, item 3: cause classification of the single most recent Kernel-Power 41
+    /// occurrence - drives the labelled badge on the unexpected-shutdown banner. Null when the most
+    /// recent unexpected shutdown was only ever seen as a legacy EventLog 6008 entry (no named
+    /// properties to classify) or there was none at all.</summary>
+    public ShutdownCause? LastShutdownCause { get; init; }
+
+    /// <summary>Round 13, item 4: every Kernel-Power 41 occurrence in the lookback window, not just
+    /// the most recent - feeds the Stability tab's "Unexpected shutdowns" card.</summary>
+    public List<UnexpectedShutdownRecord> UnexpectedShutdowns { get; init; } = new();
+
+    /// <summary>Round 13, items 5/6: the merged shutdown/restart/boot timeline - see
+    /// EventLogService.ReadShutdownTimeline.</summary>
+    public List<ShutdownTimelineEntry> ShutdownTimeline { get; init; } = new();
+
+    /// <summary>Round 13, item 7: volmgr 161/162 "dump creation failed" events in the lookback
+    /// window - surfaced as an inline warning on the Minidumps card.</summary>
+    public List<DumpFailureEvent> DumpFailures { get; init; } = new();
+
+    /// <summary>Round 13, items 9/10: WHEA-Logger hardware-error events in the lookback window.</summary>
+    public List<WheaErrorEvent> WheaErrors { get; init; } = new();
+
+    /// <summary>Round 13, item 11: Microsoft's own per-day Reliability Monitor stability index -
+    /// plotted as a second series on the Reliability History chart.</summary>
+    public List<ReliabilityMetricPoint> ReliabilityMetrics { get; init; } = new();
+
+    /// <summary>Round 13, item 12: "is the lookback window even trustworthy" health check.</summary>
+    public EventLogHealth? LogHealth { get; init; }
 }
 
 /// <summary>#66 (Round 10): repeated application crashes grouped by faulting module, with a count -

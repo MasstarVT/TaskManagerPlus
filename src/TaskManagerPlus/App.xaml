@@ -29,6 +29,8 @@
             <conv:IntEqualsConverter x:Key="IntEqualsConverter" />
             <conv:BoolToVisibilityConverter x:Key="BoolToVisibilityConverter" />
             <conv:ActivePlanSuffixConverter x:Key="ActivePlanSuffixConverter" />
+            <conv:BugcheckSourceToTextConverter x:Key="BugcheckSourceToTextConverter" />
+            <conv:ShutdownCauseToTextConverter x:Key="ShutdownCauseToTextConverter" />
         </ResourceDictionary>
     </Application.Resources>
 </Application>
