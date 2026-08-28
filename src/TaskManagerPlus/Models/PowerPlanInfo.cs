@@ -9,6 +9,18 @@ public sealed class PowerPlanInfo
     public bool IsActive { get; init; }
 }
 
+/// <summary>#691: one of the three well-known Windows power-mode overlay schemes ("Best power
+/// efficiency" / "Balanced" / "Best performance" - the slider next to the battery icon on Windows
+/// 10 1709+/11) - a plain CLR class rather than exposing PowerPlanService.OverlaySchemes' tuples
+/// directly to XAML, since a ValueTuple's element names ("Guid"/"Name") are compile-time-only
+/// aliases erased at runtime and can't be data-bound (see UsbPdConnectorInfo's own remarks on the
+/// same trap).</summary>
+public sealed class PowerOverlaySchemeOption
+{
+    public string Guid { get; init; } = string.Empty;
+    public string Name { get; init; } = string.Empty;
+}
+
 /// <summary>Round 12, #92: best-effort per-USB-device selective-suspend read - see
 /// UsbPowerService's remarks for why <see cref="SelectiveSuspendEnabled"/> is nullable
 /// ("Unknown") far more often than a definitive true/false on real hardware.</summary>

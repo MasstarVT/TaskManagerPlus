@@ -32,6 +32,9 @@
             <conv:BoolToFirmwareEventTextConverter x:Key="BoolToFirmwareEventTextConverter" />
             <conv:EpisodeDurationConverter x:Key="EpisodeDurationConverter" />
             <conv:NullableBoolToYesNoConverter x:Key="NullableBoolToYesNoConverter" />
+            <conv:StressTestTypeDisplayNameConverter x:Key="StressTestTypeDisplayNameConverter" />
+            <conv:StressTestTypeEqualsConverter x:Key="StressTestTypeEqualsConverter" />
+            <conv:InverseBoolConverter x:Key="InverseBoolConverter" />
         </ResourceDictionary>
     </Application.Resources>
 </Application>

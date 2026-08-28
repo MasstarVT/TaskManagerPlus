@@ -847,6 +847,106 @@
                 </StackPanel>
             </Border>
 
+            <!-- #691/#692: power-mode overlay readout + switch, and OEM vendor thermal-profile
+                 detection - both "what is this machine actually running right now" readouts that
+                 sit alongside (not inside) the power-plan card above, since the overlay is a
+                 genuinely separate layer on top of whichever scheme is active. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <TextBlock Text="Power mode overlay &amp; vendor thermal mode" Style="{StaticResource CardTitle}" />
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap"
+                               Text="The power-mode overlay sits on top of the power plan above - a machine can show Balanced as its active plan while the overlay independently caps it to the efficiency profile. Vendor thermal mode reads the OEM's own fan-mode/thermal-profile setting where a WMI namespace for it exists." />
+
+                    <TextBlock Margin="0,0,0,6" TextWrapping="Wrap">
+                        <Run Text="Active overlay: " Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" />
+                        <Run Text="{Binding ActiveOverlaySchemeText, Mode=OneWay}" FontSize="12.5" FontWeight="SemiBold" />
+                    </TextBlock>
+                    <ItemsControl ItemsSource="{Binding PowerOverlaySchemes}" Margin="0,0,0,10">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="{Binding Name, Mode=OneWay}" FontSize="12.5" VerticalAlignment="Center" />
+                                    <Button Grid.Column="1" Content="Switch to this" FontSize="11" Padding="8,3"
+                                            Command="{Binding DataContext.SetOverlaySchemeCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                            CommandParameter="{Binding Guid}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <TextBlock Margin="0,4,0,0" TextWrapping="Wrap">
+                        <Run Text="Vendor thermal mode: " Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" />
+                        <Run Text="{Binding OemThermalProfile.ModeText, Mode=OneWay}" FontSize="12.5" FontWeight="SemiBold" />
+                    </TextBlock>
+                    <TextBlock Margin="0,2,0,0" TextWrapping="Wrap" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}"
+                               Text="{Binding OemThermalProfile.Vendor, Mode=OneWay, StringFormat=({0})}">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding OemThermalProfile.Available}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- #693: AC vs. DC sustained-performance cliff - measured, not configured. Hidden on
+                 any system HasBattery has never latched true (a desktop). -->
+            <Border Margin="0,16,0,0">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding HasBattery}" Value="False">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="AC vs. battery sustained-performance cliff" Style="{StaticResource CardTitle}" />
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap"
+                               Text="Steady-state clock, package power, and temperature recorded separately during sustained CPU load (60%+ for 20+ seconds) on AC and on battery, so this shows what the machine actually does - not what its power plan is configured to allow." />
+                    <TextBlock Text="{Binding AcDcCliffText, Mode=OneWay}" TextWrapping="Wrap" FontSize="12.5" Margin="0,0,0,10" />
+                    <UniformGrid Columns="3">
+                        <views:VfdMeter Title="AC sustained clock" Glow="False" Margin="0,0,6,0"
+                                        ValueText="{Binding AcDcCliff.AcClockGhz, StringFormat={}{0:0.00}, TargetNullValue=–}" Unit="GHz"
+                                        SubText="{Binding AcDcCliff.AcSampleCount, StringFormat={}{0} samples}" AccentBrush="{DynamicResource AccentBrush}" />
+                        <views:VfdMeter Title="Battery sustained clock" Glow="False" Margin="3,0,3,0"
+                                        ValueText="{Binding AcDcCliff.DcClockGhz, StringFormat={}{0:0.00}, TargetNullValue=–}" Unit="GHz"
+                                        SubText="{Binding AcDcCliff.DcSampleCount, StringFormat={}{0} samples}" AccentBrush="{DynamicResource WarningBrush}" />
+                        <views:VfdMeter Title="Battery package power" Glow="False" Margin="6,0,0,0"
+                                        ValueText="{Binding AcDcCliff.DcPackagePowerW, StringFormat={}{0:0.#}, TargetNullValue=–}" Unit="W"
+                                        SubText="Vs. AC package power" AccentBrush="{DynamicResource WarningBrush}" />
+                    </UniformGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- #694: blocked-vent/airflow-obstruction heuristic - hidden until BlockedVentSuspected
+                 latches true, same "quick flag, not a verdict" banner treatment as the dead-fan/
+                 fan-hunting banners near the top of this view. -->
+            <Border Background="{DynamicResource DangerMutedBrush}" BorderBrush="{DynamicResource DangerBrush}"
+                    BorderThickness="1" CornerRadius="8" Padding="14,10" Margin="0,16,0,0">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding BlockedVentSuspected}" Value="True">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <TextBlock Foreground="{DynamicResource DangerBrush}" Text="{Binding BlockedVentText}" TextWrapping="Wrap" FontSize="12.5" />
+            </Border>
+
             <!-- #661: active-plan setting diff against Balanced defaults. -->
             <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
                 <StackPanel>
@@ -2087,6 +2187,15 @@
                     <TextBlock Text="{Binding Hibernation.StatusText}" TextWrapping="Wrap" Style="{StaticResource SubStat}" Margin="0,0,0,4" />
                 </StackPanel>
             </Border>
+
+            <!-- #695-#700: Stress test panel - its own ViewModel/UserControl (StressTestViewModel/
+                 StressTestPanel), composed at the MainViewModel level since it needs Gpu (TDR
+                 watch) as well as EnergyThermals/Performance - reached the same cross-ViewModel way
+                 the Sleep panel's Logging/Summary cards reach a sibling ViewModel elsewhere in this
+                 app (CLAUDE.md's {Binding DataContext.X, RelativeSource={RelativeSource
+                 AncestorType=Window}} convention), set once here rather than repeated per binding
+                 inside StressTestPanel.xaml itself. -->
+            <views:StressTestPanel DataContext="{Binding DataContext.StressTest, RelativeSource={RelativeSource AncestorType=Window}}" Margin="0,0,0,16" />
 
         </StackPanel>
     </ScrollViewer>

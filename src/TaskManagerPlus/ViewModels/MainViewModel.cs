@@ -38,6 +38,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     public LoggingViewModel Logging { get; }
 
+    // #695-#700: the Stress test panel (hosted inside the Energy & Thermals tab, see
+    // StressTestPanel.xaml) - composed here rather than inside EnergyThermalsViewModel since it
+    // needs both EnergyThermals and Gpu (TDR watch) already constructed, the same "compose after
+    // its dependencies exist" shape Summary/Logging/Search already use below.
+    public StressTestViewModel StressTest { get; }
+
     // #100: cross-tab search - see GlobalSearchViewModel's remarks.
     public GlobalSearchViewModel Search { get; }
 
@@ -218,6 +224,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         // #678: takes Performance too now, for the bottleneck verdict's CPU-core-saturation evidence.
         Gpu = new GpuViewModel(Processes, EnergyThermals, Performance);
         Logging = new LoggingViewModel(Performance, EnergyThermals);
+        StressTest = new StressTestViewModel(Performance, EnergyThermals, Gpu);
         Summary = new SummaryViewModel(Performance, Processes, Services, EnergyThermals, SystemSpecs, Network, Stability);
         Search = new GlobalSearchViewModel(Processes, Services, Startup, SystemSpecs);
 
@@ -412,6 +419,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Network.Dispose();
         Gpu.Dispose();
         Logging.Dispose();
+        StressTest.Dispose();
         Summary.Dispose();
         _miniDashboard?.Close();
         RemoteMonitor.Dispose();

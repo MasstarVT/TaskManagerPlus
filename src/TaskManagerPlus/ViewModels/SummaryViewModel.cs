@@ -369,19 +369,16 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
 
     private string BuildReportHtml()
     {
-        static string Esc(string s) => System.Net.WebUtility.HtmlEncode(s);
+        // #700: Esc/style-block/Sparkline are now the shared DiagnosticReportFormatting helper -
+        // extracted so StressTestReportService's run reports render through the same "existing
+        // HTML reporting system" instead of a second, unrelated writer. Esc kept as a local alias
+        // so every call site below stays unchanged.
+        static string Esc(string s) => DiagnosticReportFormatting.HtmlEscape(s);
 
         var sb = new StringBuilder();
         void Line(string s = "") => sb.Append(s).Append('\n');
 
-        Line("<!doctype html><html><head><meta charset=\"utf-8\">");
-        Line($"<title>Task Manager Plus report - {Esc(DateTime.Now.ToString("F"))}</title>");
-        Line("<style>" +
-             "body{font-family:Segoe UI,Arial,sans-serif;background:#1c1c1f;color:#e4e4e7;max-width:900px;margin:32px auto;padding:0 16px}" +
-             "h1{font-size:20px}h2{font-size:15px;border-bottom:1px solid #3a3a42;padding-bottom:6px;margin-top:28px}" +
-             "table{border-collapse:collapse;width:100%;font-size:13px}td,th{padding:4px 8px;text-align:left;border-bottom:1px solid #2c2c33}" +
-             ".crit{color:#f26d6d}.warn{color:#e8b23c}.ok{color:#4fd18b}.muted{color:#9a9aa2;font-size:12px}" +
-             "svg{background:#242429;border-radius:6px}</style></head><body>");
+        Line(DiagnosticReportFormatting.HtmlDocumentOpen($"Task Manager Plus report - {DateTime.Now:F}"));
 
         Line($"<h1>Task Manager Plus diagnostic report</h1><p class=\"muted\">Generated {Esc(DateTime.Now.ToString("F"))}</p>");
 
@@ -431,23 +428,10 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>Renders one history buffer (0-100 range, 60 samples) as a small inline SVG
-    /// polyline - no chart library, just a hand-built path so the file stays a single
-    /// self-contained .html with no external script/CSS reference.</summary>
+    /// polyline - now a thin wrapper over the shared DiagnosticReportFormatting.Sparkline (#700),
+    /// kept as a same-named local method so every call site above stays unchanged.</summary>
     private static string Sparkline(IEnumerable<double> values, string color)
-    {
-        var list = values.ToList();
-        if (list.Count < 2) return string.Empty;
-
-        const int width = 600, height = 60;
-        var points = list.Select((v, i) =>
-        {
-            double x = i / (double)(list.Count - 1) * width;
-            double y = height - Math.Clamp(v, 0, 100) / 100.0 * height;
-            return $"{x:0.#},{y:0.#}";
-        });
-        return $"<svg viewBox=\"0 0 {width} {height}\" width=\"100%\" height=\"{height}\">" +
-               $"<polyline points=\"{string.Join(' ', points)}\" fill=\"none\" stroke=\"{color}\" stroke-width=\"2\" /></svg>";
-    }
+        => DiagnosticReportFormatting.Sparkline(values, color);
 
     /// <summary>Round 12, #99: a handful of plain-text lines - OS, CPU, RAM, GPU, uptime, and a
     /// couple of headline health numbers - built for pasting directly into a chat message or a

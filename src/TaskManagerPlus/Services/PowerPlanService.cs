@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 using TaskManagerPlus.Models;
 
@@ -363,6 +364,88 @@ public static class PowerPlanService
         {
             return (false, ex.Message);
         }
+    }
+
+    // #691: power-mode overlay (Best power efficiency / Balanced / Best performance - the slider
+    // next to the battery icon on Windows 10 1709+/11). This sits ON TOP of whichever power scheme
+    // ListPowerPlansAsync/SetActivePlanAsync manage - a machine can show "Balanced" as its active
+    // scheme while the overlay independently caps it to the efficiency profile, a genuinely
+    // confusing state the plan card alone can't surface. There's no powercfg subcommand or WMI
+    // class for the overlay (verified: `powercfg /list`, `/q`, and `/getactivescheme` never mention
+    // it) - PowerGetActualOverlayScheme/PowerSetActiveOverlayScheme are the only surface, and they
+    // are documented Win32 APIs (powrprof.dll), so this is the one place in this file that's a
+    // direct P/Invoke rather than a powercfg text-parse (project convention: raw interop only when
+    // no tool/WMI class exists at all).
+    [DllImport("powrprof.dll")]
+    private static extern uint PowerGetActualOverlayScheme(out Guid actualOverlayGuid);
+
+    [DllImport("powrprof.dll")]
+    private static extern uint PowerSetActiveOverlayScheme(Guid overlaySchemeGuid);
+
+    // Well-known, publicly documented overlay-scheme GUIDs - the same three every "toggle Windows'
+    // power-mode slider from a script" reference relies on. GUID_NULL (all-zero) is "Balanced" -
+    // Windows encodes "no overlay applied" as the null GUID rather than a fourth named value.
+    public const string OverlayBestPowerEfficiencyGuid = "961cc777-2547-4f9d-8174-7d86181b8a7a";
+    public const string OverlayBalancedGuid = "00000000-0000-0000-0000-000000000000";
+    public const string OverlayBestPerformanceGuid = "ded574b5-45a0-4f42-8737-46345c09c238";
+
+    public static readonly IReadOnlyList<PowerOverlaySchemeOption> OverlaySchemes = new[]
+    {
+        new PowerOverlaySchemeOption { Guid = OverlayBestPowerEfficiencyGuid, Name = "Best power efficiency" },
+        new PowerOverlaySchemeOption { Guid = OverlayBalancedGuid, Name = "Balanced" },
+        new PowerOverlaySchemeOption { Guid = OverlayBestPerformanceGuid, Name = "Best performance" },
+    };
+
+    /// <summary>#691: the active power-mode overlay. "Unknown" (never a guess) when the API isn't
+    /// present at all (pre-1709 Windows, or a policy/edition that hides it) or the returned GUID
+    /// doesn't match one of the three documented values - some OEM utilities register a fourth
+    /// "Recommended"/custom overlay this app doesn't try to name, shown as "Unknown overlay
+    /// ({guid})" instead of silently mislabeling it as one of the three known ones.</summary>
+    public static string ReadActiveOverlaySchemeText()
+    {
+        try
+        {
+            uint result = PowerGetActualOverlayScheme(out var guid);
+            if (result != 0) return "Unknown";
+
+            foreach (var scheme in OverlaySchemes)
+            {
+                if (Guid.TryParse(scheme.Guid, out var known) && known == guid) return scheme.Name;
+            }
+            return $"Unknown overlay ({guid:B})";
+        }
+        catch (EntryPointNotFoundException)
+        {
+            return "Unknown — not supported on this Windows build";
+        }
+        catch
+        {
+            // powrprof.dll missing/blocked, or any other P/Invoke failure - degrade to Unknown
+            // rather than throw out of a card that's otherwise just informational.
+            return "Unknown";
+        }
+    }
+
+    /// <summary>#691: switches the active power-mode overlay via PowerSetActiveOverlayScheme -
+    /// takes effect immediately, no separate "activate" step the way a plain power-scheme switch
+    /// needs.</summary>
+    public static Task<(bool Success, string? Error)> SetActiveOverlaySchemeAsync(string overlaySchemeGuid)
+    {
+        return Task.Run(() =>
+        {
+            try
+            {
+                if (!Guid.TryParse(overlaySchemeGuid, out var guid))
+                    return (false, "Not a recognized overlay scheme.");
+
+                uint result = PowerSetActiveOverlayScheme(guid);
+                return result == 0 ? (true, (string?)null) : (false, $"powrprof.dll returned error {result}.");
+            }
+            catch (Exception ex)
+            {
+                return (false, ex.Message);
+            }
+        });
     }
 
     /// <summary>

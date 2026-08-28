@@ -83,6 +83,19 @@ container — everything is `new`'d directly). Layers:
   already-polled state off `PerformanceViewModel`/`EnergyThermalsViewModel`.
   `MainViewModel` composes all of them plus settings-drawer state, tray/
   hotkey wiring, and elevation status (checked once via `WindowsPrincipal`).
+  `StressTestViewModel` is the one ViewModel that isn't one-per-tab: it
+  backs a panel (`StressTestPanel.xaml`) embedded inside `EnergyThermalsView`
+  via the usual cross-ViewModel `RelativeSource AncestorType=Window` binding
+  rather than getting its own `TabItem`, since a stress-test suite is a
+  panel-sized feature, not a new subsystem to monitor. It's on-demand only
+  (Start/Stop, never a timer) and, because it deliberately loads CPU/GPU/
+  memory/disk for real, always runs every sample through
+  `StressTestSafetyMonitor` — an unconditional, unthrottled temperature-
+  ceiling (and optional WHEA/TDR-delta) abort check with no setting able to
+  disable the check itself, only where its thresholds sit. Any future
+  feature that drives real hardware load on demand should follow this same
+  "always-on safety monitor, no opt-out" shape rather than relying on the
+  user-configured duration alone.
 - **Views/** — XAML + minimal code-behind per tab, hosted in `MainWindow.xaml`'s
   `TabControl`. `MeterTile` and `VfdMeter` are small reusable UserControls
   (colored dot/title, big value, colored bar/segmented LED bar) sharing the

@@ -106,6 +106,15 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
     private double? _cpuThermalHeadroomC;
     public double? CpuThermalHeadroomC { get => _cpuThermalHeadroomC; private set => SetProperty(ref _cpuThermalHeadroomC, value); }
 
+    /// <summary>#699: the same reported-or-inferred CPU throttle-point ceiling #608's headroom
+    /// figure is computed from, exposed directly (not just as a subtraction) so
+    /// StressTestViewModel can default its own safety-abort temperature ceiling to "5°C below this,
+    /// or 90°C if this is null" without re-deriving the TjMax/inferred-episode-floor lookup a
+    /// second time. Null exactly when CpuThermalHeadroomC is null (no reported ceiling, and no
+    /// persisted thermal-throttle episode yet to infer one from).</summary>
+    private double? _cpuThrottlePointReferenceC;
+    public double? CpuThrottlePointReferenceC { get => _cpuThrottlePointReferenceC; private set => SetProperty(ref _cpuThrottlePointReferenceC, value); }
+
     private double? _gpuTempC;
     public double? GpuTempC { get => _gpuTempC; private set => SetProperty(ref _gpuTempC, value); }
 
@@ -156,6 +165,14 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
 
     private bool _batteryIsCharging;
     public bool BatteryIsCharging { get => _batteryIsCharging; private set => SetProperty(ref _batteryIsCharging, value); }
+
+    /// <summary>#693: true only when a battery is present AND Win32_Battery.BatteryStatus reports
+    /// "Discharging" - the authoritative AC-vs-DC signal #693's steady-state sampler tags each
+    /// sample with (deliberately not derived from BatteryIsCharging above, which is ambiguous in
+    /// the "no charge/discharge sensor reading found" case). Set alongside HasBattery in
+    /// RefreshBatteryReportLiveStateAsync, the same per-tick Win32_Battery read.</summary>
+    private bool _isOnBatteryPower;
+    public bool IsOnBatteryPower { get => _isOnBatteryPower; private set => SetProperty(ref _isOnBatteryPower, value); }
 
     public ObservableCollection<double> PowerHistory { get; } = NewHistory();
     private readonly LineSeries<double> _powerGlow;
@@ -227,6 +244,59 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
 
     private string _powerPlanStatusText = string.Empty;
     public string PowerPlanStatusText { get => _powerPlanStatusText; private set => SetProperty(ref _powerPlanStatusText, value); }
+
+    // ================================================================================
+    // #691-#694: Laptop thermal and performance modes - extends the power-plan card above with
+    // two more "what is this machine actually doing right now" readouts (691/692), plus two
+    // measured (not configured) heuristics (693/694).
+    // ================================================================================
+
+    // ---- #691: power-mode overlay readout + switch -------------------------------------------
+    private string _activeOverlaySchemeText = "Unknown";
+    /// <summary>The overlay sits ON TOP of whichever power scheme PowerPlans/SetPowerPlanCommand
+    /// manage - see PowerPlanService.ReadActiveOverlaySchemeText's remarks for why a machine can
+    /// show "Balanced" as its active scheme while this independently caps it to the efficiency
+    /// profile.</summary>
+    public string ActiveOverlaySchemeText { get => _activeOverlaySchemeText; private set => SetProperty(ref _activeOverlaySchemeText, value); }
+
+    public IReadOnlyList<PowerOverlaySchemeOption> PowerOverlaySchemes => PowerPlanService.OverlaySchemes;
+    public AsyncRelayCommand SetOverlaySchemeCommand { get; }
+
+    // ---- #692: OEM thermal-profile / fan-mode detection ---------------------------------------
+    private OemThermalProfileInfo _oemThermalProfile = OemThermalProfileInfo.Unknown;
+    public OemThermalProfileInfo OemThermalProfile { get => _oemThermalProfile; private set => SetProperty(ref _oemThermalProfile, value); }
+
+    // ---- #693: AC vs. DC sustained-performance cliff (measured, not configured) ---------------
+    // Sustained-load gate independent of #605's own _sustainedLoadStartedAt (that one drives
+    // throttle-episode tracking specifically) - CPU >= 60% for >= 20s is "worth sampling", and once
+    // in that state a sample is captured at most once every AcDcSampleInterval so a long session
+    // doesn't spam the persisted history with near-duplicate points.
+    private static readonly TimeSpan AcDcSampleInterval = TimeSpan.FromSeconds(20);
+    private const double AcDcSustainedLoadCpuPercent = 60.0;
+    private const double AcDcSustainedLoadDwellSeconds = 20.0;
+    private DateTime? _acDcLoadStartedAt;
+    private DateTime _lastAcDcSampleAt = DateTime.MinValue;
+    private List<AcDcSteadyStateSample> _acDcSamples = new();
+
+    private AcDcCliffSummary _acDcCliff = AcDcCliffSummary.Empty;
+    public AcDcCliffSummary AcDcCliff { get => _acDcCliff; private set => SetProperty(ref _acDcCliff, value); }
+
+    private string _acDcCliffText = "Not enough sustained-load samples yet on both AC and battery to compare.";
+    public string AcDcCliffText { get => _acDcCliffText; private set => SetProperty(ref _acDcCliffText, value); }
+
+    // ---- #694: blocked-vent / airflow-obstruction heuristic -----------------------------------
+    // Streak-based (like #613's fan-hunting detector) rather than single-tick, so one noisy sample
+    // can't flip the flag - needs BlockedVentStreakTicksThreshold consecutive ticks where fan is at
+    // or near its known ceiling AND package power is falling AND temperature is still rising.
+    private const double BlockedVentFanNearMaxFraction = 0.92;
+    private const int BlockedVentStreakTicksThreshold = 5;
+    private int _blockedVentStreak;
+
+    private bool _blockedVentSuspected;
+    public bool BlockedVentSuspected { get => _blockedVentSuspected; private set => SetProperty(ref _blockedVentSuspected, value); }
+
+    private string _blockedVentText = string.Empty;
+    public string BlockedVentText { get => _blockedVentText; private set => SetProperty(ref _blockedVentText, value); }
 
     // ================================================================================
     // #660-#664: Power plans and processor power management - extends the power-plan card above.
@@ -1002,6 +1072,9 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
 
         LoadPowerInfoCommand = new AsyncRelayCommand(_ => LoadPowerInfoAsync());
         SetPowerPlanCommand = new AsyncRelayCommand(SetPowerPlanAsync);
+        // #691: overlay switch - folded into the same LoadPowerInfoCommand refresh (SetPowerPlanAsync
+        // itself already re-calls LoadPowerInfoAsync after a successful plan switch).
+        SetOverlaySchemeCommand = new AsyncRelayCommand(SetOverlaySchemeAsync);
         LoadUsbDevicesCommand = new AsyncRelayCommand(_ => LoadUsbDevicesAsync());
 
         // #660-#664: power-plan-card extensions - every one a real subprocess call, gated behind
@@ -1046,6 +1119,13 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         // reads elsewhere in this constructor), and #651's sleepstudy-vs-systemsleepdiagnostics
         // routing needs it available before the user ever opens this panel.
         _ = LoadPowerInfoAsync();
+
+        // #693: persisted AC/DC steady-state sample history loaded once at startup (a plain JSON
+        // read, same tier as every other persisted-history load in this constructor) so the card
+        // isn't empty until a fresh sustained-load session captures a new sample.
+        _acDcSamples = AcDcCliffService.Load();
+        AcDcCliff = AcDcCliffService.Summarize(_acDcSamples);
+        UpdateAcDcCliffText();
 
         // #657: persisted standby-drain trend loaded once at startup (a plain JSON read) so the
         // summary at the top of the Sleep panel isn't empty until the user clicks anything.
@@ -1419,6 +1499,16 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
             _lastKnownActivePlanGuid = active.Guid;
             _lastKnownActivePlanName = active.Name;
         }
+
+        // #691: overlay readout - a P/Invoke, not a shell-out, but cheap enough (a single small
+        // powrprof.dll call) to fold into this same "load power info" refresh rather than a
+        // separate button.
+        ActiveOverlaySchemeText = await Task.Run(PowerPlanService.ReadActiveOverlaySchemeText);
+
+        // #692: OEM vendor thermal-profile probe - a handful of WMI namespace connect attempts
+        // that fail fast when absent (the common case), so this is cheap enough to fold in here
+        // too rather than needing its own button.
+        OemThermalProfile = await Task.Run(OemThermalProfileService.Probe);
     }
 
     /// <summary>Round 12, #90: switches the active power plan via powercfg /setactive - same
@@ -1430,6 +1520,17 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         var (success, error) = await PowerPlanService.SetActivePlanAsync(guid);
         PowerPlanStatusText = success ? "Power plan switched." : $"Couldn't switch power plan: {error}";
         if (success) await LoadPowerInfoAsync();
+    }
+
+    /// <summary>#691: switches the active power-mode overlay - independent of SetPowerPlanAsync
+    /// above (the overlay sits on top of whatever scheme is active, not a scheme itself).</summary>
+    private async Task SetOverlaySchemeAsync(object? param)
+    {
+        if (param is not string guid || string.IsNullOrWhiteSpace(guid)) return;
+
+        var (success, error) = await PowerPlanService.SetActiveOverlaySchemeAsync(guid);
+        PowerPlanStatusText = success ? "Power mode overlay switched." : $"Couldn't switch power mode overlay: {error}";
+        if (success) ActiveOverlaySchemeText = await Task.Run(PowerPlanService.ReadActiveOverlaySchemeText);
     }
 
     /// <summary>Round 12, #92: on-demand USB selective-suspend read - see UsbPowerService's
@@ -1854,6 +1955,7 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
             if (thermalEpisodes.Count > 0) cpuCeiling = thermalEpisodes.Min(e => e.PeakTempC);
         }
         CpuThermalHeadroomC = cpuCeiling.HasValue && CpuPackageTempC.HasValue ? cpuCeiling - CpuPackageTempC : null;
+        CpuThrottlePointReferenceC = cpuCeiling;
 
         // GPU headroom relies on a directly reported ceiling only - this round doesn't add a
         // separate GPU throttle-episode detector, so there's no inferred fallback the way the CPU
@@ -1990,6 +2092,16 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         // #624: PSU wattage sanity check - estimated draw vs. rated wattage, with a sustained-
         // above-80% brownout-risk flag.
         TrackPsuLoad(TotalPackagePowerW, GpuPowerDrawW);
+
+        // #693: AC-vs-battery measured steady-state sampling - only meaningful on a machine with a
+        // battery at all.
+        if (HasBattery) TrackAcDcCliff(_performance.CpuCurrentClockGhz, TotalPackagePowerW, CpuPackageTempC);
+
+        // #694: blocked-vent/airflow-obstruction heuristic - needs both PowerHistory and
+        // CpuTempHistory already appended for this tick (both above), and the *enriched* fan
+        // readings specifically (HistoricalMaxRpm is stamped on by EnrichFanReadings, not present
+        // on the raw fanReadings list).
+        TrackBlockedVentHeuristic(enrichedFanReadings);
 
         // #632: AMD PPT/TDC/EDC limit approximation - a no-op on non-AMD silicon.
         var currentReadings = readings.Where(r => r.Type == SensorType.Current && HasNonZeroReading(r)).ToList();
@@ -3034,6 +3146,120 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
     }
 
     // ================================================================================
+    // #693: AC vs. DC sustained-performance cliff (measured, not configured)
+    // ================================================================================
+
+    /// <summary>Gate: CPU busy enough, for long enough, with all three figures available, before a
+    /// sample is worth recording - a burst of load or a momentary sensor gap would otherwise pull
+    /// the AC/DC averages toward an unrepresentative reading.</summary>
+    private void TrackAcDcCliff(double clockGhz, double? packagePowerW, double? tempC)
+    {
+        var now = DateTime.Now;
+
+        if (_performance.CpuCurrentPercent >= AcDcSustainedLoadCpuPercent && packagePowerW.HasValue && tempC.HasValue && clockGhz > 0)
+            _acDcLoadStartedAt ??= now;
+        else
+            _acDcLoadStartedAt = null;
+
+        if (_acDcLoadStartedAt is not { } loadStart || (now - loadStart).TotalSeconds < AcDcSustainedLoadDwellSeconds) return;
+        if (now - _lastAcDcSampleAt < AcDcSampleInterval) return;
+        _lastAcDcSampleAt = now;
+
+        _acDcSamples = AcDcCliffService.Append(_acDcSamples, new AcDcSteadyStateSample
+        {
+            Timestamp = now,
+            OnBattery = IsOnBatteryPower,
+            ClockGhz = clockGhz,
+            PackagePowerW = packagePowerW!.Value,
+            TempC = tempC!.Value,
+        });
+        AcDcCliff = AcDcCliffService.Summarize(_acDcSamples);
+        UpdateAcDcCliffText();
+    }
+
+    private void UpdateAcDcCliffText()
+    {
+        var c = AcDcCliff;
+        if (!c.HasAcData || !c.HasDcData)
+        {
+            AcDcCliffText = $"Not enough sustained-load samples yet on both AC and battery to compare " +
+                $"(AC: {c.AcSampleCount}, battery: {c.DcSampleCount}; needs {AcDcCliffService.MinSamplesForSummary} on each side). " +
+                "Run under sustained load (60%+ CPU for 20+ seconds) on both power sources to build this up.";
+            return;
+        }
+
+        double clockDeltaGhz = c.AcClockGhz - c.DcClockGhz;
+        double clockDeltaPercent = c.AcClockGhz > 0 ? clockDeltaGhz / c.AcClockGhz * 100.0 : 0;
+        double powerDeltaW = c.AcPackagePowerW - c.DcPackagePowerW;
+        double tempDeltaC = c.AcTempC - c.DcTempC;
+
+        AcDcCliffText = clockDeltaGhz > 0.05
+            ? $"On battery, measured sustained clock is {clockDeltaGhz:0.00} GHz lower ({clockDeltaPercent:0}%) than on AC " +
+              $"({c.DcClockGhz:0.00} vs. {c.AcClockGhz:0.00} GHz), package power {Math.Abs(powerDeltaW):0.#} W lower and temperature " +
+              $"{Math.Abs(tempDeltaC):0.#}°C {(tempDeltaC > 0 ? "lower" : "higher")} - if the power plan itself isn't restricting battery " +
+              "performance, this cliff is coming from firmware, not Windows."
+            : $"Measured sustained clock is within {Math.Abs(clockDeltaGhz):0.00} GHz between AC ({c.AcClockGhz:0.00} GHz) and battery " +
+              $"({c.DcClockGhz:0.00} GHz) - no meaningful firmware-level performance cliff detected.";
+    }
+
+    // ================================================================================
+    // #694: blocked-vent / airflow-obstruction heuristic
+    // ================================================================================
+
+    /// <summary>Streak-based (like #613's fan-hunting detector): fan at/near its known RPM ceiling,
+    /// package power falling, and temperature still rising, all true at once, for
+    /// BlockedVentStreakTicksThreshold consecutive ticks - that combination means the cooler is
+    /// spinning hard but moving no air (a blocked intake), not a failed fan (which would show
+    /// falling temperature response, not rising) or a simple thermal-limit throttle (which shows
+    /// power falling AND temperature falling/flat together, not power falling while temperature
+    /// keeps climbing).</summary>
+    private void TrackBlockedVentHeuristic(List<SensorReading> fanReadings)
+    {
+        bool fanNearMax = fanReadings.Any(f => f.Value is { } rpm && f.HistoricalMaxRpm is { } max && max > 0 &&
+            rpm >= max * BlockedVentFanNearMaxFraction);
+
+        bool powerFalling = TrendDirection(PowerHistory) < 0;
+        bool tempRising = TrendDirection(CpuTempHistory) > 0;
+
+        if (fanNearMax && powerFalling && tempRising)
+        {
+            _blockedVentStreak++;
+        }
+        else
+        {
+            _blockedVentStreak = 0;
+        }
+
+        BlockedVentSuspected = _blockedVentStreak >= BlockedVentStreakTicksThreshold;
+        BlockedVentText = BlockedVentSuspected
+            ? "Possible blocked vent: a fan is spinning at/near its known maximum, package power is falling, but temperature keeps " +
+              "rising - the cooler is working hard but not moving air. Check for a blocked intake (soft surface, dust mat) before " +
+              "assuming the fan itself has failed. Quick flag, not a verdict."
+            : string.Empty;
+    }
+
+    /// <summary>+1 when the second half of the window averages meaningfully higher than the first
+    /// half, -1 when meaningfully lower, 0 when flat or there isn't enough history yet - a simple,
+    /// noise-tolerant trend direction rather than a full least-squares slope (the histories this
+    /// reads are already smoothed by being per-tick averages, so a two-halves comparison is enough
+    /// to tell "still climbing" from "leveling off/falling").</summary>
+    private static int TrendDirection(IReadOnlyList<double> history, double meaningfulFraction = 0.02)
+    {
+        const int window = 10;
+        if (history.Count < window) return 0;
+
+        var recent = history.Skip(history.Count - window).ToList();
+        double firstHalf = recent.Take(window / 2).Average();
+        double secondHalf = recent.Skip(window / 2).Average();
+        if (firstHalf == 0) return 0;
+
+        double change = (secondHalf - firstHalf) / Math.Abs(firstHalf);
+        if (change > meaningfulFraction) return 1;
+        if (change < -meaningfulFraction) return -1;
+        return 0;
+    }
+
+    // ================================================================================
     // #625/#638: coarse power-history log
     // ================================================================================
 
@@ -3202,6 +3428,7 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         // instantaneous Battery.Count.
         bool presentNow = Battery.Count > 0 || win32.Present;
         if (presentNow) HasBattery = true;
+        IsOnBatteryPower = presentNow && string.Equals(win32.BatteryStatusText, "Discharging", StringComparison.OrdinalIgnoreCase);
         if (_batteryPresentLastTick is { } wasPresent && wasPresent != presentNow)
         {
             BatteryDropoutEvents.Insert(0, new BatteryPresenceEvent { Timestamp = DateTime.Now, BecamePresent = presentNow });
