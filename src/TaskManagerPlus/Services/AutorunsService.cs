@@ -2831,39 +2831,52 @@ public static class AutorunsService
     // here, per this item's own note. Informational rows only - no findings.
     private static void AddProvisionedAppxPackageItems(List<AutorunEntry> items)
     {
+        const string location = "Get-AppxProvisionedPackage -Online";
+        foreach (var (displayName, packageName) in GetProvisionedAppxPackages())
+        {
+            items.Add(new AutorunEntry
+            {
+                Category = "Provisioned AppX Package",
+                Name = displayName,
+                RawCommand = packageName,
+                ResolvedPath = string.Empty,
+                Publisher = "Unknown",
+                SignatureStatus = "Unknown",
+                Location = location,
+                Enabled = true,
+            });
+        }
+    }
+
+    /// <summary>#834's actual `Get-AppxProvisionedPackage -Online` read, extracted to a public
+    /// method so #895's BloatwareInventoryService can reuse this exact call/parse rather than
+    /// re-implementing it - see that service's remarks for why (the item's own text says "DO NOT
+    /// re-implement, just call the same result").</summary>
+    public static List<(string DisplayName, string PackageName)> GetProvisionedAppxPackages()
+    {
+        var result = new List<(string, string)>();
         try
         {
             string output = RunCapturedSync("powershell.exe",
                 "-NoProfile -NonInteractive -Command \"Get-AppxProvisionedPackage -Online | Select-Object DisplayName,PackageName | ConvertTo-Csv -NoTypeInformation\"",
                 TimeSpan.FromSeconds(20));
-            if (string.IsNullOrWhiteSpace(output)) return;
+            if (string.IsNullOrWhiteSpace(output)) return result;
 
             var lines = output.Replace("\r\n", "\n").Split('\n').Where(l => l.Trim().Length > 0).ToList();
-            if (lines.Count < 2) return; // header only (or command failed/unavailable) - no packages to show
+            if (lines.Count < 2) return result; // header only (or command failed/unavailable) - no packages to show
 
-            const string location = "Get-AppxProvisionedPackage -Online";
             foreach (var line in lines.Skip(1))
             {
                 var fields = ParseSimpleCsvLine(line);
                 if (fields.Count == 0 || string.IsNullOrWhiteSpace(fields[0])) continue;
-
-                items.Add(new AutorunEntry
-                {
-                    Category = "Provisioned AppX Package",
-                    Name = fields[0],
-                    RawCommand = fields.Count > 1 ? fields[1] : string.Empty,
-                    ResolvedPath = string.Empty,
-                    Publisher = "Unknown",
-                    SignatureStatus = "Unknown",
-                    Location = location,
-                    Enabled = true,
-                });
+                result.Add((fields[0], fields.Count > 1 ? fields[1] : string.Empty));
             }
         }
         catch
         {
             // PowerShell/DISM cmdlet unavailable/failed/timed out - contribute nothing.
         }
+        return result;
     }
 
     /// <summary>Small hand-rolled CSV-line parser (quoted fields, "" escapes an embedded quote) -

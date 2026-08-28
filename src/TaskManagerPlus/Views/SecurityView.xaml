@@ -187,6 +187,11 @@
                     <WrapPanel Margin="0,10,0,0">
                         <Button Content="Copy registry path" Command="{Binding CopyRegistryPathCommand}" CommandParameter="{Binding SelectedAutorunEntry}" Margin="0,0,8,8" />
                         <Button Content="Open containing folder" Command="{Binding OpenContainingFolderCommand}" CommandParameter="{Binding SelectedAutorunEntry}" Margin="0,0,8,8" />
+                        <!-- #899(c): moves (never deletes) the target file into a timestamped
+                             quarantine folder - confirmed, and reversible via the action journal
+                             ("Owner-initiated cleanup" section, near the bottom of this tab). -->
+                        <Button Content="Quarantine this file" Style="{StaticResource DangerButton}" Command="{Binding QuarantineSelectedFileCommand}" CommandParameter="{Binding SelectedAutorunEntry}" Margin="0,0,8,8"
+                                ToolTip="Moves the file to Quarantine\&lt;timestamp&gt; under this app's own settings folder - never deletes it. Reversible from the action journal below." />
                         <!-- #841: on-demand hashing - computed only on click, never during a scan. -->
                         <Button Command="{Binding HashSelectedCommand}" CommandParameter="{Binding SelectedAutorunEntry}" Margin="0,0,8,8">
                             <TextBlock>
@@ -1613,6 +1618,439 @@
                             </DataGridTemplateColumn>
                         </DataGrid.Columns>
                     </DataGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- Round 20, #891-894: "Accounts and remote access". -->
+            <Border Margin="0,20,0,0" BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,1,0,0" Padding="0,16,0,0">
+                <StackPanel>
+                    <TextBlock Text="Accounts and remote access" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,4" />
+                    <TextBlock TextWrapping="Wrap" Margin="0,0,0,12" Foreground="{DynamicResource TextSecondaryBrush}"
+                               Text="Who can sign in, who's an administrator, and how remotely reachable this PC is." />
+
+                    <!-- #891: local account audit. -->
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Local account audit" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Command="{Binding ScanLocalAccountsCommand}">
+                            <TextBlock>
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="Scan accounts" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsScanningLocalAccounts}" Value="True">
+                                                <Setter Property="Text" Value="Scanning..." />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Button>
+                    </Grid>
+                    <TextBlock Text="{Binding LocalAccountsStatus}" TextWrapping="Wrap" Margin="0,4,0,8" Foreground="{DynamicResource TextSecondaryBrush}" />
+                    <DataGrid IsReadOnly="True" MaxHeight="200" Margin="0,0,0,16" ItemsSource="{Binding LocalAccounts}" AutoGenerateColumns="False">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="1.4*" />
+                            <DataGridCheckBoxColumn Header="Enabled" Binding="{Binding Enabled}" Width="70" />
+                            <DataGridCheckBoxColumn Header="Admin" Binding="{Binding IsAdministrator}" Width="60" />
+                            <DataGridCheckBoxColumn Header="Password required" Binding="{Binding PasswordRequired}" Width="120" />
+                            <DataGridCheckBoxColumn Header="Password expires" Binding="{Binding PasswordExpires}" Width="120" />
+                            <DataGridTemplateColumn Header="Hidden from sign-in screen" Width="180">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding IsHiddenFromSignInScreen}" VerticalAlignment="Center">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsHighValueCombination}" Value="True">
+                                                            <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                            <Setter Property="FontWeight" Value="SemiBold" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+
+                    <!-- #892: autologon credential exposure. -->
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Autologon credential exposure" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Command="{Binding CheckAutologonExposureCommand}">
+                            <TextBlock>
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="Check" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsCheckingAutologonExposure}" Value="True">
+                                                <Setter Property="Text" Value="Checking..." />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Button>
+                    </Grid>
+                    <TextBlock Text="{Binding AutologonExposureStatus}" TextWrapping="Wrap" Margin="0,4,0,4" Foreground="{DynamicResource TextSecondaryBrush}" />
+                    <TextBlock Margin="0,0,0,16" TextWrapping="Wrap" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}"
+                               Text="This app reads only WHETHER a DefaultPassword registry value exists, never the value itself - not here, not in any log." />
+
+                    <!-- #893: RDP exposure card. -->
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="RDP exposure" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Command="{Binding CheckRdpExposureCommand}">
+                            <TextBlock>
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="Check" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsCheckingRdpExposure}" Value="True">
+                                                <Setter Property="Text" Value="Checking..." />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Button>
+                    </Grid>
+                    <TextBlock Text="{Binding RdpExposureStatus}" TextWrapping="Wrap" Margin="0,4,0,4" Foreground="{DynamicResource TextSecondaryBrush}" />
+                    <Border Padding="10,8" Margin="0,0,0,4" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6"
+                            Visibility="{Binding RdpExposure, Converter={StaticResource NullToVisibilityConverter}}">
+                        <StackPanel>
+                            <TextBlock TextWrapping="Wrap"><Run Text="Shadow (remote control) setting: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding RdpExposure.ShadowDescription}" /></TextBlock>
+                            <TextBlock Margin="0,2,0,0" TextWrapping="Wrap"><Run Text="Restricted Admin mode disabled: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding RdpExposure.RestrictedAdminDisabled}" /></TextBlock>
+                            <TextBlock Margin="0,6,0,0" Text="{Binding RdpExposure.RemoteDesktopUsersMembers.Count, StringFormat=Remote Desktop Users members ({0}):}" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+                            <ItemsControl ItemsSource="{Binding RdpExposure.RemoteDesktopUsersMembers}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding}" FontSize="11.5" Margin="8,0,0,0" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </Border>
+                    <TextBlock Margin="0,0,0,16" />
+
+                    <!-- #894: sign-in and account-change timeline - Security event log, on-demand
+                         only, same gating as the Stability tab's own event-log scan. -->
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" TextWrapping="Wrap" VerticalAlignment="Center">
+                            <Run Text="Sign-in and account-change timeline" FontSize="13" FontWeight="SemiBold" />
+                            <LineBreak />
+                            <Run Text="Reads the Security event log directly - can be slow and is sometimes access-denied even elevated, depending on local audit policy. Last 30 days, capped at 200 events." FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        </TextBlock>
+                        <Button Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Top" Command="{Binding ScanSignInTimelineCommand}">
+                            <TextBlock>
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="Scan sign-in history" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsScanningSignInTimeline}" Value="True">
+                                                <Setter Property="Text" Value="Scanning..." />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Button>
+                    </Grid>
+                    <TextBlock Text="{Binding SignInTimelineStatus}" TextWrapping="Wrap" Margin="0,4,0,8" Foreground="{DynamicResource TextSecondaryBrush}" />
+                    <DataGrid IsReadOnly="True" MaxHeight="240" ItemsSource="{Binding SignInTimeline}" AutoGenerateColumns="False">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Time" Binding="{Binding Time, StringFormat=g}" Width="140" />
+                            <DataGridTextColumn Header="Event" Binding="{Binding EventType}" Width="1.2*" />
+                            <DataGridTextColumn Header="User" Binding="{Binding TargetUser}" Width="1*" />
+                            <DataGridTextColumn Header="Logon type" Binding="{Binding LogonType}" Width="1*" />
+                            <DataGridTextColumn Header="Source IP" Binding="{Binding SourceIp}" Width="1*" />
+                            <DataGridTextColumn Header="Summary" Binding="{Binding Summary}" Width="2.4*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- Round 20, #895-896: "Bloatware". -->
+            <Border Margin="0,20,0,0" BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,1,0,0" Padding="0,16,0,0">
+                <StackPanel>
+                    <TextBlock Text="Bloatware" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,4" />
+                    <TextBlock TextWrapping="Wrap" Margin="0,0,0,12" Foreground="{DynamicResource TextSecondaryBrush}"
+                               Text="Preinstalled/OEM software, tiered by a simple keyword heuristic - not a perfect classifier, and the 'driver-adjacent' tier is called out because removing it can break hardware, not because it's suspicious." />
+
+                    <!-- #895: preinstalled/OEM software inventory. -->
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Preinstalled/OEM software inventory" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Command="{Binding ScanBloatwareCommand}">
+                            <TextBlock>
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="Scan" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsScanningBloatware}" Value="True">
+                                                <Setter Property="Text" Value="Scanning..." />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Button>
+                    </Grid>
+                    <TextBlock Text="{Binding BloatwareScanStatus}" TextWrapping="Wrap" Margin="0,4,0,8" Foreground="{DynamicResource TextSecondaryBrush}" />
+                    <DataGrid IsReadOnly="True" MaxHeight="260" Margin="0,0,0,16" ItemsSource="{Binding BloatwareEntries}" AutoGenerateColumns="False">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="2*" />
+                            <DataGridTextColumn Header="Publisher" Binding="{Binding Publisher}" Width="1.2*" />
+                            <DataGridTemplateColumn Header="Tier" Width="180">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <Border CornerRadius="3" Padding="5,1" HorizontalAlignment="Left">
+                                            <Border.Style>
+                                                <Style TargetType="Border">
+                                                    <Setter Property="Background" Value="Transparent" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding Tier}" Value="DriverAdjacentDoNotRemove">
+                                                            <Setter Property="Background" Value="{DynamicResource WarningBrush}" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding Tier}" Value="Trialware">
+                                                            <Setter Property="Background" Value="{DynamicResource DangerBrush}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Border.Style>
+                                            <TextBlock Text="{Binding TierLabel}" FontSize="11.5" />
+                                        </Border>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTextColumn Header="Source" Binding="{Binding SourceLabel}" Width="1.2*" />
+                            <DataGridTextColumn Header="Installed" Binding="{Binding InstallDate, StringFormat=d}" Width="90" />
+                            <DataGridTextColumn Header="Size (KB)" Binding="{Binding EstimatedSizeKb}" Width="80" />
+                            <DataGridTextColumn Header="Uninstall string" Binding="{Binding UninstallString}" Width="2*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+
+                    <!-- #896: OEM service/task/startup cleanup guidance. -->
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" TextWrapping="Wrap" VerticalAlignment="Center">
+                            <Run Text="OEM cleanup guidance" FontSize="13" FontWeight="SemiBold" />
+                            <LineBreak />
+                            <Run Text="Cross-references the inventory above against currently installed services/scheduled tasks/startup entries by a simple name/publisher match. Disable routes through the SAME control this app's Services/Startup tabs already use - it never deletes anything." FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        </TextBlock>
+                        <Button Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Top" Command="{Binding ScanOemCleanupCommand}"
+                                ToolTip="Scan the Bloatware inventory above first - this button matches against it.">
+                            <TextBlock>
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="Find cleanup candidates" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsScanningOemCleanup}" Value="True">
+                                                <Setter Property="Text" Value="Scanning..." />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Button>
+                    </Grid>
+                    <TextBlock Text="{Binding OemCleanupStatus}" TextWrapping="Wrap" Margin="0,4,0,4" Foreground="{DynamicResource TextSecondaryBrush}" />
+                    <TextBlock Margin="0,0,0,8" TextWrapping="Wrap" FontSize="11.5" Foreground="{DynamicResource WarningBrush}"
+                               Text="DiagTrack (Connected User Experiences and Telemetry) and Customer Experience Improvement Program tasks are always shown here when present. Disabling them reduces SOME diagnostic data sent to Microsoft - Windows still collects other built-in telemetry regardless, so don't expect this to eliminate telemetry entirely." />
+                    <DataGrid IsReadOnly="True" MaxHeight="220" ItemsSource="{Binding OemCleanupCandidates}" AutoGenerateColumns="False">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="From" Binding="{Binding SourceName}" Width="1.6*" />
+                            <DataGridTextColumn Header="Kind" Binding="{Binding KindLabel}" Width="100" />
+                            <DataGridTextColumn Header="Target" Binding="{Binding TargetName}" Width="1.6*" />
+                            <DataGridCheckBoxColumn Header="Enabled" Binding="{Binding IsCurrentlyEnabled}" Width="70" />
+                            <DataGridTemplateColumn Header="Action" Width="90">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <Button Content="Disable" Padding="6,2"
+                                                Command="{Binding DataContext.DisableOemCleanupCandidateCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                CommandParameter="{Binding}" IsEnabled="{Binding IsCurrentlyEnabled}" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- Round 20, #897: browser hijack check. -->
+            <Border Margin="0,20,0,0" BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,1,0,0" Padding="0,16,0,0">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="Browser hijack check" FontSize="15" FontWeight="SemiBold" />
+                            <TextBlock TextWrapping="Wrap" Margin="0,4,0,0" Foreground="{DynamicResource TextSecondaryBrush}"
+                                       Text="Homepage/startup-pages/search-engine overrides per Chrome/Edge/Firefox profile, PLUS enterprise policy (force-installed extensions, policy homepage/proxy), native-messaging-host registrations, and an External Extensions file check. Policy-forced extensions on a home PC are the single clearest adware signature - shown as High severity whenever found." />
+                        </StackPanel>
+                        <Button Grid.Column="1" VerticalAlignment="Top" Margin="12,0,0,0" Style="{StaticResource PrimaryButton}" Command="{Binding ScanBrowserHijackCommand}">
+                            <TextBlock>
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="Scan" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsScanningBrowserHijack}" Value="True">
+                                                <Setter Property="Text" Value="Scanning..." />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Button>
+                    </Grid>
+                    <TextBlock Text="{Binding BrowserHijackScanStatus}" TextWrapping="Wrap" Margin="0,8,0,8" Foreground="{DynamicResource TextSecondaryBrush}" />
+                    <DataGrid IsReadOnly="True" MaxHeight="260" ItemsSource="{Binding BrowserHijackFindings}" AutoGenerateColumns="False">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Browser" Binding="{Binding Browser}" Width="90" />
+                            <DataGridTextColumn Header="Profile/scope" Binding="{Binding ProfileOrScope}" Width="1.2*" />
+                            <DataGridTextColumn Header="Category" Binding="{Binding Category}" Width="1.6*" />
+                            <DataGridTemplateColumn Header="Detail" Width="3*">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding Detail}" TextWrapping="Wrap" FontSize="11.5">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding Severity}" Value="High">
+                                                            <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding Severity}" Value="Medium">
+                                                            <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- Round 20, #899: owner-initiated cleanup workflow - restore-point opt-in +
+                 persistent action journal. The Persistence section's "Quarantine this file" button
+                 (above) and #882's firewall-rule Disable, plus #896's Disable buttons above, are
+                 the actions currently wired into this journal - see the report for exact coverage. -->
+            <Border Margin="0,20,0,0" BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,1,0,0" Padding="0,16,0,0">
+                <StackPanel>
+                    <TextBlock Text="Owner-initiated cleanup" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,4" />
+                    <TextBlock TextWrapping="Wrap" Margin="0,0,0,12" Foreground="{DynamicResource TextSecondaryBrush}"
+                               Text="A shared safety net for the change-making buttons on this tab: an opt-in System Restore point before a change, files moved (never shredded) into quarantine, and a persistent journal of what changed with Undo where that's meaningful." />
+
+                    <CheckBox Content="Create a System Restore point before the next change-making action" Margin="0,0,0,4"
+                              IsChecked="{Binding CreateRestorePointBeforeActions}"
+                              ToolTip="Runs Checkpoint-Computer (PowerShell) before Disable/Quarantine actions wired into this journal. System Restore can be off entirely on some machines - this degrades gracefully and never blocks the actual action." />
+                    <TextBlock Text="{Binding RestorePointStatus}" TextWrapping="Wrap" Margin="0,0,0,12" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+
+                    <TextBlock Text="Action journal" FontSize="13" FontWeight="SemiBold" Margin="0,0,0,4" />
+                    <TextBlock Margin="0,0,0,8" TextWrapping="Wrap" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}"
+                               Text="Persisted to security-actions.json - every Disable/Quarantine action recorded here can be undone by calling the exact same toggle method again with the opposite state, or (for a quarantined file) moving it back to its original path." />
+                    <DataGrid IsReadOnly="True" MaxHeight="240" ItemsSource="{Binding ActionJournal}" AutoGenerateColumns="False">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Time" Binding="{Binding TimestampUtc, StringFormat=g}" Width="140" />
+                            <DataGridTextColumn Header="Action" Binding="{Binding ActionDescription}" Width="2.4*" />
+                            <DataGridTextColumn Header="Target" Binding="{Binding Target}" Width="2*" />
+                            <DataGridTextColumn Header="State" Binding="{Binding StatusText}" Width="90" />
+                            <DataGridTemplateColumn Header="" Width="80">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <Button Content="Undo" Padding="6,2"
+                                                Command="{Binding DataContext.UndoJournalEntryCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                CommandParameter="{Binding}" IsEnabled="{Binding CanUndo}" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- Round 20, #900: second-opinion scanner launcher + evidence bundle. -->
+            <Border Margin="0,20,0,20" BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,1,0,0" Padding="0,16,0,0">
+                <StackPanel>
+                    <TextBlock Text="Second opinion and evidence bundle" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,4" />
+                    <TextBlock TextWrapping="Wrap" Margin="0,0,0,4" Foreground="{DynamicResource TextSecondaryBrush}"
+                               Text="A single AV/scanner disagreeing with another is not proof either way - these are link-outs to each tool's own official page only. This app never bundles, downloads, or runs any of them itself." />
+                    <TextBlock TextWrapping="Wrap" Margin="0,0,0,12" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}"
+                               Text="Microsoft Defender Offline is already built into this app - see the &quot;Run Defender Offline scan&quot; button in the Protection status section above, no outbound link needed for that one." />
+
+                    <ItemsControl ItemsSource="{Binding SecondOpinionTools}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Padding="8" Margin="0,0,0,6" CornerRadius="4" Background="{DynamicResource BgElevatedBrush}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Grid.Column="0">
+                                            <TextBlock FontWeight="SemiBold" FontSize="12.5" Text="{Binding Name}" />
+                                            <TextBlock FontSize="11.5" Margin="0,2,0,0" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" Text="{Binding GoodFor}" />
+                                        </StackPanel>
+                                        <Button Grid.Column="1" Content="Open" VerticalAlignment="Center" Margin="8,0,0,0"
+                                                Command="{Binding DataContext.OpenSecondOpinionToolCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                CommandParameter="{Binding}" />
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <Border BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,1,0,0" Padding="0,16,0,0" Margin="0,16,0,0">
+                        <StackPanel>
+                            <TextBlock Text="Build evidence bundle" FontSize="13" FontWeight="SemiBold" Margin="0,0,0,4" />
+                            <TextBlock TextWrapping="Wrap" Margin="0,0,0,8" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}"
+                                       Text="Writes out only what's already been loaded/run this session (the report, baseline diff, flagged-file hashes, event timelines already scanned above) into one timestamped folder, with a README.txt naming what was included vs. skipped, then opens it in Explorer. Nothing is uploaded or sent anywhere by this app." />
+                            <Button HorizontalAlignment="Left" Style="{StaticResource PrimaryButton}" Command="{Binding BuildEvidenceBundleCommand}">
+                                <TextBlock>
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Text" Value="Build evidence bundle" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsBuildingEvidenceBundle}" Value="True">
+                                                    <Setter Property="Text" Value="Building..." />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </Button>
+                            <TextBlock Text="{Binding EvidenceBundleStatus}" TextWrapping="Wrap" Margin="0,8,0,0" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        </StackPanel>
+                    </Border>
                 </StackPanel>
             </Border>
 

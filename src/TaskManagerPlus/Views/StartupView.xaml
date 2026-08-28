@@ -314,12 +314,43 @@
                             </TextBlock>
                         </Button>
                     </Grid>
-                    <DataGrid Height="220" ItemsSource="{Binding BrowserExtensions}" IsReadOnly="True">
+                    <!-- #898: permission-surface columns, sortable - "which extensions can read
+                         every page I visit" is sorting by "All URLs" descending. -->
+                    <DataGrid Height="240" ItemsSource="{Binding BrowserExtensions}" IsReadOnly="True">
                         <DataGrid.Columns>
-                            <DataGridTextColumn Header="Browser" Binding="{Binding Browser}" Width="100" />
-                            <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="3*" />
-                            <DataGridTextColumn Header="Version" Binding="{Binding Version}" Width="100" />
-                            <DataGridTextColumn Header="ID" Binding="{Binding Id}" Width="2*" />
+                            <DataGridTextColumn Header="Browser" Binding="{Binding Browser}" Width="90" />
+                            <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="2.2*" />
+                            <DataGridTextColumn Header="Version" Binding="{Binding Version}" Width="80" />
+                            <DataGridTemplateColumn Header="All URLs" Width="70" SortMemberPath="HasAllUrlsAccess">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock HorizontalAlignment="Center" VerticalAlignment="Center" Text="{Binding HasAllUrlsAccess, StringFormat={}{0}}">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding HasAllUrlsAccess}" Value="True">
+                                                            <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                            <Setter Property="FontWeight" Value="SemiBold" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTemplateColumn Header="Sensitive permissions" Width="1.6*">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock FontSize="11.5" TextWrapping="Wrap" Foreground="{DynamicResource WarningBrush}"
+                                                   Text="{Binding SensitivePermissionsText}" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTextColumn Header="Install source" Binding="{Binding InstallSource}" Width="1.6*" />
+                            <DataGridTextColumn Header="State" Binding="{Binding InstallSourceOrEnabledSummary}" Width="80" />
+                            <DataGridTextColumn Header="ID" Binding="{Binding Id}" Width="1.6*" />
                         </DataGrid.Columns>
                     </DataGrid>
                 </StackPanel>

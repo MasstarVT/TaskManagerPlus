@@ -271,6 +271,24 @@ public sealed class SecurityViewModel : ObservableObject
         ResetProxyAndWinsockCommand = new AsyncRelayCommand(ResetProxyAndWinsockAsync);
         ScanCertificateStoreCommand = new AsyncRelayCommand(ScanCertificateStoreAsync);
         OpenCertificateManagerCommand = new RelayCommand(_ => OpenCertificateManager());
+
+        // Round 20, #891-900.
+        ScanLocalAccountsCommand = new AsyncRelayCommand(ScanLocalAccountsAsync);
+        CheckAutologonExposureCommand = new AsyncRelayCommand(CheckAutologonExposureAsync);
+        CheckRdpExposureCommand = new AsyncRelayCommand(CheckRdpExposureAsync);
+        ScanSignInTimelineCommand = new AsyncRelayCommand(ScanSignInTimelineAsync);
+        ScanBloatwareCommand = new AsyncRelayCommand(ScanBloatwareAsync);
+        ScanOemCleanupCommand = new AsyncRelayCommand(ScanOemCleanupAsync, () => BloatwareEntries.Count > 0);
+        DisableOemCleanupCandidateCommand = new AsyncRelayCommand(param => DisableOemCleanupCandidateAsync(param as OemCleanupCandidate));
+        ScanBrowserHijackCommand = new AsyncRelayCommand(ScanBrowserHijackAsync);
+        QuarantineSelectedFileCommand = new RelayCommand(param => QuarantineSelectedFile(param as AutorunEntry));
+        UndoJournalEntryCommand = new AsyncRelayCommand(param => UndoJournalEntryAsync(param as SecurityActionJournalEntry));
+        OpenSecondOpinionToolCommand = new RelayCommand(param => OpenSecondOpinionTool(param as SecondOpinionTool));
+        BuildEvidenceBundleCommand = new AsyncRelayCommand(BuildEvidenceBundleAsync);
+
+        // #899(d): the journal is a small persisted list - loaded once up front like every other
+        // settings file this app reads at ViewModel construction time.
+        foreach (var entry in SecurityActionJournalService.Load()) ActionJournal.Add(entry);
     }
 
     /// <summary>#859/#860/#865/#866/#868/#869/#870: everything cheap enough to read on one click -
@@ -1190,11 +1208,23 @@ public sealed class SecurityViewModel : ObservableObject
         }
     }
 
+    /// <summary>#899: upgraded (Round 20) to ALSO record into the persistent action journal,
+    /// alongside the pre-existing session-only DisabledFirewallRuleNames/Undo list above (kept as-
+    /// is - either button re-enables the rule) - the item's own text names this specific action as
+    /// the one to demonstrate the journal pattern on.</summary>
     private async Task DisableFirewallRuleAsync(FirewallService.FirewallRuleInfo? rule)
     {
         if (rule is null) return;
+
+        await MaybeCreateRestorePointAsync($"Task Manager Plus - before disabling firewall rule \"{rule.Name}\"");
+
         var (success, output) = await Task.Run(() => FirewallService.DisableRule(rule.Name));
-        if (success && !DisabledFirewallRuleNames.Contains(rule.Name)) DisabledFirewallRuleNames.Add(rule.Name);
+        if (success)
+        {
+            if (!DisabledFirewallRuleNames.Contains(rule.Name)) DisabledFirewallRuleNames.Add(rule.Name);
+            RecordJournalEntry(SecurityActionKind.FirewallRuleDisable, $"Disabled firewall rule \"{rule.Name}\"", rule.Name,
+                SecurityActionJournalService.BuildFirewallUndoPayload(rule.Name));
+        }
         FirewallRuleScanStatus = success ? $"Disabled \"{rule.Name}\"." : $"Couldn't disable \"{rule.Name}\": {output}";
     }
 
@@ -1483,5 +1513,568 @@ public sealed class SecurityViewModel : ObservableObject
         {
             CertificateScanStatus = $"Couldn't open Certificate Manager: {ex.Message}";
         }
+    }
+
+    // ==================================================================================
+    // Round 20, #891-900 (the final chunk): "Accounts and remote access" (891-894),
+    // "Bloatware" (895-896), browser hijack check (897 - #898 lives on the Startup tab's
+    // existing browser-extensions grid instead, extending BrowserExtensionInfo/Service directly),
+    // the owner-initiated cleanup workflow (899: action journal + quarantine + restore-point
+    // opt-in), and the second-opinion scanner launcher + evidence bundle (900). Same on-demand,
+    // one-button-per-section, "quick flag not a verdict" discipline as every other section above.
+    // ==================================================================================
+
+    // #891: local account audit.
+    public ObservableCollection<LocalAccountInfo> LocalAccounts { get; } = new();
+    private bool _isScanningLocalAccounts;
+    public bool IsScanningLocalAccounts { get => _isScanningLocalAccounts; private set => SetProperty(ref _isScanningLocalAccounts, value); }
+    private string? _localAccountsStatus;
+    public string? LocalAccountsStatus { get => _localAccountsStatus; private set => SetProperty(ref _localAccountsStatus, value); }
+    public AsyncRelayCommand ScanLocalAccountsCommand { get; }
+
+    // #892: autologon credential exposure.
+    private AccountSecurityService.AutologonExposureInfo? _autologonExposure;
+    public AccountSecurityService.AutologonExposureInfo? AutologonExposure { get => _autologonExposure; private set => SetProperty(ref _autologonExposure, value); }
+    private bool _isCheckingAutologonExposure;
+    public bool IsCheckingAutologonExposure { get => _isCheckingAutologonExposure; private set => SetProperty(ref _isCheckingAutologonExposure, value); }
+    private string? _autologonExposureStatus;
+    public string? AutologonExposureStatus { get => _autologonExposureStatus; private set => SetProperty(ref _autologonExposureStatus, value); }
+    public AsyncRelayCommand CheckAutologonExposureCommand { get; }
+
+    // #893: RDP exposure card.
+    private AccountSecurityService.RdpExposureInfo? _rdpExposure;
+    public AccountSecurityService.RdpExposureInfo? RdpExposure { get => _rdpExposure; private set => SetProperty(ref _rdpExposure, value); }
+    private bool _isCheckingRdpExposure;
+    public bool IsCheckingRdpExposure { get => _isCheckingRdpExposure; private set => SetProperty(ref _isCheckingRdpExposure, value); }
+    private string? _rdpExposureStatus;
+    public string? RdpExposureStatus { get => _rdpExposureStatus; private set => SetProperty(ref _rdpExposureStatus, value); }
+    public AsyncRelayCommand CheckRdpExposureCommand { get; }
+
+    // #894: sign-in and account-change timeline - Security event log, on-demand only (an explicit
+    // "Scan sign-in history" button, never auto-run - same gating as StabilityViewModel's own
+    // event-log scan, per the item's own text).
+    public ObservableCollection<AccountSecurityService.SignInTimelineEvent> SignInTimeline { get; } = new();
+    private bool _isScanningSignInTimeline;
+    public bool IsScanningSignInTimeline { get => _isScanningSignInTimeline; private set => SetProperty(ref _isScanningSignInTimeline, value); }
+    private string? _signInTimelineStatus;
+    public string? SignInTimelineStatus { get => _signInTimelineStatus; private set => SetProperty(ref _signInTimelineStatus, value); }
+    public AsyncRelayCommand ScanSignInTimelineCommand { get; }
+
+    // #895: preinstalled/OEM software inventory.
+    public ObservableCollection<BloatwareEntry> BloatwareEntries { get; } = new();
+    private bool _isScanningBloatware;
+    public bool IsScanningBloatware { get => _isScanningBloatware; private set => SetProperty(ref _isScanningBloatware, value); }
+    private string? _bloatwareScanStatus;
+    public string? BloatwareScanStatus { get => _bloatwareScanStatus; private set => SetProperty(ref _bloatwareScanStatus, value); }
+    public AsyncRelayCommand ScanBloatwareCommand { get; }
+
+    // #896: OEM service/task/startup cleanup guidance - cross-referenced against #895's inventory
+    // above, so this button is enabled only once a bloatware scan has actually run.
+    public ObservableCollection<OemCleanupCandidate> OemCleanupCandidates { get; } = new();
+    private bool _isScanningOemCleanup;
+    public bool IsScanningOemCleanup { get => _isScanningOemCleanup; private set => SetProperty(ref _isScanningOemCleanup, value); }
+    private string? _oemCleanupStatus;
+    public string? OemCleanupStatus { get => _oemCleanupStatus; private set => SetProperty(ref _oemCleanupStatus, value); }
+    public AsyncRelayCommand ScanOemCleanupCommand { get; }
+    public AsyncRelayCommand DisableOemCleanupCandidateCommand { get; }
+
+    // #897: browser hijack check.
+    public ObservableCollection<BrowserHijackFinding> BrowserHijackFindings { get; } = new();
+    private bool _isScanningBrowserHijack;
+    public bool IsScanningBrowserHijack { get => _isScanningBrowserHijack; private set => SetProperty(ref _isScanningBrowserHijack, value); }
+    private string? _browserHijackScanStatus;
+    public string? BrowserHijackScanStatus { get => _browserHijackScanStatus; private set => SetProperty(ref _browserHijackScanStatus, value); }
+    public AsyncRelayCommand ScanBrowserHijackCommand { get; }
+
+    // #899: owner-initiated cleanup workflow - restore-point opt-in, quarantine, and the
+    // persistent action journal. Wired into: the Persistence grid's new "Quarantine this file"
+    // action, #882's firewall-rule Disable (upgraded from its prior session-only-Undo-list-only
+    // shape), and #896's new Service/Task/Startup Disable actions above - see the report for
+    // exactly which existing actions were and weren't retrofitted, per this item's own explicit
+    // "implemented-partially is fine" allowance.
+    public ObservableCollection<SecurityActionJournalEntry> ActionJournal { get; } = new();
+
+    private bool _createRestorePointBeforeActions;
+    public bool CreateRestorePointBeforeActions { get => _createRestorePointBeforeActions; set => SetProperty(ref _createRestorePointBeforeActions, value); }
+    private bool _isCreatingRestorePoint;
+    public bool IsCreatingRestorePoint { get => _isCreatingRestorePoint; private set => SetProperty(ref _isCreatingRestorePoint, value); }
+    private string? _restorePointStatus;
+    public string? RestorePointStatus { get => _restorePointStatus; private set => SetProperty(ref _restorePointStatus, value); }
+
+    public RelayCommand QuarantineSelectedFileCommand { get; }
+    public AsyncRelayCommand UndoJournalEntryCommand { get; }
+
+    // #900: second-opinion scanner launcher + evidence bundle.
+    public static IReadOnlyList<SecondOpinionTool> SecondOpinionTools { get; } = new List<SecondOpinionTool>
+    {
+        new() { Name = "Microsoft Safety Scanner", Url = "https://learn.microsoft.com/en-us/windows/security/operating-system-security/virus-and-threat-protection/microsoft-defender-antivirus/safety-scanner-download",
+                GoodFor = "A free, on-demand Microsoft scanner - a quick second opinion with nothing left installed afterward." },
+        new() { Name = "Sysinternals Autoruns", Url = "https://learn.microsoft.com/en-us/sysinternals/downloads/autoruns",
+                GoodFor = "The tool this app's own Persistence section is modeled after - good for cross-checking those results independently." },
+        new() { Name = "Sysinternals Process Explorer", Url = "https://learn.microsoft.com/en-us/sysinternals/downloads/process-explorer",
+                GoodFor = "A deeper per-process view (handles, DLLs, an optional VirusTotal check) than this app's Processes tab - good for chasing one specific suspicious process." },
+        new() { Name = "ESET Online Scanner", Url = "https://www.eset.com/us/home/online-scanner/",
+                GoodFor = "A free on-demand scan from a different AV engine than whatever's already installed." },
+        new() { Name = "Kaspersky Virus Removal Tool", Url = "https://www.kaspersky.com/downloads/free-virus-removal-tool",
+                GoodFor = "Another free on-demand scanner from a different engine - a third opinion if the first two disagree." },
+        new() { Name = "Malwarebytes", Url = "https://www.malwarebytes.com/",
+                GoodFor = "Strong at adware/PUP cleanup specifically - worth trying if the Bloatware/Browser hijack sections above found something." },
+    };
+    public RelayCommand OpenSecondOpinionToolCommand { get; }
+
+    private bool _isBuildingEvidenceBundle;
+    public bool IsBuildingEvidenceBundle { get => _isBuildingEvidenceBundle; private set => SetProperty(ref _isBuildingEvidenceBundle, value); }
+    private string? _evidenceBundleStatus;
+    public string? EvidenceBundleStatus { get => _evidenceBundleStatus; private set => SetProperty(ref _evidenceBundleStatus, value); }
+    public AsyncRelayCommand BuildEvidenceBundleCommand { get; }
+
+    /// <summary>#891.</summary>
+    private async Task ScanLocalAccountsAsync()
+    {
+        IsScanningLocalAccounts = true;
+        LocalAccountsStatus = null;
+        try
+        {
+            var (accounts, findings) = await Task.Run(AccountSecurityService.ReadLocalAccounts);
+            LocalAccounts.Clear();
+            foreach (var a in accounts) LocalAccounts.Add(a);
+            foreach (var f in findings) Findings.Add(f);
+
+            LocalAccountsStatus = accounts.Count == 0
+                ? "Couldn't read local accounts (WMI unavailable/denied)."
+                : $"{accounts.Count} local account(s) - {accounts.Count(a => a.IsAdministrator)} administrator(s), {accounts.Count(a => a.IsHiddenFromSignInScreen)} hidden from the sign-in screen. {findings.Count} new finding(s).";
+        }
+        catch (Exception ex)
+        {
+            LocalAccountsStatus = $"Scan failed: {ex.Message}";
+        }
+        finally
+        {
+            IsScanningLocalAccounts = false;
+        }
+    }
+
+    /// <summary>#892: presence-only - see AccountSecurityService.ReadAutologonExposure's remarks;
+    /// this method (and everything it calls) never reads the DefaultPassword value itself.</summary>
+    private async Task CheckAutologonExposureAsync()
+    {
+        IsCheckingAutologonExposure = true;
+        try
+        {
+            var (info, finding) = await Task.Run(AccountSecurityService.ReadAutologonExposure);
+            AutologonExposure = info;
+            if (finding is not null) Findings.Add(finding);
+
+            AutologonExposureStatus = info.Enabled
+                ? $"AutoAdminLogon is ON for \"{info.UserName}\"" + (info.DefaultPasswordPresent ? " - a DefaultPassword value IS present (value itself never read)." : " - no DefaultPassword value present.")
+                : "AutoAdminLogon is off.";
+        }
+        catch (Exception ex)
+        {
+            AutologonExposureStatus = $"Check failed: {ex.Message}";
+        }
+        finally
+        {
+            IsCheckingAutologonExposure = false;
+        }
+    }
+
+    /// <summary>#893: cross-links to #883's exposed-listener map (port 3389) and mentions #894's
+    /// sign-in timeline for failed-RDP-logon data, both per the item's own text.</summary>
+    private async Task CheckRdpExposureAsync()
+    {
+        IsCheckingRdpExposure = true;
+        try
+        {
+            var (info, finding) = await Task.Run(AccountSecurityService.ReadRdpExposure);
+            RdpExposure = info;
+            if (finding is not null) Findings.Add(finding);
+
+            bool listedAsExposed = ExposedListeners.Any(l => l.Connection.LocalPort == info.Port) || OtherListeners.Any(l => l.Connection.LocalPort == info.Port);
+            string exposureNote = listedAsExposed
+                ? $" Port {info.Port} shows up in the exposed-listener map above."
+                : ExposedListeners.Count == 0 && OtherListeners.Count == 0
+                    ? " (Run \"Scan exposed listeners\" above to cross-check whether this port is actually reachable.)"
+                    : $" Port {info.Port} did not show up in the exposed-listener map above.";
+
+            RdpExposureStatus = $"RDP: {(info.RdpEnabled switch { true => "Enabled", false => "Disabled", _ => "Unknown" })}, NLA: {(info.NlaRequired switch { true => "Required", false => "Not required", _ => "Unknown" })}, port {info.Port}, {info.RemoteDesktopUsersMembers.Count} member(s) of Remote Desktop Users.{exposureNote} Failed-RDP-logon data (LogonType RemoteInteractive) is available in the sign-in timeline below once scanned.";
+        }
+        catch (Exception ex)
+        {
+            RdpExposureStatus = $"Check failed: {ex.Message}";
+        }
+        finally
+        {
+            IsCheckingRdpExposure = false;
+        }
+    }
+
+    /// <summary>#894: the Security-log scan itself - expensive/access-denied-prone, so this is a
+    /// dedicated explicit button, never auto-run, matching StabilityViewModel's own event-log-scan
+    /// gating.</summary>
+    private async Task ScanSignInTimelineAsync()
+    {
+        IsScanningSignInTimeline = true;
+        SignInTimelineStatus = null;
+        try
+        {
+            var (events, logAvailable, findings) = await Task.Run(AccountSecurityService.ReadSignInTimeline);
+            SignInTimeline.Clear();
+            foreach (var e in events) SignInTimeline.Add(e);
+            foreach (var f in findings) Findings.Add(f);
+
+            SignInTimelineStatus = logAvailable
+                ? $"{events.Count} event(s) in the last 30 days. {findings.Count} new finding(s)."
+                : "No events found (or auditing may not be enabled for these event types) - the Security log can be unreadable even elevated if local audit policy doesn't log logon events at all.";
+        }
+        catch (Exception ex)
+        {
+            SignInTimelineStatus = $"Scan failed: {ex.Message}";
+        }
+        finally
+        {
+            IsScanningSignInTimeline = false;
+        }
+    }
+
+    /// <summary>#895.</summary>
+    private async Task ScanBloatwareAsync()
+    {
+        IsScanningBloatware = true;
+        BloatwareScanStatus = null;
+        try
+        {
+            var entries = await Task.Run(BloatwareInventoryService.Scan);
+            BloatwareEntries.Clear();
+            foreach (var e in entries) BloatwareEntries.Add(e);
+
+            int doNotRemove = entries.Count(e => e.Tier == BloatwareTier.DriverAdjacentDoNotRemove);
+            BloatwareScanStatus = $"{entries.Count} entries across the Uninstall registry, installed Store apps, and provisioned Store apps - {doNotRemove} tagged \"do not remove\" (driver-adjacent). Tiering is a simple keyword heuristic, not a perfect classifier.";
+        }
+        catch (Exception ex)
+        {
+            BloatwareScanStatus = $"Scan failed: {ex.Message}";
+        }
+        finally
+        {
+            IsScanningBloatware = false;
+        }
+    }
+
+    /// <summary>#896: cross-references the #895 inventory just scanned - requires that scan to
+    /// have already run (the button's CanExecute below enforces this).</summary>
+    private async Task ScanOemCleanupAsync()
+    {
+        IsScanningOemCleanup = true;
+        OemCleanupStatus = null;
+        try
+        {
+            var snapshot = BloatwareEntries.ToList();
+            // Task.Run (not a bare await) so the synchronous parts inside ScanAsync
+            // (ServiceController.GetServices(), StartupManagerService.Sample()) run off the UI
+            // thread too, not just the schtasks.exe call.
+            var candidates = await Task.Run(() => OemCleanupService.ScanAsync(snapshot));
+            OemCleanupCandidates.Clear();
+            foreach (var c in candidates) OemCleanupCandidates.Add(c);
+
+            OemCleanupStatus = $"{candidates.Count} candidate(s) matched against currently installed services/scheduled tasks/startup entries. Disable never deletes - it's reversible from here (Undo, below) or from the Services/Startup tab.";
+        }
+        catch (Exception ex)
+        {
+            OemCleanupStatus = $"Scan failed: {ex.Message}";
+        }
+        finally
+        {
+            IsScanningOemCleanup = false;
+        }
+    }
+
+    /// <summary>#896's Disable action - routes through the SAME existing control method the
+    /// Services/Startup tabs already use for that Kind, per the item's own explicit instruction.
+    /// Wired into #899's journal + opt-in restore point.</summary>
+    private async Task DisableOemCleanupCandidateAsync(OemCleanupCandidate? candidate)
+    {
+        if (candidate is null) return;
+
+        var confirm = MessageBox.Show(
+            $"Disable {candidate.KindLabel.ToLowerInvariant()} \"{candidate.TargetName}\"?\n\nThis flips it off the same way the Services/Startup tab's own Disable does - it is NEVER deleted, and can be re-enabled from that tab or from \"Undo\" in the action journal below.",
+            $"Disable {candidate.KindLabel}", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        await MaybeCreateRestorePointAsync($"Task Manager Plus - before disabling {candidate.KindLabel} \"{candidate.TargetName}\"");
+
+        switch (candidate.Kind)
+        {
+            case OemCleanupKind.Service:
+            {
+                var (success, previous, error) = await Task.Run(() => ServiceControlService.SetStartupType(candidate.TargetName, "disabled"));
+                if (success)
+                    RecordJournalEntry(SecurityActionKind.ServiceDisable, $"Disabled service \"{candidate.TargetName}\" ({candidate.SourceName})", candidate.TargetName,
+                        SecurityActionJournalService.BuildServiceUndoPayload(candidate.TargetName, previous));
+                OemCleanupStatus = success ? $"Disabled service \"{candidate.TargetName}\"." : $"Couldn't disable \"{candidate.TargetName}\": {error}";
+                break;
+            }
+            case OemCleanupKind.ScheduledTask:
+            {
+                var (success, error) = await ScheduledTaskService.SetEnabledAsync(candidate.TargetName, false);
+                if (success)
+                    RecordJournalEntry(SecurityActionKind.ScheduledTaskDisable, $"Disabled scheduled task \"{candidate.TargetName}\" ({candidate.SourceName})", candidate.TargetName,
+                        SecurityActionJournalService.BuildScheduledTaskUndoPayload(candidate.TargetName));
+                OemCleanupStatus = success ? $"Disabled scheduled task \"{candidate.TargetName}\"." : $"Couldn't disable \"{candidate.TargetName}\": {error}";
+                break;
+            }
+            case OemCleanupKind.StartupItem:
+            {
+                if (candidate.StartupItemRef is null) { OemCleanupStatus = "Couldn't disable - missing startup item reference (re-scan and try again)."; break; }
+                var (success, error) = StartupManagerService.SetEnabled(candidate.StartupItemRef, false);
+                if (success)
+                    RecordJournalEntry(SecurityActionKind.StartupItemDisable, $"Disabled startup item \"{candidate.TargetName}\" ({candidate.SourceName})", candidate.TargetName,
+                        SecurityActionJournalService.BuildStartupItemUndoPayload(candidate.StartupItemRef.Name, candidate.StartupItemRef.Source.ToString(), candidate.StartupItemRef.Command));
+                OemCleanupStatus = success ? $"Disabled startup item \"{candidate.TargetName}\"." : $"Couldn't disable \"{candidate.TargetName}\": {error}";
+                break;
+            }
+        }
+    }
+
+    /// <summary>#897.</summary>
+    private async Task ScanBrowserHijackAsync()
+    {
+        IsScanningBrowserHijack = true;
+        BrowserHijackScanStatus = null;
+        try
+        {
+            var (findings, securityFindings) = await Task.Run(BrowserHijackCheckService.Scan);
+            BrowserHijackFindings.Clear();
+            foreach (var f in findings) BrowserHijackFindings.Add(f);
+            foreach (var f in securityFindings) Findings.Add(f);
+
+            bool anyForced = findings.Any(f => f.Category.Contains("Force-installed", StringComparison.OrdinalIgnoreCase) || f.Category.Contains("External Extensions", StringComparison.OrdinalIgnoreCase));
+            BrowserHijackScanStatus = $"{findings.Count} item(s) checked across Chrome/Edge/Firefox profiles and policy. {securityFindings.Count} new finding(s)."
+                + (anyForced ? " Policy-forced extensions were found - the single clearest adware signature on a home PC, worth a close look." : string.Empty);
+        }
+        catch (Exception ex)
+        {
+            BrowserHijackScanStatus = $"Scan failed: {ex.Message}";
+        }
+        finally
+        {
+            IsScanningBrowserHijack = false;
+        }
+    }
+
+    /// <summary>#899(a): opt-in only, never blocks the actual action on success/failure - see
+    /// RestorePointService's remarks. Called before each journal-wired Disable action below.</summary>
+    private async Task MaybeCreateRestorePointAsync(string description)
+    {
+        if (!CreateRestorePointBeforeActions) return;
+        IsCreatingRestorePoint = true;
+        try
+        {
+            var (success, error) = await RestorePointService.TryCreateRestorePointAsync(description);
+            RestorePointStatus = success ? $"Restore point created ({DateTime.Now:t})." : $"Couldn't create a restore point (continuing anyway): {error}";
+        }
+        finally
+        {
+            IsCreatingRestorePoint = false;
+        }
+    }
+
+    /// <summary>#899(d).</summary>
+    private void RecordJournalEntry(SecurityActionKind kind, string description, string target, string? undoPayload)
+    {
+        var entry = new SecurityActionJournalEntry { Kind = kind, ActionDescription = description, Target = target, UndoPayload = undoPayload };
+        var updated = SecurityActionJournalService.Append(ActionJournal.ToList(), entry);
+        ActionJournal.Clear();
+        foreach (var e in updated) ActionJournal.Add(e);
+    }
+
+    /// <summary>#899(c): "Quarantine this file" - confirmed, moves (never deletes) the selected
+    /// persistence entry's target file, then records a reversible journal entry.</summary>
+    private void QuarantineSelectedFile(AutorunEntry? entry)
+    {
+        entry ??= SelectedAutorunEntry;
+        if (entry is null || string.IsNullOrWhiteSpace(entry.ResolvedPath))
+        {
+            StatusMessage = "Select a persistence entry with a resolvable file path first.";
+            return;
+        }
+        if (!File.Exists(entry.ResolvedPath))
+        {
+            StatusMessage = "Target file couldn't be found on disk.";
+            return;
+        }
+
+        var confirm = MessageBox.Show(
+            $"Move \"{entry.ResolvedPath}\" to a timestamped quarantine folder under this app's own settings folder?\n\nThe file is MOVED, never deleted - use \"Undo\" in the action journal below to move it back.",
+            "Quarantine this file", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        var (success, quarantinePath, error) = QuarantineService.Quarantine(entry.ResolvedPath);
+        if (success && quarantinePath is not null)
+        {
+            RecordJournalEntry(SecurityActionKind.FileQuarantine, $"Quarantined \"{entry.Name}\"", entry.ResolvedPath,
+                SecurityActionJournalService.BuildQuarantineUndoPayload(quarantinePath, entry.ResolvedPath));
+            StatusMessage = $"Quarantined to {quarantinePath}.";
+        }
+        else
+        {
+            StatusMessage = $"Quarantine failed: {error}";
+        }
+    }
+
+    /// <summary>#899(d): re-enables a disabled service/task/startup item/firewall rule by calling
+    /// the SAME toggle method again with the opposite state, or moves a quarantined file back.</summary>
+    private async Task UndoJournalEntryAsync(SecurityActionJournalEntry? entry)
+    {
+        if (entry is null || !entry.CanUndo) return;
+        var payload = SecurityActionJournalService.ParseUndoPayload(entry.UndoPayload);
+        if (payload is null) { StatusMessage = "This entry has no undo information."; return; }
+
+        bool success;
+        string? error = null;
+        try
+        {
+            switch (entry.Kind)
+            {
+                case SecurityActionKind.FirewallRuleDisable:
+                {
+                    var r = await Task.Run(() => FirewallService.EnableRule(payload["ruleName"]));
+                    success = r.Success; error = r.Output;
+                    if (success) DisabledFirewallRuleNames.Remove(payload["ruleName"]);
+                    break;
+                }
+                case SecurityActionKind.ServiceDisable:
+                {
+                    var r = await Task.Run(() => ServiceControlService.SetStartupType(payload["serviceName"], payload["previousStartType"]));
+                    success = r.Success; error = r.Error;
+                    break;
+                }
+                case SecurityActionKind.ScheduledTaskDisable:
+                {
+                    var r = await ScheduledTaskService.SetEnabledAsync(payload["taskName"], true);
+                    success = r.Success; error = r.Error;
+                    break;
+                }
+                case SecurityActionKind.StartupItemDisable:
+                {
+                    var startupItem = new Models.StartupItem
+                    {
+                        Name = payload["name"],
+                        Command = payload["command"],
+                        Source = Enum.TryParse<Models.StartupSource>(payload["source"], out var src) ? src : Models.StartupSource.RegistryRunHkcu,
+                    };
+                    var r = StartupManagerService.SetEnabled(startupItem, true);
+                    success = r.Success; error = r.Error;
+                    break;
+                }
+                case SecurityActionKind.FileQuarantine:
+                {
+                    var r = QuarantineService.Restore(payload["quarantinePath"], payload["originalPath"]);
+                    success = r.Success; error = r.Error;
+                    break;
+                }
+                default:
+                    success = false;
+                    error = "This action type can't be undone from here.";
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            success = false;
+            error = ex.Message;
+        }
+
+        if (success)
+        {
+            var updated = SecurityActionJournalService.MarkUndone(ActionJournal.ToList(), entry.Id);
+            ActionJournal.Clear();
+            foreach (var e in updated) ActionJournal.Add(e);
+            StatusMessage = $"Undone: {entry.ActionDescription}";
+        }
+        else
+        {
+            StatusMessage = $"Undo failed: {error}";
+        }
+    }
+
+    /// <summary>#900: link-out only - never bundles/downloads/runs any third-party tool itself.</summary>
+    private void OpenSecondOpinionTool(SecondOpinionTool? tool)
+    {
+        if (tool is null) return;
+        try
+        {
+            Process.Start(new ProcessStartInfo(tool.Url) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Couldn't open browser: {ex.Message}";
+        }
+    }
+
+    /// <summary>#900: writes out only what's ALREADY been loaded/computed this session - never
+    /// re-triggers an expensive scan just to build the bundle - then opens the folder in Explorer.</summary>
+    private async Task BuildEvidenceBundleAsync()
+    {
+        IsBuildingEvidenceBundle = true;
+        EvidenceBundleStatus = null;
+        try
+        {
+            var sections = new List<EvidenceBundleService.Section>
+            {
+                new("security-report.md", "Redacted security posture report (#805)",
+                    AutorunEntries.Count > 0 || Findings.Count > 0 ? SecurityReportService.BuildMarkdownReport(AutorunEntries, Findings, RedactReport) : null),
+                new("autoruns-baseline-diff.txt", "Autoruns baseline diff (#803)",
+                    BaselineAdded.Count + BaselineRemoved.Count + BaselineChanged.Count > 0 ? BuildBaselineDiffText() : null),
+                new("flagged-file-hashes.txt", "Flagged-file hashes (#841)", HashAllFlaggedResult),
+                new("platform-security-summary.txt", "Platform security summary + CodeIntegrity events (#871/#873)",
+                    PlatformSecurity is not null ? BuildPlatformSecuritySummaryText() : null),
+                new("defender-scan-history.txt", "Defender scan history events (#861)", ScanHistoryTimeline.Count > 0 ? BuildDefenderTimelineText(ScanHistoryTimeline) : null),
+                new("defender-threat-events.txt", "Defender threat detection events (#862)", ThreatEventTimeline.Count > 0 ? BuildDefenderTimelineText(ThreatEventTimeline) : null),
+                new("defender-asr-events.txt", "Defender ASR block/audit events (#867)", AsrEventTimeline.Count > 0 ? BuildDefenderTimelineText(AsrEventTimeline) : null),
+                new("sign-in-timeline.txt", "Sign-in and account-change timeline (#894)", SignInTimeline.Count > 0 ? BuildSignInTimelineText() : null),
+            };
+
+            var (success, folderPath, error) = await Task.Run(() => EvidenceBundleService.BuildBundle(sections));
+            EvidenceBundleStatus = success ? $"Evidence bundle built at {folderPath} (opened in Explorer)." : $"Couldn't build evidence bundle: {error}";
+        }
+        finally
+        {
+            IsBuildingEvidenceBundle = false;
+        }
+    }
+
+    private static string BuildDefenderTimelineText(IEnumerable<DefenderService.DefenderTimelineEvent> events)
+        => string.Join(Environment.NewLine, events.Select(e => $"{e.Time:yyyy-MM-dd HH:mm:ss}  [{e.EventId}] {e.EventType} - {e.Summary}"));
+
+    private string BuildSignInTimelineText()
+        => string.Join(Environment.NewLine, SignInTimeline.Select(e => $"{e.Time:yyyy-MM-dd HH:mm:ss}  [{e.EventId}] {e.EventType} - {e.Summary}"));
+
+    private string BuildBaselineDiffText()
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"Added ({BaselineAdded.Count}):");
+        foreach (var e in BaselineAdded) sb.AppendLine($"  {e.Name} - {e.Location}");
+        sb.AppendLine();
+        sb.AppendLine($"Removed ({BaselineRemoved.Count}):");
+        foreach (var e in BaselineRemoved) sb.AppendLine($"  {e.Name} - {e.Location}");
+        sb.AppendLine();
+        sb.AppendLine($"Changed ({BaselineChanged.Count}):");
+        foreach (var e in BaselineChanged) sb.AppendLine($"  {e.Name} - {e.Location}");
+        return sb.ToString();
+    }
+
+    private string BuildPlatformSecuritySummaryText()
+    {
+        var sb = new StringBuilder();
+        var info = PlatformSecurity!;
+        sb.AppendLine($"HVCI: running={info.Hvci.RunningText}, configured={info.Hvci.ConfiguredText} - {info.Hvci.ReasonText}");
+        if (info.Hvci.BlockingDriverNames.Count > 0) sb.AppendLine($"  Blocking driver(s): {string.Join(", ", info.Hvci.BlockingDriverNames)}");
+        sb.AppendLine($"LSA protection (RunAsPPL): {info.LsaProtection.RunAsPPLText} (boot: {info.LsaProtection.RunAsPPLBootText})");
+        sb.AppendLine();
+        sb.AppendLine($"Related CodeIntegrity/Operational events ({info.LsaProtection.RelatedEvents.Count}, log available: {info.LsaProtection.EventLogAvailable}):");
+        foreach (var e in info.LsaProtection.RelatedEvents)
+            sb.AppendLine($"  {e.Time:yyyy-MM-dd HH:mm:ss}  [{e.EventId}] {e.Summary}");
+        return sb.ToString();
     }
 }
