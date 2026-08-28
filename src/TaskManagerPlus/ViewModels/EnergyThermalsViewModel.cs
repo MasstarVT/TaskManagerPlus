@@ -40,6 +40,15 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
     public bool SensorsAvailable => _sensors.IsAvailable;
 
     public ObservableCollection<SensorReading> Temperatures { get; } = new();
+
+    // #450: DDR5-era on-module DIMM temperature sensors, pulled out of the generic Temperatures
+    // list above into their own section - LibreHardwareMonitorLib reports these (when the
+    // chipset/board exposes them at all) under HardwareType.Memory the same way every other
+    // sensor here is bucketed by hardware type; most systems report none at all (this needs
+    // vendor SMBus/SPD support LibreHardwareMonitorLib doesn't have for every chipset), so the
+    // whole section is hidden entirely rather than shown empty - see EnergyThermalsView.xaml.
+    public ObservableCollection<SensorReading> MemoryTemperatures { get; } = new();
+
     public ObservableCollection<SensorReading> Fans { get; } = new();
     public ObservableCollection<SensorReading> Voltages { get; } = new();
     public ObservableCollection<SensorReading> Wattages { get; } = new();
@@ -500,6 +509,12 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         // RPM is a normal, real reading for a semi-passive fan that's stopped at idle.
         var tempReadings = readings.Where(r => r.Type == SensorType.Temperature && HasNonZeroReading(r)).ToList();
         Replace(Temperatures, tempReadings.Select(WithSessionBaseline));
+
+        // #450: DIMM temperature sensors - a highlighted subset of Temperatures above (same
+        // "still in the full list too" pattern the CPU/motherboard/GPU headline tiles already
+        // use), restricted to HardwareType.Memory so a CPU/GPU sensor merely named "Memory" or
+        // "RAM" can't collide with this lookup.
+        Replace(MemoryTemperatures, tempReadings.Where(r => r.HardwareType == HardwareType.Memory).Select(WithSessionBaseline));
 
         var fanReadings = readings.Where(r => r.Type == SensorType.Fan && r.Value.HasValue).ToList();
         Replace(Fans, fanReadings);

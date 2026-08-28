@@ -321,6 +321,32 @@ public sealed class MemoryViewModel : ObservableObject, IDisposable
 
     public bool HasCompressedStoreData => CompressedStoreGb.HasValue;
 
+    // #452: quick in-app memory pattern test - allocates PatternTestSizeMb of unmanaged RAM and
+    // runs a walking-pattern write/verify pass over it (MemoryPatternTestService). Explicitly a
+    // far weaker check than a boot-time tool (#448's launcher): it can only touch pageable
+    // user-mode memory the OS hands this one process, so it never runs unattended/automatically -
+    // same confirm-first pattern as the #435 purge actions above, since a multi-gigabyte
+    // allocation can itself put real memory pressure on the system while it runs.
+    private CancellationTokenSource? _patternTestCts;
+
+    private double _patternTestSizeMb = 512;
+    public double PatternTestSizeMb { get => _patternTestSizeMb; set => SetProperty(ref _patternTestSizeMb, Math.Clamp(value, 16, 65536)); }
+
+    private bool _isPatternTestRunning;
+    public bool IsPatternTestRunning { get => _isPatternTestRunning; private set => SetProperty(ref _isPatternTestRunning, value); }
+
+    private double _patternTestProgressPercent;
+    public double PatternTestProgressPercent { get => _patternTestProgressPercent; private set => SetProperty(ref _patternTestProgressPercent, value); }
+
+    private string? _patternTestStatusText;
+    public string? PatternTestStatusText { get => _patternTestStatusText; private set => SetProperty(ref _patternTestStatusText, value); }
+
+    private bool _patternTestFailed;
+    public bool PatternTestFailed { get => _patternTestFailed; private set => SetProperty(ref _patternTestFailed, value); }
+
+    public AsyncRelayCommand StartPatternTestCommand { get; }
+    public RelayCommand AbortPatternTestCommand { get; }
+
     public MemoryViewModel(PerformanceViewModel performance, ProcessesViewModel processes, LeakWatchViewModel leakWatch, ProcessHistoryService processHistory)
     {
         Performance = performance;
@@ -450,6 +476,10 @@ public sealed class MemoryViewModel : ObservableObject, IDisposable
             "Empty working sets",
             "This trims every running process's working set down to the minimum right now - reported per-process RAM usage will drop immediately, but every process will take a burst of page faults refilling its working set as it keeps running, which can make things feel briefly sluggish.\n\nContinue?",
             MemoryListPurgeService.EmptyWorkingSets), () => !IsPurgingMemoryList);
+
+        // #452
+        StartPatternTestCommand = new AsyncRelayCommand(RunPatternTestAsync, () => !IsPatternTestRunning);
+        AbortPatternTestCommand = new RelayCommand(_ => _patternTestCts?.Cancel(), _ => IsPatternTestRunning);
 
         _leakGrowthTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = LeakGrowthRefreshInterval };
         _leakGrowthTimer.Tick += (_, _) => RefreshLeakGrowthProjections();
@@ -1026,6 +1056,53 @@ public sealed class MemoryViewModel : ObservableObject, IDisposable
         finally
         {
             IsPurgingMemoryList = false;
+        }
+    }
+
+    /// <summary>#452: confirms (a multi-gigabyte allocation is real memory pressure while it
+    /// runs, the same tradeoff #435's purge actions warn about), then allocates PatternTestSizeMb
+    /// and runs MemoryPatternTestService's walking-pattern write/verify pass, reporting progress
+    /// back via a captured-UI-thread Progress&lt;T&gt; so PatternTestProgressPercent/StatusText
+    /// update live without any manual Dispatcher.Invoke plumbing.</summary>
+    private async Task RunPatternTestAsync()
+    {
+        long sizeBytes = (long)(PatternTestSizeMb * 1024.0 * 1024.0);
+        var confirm = MessageBox.Show(
+            $"This allocates {PatternTestSizeMb:0} MB of RAM and writes/verifies a test pattern across it - a real, temporary increase in memory pressure while it runs (and slower than a boot-time test, since it can only touch pageable user memory the OS is willing to hand this one process; far weaker than Windows Memory Diagnostic).\n\nContinue?",
+            "Run memory pattern test", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        _patternTestCts = new CancellationTokenSource();
+        IsPatternTestRunning = true;
+        PatternTestFailed = false;
+        PatternTestProgressPercent = 0;
+        PatternTestStatusText = "Starting…";
+        AbortPatternTestCommand.RaiseCanExecuteChanged();
+
+        var progress = new Progress<MemoryPatternTestProgress>(p =>
+        {
+            PatternTestProgressPercent = p.PercentComplete;
+            PatternTestStatusText = p.StatusText;
+        });
+
+        try
+        {
+            var result = await MemoryPatternTestService.RunAsync(sizeBytes, progress, _patternTestCts.Token);
+            PatternTestFailed = !result.Passed;
+            PatternTestProgressPercent = result.Completed ? 100 : PatternTestProgressPercent;
+            PatternTestStatusText = result.StatusText;
+        }
+        catch (Exception ex)
+        {
+            PatternTestFailed = true;
+            PatternTestStatusText = $"Test failed: {ex.Message}";
+        }
+        finally
+        {
+            IsPatternTestRunning = false;
+            _patternTestCts?.Dispose();
+            _patternTestCts = null;
+            AbortPatternTestCommand.RaiseCanExecuteChanged();
         }
     }
 

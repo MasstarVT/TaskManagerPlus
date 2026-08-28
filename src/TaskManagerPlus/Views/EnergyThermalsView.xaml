@@ -364,6 +364,44 @@
                 </ItemsControl.ItemTemplate>
             </ItemsControl>
 
+            <!-- #450: DIMM temperature sensors - hidden entirely when none are reported (most
+                 systems, since this needs vendor SMBus/SPD support LibreHardwareMonitorLib doesn't
+                 have for every chipset - see EnergyThermalsViewModel.MemoryTemperatures). -->
+            <StackPanel>
+                <StackPanel.Style>
+                    <Style TargetType="StackPanel">
+                        <Setter Property="Visibility" Value="Visible" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding MemoryTemperatures.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </StackPanel.Style>
+                <TextBlock Text="DIMM temperatures" Style="{StaticResource SubStat}" Margin="0,0,0,10" />
+                <ItemsControl ItemsSource="{Binding MemoryTemperatures}" Margin="0,0,0,16">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <views:VfdMeter Title="{Binding SensorName}" Glow="False" Width="172" Margin="0,0,8,8"
+                                            Percent="{Binding Value, TargetNullValue=0}"
+                                            ValueText="{Binding Value, StringFormat={}{0:0.#}, TargetNullValue=–}" Unit="°C"
+                                            AccentBrush="{Binding Value, Converter={StaticResource TemperatureToBrushConverter}}">
+                                <views:VfdMeter.SubText>
+                                    <MultiBinding StringFormat="{}{0} • {1:0}–{2:0}°C session">
+                                        <Binding Path="HardwareName" />
+                                        <Binding Path="SessionMin" />
+                                        <Binding Path="SessionMax" />
+                                    </MultiBinding>
+                                </views:VfdMeter.SubText>
+                            </views:VfdMeter>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
+
             <!-- Fans -->
             <TextBlock Text="Fans" Style="{StaticResource SubStat}" Margin="0,0,0,10" />
             <ItemsControl ItemsSource="{Binding Fans}" Margin="0,0,0,16">

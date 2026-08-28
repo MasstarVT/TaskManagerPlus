@@ -5,6 +5,10 @@
     <TargetFramework>net8.0-windows</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- #452: MemoryPatternTestService uses NativeMemory.Alloc + pointer-based Span<byte> access
+         over an unmanaged allocation (so a multi-gigabyte pattern-test request isn't capped by
+         .NET's ~2 GB single managed-object limit) - the only unsafe code in this project. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <UseWPF>true</UseWPF>
     <!-- Round 12, #85: System tray icon (System.Windows.Forms.NotifyIcon) - WPF has no tray-icon
          API of its own; UseWindowsForms pulls in the WinForms subset of the Windows Desktop

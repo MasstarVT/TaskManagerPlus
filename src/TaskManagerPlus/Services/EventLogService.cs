@@ -54,6 +54,7 @@ public sealed class EventLogService
         var lastCrash = events.Where(e => crashLikeIds.Contains(e.EventId)).OrderByDescending(e => e.TimeCreated).FirstOrDefault();
 
         var (lowMemCount, lowMemLast) = ReadLowMemoryEvents();
+        var correctedMemoryErrors = ReadCorrectedMemoryErrors();
 
         return new StabilitySnapshot
         {
@@ -69,7 +70,211 @@ public sealed class EventLogService
             LastLowMemoryEvent = lowMemLast,
             PoolExhaustionEvents = ReadPoolExhaustionEvents(),
             OutOfMemoryIncidents = ReadOutOfMemoryIncidents(),
+            // #447: corrected-memory-error events - also read independently (this same method) by
+            // SystemSpecsService for the System Specs memory section, so the two tabs' figures stay
+            // in sync without SystemSpecsViewModel needing a reference to StabilityViewModel.
+            CorrectedMemoryErrorCount = correctedMemoryErrors.Count,
+            LastCorrectedMemoryError = correctedMemoryErrors.Count > 0 ? correctedMemoryErrors[0].TimeCreated : null,
+            CorrectedMemoryErrors = correctedMemoryErrors,
+            // #451: memory-related bugcheck count, for the Stability tab's own display and for
+            // SystemSpecsViewModel's RAM health rollup (read independently there too, same reasoning).
+            MemoryRelatedBugcheckCount = CountMemoryRelatedBugchecks(events),
         };
+    }
+
+    // #451: the subset of BugcheckCodeLookup's known STOP codes that point specifically at RAM/
+    // memory-management failures rather than a driver/software fault - MEMORY_MANAGEMENT,
+    // PFN_LIST_CORRUPT, PAGE_FAULT_IN_NONPAGED_AREA, the two INPAGE_ERROR codes (disk-adjacent but
+    // triggered by a failed page-in, which a bad DIMM can cause), and WHEA_UNCORRECTABLE_ERROR
+    // (the uncorrected counterpart to the corrected-error events read above).
+    private static readonly HashSet<uint> MemoryRelatedBugcheckCodes = new()
+    {
+        0x0000001A, 0x0000004E, 0x00000050, 0x00000077, 0x0000007A, 0x00000124,
+    };
+
+    private static int CountMemoryRelatedBugchecks(List<StabilityEvent> events)
+    {
+        int count = 0;
+        foreach (var e in events)
+        {
+            if (e.BugcheckCode is not { } code) continue;
+            if (IsMemoryRelatedBugcheckHex(code)) count++;
+        }
+        return count;
+    }
+
+    private static bool IsMemoryRelatedBugcheckHex(string code)
+    {
+        string hex = code.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? code[2..] : code;
+        return uint.TryParse(hex, System.Globalization.NumberStyles.HexNumber, System.Globalization.CultureInfo.InvariantCulture, out uint parsed)
+            && MemoryRelatedBugcheckCodes.Contains(parsed);
+    }
+
+    /// <summary>#451: dedicated, lightweight count of Kernel-Power 41 events whose extracted
+    /// bugcheck code falls in MemoryRelatedBugcheckCodes - reads just the System log's own
+    /// Kernel-Power 41 entries (not the full dual-log Query() scan), so SystemSpecsService's RAM
+    /// health rollup can call this independently of the Stability tab, the same "public, targeted,
+    /// no ViewModel coupling" shape as ReadCorrectedMemoryErrors/ReadMemoryDiagnosticResult above.</summary>
+    public int ReadMemoryRelatedBugcheckCount()
+    {
+        int count = 0;
+        try
+        {
+            long maxAgeMs = LookbackDays * 24L * 60 * 60 * 1000;
+            var query = new EventLogQuery("System", PathType.LogName,
+                $"*[System[(EventID={KernelPowerEventId}) and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]")
+            {
+                ReverseDirection = true,
+            };
+
+            using var reader = new EventLogReader(query);
+            int scanned = 0;
+            const int maxEvents = 200;
+            while (scanned < maxEvents && reader.ReadEvent() is { } record)
+            {
+                using (record)
+                {
+                    scanned++;
+                    var code = ExtractBugcheckCode(record);
+                    if (code is not null && IsMemoryRelatedBugcheckHex(code)) count++;
+                }
+            }
+        }
+        catch
+        {
+            // Log unavailable/access denied - degrade to 0, same as every other targeted query here.
+        }
+        return count;
+    }
+
+    // #447: Microsoft-Windows-WHEA-Logger event ID 47 - "A corrected hardware error has occurred",
+    // Windows' own corrected-ECC-memory-error log entry (Reliability Monitor reads the same
+    // provider/event for its own memory-error reporting). DIMM/physical-address hints are a
+    // best-effort regex over the event's own formatted message text - WHEA's message layout isn't
+    // a documented, versioned contract (the same caveat ExtractBugcheckCode already carries for a
+    // different event), so both stay null when the message doesn't match a recognized shape.
+    private const string WheaLoggerProvider = "Microsoft-Windows-WHEA-Logger";
+    private const int CorrectedMemoryErrorEventId = 47;
+    private const int MaxCorrectedMemoryErrorsReturned = 100;
+
+    private static readonly Regex PhysicalAddressRegex = new(@"Physical\s*Address:\s*(0x[0-9A-Fa-f]+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex DimmHintRegex = new(@"(DIMM\s*[0-9A-Za-z]+|Memory Module:\s*[^\r\n]+|Channel:\s*[0-9A-Za-z]+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    /// <summary>Public (not just Query()'s private use) so SystemSpecsService can read the same
+    /// figure independently for the System Specs memory section (#447) without depending on
+    /// StabilityViewModel - a single, cheap, dedicated targeted query (same shape as
+    /// ReadLowMemoryEvents), not the full dual-log Query() scan.</summary>
+    public List<CorrectedMemoryErrorEvent> ReadCorrectedMemoryErrors()
+    {
+        var results = new List<CorrectedMemoryErrorEvent>();
+        try
+        {
+            long maxAgeMs = LookbackDays * 24L * 60 * 60 * 1000;
+            var query = new EventLogQuery("System", PathType.LogName,
+                $"*[System[Provider[@Name='{WheaLoggerProvider}'] and (EventID={CorrectedMemoryErrorEventId}) and " +
+                $"TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]")
+            {
+                ReverseDirection = true,
+            };
+
+            using var reader = new EventLogReader(query);
+            int count = 0;
+            while (count < MaxCorrectedMemoryErrorsReturned && reader.ReadEvent() is { } record)
+            {
+                using (record)
+                {
+                    count++;
+                    if (record.TimeCreated is null) continue;
+
+                    string message;
+                    try { message = record.FormatDescription() ?? string.Empty; }
+                    catch { message = string.Empty; }
+
+                    var addressMatch = PhysicalAddressRegex.Match(message);
+                    var dimmMatch = DimmHintRegex.Match(message);
+
+                    results.Add(new CorrectedMemoryErrorEvent
+                    {
+                        TimeCreated = record.TimeCreated.Value,
+                        PhysicalAddressHint = addressMatch.Success ? addressMatch.Groups[1].Value : null,
+                        DimmHint = dimmMatch.Success ? dimmMatch.Groups[1].Value.Trim() : null,
+                        RawMessage = Truncate(message, 400),
+                    });
+                }
+            }
+        }
+        catch
+        {
+            // Provider/log unavailable, or no WHEA-capable hardware on this system at all - "none
+            // found", same degrade-to-empty shape as every other targeted query in this service.
+        }
+        return results;
+    }
+
+    // #449: the built-in Windows Memory Diagnostic's own results provider/event IDs - documented
+    // by Microsoft (Event Viewer's own "MemoryDiagnostics-Results" log/source). 1101 fires whether
+    // or not errors were found; 1201 is used on some Windows versions for the same purpose - both
+    // are queried together and the newest match wins.
+    private const string MemoryDiagnosticsProvider = "Microsoft-Windows-MemoryDiagnostics-Results";
+    private static readonly int[] MemoryDiagnosticsResultEventIds = { 1101, 1201 };
+
+    /// <summary>Public for the same reason ReadCorrectedMemoryErrors is - SystemSpecsService reads
+    /// this directly for the System Specs "last diagnostic run" card (#449), independent of the
+    /// Stability tab. No lookback-window filter (unlike every other targeted query here) - the
+    /// diagnostic runs rarely enough (a manual, boot-time action) that "the most recent one ever
+    /// logged, whenever that was" is more useful than silently going blank once it's 31 days old.</summary>
+    public MemoryDiagnosticResultInfo? ReadMemoryDiagnosticResult()
+    {
+        try
+        {
+            string idFilter = string.Join(" or ", MemoryDiagnosticsResultEventIds.Select(id => $"EventID={id}"));
+            var query = new EventLogQuery("System", PathType.LogName,
+                $"*[System[Provider[@Name='{MemoryDiagnosticsProvider}'] and ({idFilter})]]")
+            {
+                ReverseDirection = true,
+            };
+
+            using var reader = new EventLogReader(query);
+            if (reader.ReadEvent() is not { } record) return null;
+            using (record)
+            {
+                if (record.TimeCreated is null) return null;
+
+                string message;
+                try { message = record.FormatDescription() ?? string.Empty; }
+                catch { message = string.Empty; }
+
+                // The rendered message states the outcome in plain English ("no memory problems
+                // ... " vs. "... detected ... errors ..."); this is the documented, stable wording
+                // Microsoft uses across Windows versions for this specific event, but is still
+                // treated as best-effort text matching rather than a structured field - an
+                // unrecognized wording degrades to null (shown as "couldn't determine the result"),
+                // never a guessed pass/fail.
+                bool? passed = null;
+                if (message.Length > 0)
+                {
+                    if (message.Contains("did not detect any errors", StringComparison.OrdinalIgnoreCase) ||
+                        message.Contains("no memory problems", StringComparison.OrdinalIgnoreCase))
+                        passed = true;
+                    else if (message.Contains("detected", StringComparison.OrdinalIgnoreCase) &&
+                             message.Contains("error", StringComparison.OrdinalIgnoreCase))
+                        passed = false;
+                }
+
+                return new MemoryDiagnosticResultInfo
+                {
+                    TimeCreated = record.TimeCreated.Value,
+                    Passed = passed,
+                    StatusText = Truncate(message, 300),
+                };
+            }
+        }
+        catch
+        {
+            // Provider/log unavailable, or the diagnostic has genuinely never been run on this
+            // machine - "never run", not an error.
+            return null;
+        }
     }
 
     // #439: the specific event ID (out of everything ReadLowMemoryEvents/ReadPoolExhaustionEvents

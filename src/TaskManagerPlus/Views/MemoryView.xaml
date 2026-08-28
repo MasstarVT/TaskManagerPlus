@@ -1051,6 +1051,58 @@
                 </StackPanel>
             </Border>
 
+            <!-- #452: quick in-app memory pattern test - allocates a user-chosen block of RAM and
+                 runs a walking-pattern write/verify pass, with progress and abort. Explicitly a
+                 far weaker check than #448's Windows Memory Diagnostic launcher above/on the
+                 System Specs tab (can only touch pageable user memory, no reboot needed). -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <TextBlock Text="Diagnostics: quick memory pattern test" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Allocates the amount below and writes/verifies a walking bit pattern (0x55/0xAA/0x00/0xFF) across it - a fast, no-reboot sanity check. Far weaker than a boot-time test: it can only touch pageable memory this one app is handed, not the full system, and isn't a substitute for Windows Memory Diagnostic (below on the System Specs tab) if you suspect real hardware trouble."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <Slider Grid.Column="0" Minimum="16" Maximum="8192" Value="{Binding PatternTestSizeMb}"
+                                VerticalAlignment="Center" Margin="0,0,10,0" />
+                        <TextBlock Grid.Column="1" Text="{Binding PatternTestSizeMb, StringFormat={}{0:0} MB}" VerticalAlignment="Center" FontWeight="SemiBold" Width="80" />
+                    </Grid>
+                    <WrapPanel Margin="0,0,0,10">
+                        <Button Content="Start test" Command="{Binding StartPatternTestCommand}" Margin="0,0,8,0" Padding="10,5" />
+                        <Button Content="Abort" Command="{Binding AbortPatternTestCommand}" Padding="10,5" />
+                    </WrapPanel>
+                    <ProgressBar Height="8" Minimum="0" Maximum="100" Value="{Binding PatternTestProgressPercent, Mode=OneWay}" Margin="0,0,0,8">
+                        <ProgressBar.Style>
+                            <Style TargetType="ProgressBar">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsPatternTestRunning}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </ProgressBar.Style>
+                    </ProgressBar>
+                    <TextBlock Text="{Binding PatternTestStatusText}" TextWrapping="Wrap">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding PatternTestStatusText}" Value="{x:Null}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding PatternTestFailed}" Value="True">
+                                        <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
             <!-- #416/#417/#418: "Kernel pool by tag" grid - poolmon-equivalent data via
                  NtQuerySystemInformation(SystemPoolTagInformation), joined with a cached #417
                  driver-attribution scan and the curated #418 embedded dictionary. See

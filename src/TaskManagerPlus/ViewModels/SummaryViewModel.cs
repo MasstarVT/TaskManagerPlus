@@ -908,6 +908,14 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         if (_systemSpecs.MultipleActiveAvWarning)
             issues.Add(new HealthIssue { Message = "Multiple antivirus products look active", IsCritical = false });
 
+        // #451: RAM health rollup (mismatched DIMMs, ECC-corrected errors, memory diagnostic
+        // result, XMP state, channel population, memory-related bugchecks) - see
+        // MemoryDiagnosticsService.BuildRamHealth / SystemSpecsViewModel.RamHealthVerdictText.
+        // Never critical on its own here - it's an aggregation of several individually-informational
+        // signals, not a confirmed hardware failure.
+        if (_systemSpecs.RamHealthIsWarning)
+            issues.Add(new HealthIssue { Message = $"RAM health check: {string.Join("; ", _systemSpecs.RamHealthFindings.Take(2))}", IsCritical = false });
+
         // Round 11, #73: Windows Update/servicing reboot pending - see
         // SystemSpecsService.ReadRebootPending for which registry keys are checked.
         if (_systemSpecs.RebootPending)

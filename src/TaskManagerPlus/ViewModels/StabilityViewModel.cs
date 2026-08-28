@@ -36,6 +36,17 @@ public sealed class StabilityViewModel : ObservableObject
     // EventLogService.ReadOutOfMemoryIncidents.
     public ObservableCollection<OutOfMemoryIncident> OutOfMemoryIncidents { get; } = new();
 
+    // #447: corrected-memory-error events (WHEA-Logger 47) - the same figure the System Specs
+    // memory section shows, surfaced here too since a corrected-error trend is as much a
+    // stability signal as a hardware-inventory fact.
+    public ObservableCollection<CorrectedMemoryErrorEvent> CorrectedMemoryErrors { get; } = new();
+
+    private int _correctedMemoryErrorCount;
+    public int CorrectedMemoryErrorCount { get => _correctedMemoryErrorCount; private set => SetProperty(ref _correctedMemoryErrorCount, value); }
+
+    private string _lastCorrectedMemoryErrorText = "None in the last 30 days";
+    public string LastCorrectedMemoryErrorText { get => _lastCorrectedMemoryErrorText; private set => SetProperty(ref _lastCorrectedMemoryErrorText, value); }
+
     private bool _isLoading;
     public bool IsLoading { get => _isLoading; private set => SetProperty(ref _isLoading, value); }
 
@@ -205,6 +216,13 @@ public sealed class StabilityViewModel : ObservableObject
         // #439
         OutOfMemoryIncidents.Clear();
         foreach (var e in snapshot.OutOfMemoryIncidents) OutOfMemoryIncidents.Add(e);
+
+        // #447
+        CorrectedMemoryErrors.Clear();
+        foreach (var e in snapshot.CorrectedMemoryErrors) CorrectedMemoryErrors.Add(e);
+        CorrectedMemoryErrorCount = snapshot.CorrectedMemoryErrorCount;
+        LastCorrectedMemoryErrorText = snapshot.LastCorrectedMemoryError is { } last
+            ? $"Last: {last:g}" : "None in the last 30 days";
 
         StabilityIndex = ComputeStabilityIndex(snapshot);
     }

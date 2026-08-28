@@ -89,6 +89,18 @@ public sealed class StabilitySnapshot
     /// ReadPoolExhaustionEvents (which folds this provider's events into the pool-exhaustion list
     /// without parsing the consumer list) - see EventLogService.ReadOutOfMemoryIncidents.</summary>
     public List<OutOfMemoryIncident> OutOfMemoryIncidents { get; init; } = new();
+
+    /// <summary>#447: Microsoft-Windows-WHEA-Logger corrected-memory-error events (event ID 47)
+    /// within the lookback window - see EventLogService.ReadCorrectedMemoryErrors. Also read
+    /// independently by SystemSpecsService for the System Specs memory section, so both tabs stay
+    /// in sync without a ViewModel-to-ViewModel dependency.</summary>
+    public int CorrectedMemoryErrorCount { get; init; }
+    public DateTime? LastCorrectedMemoryError { get; init; }
+    public List<CorrectedMemoryErrorEvent> CorrectedMemoryErrors { get; init; } = new();
+
+    /// <summary>#451: how many of RecentEvents' Kernel-Power 41 bugcheck codes match the small
+    /// memory-related STOP code set - see EventLogService.MemoryRelatedBugcheckCodes.</summary>
+    public int MemoryRelatedBugcheckCount { get; init; }
 }
 
 /// <summary>#439: one process from event 2004's ranked "consumed the most virtual memory" list.</summary>
