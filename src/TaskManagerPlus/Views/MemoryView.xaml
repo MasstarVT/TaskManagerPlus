@@ -77,6 +77,27 @@
                                 AccentBrush="{Binding Performance.PageFilePercent, Converter={StaticResource PercentToBrushConverter}}" />
             </UniformGrid>
 
+            <!-- #428/#429: commit-limit exhaustion projection (hidden entirely when the trend is
+                 flat/negative or there isn't enough confidence in the fit) and the peak committed
+                 high-water mark for this boot session (persisted across app restarts - see
+                 MemoryViewModel.RefreshHighWaterMark) - the Committed tile above only ever shows
+                 the *current* figure, so a machine that briefly hit its limit hours ago would
+                 otherwise show no evidence of it. -->
+            <TextBlock Text="{Binding CommitLimitProjectionText}"
+                       Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" Margin="0,-8,0,2">
+                <TextBlock.Style>
+                    <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding ShowCommitLimitProjection}" Value="True">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </TextBlock.Style>
+            </TextBlock>
+            <TextBlock Text="{Binding PeakCommittedText}" Style="{StaticResource SubStat}" Opacity="0.75" TextWrapping="Wrap" Margin="0,0,0,16" />
+
             <!-- Round 8 #37: "memory in use by category" stacked bar, built purely from figures
                  already read above (In Use / Standby / Free - matches Windows' own Resource
                  Monitor split) - see PerformanceViewModel's MemoryInUsePercent remarks. -->
@@ -110,18 +131,77 @@
                 </StackPanel>
             </Border>
 
-            <!-- #15: Windows has no macOS-style "compressed memory" stat surfaced separately -
-                 the Committed % above (Memory\% Committed Bytes In Use) is Windows' own
-                 equivalent memory-pressure figure, and already folds compression in rather than
-                 needing a second number. -->
-            <TextBlock Text="Committed % above also reflects Windows' memory-compression pressure — there's no separate 'compressed memory' stat on Windows the way there is on macOS."
-                       Style="{StaticResource SubStat}" TextWrapping="Wrap" Opacity="0.7" Margin="0,-8,0,16" />
+            <!-- #438: real compressed-store numbers when the MemCompression process is present
+                 (its own working set as a size proxy - see MemoryViewModel.RefreshCompressionStats),
+                 falling back to #15's original explanatory note when it isn't (compression
+                 disabled by policy, or absent on an older Windows version). Either way, the
+                 Committed % tile above still reflects compression pressure the same way Task
+                 Manager's own equivalent figure does - there's no separate "compressed memory"
+                 stat on Windows the way there is on macOS. -->
+            <TextBlock TextWrapping="Wrap" Opacity="0.7" Margin="0,-8,0,16">
+                <TextBlock.Style>
+                    <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                        <Setter Property="Text" Value="Committed % above also reflects Windows' memory-compression pressure — there's no separate 'compressed memory' stat on Windows the way there is on macOS." />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding HasCompressedStoreData}" Value="True">
+                                <Setter Property="Text">
+                                    <Setter.Value>
+                                        <Binding Path="CompressedStoreGb" StringFormat="Estimated compressed store: {0:0.00} GB — the Memory Compression process working set, the closest proxy Windows offers (already folded into Committed % above, not counted separately)." />
+                                    </Setter.Value>
+                                </Setter>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </TextBlock.Style>
+            </TextBlock>
 
             <!-- Diagnostics: standby (reclaimable) list (#22, explains "why does Windows show
                  low free RAM when nothing is running" - this memory looks used but is instantly
                  reclaimable), kernel pool usage (#24, a slow sustained climb usually means a
                  leaking driver), and page fault rate (#20, hard faults spiking means heavy
                  paging to disk; soft faults are cheap and normal). -->
+            <!-- #432: page-file thrashing status strip - combines the actual page-file I/O rate,
+                 how full the page file is, and its volume's disk queue length into one flag with a
+                 "how long has this been going on" duration - see MemoryViewModel.RefreshThrashingState. -->
+            <Border CornerRadius="6" Padding="10,7" Margin="0,0,0,12">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Background" Value="{DynamicResource BgElevatedBrush}" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsThrashing}" Value="True">
+                                <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel Orientation="Horizontal">
+                    <Border Width="9" Height="9" CornerRadius="4.5" Margin="0,0,8,0" VerticalAlignment="Center">
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Setter Property="Background" Value="{DynamicResource SuccessBrush}" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsThrashing}" Value="True">
+                                        <Setter Property="Background" Value="{DynamicResource DangerBrush}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                    </Border>
+                    <TextBlock Text="{Binding ThrashingStatusText}" FontSize="12" VerticalAlignment="Center" TextWrapping="Wrap">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsThrashing}" Value="True">
+                                        <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
             <TextBlock Text="Diagnostics" Style="{StaticResource SubStat}" Margin="0,0,0,10" />
             <UniformGrid Columns="5" Margin="0,0,0,16">
                 <views:VfdMeter Title="Standby list" Glow="False" Margin="0,0,6,0"
@@ -185,6 +265,183 @@
                                         ValueText="{Binding Performance.SystemCodeResidentGb, StringFormat={}{0:0.00}}" Unit="GB"
                                         SubText="Kernel-mode OS code" AccentBrush="{DynamicResource AccentBrush}" />
                     </UniformGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- #434: standby list composition - the three priority tiers that sum to the
+                 "Standby list" tile above, charted as a stacked bar the same way the "Memory in
+                 use by category" card further up splits In Use/Standby/Free. Reserve is the
+                 lowest-priority tier (first Windows reclaims under pressure); Core is the
+                 highest-priority tier (reclaimed last). -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <TextBlock Text="Standby list composition" Style="{StaticResource CardTitle}" Margin="0,0,0,10" />
+                    <Grid Height="18">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="{Binding Performance.StandbyCorePercentOfStandby, Converter={StaticResource PercentToStarWidthConverter}}" />
+                            <ColumnDefinition Width="{Binding Performance.StandbyNormalPercentOfStandby, Converter={StaticResource PercentToStarWidthConverter}}" />
+                            <ColumnDefinition Width="{Binding Performance.StandbyReservePercentOfStandby, Converter={StaticResource PercentToStarWidthConverter}}" />
+                        </Grid.ColumnDefinitions>
+                        <Border Grid.Column="0" Background="{Binding Performance.RamColor, Converter={StaticResource ColorToBrushConverter}}" CornerRadius="4,0,0,4" Margin="0,0,1,0" />
+                        <Border Grid.Column="1" Background="{DynamicResource WarningBrush}" Opacity="0.55" Margin="0,0,1,0" />
+                        <Border Grid.Column="2" Background="{DynamicResource SuccessBrush}" Opacity="0.45" CornerRadius="0,4,4,0" />
+                    </Grid>
+                    <UniformGrid Columns="3" Margin="0,8,0,0">
+                        <StackPanel Orientation="Horizontal">
+                            <Border Width="9" Height="9" CornerRadius="2" Margin="0,0,6,0" Background="{Binding Performance.RamColor, Converter={StaticResource ColorToBrushConverter}}" />
+                            <TextBlock Text="{Binding Performance.StandbyCoreGb, StringFormat=Core {0:0.00} GB}" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <Border Width="9" Height="9" CornerRadius="2" Margin="0,0,6,0" Background="{DynamicResource WarningBrush}" />
+                            <TextBlock Text="{Binding Performance.StandbyNormalGb, StringFormat=Normal {0:0.00} GB}" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <Border Width="9" Height="9" CornerRadius="2" Margin="0,0,6,0" Background="{DynamicResource SuccessBrush}" />
+                            <TextBlock Text="{Binding Performance.StandbyReserveGb, StringFormat=Reserve {0:0.00} GB}" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        </StackPanel>
+                    </UniformGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- #436: modified page list & writer activity - a modified list that grows without
+                 draining means the page file/disk can't keep up with the writer. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <TextBlock Text="Modified page list &amp; writer activity" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Modified pages are dirty (changed since read from disk) and wait here until the modified page writer flushes them out - Pages Output/sec is the closest counter Windows exposes to the writer's own flush rate, labeled accordingly rather than as a dedicated 'writer rate' stat. A modified list that keeps growing while Pages Output/sec stays low means the page file/disk can't keep up."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+                    <UniformGrid Columns="2">
+                        <views:VfdMeter Title="Modified list" Glow="False" Margin="0,0,6,0"
+                                        ValueText="{Binding Performance.ModifiedGb, StringFormat={}{0:0.00}}" Unit="GB"
+                                        SubText="Dirty, waiting to flush" AccentBrush="{DynamicResource AccentBrush}" />
+                        <views:VfdMeter Title="Writer flush rate" Glow="False" Margin="6,0,0,0"
+                                        ValueText="{Binding Performance.PagesOutputPerSec, StringFormat={}{0:0}}" Unit="pages/s"
+                                        SubText="Memory\Pages Output/sec" AccentBrush="{DynamicResource AccentBrush}" />
+                    </UniformGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- #437: metafile/system-cache runaway - Cache Bytes' file-system-cache component,
+                 flagged only when it's both above a share of physical RAM and has been growing
+                 over the recent window (not just momentarily high) - see
+                 MemoryViewModel.RefreshSystemCacheRunaway. Cache is reclaimable, same as the
+                 standby list, so this is informational, never a leak verdict on its own. -->
+            <Border Margin="0,16,0,0">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsSystemCacheRunawayFlagged}" Value="True">
+                                <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
+                                <Setter Property="BorderBrush" Value="{DynamicResource DangerBrush}" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="System cache resident" Style="{StaticResource CardTitle}" Margin="0" />
+                        <TextBlock Grid.Column="1" VerticalAlignment="Center" FontSize="16" FontWeight="SemiBold">
+                            <Run Text="{Binding Performance.SystemCacheResidentGb, StringFormat={}{0:0.00}, Mode=OneWay}" /><Run Text=" GB" />
+                        </TextBlock>
+                    </Grid>
+                    <TextBlock Text="The file-system-cache component of Cache Bytes above (Cache Bytes also includes driver- and OS-code-resident memory shown in the card above) - reclaimable under pressure the same as the standby list, so a high number alone isn't a problem. Flagged below only when it's both a large share of physical RAM and has kept growing over the last couple minutes, not on either signal alone."
+                               Style="{StaticResource SubStat}" Margin="0,0,0,6" TextWrapping="Wrap" />
+                    <TextBlock Text="Sustained growth flagged - worth a look, not a confirmed leak (cache is reclaimable)." FontSize="11.5" Foreground="{DynamicResource DangerBrush}" FontWeight="SemiBold">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsSystemCacheRunawayFlagged}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- #430/#431: page file configuration inspector + sizing advisories. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Page file configuration" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Refresh" Command="{Binding RefreshPageFileConfigCommand}" />
+                    </Grid>
+                    <TextBlock Text="{Binding PageFileManagementText}" Style="{StaticResource SubStat}" Margin="0,0,0,4" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding PageFileConfigStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,10" TextWrapping="Wrap" />
+                    <DataGrid ItemsSource="{Binding PageFileConfigs}" IsReadOnly="True" AutoGenerateColumns="False"
+                              MaxHeight="200">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Volume" Binding="{Binding Volume}" Width="70" />
+                            <DataGridTextColumn Header="Path" Binding="{Binding FilePath}" Width="2*" />
+                            <DataGridTemplateColumn Header="Managed" Width="110">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock VerticalAlignment="Center" Margin="4,0">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Text" Value="Fixed (manual)" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsSystemManaged}" Value="True">
+                                                            <Setter Property="Text" Value="System-managed" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTextColumn Header="Initial (MB)" Binding="{Binding InitialSizeMb, StringFormat={}{0:N0}}" Width="90" />
+                            <DataGridTextColumn Header="Maximum (MB)" Binding="{Binding MaximumSizeMb, StringFormat={}{0:N0}}" Width="100" />
+                            <DataGridTextColumn Header="Current (MB)" Binding="{Binding CurrentSizeMb, StringFormat={}{0:N0}}" Width="100" />
+                            <DataGridTextColumn Header="Peak usage (MB)" Binding="{Binding PeakUsageMb, StringFormat={}{0:N0}}" Width="110" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <TextBlock Text="No page file is configured on this system." Opacity="0.7" Margin="0,8,0,0">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding PageFileConfigs.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <!-- #431: quick flag, not a verdict. -->
+                    <ItemsControl ItemsSource="{Binding PageFileAdvisories}" Margin="0,10,0,0">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Padding="10,8" Margin="0,0,0,8" Background="{DynamicResource DangerMutedBrush}" CornerRadius="6">
+                                    <TextBlock Text="{Binding}" FontSize="11.5" TextWrapping="Wrap" Foreground="{DynamicResource DangerBrush}" />
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="Quick flag, not a verdict - a one-time historical peak or a capped maximum doesn't necessarily mean the page file is causing problems right now."
+                               Margin="0,4,0,0" TextWrapping="Wrap" Opacity="0.7">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding PageFileAdvisories.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
                 </StackPanel>
             </Border>
 
@@ -711,6 +968,86 @@
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #433: "Find what's paging" - a 30-second per-process Page Faults/sec sampling
+                 pass, plus a best-effort raw kernel-trace (.etl) capture running alongside it -
+                 see MemoryViewModel.ScanPageFaultsAsync / PageFaultTraceService's remarks. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Find what's paging" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Find what's paging (30s)" Command="{Binding ScanPageFaultsCommand}" />
+                    </Grid>
+                    <TextBlock Text="Samples every process's page-fault rate for 30 seconds and ranks the top offenders - this counts all faults (soft+hard), since Windows exposes no per-process hard-fault-only counter, so it's most meaningful when the Page faults tile above shows an elevated hard-fault rate right now. Also starts a best-effort raw NT Kernel Trace capture (Page Faults/Hard Faults keywords) alongside the sampling pass, saved as an .etl file you can open in Windows Performance Analyzer for full detail - this app doesn't parse ETL traces itself."
+                               Style="{StaticResource SubStat}" Margin="0,0,0,10" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding PageFaultScanStatusText}" Margin="0,0,0,10" TextWrapping="Wrap">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding PageFaultScanStatusText}" Value="{x:Null}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <ItemsControl ItemsSource="{Binding PageFaultAttributionRows}" MaxHeight="280">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                                        <TextBlock Text="{Binding ProcessName}" FontSize="12.5" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Style="{StaticResource SubStat}" FontSize="10.5">
+                                            <Run Text="PID " /><Run Text="{Binding Pid, Mode=OneWay}" />
+                                            <Run Text=" · peak " /><Run Text="{Binding PeakPageFaultsPerSec, StringFormat={}{0:0} faults/s, Mode=OneWay}" />
+                                        </TextBlock>
+                                    </StackPanel>
+                                    <TextBlock Grid.Column="1" Text="{Binding AvgPageFaultsPerSec, StringFormat={}{0:0} faults/s avg}"
+                                               FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #435: RAMMap-style memory list purge actions - each confirms via a warning dialog
+                 first (see MemoryViewModel.RunMemoryPurgeAsync) since every one of these trades a
+                 temporary free-RAM gain for slower reads/rebuilding afterwards. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <TextBlock Text="Diagnostics: reclaim memory now" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="RAMMap-style actions via the same undocumented NtSetSystemInformation(SystemMemoryListInformation) API RAMMap.exe itself uses. Each one trades a temporary free-RAM gain for slower reads/rebuilding afterwards - not a pure win, so each asks for confirmation first."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+                    <WrapPanel>
+                        <Button Content="Empty standby list" Command="{Binding PurgeStandbyListCommand}" Margin="0,0,8,8" Padding="10,5" />
+                        <Button Content="Empty low-priority standby list" Command="{Binding PurgeLowPriorityStandbyListCommand}" Margin="0,0,8,8" Padding="10,5" />
+                        <Button Content="Flush modified page list" Command="{Binding FlushModifiedListCommand}" Margin="0,0,8,8" Padding="10,5" />
+                        <Button Content="Empty working sets (all processes)" Command="{Binding EmptyWorkingSetsCommand}" Margin="0,0,8,8" Padding="10,5" />
+                    </WrapPanel>
+                    <TextBlock Text="{Binding MemoryPurgeStatusText}" Margin="0,4,0,0" TextWrapping="Wrap">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding MemoryPurgeStatusText}" Value="{x:Null}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
                 </StackPanel>
             </Border>
 

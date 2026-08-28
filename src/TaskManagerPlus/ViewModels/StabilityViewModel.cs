@@ -31,6 +31,11 @@ public sealed class StabilityViewModel : ObservableObject
     // Resource-Exhaustion-Detector entries) - see EventLogService.ReadPoolExhaustionEvents.
     public ObservableCollection<PoolExhaustionEvent> PoolExhaustionEvents { get; } = new();
 
+    // #439: out-of-memory incidents (Resource-Exhaustion-Detector event 2004), each carrying the
+    // ranked top commit consumers Windows itself recorded at the moment - see
+    // EventLogService.ReadOutOfMemoryIncidents.
+    public ObservableCollection<OutOfMemoryIncident> OutOfMemoryIncidents { get; } = new();
+
     private bool _isLoading;
     public bool IsLoading { get => _isLoading; private set => SetProperty(ref _isLoading, value); }
 
@@ -196,6 +201,10 @@ public sealed class StabilityViewModel : ObservableObject
         // #427
         PoolExhaustionEvents.Clear();
         foreach (var e in snapshot.PoolExhaustionEvents) PoolExhaustionEvents.Add(e);
+
+        // #439
+        OutOfMemoryIncidents.Clear();
+        foreach (var e in snapshot.OutOfMemoryIncidents) OutOfMemoryIncidents.Add(e);
 
         StabilityIndex = ComputeStabilityIndex(snapshot);
     }

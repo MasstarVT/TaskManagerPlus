@@ -204,6 +204,79 @@
                 </StackPanel>
             </Border>
 
+            <!-- #439: out-of-memory incidents (Resource-Exhaustion-Detector event 2004) - each one
+                 expandable to the ranked top commit consumers Windows itself recorded at the
+                 moment it diagnosed the low-virtual-memory condition. Collapsed entirely when none
+                 are found, same pattern as the faulting-module/pool-exhaustion cards above. -->
+            <Border Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding OutOfMemoryIncidents.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Out-of-memory incidents" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Windows' own resource-exhaustion detector, event 2004 - logged when the system diagnosed a low-virtual-memory condition, along with the processes it saw consuming the most committed memory at that moment. Those processes are often just the largest visible consumers at the time, not necessarily the root cause."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+                    <ItemsControl ItemsSource="{Binding OutOfMemoryIncidents}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Expander Margin="0,0,0,8" Background="{DynamicResource DangerMutedBrush}"
+                                          Foreground="{DynamicResource TextPrimaryBrush}" BorderThickness="0">
+                                    <Expander.Header>
+                                        <Grid Margin="4,2">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" FontSize="12.5" FontWeight="SemiBold" Foreground="{DynamicResource DangerBrush}" Text="Low virtual memory diagnosed" />
+                                            <TextBlock Grid.Column="1" Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}"
+                                                       FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        </Grid>
+                                    </Expander.Header>
+                                    <StackPanel Margin="4,4,4,8">
+                                        <ItemsControl ItemsSource="{Binding TopConsumers}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Grid Margin="0,2">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <TextBlock Grid.Column="0" FontSize="11.5">
+                                                            <Run Text="{Binding ProcessName}" /><Run Text=" · PID " /><Run Text="{Binding Pid, Mode=OneWay}" />
+                                                        </TextBlock>
+                                                        <TextBlock Grid.Column="1" Text="{Binding Bytes, Converter={StaticResource BytesToReadableConverter}}"
+                                                                   FontSize="11.5" FontWeight="SemiBold" />
+                                                    </Grid>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                        <TextBlock Text="{Binding RawMessage}" FontSize="10.5" TextWrapping="Wrap"
+                                                   Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,0">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding TopConsumers.Count}" Value="0">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </StackPanel>
+                                </Expander>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
             <!-- #1/#8: recent Critical/Error entries from the System and Application logs, last
                  30 days - a faulting-module tooltip is shown when the message matched that shape
                  (typically an Application-log app crash entry). -->

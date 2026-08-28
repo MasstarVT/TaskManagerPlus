@@ -81,6 +81,35 @@ public sealed class StabilitySnapshot
     /// Resource-Exhaustion-Detector entries) found within the lookback window, most recent first -
     /// see EventLogService.ReadPoolExhaustionEvents.</summary>
     public List<PoolExhaustionEvent> PoolExhaustionEvents { get; init; } = new();
+
+    /// <summary>#439: Resource-Exhaustion-Detector event 2004 specifically (the "Windows
+    /// successfully diagnosed a low virtual memory condition" entry, which also records the
+    /// ranked top commit consumers at that moment) - a separate, more specific query from
+    /// ReadLowMemoryEvents (which counts every event ID from this provider) and
+    /// ReadPoolExhaustionEvents (which folds this provider's events into the pool-exhaustion list
+    /// without parsing the consumer list) - see EventLogService.ReadOutOfMemoryIncidents.</summary>
+    public List<OutOfMemoryIncident> OutOfMemoryIncidents { get; init; } = new();
+}
+
+/// <summary>#439: one process from event 2004's ranked "consumed the most virtual memory" list.</summary>
+public sealed class OomTopConsumer
+{
+    public string ProcessName { get; init; } = string.Empty;
+    public int Pid { get; init; }
+    public long Bytes { get; init; }
+}
+
+/// <summary>#439: one Resource-Exhaustion-Detector event 2004 entry - Windows' own record of which
+/// processes were consuming the most committed memory at the moment it detected a low-virtual-
+/// memory condition. TopConsumers is parsed out of the event's own formatted message text via a
+/// best-effort regex (the message format isn't a documented, versioned contract, mirroring
+/// EventLogService.ExtractBugcheckCode's same caveat for a different event) - when parsing finds
+/// nothing, RawMessage is shown instead so nothing is fabricated, just less structured.</summary>
+public sealed class OutOfMemoryIncident
+{
+    public DateTime TimeCreated { get; init; }
+    public List<OomTopConsumer> TopConsumers { get; init; } = new();
+    public string RawMessage { get; init; } = string.Empty;
 }
 
 /// <summary>#66 (Round 10): repeated application crashes grouped by faulting module, with a count -

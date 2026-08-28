@@ -1,5 +1,7 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Diagnostics;
+using System.Windows;
 using System.Windows.Data;
 using System.Windows.Threading;
 using TaskManagerPlus.Common;
@@ -186,6 +188,139 @@ public sealed class MemoryViewModel : ObservableObject, IDisposable
     private double _reconciledRemainderPercent;
     public double ReconciledRemainderPercent { get => _reconciledRemainderPercent; private set => SetProperty(ref _reconciledRemainderPercent, value); }
 
+    // #428: commit-limit exhaustion projection - a straight-line least-squares extrapolation of
+    // Performance.CommittedHistory toward Performance.CommitLimitGb, hidden entirely unless the
+    // trend is positive, reasonably confident (R² floor - the same "quick flag, not a verdict"
+    // treatment #415's per-process leak growth projection above already uses), and there's
+    // actually a limit left to reach.
+    private const double MinCommitGrowthGbPerHourToProject = 0.05;
+    private const double MinCommitTrendRSquared = 0.5;
+
+    private double? _minutesToCommitLimitExhaustion;
+    public double? MinutesToCommitLimitExhaustion { get => _minutesToCommitLimitExhaustion; private set => SetProperty(ref _minutesToCommitLimitExhaustion, value); }
+
+    public bool ShowCommitLimitProjection => MinutesToCommitLimitExhaustion.HasValue;
+
+    public string CommitLimitProjectionText => MinutesToCommitLimitExhaustion is { } minutes
+        ? minutes < 60
+            ? $"Projected: commit limit reached in ~{minutes:0} min at the current rate"
+            : $"Projected: commit limit reached in ~{minutes / 60.0:0.0} hr at the current rate"
+        : string.Empty;
+
+    // #429: peak committed-memory high-water mark, persisted per boot session (a persisted "last
+    // known boot time" compared against Environment.TickCount64 is the cheap boot-id proxy - see
+    // MemoryHighWaterSettings' remarks) so a machine that briefly hit its limit hours ago still
+    // shows the evidence after this app restarts, as long as the machine itself hasn't rebooted.
+    private static readonly TimeSpan BootTimeTolerance = TimeSpan.FromMinutes(3);
+    private readonly MemoryHighWaterSettings _highWater;
+
+    private double _peakCommittedGb;
+    public double PeakCommittedGb { get => _peakCommittedGb; private set => SetProperty(ref _peakCommittedGb, value); }
+
+    private double _peakCommitLimitGbAtPeak;
+    public double PeakCommitLimitGbAtPeak { get => _peakCommitLimitGbAtPeak; private set => SetProperty(ref _peakCommitLimitGbAtPeak, value); }
+
+    private DateTime _peakTimestampUtc;
+
+    public string PeakCommittedText => PeakCommittedGb <= 0
+        ? "No peak recorded yet this boot"
+        : $"Peak this boot: {PeakCommittedGb:0.0} GB of {PeakCommitLimitGbAtPeak:0.0} GB limit ({_peakTimestampUtc.ToLocalTime():t})";
+
+    // #430/#431: per-page-file configuration + sizing advisories - see PageFileConfigurationService.
+    public ObservableCollection<PageFileConfigInfo> PageFileConfigs { get; } = new();
+
+    private bool? _pageFileAutomaticallyManaged;
+    public bool? PageFileAutomaticallyManaged { get => _pageFileAutomaticallyManaged; private set => SetProperty(ref _pageFileAutomaticallyManaged, value); }
+
+    public string PageFileManagementText => PageFileAutomaticallyManaged switch
+    {
+        true => "Windows is automatically managing page file size and placement.",
+        false => "Page file size/placement is manually configured (automatic management is off).",
+        null => "Couldn't determine whether page file management is automatic.",
+    };
+
+    private bool _isLoadingPageFileConfig;
+    public bool IsLoadingPageFileConfig { get => _isLoadingPageFileConfig; private set => SetProperty(ref _isLoadingPageFileConfig, value); }
+
+    private string? _pageFileConfigStatusText;
+    public string? PageFileConfigStatusText { get => _pageFileConfigStatusText; private set => SetProperty(ref _pageFileConfigStatusText, value); }
+
+    public AsyncRelayCommand RefreshPageFileConfigCommand { get; }
+
+    /// <summary>#431: "quick flag, not a verdict" sizing advisories - see
+    /// RefreshPageFileAdvisories for exactly what's flagged.</summary>
+    public ObservableCollection<string> PageFileAdvisories { get; } = new();
+
+    // #432: page-file thrashing detector - combines actual page-file I/O rate, how full the page
+    // file is, and its volume's own disk queue length into one flag with a duration timer, rather
+    // than trusting any single signal alone (a burst of page-file I/O right after launching a big
+    // app is normal; sustained alongside a saturated page file and a backed-up disk queue is the
+    // actual thrashing signature).
+    private const double ThrashingPagingActivityThreshold = 500.0; // combined Pages Input/sec + Pages Output/sec
+    private const double ThrashingPageFilePercentThreshold = 70.0;
+    private const double ThrashingQueueLengthThreshold = 2.0;
+
+    private DateTime? _thrashingStartUtc;
+
+    private bool _isThrashing;
+    public bool IsThrashing { get => _isThrashing; private set => SetProperty(ref _isThrashing, value); }
+
+    private string _thrashingStatusText = "Not thrashing";
+    public string ThrashingStatusText { get => _thrashingStatusText; private set => SetProperty(ref _thrashingStatusText, value); }
+
+    // #433: "Find what's paging" - a 30-second per-process Page Faults/sec sampling pass, plus a
+    // best-effort raw kernel-trace (.etl) capture running alongside it - see ScanPageFaultsAsync
+    // and PageFaultTraceService's remarks for why the raw trace isn't parsed in-app.
+    private static readonly TimeSpan PageFaultScanWindow = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan PageFaultSampleInterval = TimeSpan.FromSeconds(2);
+
+    public ObservableCollection<PageFaultAttributionRow> PageFaultAttributionRows { get; } = new();
+
+    private bool _isScanningPageFaults;
+    public bool IsScanningPageFaults { get => _isScanningPageFaults; private set => SetProperty(ref _isScanningPageFaults, value); }
+
+    private string? _pageFaultScanStatusText;
+    public string? PageFaultScanStatusText { get => _pageFaultScanStatusText; private set => SetProperty(ref _pageFaultScanStatusText, value); }
+
+    private string? _pageFaultTraceFilePath;
+    public string? PageFaultTraceFilePath { get => _pageFaultTraceFilePath; private set => SetProperty(ref _pageFaultTraceFilePath, value); }
+
+    public AsyncRelayCommand ScanPageFaultsCommand { get; }
+
+    // #435: RAMMap-style memory list purge actions - see MemoryListPurgeService's remarks for the
+    // underlying NtSetSystemInformation calls. Every command confirms via a warning dialog first
+    // (the same MessageBox.Show(..., YesNo, Warning) pattern ProcessesViewModel.EndSelected uses
+    // for ending a process) since these trade a temporary free-RAM gain for slower reads/rebuilding
+    // afterwards - a real tradeoff, not a pure win, so it's never a one-click action.
+    public AsyncRelayCommand PurgeStandbyListCommand { get; }
+    public AsyncRelayCommand PurgeLowPriorityStandbyListCommand { get; }
+    public AsyncRelayCommand FlushModifiedListCommand { get; }
+    public AsyncRelayCommand EmptyWorkingSetsCommand { get; }
+
+    private bool _isPurgingMemoryList;
+    public bool IsPurgingMemoryList { get => _isPurgingMemoryList; private set => SetProperty(ref _isPurgingMemoryList, value); }
+
+    private string? _memoryPurgeStatusText;
+    public string? MemoryPurgeStatusText { get => _memoryPurgeStatusText; private set => SetProperty(ref _memoryPurgeStatusText, value); }
+
+    // #437: metafile/system-cache runaway flag - a small rolling window (not a full history/chart)
+    // is enough to tell "trending up" from "fluctuating around a stable baseline".
+    private const double SystemCacheRunawayRamSharePercent = 40.0;
+    private const double SystemCacheRunawayGrowthGb = 0.5;
+    private const int SystemCacheRunawayWindowSamples = 20;
+    private readonly Queue<double> _systemCacheSamples = new();
+
+    private bool _isSystemCacheRunawayFlagged;
+    public bool IsSystemCacheRunawayFlagged { get => _isSystemCacheRunawayFlagged; private set => SetProperty(ref _isSystemCacheRunawayFlagged, value); }
+
+    // #438: MemCompression process working set as a compressed-store-size proxy - see
+    // RefreshCompressionStats. Replaces the Memory tab's former flat explanatory note with real
+    // numbers when the process is present, and falls back to that same note text otherwise.
+    private double? _compressedStoreGb;
+    public double? CompressedStoreGb { get => _compressedStoreGb; private set => SetProperty(ref _compressedStoreGb, value); }
+
+    public bool HasCompressedStoreData => CompressedStoreGb.HasValue;
+
     public MemoryViewModel(PerformanceViewModel performance, ProcessesViewModel processes, LeakWatchViewModel leakWatch, ProcessHistoryService processHistory)
     {
         Performance = performance;
@@ -195,13 +330,37 @@ public sealed class MemoryViewModel : ObservableObject, IDisposable
 
         _topMemoryView = new CollectionViewSource { Source = processes.Processes }.View;
         ApplyTopMemorySort();
+
+        // #429: is the persisted peak from this same boot session, or a stale one from before the
+        // machine's last reboot? Compared once here at startup; RefreshHighWaterMark keeps the
+        // persisted boot time fresh on every save afterwards.
+        var approxBootTimeUtc = DateTime.UtcNow - TimeSpan.FromMilliseconds(Environment.TickCount64);
+        var loadedHighWater = MemoryHighWaterService.Load();
+        _highWater = loadedHighWater.LastKnownBootTimeUtc != default
+            && Math.Abs((loadedHighWater.LastKnownBootTimeUtc - approxBootTimeUtc).TotalMinutes) <= BootTimeTolerance.TotalMinutes
+                ? loadedHighWater
+                : new MemoryHighWaterSettings { LastKnownBootTimeUtc = approxBootTimeUtc };
+        PeakCommittedGb = _highWater.PeakCommittedGb;
+        PeakCommitLimitGbAtPeak = _highWater.CommitLimitGbAtPeak;
+        _peakTimestampUtc = _highWater.PeakTimestampUtc;
+
         Performance.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName == nameof(PerformanceViewModel.Uptime)) OnPropertyChanged(nameof(SystemUptimeText));
             // #423: ModifiedGb is set on every Performance tick (RefreshCoreAsync), so this is a
             // convenient "once per tick" hook to recompute the reconciliation below - same trick
-            // SystemUptimeText's own subscription uses, just against a different always-updated property.
-            if (e.PropertyName == nameof(PerformanceViewModel.ModifiedGb)) RefreshReconciliation();
+            // SystemUptimeText's own subscription uses, just against a different always-updated
+            // property. #428/#429/#432/#437/#438 reuse the same hook for their own per-tick
+            // recomputation, none of which involve any new I/O.
+            if (e.PropertyName == nameof(PerformanceViewModel.ModifiedGb))
+            {
+                RefreshReconciliation();
+                RefreshCommitProjection();
+                RefreshHighWaterMark();
+                RefreshThrashingState();
+                RefreshSystemCacheRunaway();
+                RefreshCompressionStats();
+            }
         };
 
         var poolView = new CollectionViewSource { Source = processes.Processes }.View;
@@ -268,11 +427,37 @@ public sealed class MemoryViewModel : ObservableObject, IDisposable
         // #426
         ScanObjectTypesCommand = new AsyncRelayCommand(ScanObjectTypesAsync, () => !IsScanningObjectTypes);
 
+        // #430/#431
+        RefreshPageFileConfigCommand = new AsyncRelayCommand(RefreshPageFileConfigAsync, () => !IsLoadingPageFileConfig);
+
+        // #433
+        ScanPageFaultsCommand = new AsyncRelayCommand(ScanPageFaultsAsync, () => !IsScanningPageFaults);
+
+        // #435
+        PurgeStandbyListCommand = new AsyncRelayCommand(() => RunMemoryPurgeAsync(
+            "Empty standby list",
+            "This frees the reclaimable standby (file cache) list now, showing more “available” RAM immediately - but every file Windows had cached there will need to be re-read from disk the next time it's opened, which will be slower until the cache rebuilds.\n\nContinue?",
+            MemoryListPurgeService.PurgeStandbyList), () => !IsPurgingMemoryList);
+        PurgeLowPriorityStandbyListCommand = new AsyncRelayCommand(() => RunMemoryPurgeAsync(
+            "Empty low-priority standby list",
+            "This frees only the lowest-priority tier of the standby list (the portion Windows itself already reclaims first under pressure) - a smaller, lower-impact version of “Empty standby list.”\n\nContinue?",
+            MemoryListPurgeService.PurgeLowPriorityStandbyList), () => !IsPurgingMemoryList);
+        FlushModifiedListCommand = new AsyncRelayCommand(() => RunMemoryPurgeAsync(
+            "Flush modified page list",
+            "This forces Windows to write out every dirty page currently waiting in the modified list right now, instead of at its own pace - a burst of disk write activity, then a smaller modified list.\n\nContinue?",
+            MemoryListPurgeService.FlushModifiedList), () => !IsPurgingMemoryList);
+        EmptyWorkingSetsCommand = new AsyncRelayCommand(() => RunMemoryPurgeAsync(
+            "Empty working sets",
+            "This trims every running process's working set down to the minimum right now - reported per-process RAM usage will drop immediately, but every process will take a burst of page faults refilling its working set as it keeps running, which can make things feel briefly sluggish.\n\nContinue?",
+            MemoryListPurgeService.EmptyWorkingSets), () => !IsPurgingMemoryList);
+
         _leakGrowthTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = LeakGrowthRefreshInterval };
         _leakGrowthTimer.Tick += (_, _) => RefreshLeakGrowthProjections();
         _leakGrowthTimer.Start();
         RefreshLeakGrowthProjections();
         RefreshReconciliation();
+        RefreshCompressionStats();
+        _ = RefreshPageFileConfigAsync();
     }
 
     private void ApplyTopMemorySort()
@@ -578,6 +763,333 @@ public sealed class MemoryViewModel : ObservableObject, IDisposable
         double remainder = Performance.RamTotalGb - accounted;
         ReconciledRemainderGb = remainder;
         ReconciledRemainderPercent = Performance.RamTotalGb <= 0 ? 0 : Math.Clamp(remainder / Performance.RamTotalGb * 100.0, -100, 100);
+    }
+
+    /// <summary>#428: least-squares slope/R² of Performance.CommittedHistory (in GB, over elapsed
+    /// hours at the current poll interval) extrapolated toward Performance.CommitLimitGb - same
+    /// standard regression formula as ProcessHistoryService.Regress, just over this tab's own
+    /// fixed-size history buffer instead of a per-process sample list. Leading zero entries (the
+    /// buffer's initial fill before the app has been running long enough to overwrite them all)
+    /// are excluded so early-session noise can't fake a dramatic slope.</summary>
+    private void RefreshCommitProjection()
+    {
+        var samples = Performance.CommittedHistory
+            .Select((value, index) => (Value: value, Index: index))
+            .Where(t => t.Value > 0)
+            .ToList();
+
+        if (samples.Count < 10 || Performance.CommitLimitGb <= 0)
+        {
+            MinutesToCommitLimitExhaustion = null;
+            return;
+        }
+
+        double intervalHours = Performance.PollIntervalSeconds / 3600.0;
+        double n = samples.Count;
+        double sumX = 0, sumY = 0, sumXY = 0, sumXX = 0, sumYY = 0;
+        foreach (var (value, index) in samples)
+        {
+            double x = index * intervalHours;
+            double y = value / 1024.0 / 1024.0 / 1024.0; // bytes -> GB
+            sumX += x; sumY += y; sumXY += x * y; sumXX += x * x; sumYY += y * y;
+        }
+
+        double denomSlope = n * sumXX - sumX * sumX;
+        if (denomSlope <= 1e-9)
+        {
+            MinutesToCommitLimitExhaustion = null;
+            return;
+        }
+
+        double slopeGbPerHour = (n * sumXY - sumX * sumY) / denomSlope;
+        double denomCorr = Math.Sqrt(Math.Max(0, (n * sumXX - sumX * sumX) * (n * sumYY - sumY * sumY)));
+        double r2 = denomCorr <= 1e-9
+            ? (Math.Abs(slopeGbPerHour) < 1e-9 ? 1.0 : 0.0)
+            : Math.Pow((n * sumXY - sumX * sumY) / denomCorr, 2);
+
+        double remainingGb = Performance.CommitLimitGb - Performance.CommittedGb;
+
+        MinutesToCommitLimitExhaustion = slopeGbPerHour >= MinCommitGrowthGbPerHourToProject
+            && r2 >= MinCommitTrendRSquared
+            && remainingGb > 0
+                ? Math.Round(remainingGb / slopeGbPerHour * 60.0, 1)
+                : null;
+
+        OnPropertyChanged(nameof(ShowCommitLimitProjection));
+        OnPropertyChanged(nameof(CommitLimitProjectionText));
+    }
+
+    /// <summary>#429: bumps and persists the peak-committed high-water mark whenever the current
+    /// tick's committed figure exceeds it. Persisting on every increase (rather than throttled)
+    /// is fine - CommittedGb strictly increasing tick-over-tick is the uncommon case in practice,
+    /// not something that would otherwise hammer disk every second.</summary>
+    private void RefreshHighWaterMark()
+    {
+        if (Performance.CommittedGb <= PeakCommittedGb) return;
+
+        PeakCommittedGb = Performance.CommittedGb;
+        PeakCommitLimitGbAtPeak = Performance.CommitLimitGb;
+        _peakTimestampUtc = DateTime.UtcNow;
+        OnPropertyChanged(nameof(PeakCommittedText));
+
+        _highWater.PeakCommittedGb = PeakCommittedGb;
+        _highWater.CommitLimitGbAtPeak = PeakCommitLimitGbAtPeak;
+        _highWater.PeakTimestampUtc = _peakTimestampUtc;
+        _highWater.LastKnownBootTimeUtc = DateTime.UtcNow - TimeSpan.FromMilliseconds(Environment.TickCount64);
+        MemoryHighWaterService.Save(_highWater);
+
+        RefreshPageFileAdvisories(); // #431's "peak exceeded RAM with no page file" flag depends on this.
+    }
+
+    /// <summary>#430: reads Win32_PageFileSetting/Win32_PageFileUsage off the UI thread - a single,
+    /// cheap WMI query (page file config only changes on a reboot), run once at startup and again
+    /// on demand via RefreshPageFileConfigCommand rather than on any tick.</summary>
+    private async Task RefreshPageFileConfigAsync()
+    {
+        IsLoadingPageFileConfig = true;
+        try
+        {
+            var snapshot = await Task.Run(PageFileConfigurationService.Query);
+
+            PageFileConfigs.Clear();
+            foreach (var f in snapshot.Files) PageFileConfigs.Add(f);
+            PageFileAutomaticallyManaged = snapshot.IsAutomaticallyManaged;
+            OnPropertyChanged(nameof(PageFileManagementText));
+
+            PageFileConfigStatusText = PageFileConfigs.Count == 0
+                ? "No page file is currently configured on this system."
+                : $"{PageFileConfigs.Count:N0} page file(s) configured.";
+
+            RefreshPageFileAdvisories();
+        }
+        finally
+        {
+            IsLoadingPageFileConfig = false;
+        }
+    }
+
+    /// <summary>#431: "quick flag, not a verdict" page file sizing advisories - a fixed page file
+    /// capped below its own recorded peak usage (the commit limit genuinely couldn't grow past
+    /// that ceiling at least once), or no page file at all on a machine whose peak committed
+    /// memory this session already exceeded installed RAM (the commit limit is capped at physical
+    /// RAM without one). Recomputed whenever either input changes - PageFileConfigs (on load) or
+    /// PeakCommittedGb (on every new high-water mark).</summary>
+    private void RefreshPageFileAdvisories()
+    {
+        var advisories = new List<string>();
+
+        foreach (var f in PageFileConfigs.Where(f => f.IsCappedBelowPeakUsage))
+        {
+            advisories.Add($"{f.Volume} page file: fixed maximum ({f.MaximumSizeMb:N0} MB) is smaller than its recorded peak usage ({f.PeakUsageMb:N0} MB) - the commit limit couldn't grow past that cap when it mattered most.");
+        }
+
+        if (PageFileConfigs.Count == 0 && PeakCommittedGb > 0 && Performance.RamTotalGb > 0 && PeakCommittedGb > Performance.RamTotalGb)
+        {
+            advisories.Add($"No page file is configured, and this session's peak committed memory ({PeakCommittedGb:0.0} GB) already exceeded installed RAM ({Performance.RamTotalGb:0.0} GB) - without a page file, the commit limit can't exceed physical RAM.");
+        }
+
+        PageFileAdvisories.Clear();
+        foreach (var a in advisories) PageFileAdvisories.Add(a);
+    }
+
+    /// <summary>#432: combines the actual page-file I/O rate, how full the page file is, and its
+    /// volume's own disk queue length into one thrashing flag with a "how long has this been going
+    /// on" duration - see the class-level remarks by ThrashingPagingActivityThreshold for why all
+    /// three matter together rather than any one alone. An unknown (null) volume queue length
+    /// doesn't rule thrashing out - it just means that one signal can't confirm or deny it.</summary>
+    private void RefreshThrashingState()
+    {
+        double pagingActivity = Performance.PagesInputPerSec + Performance.PagesOutputPerSec;
+        bool queueBacked = Performance.PageFileVolumeQueueLength is not { } q || q >= ThrashingQueueLengthThreshold;
+        bool candidate = pagingActivity >= ThrashingPagingActivityThreshold
+            && Performance.PageFilePercent >= ThrashingPageFilePercentThreshold
+            && queueBacked;
+
+        if (candidate)
+        {
+            _thrashingStartUtc ??= DateTime.UtcNow;
+            var elapsed = DateTime.UtcNow - _thrashingStartUtc.Value;
+            IsThrashing = true;
+            ThrashingStatusText = $"Thrashing for {FormatDuration(elapsed)} - heavy page-file I/O with the page file nearly full"
+                + (Performance.PageFileVolumeQueueLength is { } ql ? $" and its disk queue backed up ({ql:0.0})." : ".");
+        }
+        else
+        {
+            _thrashingStartUtc = null;
+            IsThrashing = false;
+            ThrashingStatusText = "Not thrashing";
+        }
+    }
+
+    private static string FormatDuration(TimeSpan span)
+        => span.TotalHours >= 1 ? $"{(int)span.TotalHours}h {span.Minutes}m" : $"{(int)span.TotalMinutes}m {span.Seconds}s";
+
+    /// <summary>#433: repeated Process\Page Faults/sec sampling over a 30-second window (via
+    /// ProcessPerfCounterService, already used elsewhere in this app for the same category/rate-
+    /// counter shape), ranked by average rate - the in-app half of "Find what's paging". Windows
+    /// exposes no per-process *hard*-fault-only counter, so this counts all faults (soft+hard);
+    /// it's useful as "who's driving paging activity right now" specifically when the system-wide
+    /// hard-fault rate elsewhere on this tab is elevated, not as a literal hard-fault count. Runs
+    /// PageFaultTraceService's best-effort raw kernel-trace capture alongside it as a bonus - see
+    /// that service's remarks for why the .etl file isn't parsed in-app.</summary>
+    private async Task ScanPageFaultsAsync()
+    {
+        IsScanningPageFaults = true;
+        PageFaultTraceFilePath = null;
+        PageFaultAttributionRows.Clear();
+        PageFaultScanStatusText = "Sampling per-process page fault rate for 30 seconds (also attempting a raw kernel trace capture)...";
+
+        var traceStart = await PageFaultTraceService.StartAsync();
+
+        using var counter = new ProcessPerfCounterService("Process", "Page Faults/sec", isRate: true);
+        var totals = new Dictionary<int, (double Sum, double Peak, int Samples)>();
+        var namesByPid = new Dictionary<int, string>();
+
+        try
+        {
+            // Prime once - a rate counter's very first read is always a meaningless 0.
+            await Task.Run(() => counter.ReadByPid());
+
+            var deadline = DateTime.UtcNow + PageFaultScanWindow;
+            while (DateTime.UtcNow < deadline)
+            {
+                await Task.Delay(PageFaultSampleInterval);
+
+                var reading = await Task.Run(() => counter.ReadByPid());
+                foreach (var (pid, rate) in reading)
+                {
+                    var existing = totals.TryGetValue(pid, out var t) ? t : (0.0, 0.0, 0);
+                    totals[pid] = (existing.Item1 + rate, Math.Max(existing.Item2, rate), existing.Item3 + 1);
+                }
+
+                // Snapshot names while each process is still alive - one that exits mid-window
+                // keeps whatever name was last seen for it rather than losing its row entirely.
+                foreach (var p in _processes.Processes)
+                    namesByPid[p.Pid] = p.Name;
+            }
+        }
+        finally
+        {
+            string traceMessage;
+            if (traceStart.Success)
+            {
+                var stopResult = await PageFaultTraceService.StopAsync();
+                PageFaultTraceFilePath = stopResult.Success ? traceStart.FilePath : null;
+                traceMessage = stopResult.Success
+                    ? $" Raw kernel trace saved to {traceStart.FilePath} - open it in Windows Performance Analyzer for full detail."
+                    : $" Kernel trace capture couldn't be finalized: {stopResult.Message}";
+            }
+            else
+            {
+                traceMessage = $" Kernel trace capture wasn't available: {traceStart.Message}";
+            }
+
+            var rows = totals
+                .Select(kv => new PageFaultAttributionRow
+                {
+                    Pid = kv.Key,
+                    ProcessName = namesByPid.TryGetValue(kv.Key, out var n) ? n : $"(pid {kv.Key})",
+                    AvgPageFaultsPerSec = Math.Round(kv.Value.Sum / Math.Max(1, kv.Value.Samples), 1),
+                    PeakPageFaultsPerSec = Math.Round(kv.Value.Peak, 1),
+                })
+                .OrderByDescending(r => r.AvgPageFaultsPerSec)
+                .Take(15)
+                .ToList();
+
+            foreach (var r in rows) PageFaultAttributionRows.Add(r);
+
+            PageFaultScanStatusText = (rows.Count == 0
+                ? "No measurable per-process page fault activity during the window."
+                : $"Top {rows.Count:N0} processes by page-fault rate over the last 30 seconds - counts all faults (soft+hard); Windows exposes no per-process hard-fault-only counter.")
+                + traceMessage;
+
+            IsScanningPageFaults = false;
+        }
+    }
+
+    /// <summary>#435: confirm-then-run helper shared by every memory-list purge command - see
+    /// those commands' own warning text for what each action actually trades away.</summary>
+    private async Task RunMemoryPurgeAsync(string title, string warning, Func<(bool Success, string? Error)> action)
+    {
+        var confirm = MessageBox.Show(warning, title, MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        IsPurgingMemoryList = true;
+        MemoryPurgeStatusText = $"{title}: in progress...";
+        try
+        {
+            var (success, error) = await Task.Run(action);
+            MemoryPurgeStatusText = success
+                ? $"{title}: done."
+                : $"{title} failed: {error}";
+        }
+        finally
+        {
+            IsPurgingMemoryList = false;
+        }
+    }
+
+    /// <summary>#437: flags sustained growth of the file-system-cache component of Cache Bytes
+    /// past a share of physical RAM - a small rolling window (not a full chart) is enough to tell
+    /// "trending up over roughly the last couple minutes" from "fluctuating around a stable
+    /// baseline". Cache is reclaimable under pressure the same as the standby list is, so this is
+    /// informational, not a leak signal on its own - the UI carries that caveat explicitly.</summary>
+    private void RefreshSystemCacheRunaway()
+    {
+        double current = Performance.SystemCacheResidentGb;
+        _systemCacheSamples.Enqueue(current);
+        while (_systemCacheSamples.Count > SystemCacheRunawayWindowSamples) _systemCacheSamples.Dequeue();
+
+        double ramSharePercent = Performance.RamTotalGb <= 0 ? 0 : current / Performance.RamTotalGb * 100.0;
+        bool aboveShare = ramSharePercent >= SystemCacheRunawayRamSharePercent;
+        bool grewAcrossWindow = _systemCacheSamples.Count >= SystemCacheRunawayWindowSamples
+            && current - _systemCacheSamples.Peek() >= SystemCacheRunawayGrowthGb;
+
+        IsSystemCacheRunawayFlagged = aboveShare && grewAcrossWindow;
+    }
+
+    /// <summary>#438: MemCompression's own working set as a compressed-store-size proxy - the
+    /// closest honest number Windows offers for "how much is compressed" (there's no documented
+    /// API for the true compressed-store byte count). Looked up fresh each tick via a targeted
+    /// Process.GetProcessesByName call rather than the Processes tab's own polling collection, so
+    /// this stays correct even if that collection ever filters system processes differently.
+    /// Null (not zero) when the process isn't present - compression can be disabled by policy, or
+    /// absent entirely on older Windows versions - so the Memory tab falls back to its explanatory
+    /// note rather than showing a misleading 0 GB.</summary>
+    private void RefreshCompressionStats()
+    {
+        try
+        {
+            var procs = Process.GetProcessesByName("MemCompression");
+            try
+            {
+                if (procs.Length == 0)
+                {
+                    CompressedStoreGb = null;
+                    return;
+                }
+
+                long total = 0;
+                foreach (var p in procs)
+                {
+                    try { total += p.WorkingSet64; }
+                    catch { /* exited mid-read - skip it */ }
+                }
+                CompressedStoreGb = total / 1024.0 / 1024.0 / 1024.0;
+            }
+            finally
+            {
+                foreach (var p in procs) p.Dispose();
+            }
+        }
+        catch
+        {
+            CompressedStoreGb = null;
+        }
+        finally
+        {
+            OnPropertyChanged(nameof(HasCompressedStoreData));
+        }
     }
 
     public void Dispose() => _leakGrowthTimer.Stop();

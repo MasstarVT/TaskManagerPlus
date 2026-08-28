@@ -68,7 +68,76 @@ public sealed class EventLogService
             LowMemoryEventCount = lowMemCount,
             LastLowMemoryEvent = lowMemLast,
             PoolExhaustionEvents = ReadPoolExhaustionEvents(),
+            OutOfMemoryIncidents = ReadOutOfMemoryIncidents(),
         };
+    }
+
+    // #439: the specific event ID (out of everything ReadLowMemoryEvents/ReadPoolExhaustionEvents
+    // already read from this same provider) that carries the ranked top-consumer list.
+    private const int OutOfMemoryDiagnosedEventId = 2004;
+
+    // Matches the documented message template's repeated "Name (Pid) consumed N bytes" clauses,
+    // e.g. "chrome.exe (5892) consumed 1073741824 bytes, ... and MsMpEng.exe (908) consumed
+    // 192774144 bytes." A leading "and " before the last clause is stripped from the captured name
+    // below rather than folded into the pattern, since it only ever appears once per message.
+    private static readonly Regex OomConsumerRegex = new(
+        @"([A-Za-z0-9_.\- ]+?)\s*\((\d+)\)\s*consumed\s*([\d,]+)\s*bytes",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    private static List<OutOfMemoryIncident> ReadOutOfMemoryIncidents()
+    {
+        var results = new List<OutOfMemoryIncident>();
+        try
+        {
+            long maxAgeMs = LookbackDays * 24L * 60 * 60 * 1000;
+            var query = new EventLogQuery("System", PathType.LogName,
+                $"*[System[Provider[@Name='{ResourceExhaustionProvider}'] and (EventID={OutOfMemoryDiagnosedEventId}) and " +
+                $"TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]")
+            {
+                ReverseDirection = true,
+            };
+
+            using var reader = new EventLogReader(query);
+            int count = 0;
+            const int maxEvents = 100;
+            while (count < maxEvents && reader.ReadEvent() is { } record)
+            {
+                using (record)
+                {
+                    count++;
+                    if (record.TimeCreated is null) continue;
+
+                    string message;
+                    try { message = record.FormatDescription() ?? string.Empty; }
+                    catch { message = string.Empty; }
+
+                    var consumers = new List<OomTopConsumer>();
+                    foreach (Match m in OomConsumerRegex.Matches(message))
+                    {
+                        string name = m.Groups[1].Value.Trim();
+                        if (name.StartsWith("and ", StringComparison.OrdinalIgnoreCase)) name = name[4..].Trim();
+                        if (name.Length == 0) continue;
+                        if (!int.TryParse(m.Groups[2].Value, out int pid)) continue;
+                        if (!long.TryParse(m.Groups[3].Value.Replace(",", ""), out long bytes)) continue;
+
+                        consumers.Add(new OomTopConsumer { ProcessName = name, Pid = pid, Bytes = bytes });
+                    }
+
+                    results.Add(new OutOfMemoryIncident
+                    {
+                        TimeCreated = record.TimeCreated.Value,
+                        TopConsumers = consumers,
+                        RawMessage = Truncate(message, 500),
+                    });
+                }
+            }
+        }
+        catch
+        {
+            // Provider/log unavailable - degrade to "none found", same as every other event-log
+            // read in this service.
+        }
+        return results;
     }
 
     // #427: the classic pool-starvation event signature - Srv 2019 (nonpaged pool exhausted) and

@@ -78,6 +78,33 @@ public sealed class HardwareSnapshot
     /// running": this memory looks used but is instantly reclaimable under pressure.</summary>
     public long StandbyListBytes { get; init; }
 
+    /// <summary>#434: the three priority tiers that sum to StandbyListBytes above, read
+    /// separately so the Memory tab can chart the composition instead of only the total - a
+    /// standby list dominated by Reserve (lowest priority, first to be reclaimed) reads very
+    /// differently from one dominated by Core (highest priority, reclaimed last).</summary>
+    public long StandbyCoreBytes { get; init; }
+    public long StandbyNormalBytes { get; init; }
+    public long StandbyReserveBytes { get; init; }
+
+    /// <summary>#432: Memory\Pages Input/sec and Memory\Pages Output/sec - the actual page-file
+    /// read/write I/O rate (as opposed to HardFaultsPerSec above, which is "Memory\Pages/sec",
+    /// a slightly different combined figure). Output/sec doubles as the modified-page-writer's
+    /// flush rate for #436, since Windows exposes no separate "writer flush rate" counter.</summary>
+    public double PagesInputPerSec { get; init; }
+    public double PagesOutputPerSec { get; init; }
+
+    /// <summary>#432: "LogicalDisk\Avg. Disk Queue Length" for the specific volume hosting the
+    /// (first configured) page file - null when there's no page file, the drive letter couldn't be
+    /// resolved, or the counter instance isn't available, in which case the thrashing detector
+    /// below just weighs its other two signals instead of treating "unknown" as "zero".</summary>
+    public double? PageFileVolumeQueueLength { get; init; }
+
+    /// <summary>#437: Memory\System Cache Resident Bytes - the file-system-cache component of
+    /// Cache Bytes above (Cache Bytes = System Cache Resident + System Driver Resident + System
+    /// Code Resident), read directly rather than derived by subtraction since these three are
+    /// independently-sampled counters that can disagree slightly at the margins.</summary>
+    public long SystemCacheResidentBytes { get; init; }
+
     /// <summary>Kernel pool usage (Memory\Pool Nonpaged|Paged Bytes) - a slow, sustained climb
     /// here (rather than a stable baseline) usually points to a leaking driver, not an app.</summary>
     public long PoolNonpagedBytes { get; init; }

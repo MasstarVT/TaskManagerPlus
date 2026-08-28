@@ -253,6 +253,42 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
     private double _standbyPercent;
     public double StandbyPercent { get => _standbyPercent; private set => SetProperty(ref _standbyPercent, value); }
 
+    // #434: the three priority tiers that sum to StandbyGb above - see HardwareSnapshot's remarks.
+    private double _standbyCoreGb;
+    public double StandbyCoreGb { get => _standbyCoreGb; private set => SetProperty(ref _standbyCoreGb, value); }
+
+    private double _standbyNormalGb;
+    public double StandbyNormalGb { get => _standbyNormalGb; private set => SetProperty(ref _standbyNormalGb, value); }
+
+    private double _standbyReserveGb;
+    public double StandbyReserveGb { get => _standbyReserveGb; private set => SetProperty(ref _standbyReserveGb, value); }
+
+    // Composition percentages (of the standby total, not of RAM) - feed the Memory tab's stacked
+    // composition bar directly, same "precomputed percent so XAML needs no converter/trigger"
+    // treatment as the pool-limit text properties above.
+    public double StandbyCorePercentOfStandby => StandbyGb <= 0 ? 0 : Math.Clamp(StandbyCoreGb / StandbyGb * 100.0, 0, 100);
+    public double StandbyNormalPercentOfStandby => StandbyGb <= 0 ? 0 : Math.Clamp(StandbyNormalGb / StandbyGb * 100.0, 0, 100);
+    public double StandbyReservePercentOfStandby => StandbyGb <= 0 ? 0 : Math.Clamp(StandbyReserveGb / StandbyGb * 100.0, 0, 100);
+
+    // #432: page-file thrashing detector inputs (combined into a stateful thrashing flag/duration
+    // by MemoryViewModel, which is where the "how long has this been going on" timer state lives).
+    private double _pagesInputPerSec;
+    public double PagesInputPerSec { get => _pagesInputPerSec; private set => SetProperty(ref _pagesInputPerSec, value); }
+
+    /// <summary>Also #436's "modified page writer flush rate" label - Windows exposes no counter
+    /// named for the writer itself, and Pages Output/sec (pages actually written back to the page
+    /// file) is the closest documented proxy for how fast it's draining the modified list.</summary>
+    private double _pagesOutputPerSec;
+    public double PagesOutputPerSec { get => _pagesOutputPerSec; private set => SetProperty(ref _pagesOutputPerSec, value); }
+
+    private double? _pageFileVolumeQueueLength;
+    public double? PageFileVolumeQueueLength { get => _pageFileVolumeQueueLength; private set => SetProperty(ref _pageFileVolumeQueueLength, value); }
+
+    // #437: file-system-cache component of CachedGb - see HardwareSnapshot's remarks for why this
+    // is read directly rather than derived by subtraction.
+    private double _systemCacheResidentGb;
+    public double SystemCacheResidentGb { get => _systemCacheResidentGb; private set => SetProperty(ref _systemCacheResidentGb, value); }
+
     private double _poolNonpagedGb;
     public double PoolNonpagedGb { get => _poolNonpagedGb; private set => SetProperty(ref _poolNonpagedGb, value); }
 
@@ -732,6 +768,16 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(SoftFaultsPerSec));
         StandbyGb = snapshot.StandbyListBytes / 1024.0 / 1024.0 / 1024.0;
         StandbyPercent = snapshot.RamTotalBytes == 0 ? 0 : (double)snapshot.StandbyListBytes / snapshot.RamTotalBytes * 100.0;
+        StandbyCoreGb = snapshot.StandbyCoreBytes / 1024.0 / 1024.0 / 1024.0;
+        StandbyNormalGb = snapshot.StandbyNormalBytes / 1024.0 / 1024.0 / 1024.0;
+        StandbyReserveGb = snapshot.StandbyReserveBytes / 1024.0 / 1024.0 / 1024.0;
+        OnPropertyChanged(nameof(StandbyCorePercentOfStandby));
+        OnPropertyChanged(nameof(StandbyNormalPercentOfStandby));
+        OnPropertyChanged(nameof(StandbyReservePercentOfStandby));
+        PagesInputPerSec = snapshot.PagesInputPerSec;
+        PagesOutputPerSec = snapshot.PagesOutputPerSec;
+        PageFileVolumeQueueLength = snapshot.PageFileVolumeQueueLength;
+        SystemCacheResidentGb = snapshot.SystemCacheResidentBytes / 1024.0 / 1024.0 / 1024.0;
         PoolNonpagedGb = snapshot.PoolNonpagedBytes / 1024.0 / 1024.0 / 1024.0;
         PoolPagedGb = snapshot.PoolPagedBytes / 1024.0 / 1024.0 / 1024.0;
         OnPropertyChanged(nameof(MemoryInUsePercent));
