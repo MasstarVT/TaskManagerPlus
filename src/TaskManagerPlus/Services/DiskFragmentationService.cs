@@ -25,6 +25,34 @@ public static class DiskFragmentationService
     /// drive letter rather than just the page file's.</summary>
     public static string GetMediaType(string driveLetter)
     {
+        var (mediaType, _) = FindPhysicalDiskFacts(driveLetter);
+        return mediaType switch
+        {
+            3 => "HDD",
+            4 => "SSD",
+            5 => "SCM",
+            _ => "Unknown",
+        };
+    }
+
+    /// <summary>Round 15, #345: physical sector size (bytes) of the disk backing one drive letter -
+    /// same associator walk as GetMediaType above (MSFT_PhysicalDisk.PhysicalSectorSize), reused
+    /// rather than re-derived, per this round's brief. Used to flag a cluster (allocation unit) size
+    /// smaller than the device's physical sector size, which causes read-modify-write penalties on
+    /// every sub-physical-sector write on a 4Kn/512e drive.</summary>
+    public static uint? GetPhysicalSectorSizeBytes(string driveLetter)
+    {
+        var (_, sectorSize) = FindPhysicalDiskFacts(driveLetter);
+        return sectorSize;
+    }
+
+    /// <summary>Shared associator walk (MSFT_Volume -&gt; MSFT_Partition -&gt; MSFT_Disk -&gt;
+    /// MSFT_PhysicalDisk) behind GetMediaType/GetPhysicalSectorSizeBytes - extracted so #345 doesn't
+    /// duplicate the four-level ASSOCIATORS OF chain a second time in a different file. Returns
+    /// primitive values (not the ManagementObject itself) so the caller never has to reason about a
+    /// COM object outliving the `using` searchers that produced it.</summary>
+    private static (int? MediaType, uint? PhysicalSectorSizeBytes) FindPhysicalDiskFacts(string driveLetter)
+    {
         try
         {
             using var volSearcher = new ManagementObjectSearcher(
@@ -47,21 +75,16 @@ public static class DiskFragmentationService
                             $"ASSOCIATORS OF {{MSFT_Disk.ObjectId='{EscapeWmiPath((string)disk["ObjectId"])}'}} WHERE AssocClass=MSFT_DiskToPhysicalDisk");
                         foreach (ManagementObject phys in physicalDisks.Get())
                         {
-                            if (phys["MediaType"] is null) continue;
-                            return Convert.ToInt32(phys["MediaType"]) switch
-                            {
-                                3 => "HDD",
-                                4 => "SSD",
-                                5 => "SCM",
-                                _ => "Unknown",
-                            };
+                            int? mediaType = phys["MediaType"] is null ? null : Convert.ToInt32(phys["MediaType"]);
+                            uint? sectorSize = phys["PhysicalSectorSize"] is null ? null : Convert.ToUInt32(phys["PhysicalSectorSize"]);
+                            return (mediaType, sectorSize);
                         }
                     }
                 }
             }
         }
         catch { /* fall through */ }
-        return "Unknown";
+        return (null, null);
     }
 
     private static string EscapeWmiPath(string objectId) => objectId.Replace(@"\", @"\\").Replace("\"", "\\\"");

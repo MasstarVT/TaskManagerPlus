@@ -70,6 +70,92 @@ public sealed class NvmeWarningRow
 }
 
 /// <summary>
+/// Round 15, #337/#338/#339/#343/#345: one fixed, lettered volume's combined filesystem card row -
+/// the static MSFT_Volume/physical-sector facts (#345, Facts) plus the mutable NTFS-specific
+/// dirty/self-healing/corruption-record/boot-check facts (#337/#338/#339/#343), all read together in
+/// one background pass at Storage-tab load (or an explicit Refresh click) - see
+/// StorageViewModel.LoadVolumeFilesystemFactsAsync. This replaces the tab's earlier letter-only
+/// drive list as the anchor the rest of this round's cards attach to.
+/// </summary>
+public sealed class VolumeFilesystemRow : ObservableObject
+{
+    public VolumeFilesystemFacts Facts { get; }
+    public string DriveLetter => Facts.DriveLetter;
+
+    public VolumeFilesystemRow(VolumeFilesystemFacts facts)
+    {
+        Facts = facts;
+        // Keeps CorruptionCountText in sync without StorageViewModel having to reach into this
+        // row's internals from outside - the same "the row owns its own derived-text wiring"
+        // shape SmartTriageTile/FragmentationRow already use, just via a collection instead of a
+        // single settable property.
+        CorruptionRecords.CollectionChanged += (_, _) => OnPropertyChanged(nameof(CorruptionCountText));
+    }
+
+    public string AllocationUnitSizeText => Facts.AllocationUnitSizeBytes is { } a ? Formatting.FormatBytes(a) : "Unknown";
+    public string PhysicalSectorSizeText => Facts.PhysicalSectorSizeBytes is { } p ? Formatting.FormatBytes(p) : "Unknown";
+
+    // #337
+    private bool? _isDirty;
+    public bool? IsDirty { get => _isDirty; set { if (SetProperty(ref _isDirty, value)) OnPropertyChanged(nameof(DirtyText)); } }
+
+    public string DirtyText => IsDirty switch
+    {
+        true => "Dirty - a chkdsk is already queued for next boot",
+        false => "Not dirty",
+        null => "Unknown",
+    };
+
+    // #338
+    private bool? _selfHealingEnabled;
+    public bool? SelfHealingEnabled { get => _selfHealingEnabled; set { if (SetProperty(ref _selfHealingEnabled, value)) OnPropertyChanged(nameof(SelfHealingText)); } }
+
+    private bool? _selfHealingWarnOnly;
+    public bool? SelfHealingWarnOnly { get => _selfHealingWarnOnly; set { if (SetProperty(ref _selfHealingWarnOnly, value)) OnPropertyChanged(nameof(SelfHealingText)); } }
+
+    public string SelfHealingText
+    {
+        get
+        {
+            if (!Facts.IsNtfs) return "Unknown (not an NTFS volume)";
+            if (SelfHealingWarnOnly == true) return "Warn only (logs/warns about corruptions, doesn't auto-repair)";
+            return SelfHealingEnabled switch { true => "Enabled", false => "Disabled", null => "Unknown" };
+        }
+    }
+
+    private string _selfHealingActionStatusText = string.Empty;
+    public string SelfHealingActionStatusText { get => _selfHealingActionStatusText; set => SetProperty(ref _selfHealingActionStatusText, value); }
+
+    private bool _isTogglingSelfHealing;
+    public bool IsTogglingSelfHealing { get => _isTogglingSelfHealing; set => SetProperty(ref _isTogglingSelfHealing, value); }
+
+    // #339
+    public ObservableCollection<NtfsCorruptionRecord> CorruptionRecords { get; } = new();
+    public string CorruptionCountText => CorruptionRecords.Count == 0
+        ? "0 logged corruption records"
+        : $"{CorruptionRecords.Count} logged corruption record(s)";
+
+    // #343
+    private string _chkntfsText = string.Empty;
+    public string ChkntfsText { get => _chkntfsText; set => SetProperty(ref _chkntfsText, value); }
+
+    private string _bootExecuteText = string.Empty;
+    public string BootExecuteText { get => _bootExecuteText; set => SetProperty(ref _bootExecuteText, value); }
+
+    private bool _isExcludedFromBootCheck;
+    public bool IsExcludedFromBootCheck { get => _isExcludedFromBootCheck; set => SetProperty(ref _isExcludedFromBootCheck, value); }
+
+    private string _bootCheckActionStatusText = string.Empty;
+    public string BootCheckActionStatusText { get => _bootCheckActionStatusText; set => SetProperty(ref _bootCheckActionStatusText, value); }
+
+    private bool _isBootCheckActionRunning;
+    public bool IsBootCheckActionRunning { get => _isBootCheckActionRunning; set => SetProperty(ref _isBootCheckActionRunning, value); }
+
+    private string _ntfsFactsStatusText = "Loading...";
+    public string NtfsFactsStatusText { get => _ntfsFactsStatusText; set => SetProperty(ref _ntfsFactsStatusText, value); }
+}
+
+/// <summary>
 /// Backs the Storage tab. Thin composition over the shared PerformanceViewModel sampler -
 /// see CpuViewModel's remarks for why this doesn't own its own timer. Also takes the shared
 /// EnergyThermalsViewModel purely to re-present its already-polled Temperatures list filtered
@@ -422,6 +508,88 @@ public sealed class StorageViewModel : ObservableObject
     public RelayCommand RunAtaShortSelfTestCommand { get; }
     public RelayCommand RunAtaExtendedSelfTestCommand { get; }
 
+    // ================================================================================
+    // Round 15, #337/#338/#339/#343/#345: per-volume filesystem facts card - the anchor row list
+    // the rest of this round's cards/actions attach to. Replaces the tab's earlier letter-only
+    // drive list.
+    // ================================================================================
+    public ObservableCollection<VolumeFilesystemRow> VolumeFilesystemRows { get; } = new();
+
+    private bool _isLoadingVolumeFilesystemFacts;
+    public bool IsLoadingVolumeFilesystemFacts { get => _isLoadingVolumeFilesystemFacts; private set => SetProperty(ref _isLoadingVolumeFilesystemFacts, value); }
+
+    public AsyncRelayCommand RefreshVolumeFilesystemFactsCommand { get; }
+    public AsyncRelayCommand ToggleSelfHealingCommand { get; }
+    public AsyncRelayCommand ScheduleBootCheckCommand { get; }
+    public AsyncRelayCommand CancelBootCheckCommand { get; }
+
+    // ================================================================================
+    // #340/#341: online chkdsk /scan runner + MSFT_Volume.Repair (Scan/SpotFix/OfflineScanAndFix) -
+    // one shared volume picker for both, since they act on the same target.
+    // ================================================================================
+    public ObservableCollection<string> ChkdskVolumeOptions { get; } = new();
+
+    private string? _selectedChkdskVolume;
+    public string? SelectedChkdskVolume
+    {
+        get => _selectedChkdskVolume;
+        set { if (SetProperty(ref _selectedChkdskVolume, value) && value is not null) UpdateChkdskLastScanText(value); }
+    }
+
+    private string _chkdskScanLogText = string.Empty;
+    public string ChkdskScanLogText { get => _chkdskScanLogText; private set => SetProperty(ref _chkdskScanLogText, value); }
+
+    private bool _isChkdskScanning;
+    public bool IsChkdskScanning { get => _isChkdskScanning; private set => SetProperty(ref _isChkdskScanning, value); }
+
+    private string _chkdskScanStatusText = string.Empty;
+    public string ChkdskScanStatusText { get => _chkdskScanStatusText; private set => SetProperty(ref _chkdskScanStatusText, value); }
+
+    // #340: persisted "last scanned: <date> - ..." line, per the selected volume.
+    private string _chkdskLastScanText = string.Empty;
+    public string ChkdskLastScanText { get => _chkdskLastScanText; private set => SetProperty(ref _chkdskLastScanText, value); }
+
+    private CancellationTokenSource? _chkdskScanCts;
+    public AsyncRelayCommand RunChkdskScanCommand { get; }
+    public RelayCommand CancelChkdskScanCommand { get; }
+
+    private string _volumeRepairStatusText = string.Empty;
+    public string VolumeRepairStatusText { get => _volumeRepairStatusText; private set => SetProperty(ref _volumeRepairStatusText, value); }
+
+    private bool _isRunningVolumeRepair;
+    public bool IsRunningVolumeRepair { get => _isRunningVolumeRepair; private set => SetProperty(ref _isRunningVolumeRepair, value); }
+
+    public AsyncRelayCommand RunVolumeScanCommand { get; }
+    public AsyncRelayCommand RunVolumeSpotFixCommand { get; }
+    public AsyncRelayCommand RunVolumeOfflineFixCommand { get; }
+
+    // ================================================================================
+    // #342: filesystem check history - this app's own persisted #340/#341 runs merged with
+    // Windows' own event-logged chkdsk reports.
+    // ================================================================================
+    public ObservableCollection<ChkdskHistoryEntry> ChkdskHistory { get; } = new();
+
+    private string _chkdskHistoryStatusText = string.Empty;
+    public string ChkdskHistoryStatusText { get => _chkdskHistoryStatusText; private set => SetProperty(ref _chkdskHistoryStatusText, value); }
+
+    private bool _isLoadingChkdskHistory;
+    public bool IsLoadingChkdskHistory { get => _isLoadingChkdskHistory; private set => SetProperty(ref _isLoadingChkdskHistory, value); }
+
+    public AsyncRelayCommand RefreshChkdskHistoryCommand { get; }
+
+    // ================================================================================
+    // #344: NTFS corruption event feed (System log, provider "Ntfs").
+    // ================================================================================
+    public ObservableCollection<NtfsCorruptionEvent> NtfsCorruptionEvents { get; } = new();
+
+    private string _ntfsCorruptionEventsStatusText = "Not checked";
+    public string NtfsCorruptionEventsStatusText { get => _ntfsCorruptionEventsStatusText; private set => SetProperty(ref _ntfsCorruptionEventsStatusText, value); }
+
+    private bool _isCheckingNtfsCorruptionEvents;
+    public bool IsCheckingNtfsCorruptionEvents { get => _isCheckingNtfsCorruptionEvents; private set => SetProperty(ref _isCheckingNtfsCorruptionEvents, value); }
+
+    public AsyncRelayCommand CheckNtfsCorruptionEventsCommand { get; }
+
     public StorageViewModel(PerformanceViewModel performance, EnergyThermalsViewModel energyThermals)
     {
         Performance = performance;
@@ -470,6 +638,25 @@ public sealed class StorageViewModel : ObservableObject
         RunAtaShortSelfTestCommand = new RelayCommand(() => RunAtaSelfTest(extended: false), () => ShowAtaSelfTest && SelectedSmartDisk is not null);
         RunAtaExtendedSelfTestCommand = new RelayCommand(() => RunAtaSelfTest(extended: true), () => ShowAtaSelfTest && SelectedSmartDisk is not null);
 
+        // Round 15, #337/#338/#339/#343/#345
+        RefreshVolumeFilesystemFactsCommand = new AsyncRelayCommand(LoadVolumeFilesystemFactsAsync, () => !IsLoadingVolumeFilesystemFacts);
+        ToggleSelfHealingCommand = new AsyncRelayCommand(param => ToggleSelfHealingAsync(param as VolumeFilesystemRow));
+        ScheduleBootCheckCommand = new AsyncRelayCommand(param => ScheduleBootCheckForRowAsync(param as VolumeFilesystemRow));
+        CancelBootCheckCommand = new AsyncRelayCommand(param => CancelBootCheckForRowAsync(param as VolumeFilesystemRow));
+
+        // #340/#341
+        RunChkdskScanCommand = new AsyncRelayCommand(RunChkdskScanAsync, () => !IsChkdskScanning && SelectedChkdskVolume is not null);
+        CancelChkdskScanCommand = new RelayCommand(() => _chkdskScanCts?.Cancel(), () => IsChkdskScanning);
+        RunVolumeScanCommand = new AsyncRelayCommand(() => RunVolumeRepairAsync(VolumeRepairMode.Scan), () => !IsRunningVolumeRepair && SelectedChkdskVolume is not null);
+        RunVolumeSpotFixCommand = new AsyncRelayCommand(() => RunVolumeRepairAsync(VolumeRepairMode.SpotFix), () => !IsRunningVolumeRepair && SelectedChkdskVolume is not null);
+        RunVolumeOfflineFixCommand = new AsyncRelayCommand(() => RunVolumeRepairAsync(VolumeRepairMode.OfflineScanAndFix), () => !IsRunningVolumeRepair && SelectedChkdskVolume is not null);
+
+        // #342
+        RefreshChkdskHistoryCommand = new AsyncRelayCommand(RefreshChkdskHistoryAsync, () => !IsLoadingChkdskHistory);
+
+        // #344
+        CheckNtfsCorruptionEventsCommand = new AsyncRelayCommand(CheckNtfsCorruptionEventsAsync, () => !IsCheckingNtfsCorruptionEvents);
+
         // #324: subscribe to the shared sampler's tick rather than owning a new heavy timer -
         // see PerformanceViewModel.Sampled's remarks.
         Performance.Sampled += OnPerformanceSampled;
@@ -498,6 +685,14 @@ public sealed class StorageViewModel : ObservableObject
                 foreach (var d in fixedDrives) ThroughputDriveOptions.Add(d.Name.TrimEnd('\\'));
                 SelectedThroughputDrive = ThroughputDriveOptions.FirstOrDefault();
 
+                // #340/#341: same fixed-drive set as the throughput picker above, but bare (no
+                // trailing colon) - unlike ThroughputDriveOptions above, this matches
+                // VolumeFilesystemRow.DriveLetter's bare-letter convention (from MSFT_Volume's
+                // single-char DriveLetter property), since ChkdskService's process args append
+                // their own colon.
+                foreach (var d in fixedDrives) ChkdskVolumeOptions.Add(d.Name.TrimEnd('\\', ':'));
+                SelectedChkdskVolume = ChkdskVolumeOptions.FirstOrDefault();
+
                 foreach (var (index, model) in disks)
                 {
                     failureFlags.TryGetValue(index, out var flag);
@@ -508,6 +703,11 @@ public sealed class StorageViewModel : ObservableObject
                 }
             });
         });
+
+        // Round 15, #345: the per-volume filesystem facts card - its own async pass (not folded
+        // into the Task.Run above) since it does its own further per-row async fsutil/chkntfs
+        // shell-outs after the initial WMI read, per LoadVolumeFilesystemFactsAsync's remarks.
+        _ = LoadVolumeFilesystemFactsAsync();
     }
 
     /// <summary>#324: fired once per PerformanceViewModel sample tick. Throttled to roughly once
@@ -1675,5 +1875,348 @@ public sealed class StorageViewModel : ObservableObject
         if (disk is null) return;
         var (_, message) = AtaSelfTestService.TriggerSelfTest(disk.Index, extended);
         AtaSelfTestStatusText = message;
+    }
+
+    // ================================================================================
+    // Round 15, #337/#338/#339/#343/#345: per-volume filesystem facts card.
+    // ================================================================================
+
+    /// <summary>One MSFT_Volume query (#345) followed by, per row, the NTFS-specific fsutil/
+    /// chkntfs facts (#337/#338/#339/#343) - all read once here (constructor + explicit Refresh
+    /// click), never on a poll tick, per this round's brief. The per-row facts are their own pass
+    /// (not folded into the constructor's other Task.Run) since each row does several of its own
+    /// async shell-outs after the base list is already on screen, rather than blocking the whole
+    /// card behind every volume's slowest fsutil call.</summary>
+    private async Task LoadVolumeFilesystemFactsAsync()
+    {
+        if (IsLoadingVolumeFilesystemFacts) return;
+        IsLoadingVolumeFilesystemFacts = true;
+        try
+        {
+            var facts = await Task.Run(() => NtfsFilesystemService.ListVolumes());
+            VolumeFilesystemRows.Clear();
+            var rows = facts.Select(f => new VolumeFilesystemRow(f)).ToList();
+            foreach (var row in rows) VolumeFilesystemRows.Add(row);
+
+            var tasks = rows.Select(LoadRowNtfsDetailsAsync).ToArray();
+            await Task.WhenAll(tasks);
+        }
+        catch
+        {
+            // Card-level failure (e.g. the MSFT_Volume query itself threw) - individual row
+            // failures are already caught and shown per-row in LoadRowNtfsDetailsAsync below.
+        }
+        finally
+        {
+            IsLoadingVolumeFilesystemFacts = false;
+        }
+    }
+
+    /// <summary>Dirty bit (#337) and boot-check status (#343) apply to any volume; self-healing
+    /// state (#338) and the corruption record log (#339) are NTFS-only concepts, so those two are
+    /// skipped (left at their "Unknown (not an NTFS volume)"/empty defaults) for a non-NTFS row
+    /// rather than shelling out to fsutil commands that don't apply to it.</summary>
+    private async Task LoadRowNtfsDetailsAsync(VolumeFilesystemRow row)
+    {
+        row.NtfsFactsStatusText = "Loading...";
+        try
+        {
+            var dirtyTask = NtfsFilesystemService.QueryDirtyAsync(row.DriveLetter);
+            var bootCheckTask = NtfsFilesystemService.QueryBootCheckStatusAsync(row.DriveLetter);
+
+            if (row.Facts.IsNtfs)
+            {
+                var repairTask = NtfsFilesystemService.QueryRepairStateAsync(row.DriveLetter);
+                var corruptionTask = NtfsFilesystemService.EnumerateCorruptionRecordsAsync(row.DriveLetter);
+                await Task.WhenAll(dirtyTask, bootCheckTask, repairTask, corruptionTask);
+
+                var (enabled, warnOnly, _) = repairTask.Result;
+                row.SelfHealingEnabled = enabled;
+                row.SelfHealingWarnOnly = warnOnly;
+
+                row.CorruptionRecords.Clear();
+                foreach (var rec in corruptionTask.Result) row.CorruptionRecords.Add(rec);
+            }
+            else
+            {
+                await Task.WhenAll(dirtyTask, bootCheckTask);
+            }
+
+            row.IsDirty = dirtyTask.Result;
+            var (chkntfsText, bootExecuteText, isExcluded) = bootCheckTask.Result;
+            row.ChkntfsText = chkntfsText;
+            row.BootExecuteText = bootExecuteText;
+            row.IsExcludedFromBootCheck = isExcluded;
+
+            row.NtfsFactsStatusText = string.Empty;
+        }
+        catch (Exception ex)
+        {
+            row.NtfsFactsStatusText = $"Failed: {ex.Message}";
+        }
+    }
+
+    /// <summary>#338: toggles between Enabled and Disabled - a row currently Unknown, WarnOnly, or
+    /// Disabled is treated as "not currently Enabled" and this attempts to enable it; only a
+    /// currently-Enabled row disables. Re-queries afterwards so the displayed state reflects what
+    /// fsutil actually set, not just an optimistic flip.</summary>
+    private async Task ToggleSelfHealingAsync(VolumeFilesystemRow? row)
+    {
+        if (row is null || row.IsTogglingSelfHealing) return;
+        bool enableNext = row.SelfHealingEnabled != true;
+
+        row.IsTogglingSelfHealing = true;
+        row.SelfHealingActionStatusText = enableNext ? "Enabling..." : "Disabling...";
+        try
+        {
+            var (success, message) = await NtfsFilesystemService.SetRepairStateAsync(row.DriveLetter, enableNext);
+            row.SelfHealingActionStatusText = message;
+            if (success)
+            {
+                var (enabled, warnOnly, _) = await NtfsFilesystemService.QueryRepairStateAsync(row.DriveLetter);
+                row.SelfHealingEnabled = enabled;
+                row.SelfHealingWarnOnly = warnOnly;
+            }
+        }
+        catch (Exception ex)
+        {
+            row.SelfHealingActionStatusText = $"Failed: {ex.Message}";
+        }
+        finally
+        {
+            row.IsTogglingSelfHealing = false;
+        }
+    }
+
+    /// <summary>#343: schedules a boot-time `chkdsk /f /r` - confirmed first since a /r pass can
+    /// run for hours and requires a reboot to even start (see
+    /// NtfsFilesystemService.ScheduleBootCheckAsync's remarks for the safety timeout backing this).
+    /// </summary>
+    private async Task ScheduleBootCheckForRowAsync(VolumeFilesystemRow? row)
+    {
+        if (row is null || row.IsBootCheckActionRunning) return;
+
+        var confirm = System.Windows.MessageBox.Show(
+            $"Schedule a full chkdsk /f /r check of {row.DriveLetter}: for the next restart?\n\n" +
+            "This requires a reboot to take effect, and the /r (bad-sector) pass can take several " +
+            "hours on a large volume - the computer won't be usable for normal work until it finishes.",
+            "Schedule boot-time check",
+            System.Windows.MessageBoxButton.YesNo,
+            System.Windows.MessageBoxImage.Warning);
+        if (confirm != System.Windows.MessageBoxResult.Yes) return;
+
+        row.IsBootCheckActionRunning = true;
+        row.BootCheckActionStatusText = "Scheduling...";
+        try
+        {
+            var (success, message) = await NtfsFilesystemService.ScheduleBootCheckAsync(row.DriveLetter);
+            row.BootCheckActionStatusText = message;
+            if (success) await RefreshRowBootCheckStatusAsync(row);
+        }
+        catch (Exception ex)
+        {
+            row.BootCheckActionStatusText = $"Failed: {ex.Message}";
+        }
+        finally
+        {
+            row.IsBootCheckActionRunning = false;
+        }
+    }
+
+    /// <summary>#343: `chkntfs /x` - excludes the volume from the default boot-time check.</summary>
+    private async Task CancelBootCheckForRowAsync(VolumeFilesystemRow? row)
+    {
+        if (row is null || row.IsBootCheckActionRunning) return;
+
+        row.IsBootCheckActionRunning = true;
+        row.BootCheckActionStatusText = "Cancelling...";
+        try
+        {
+            var (success, message) = await NtfsFilesystemService.CancelBootCheckAsync(row.DriveLetter);
+            row.BootCheckActionStatusText = message;
+            if (success) await RefreshRowBootCheckStatusAsync(row);
+        }
+        catch (Exception ex)
+        {
+            row.BootCheckActionStatusText = $"Failed: {ex.Message}";
+        }
+        finally
+        {
+            row.IsBootCheckActionRunning = false;
+        }
+    }
+
+    private static async Task RefreshRowBootCheckStatusAsync(VolumeFilesystemRow row)
+    {
+        var (chkntfsText, bootExecuteText, isExcluded) = await NtfsFilesystemService.QueryBootCheckStatusAsync(row.DriveLetter);
+        row.ChkntfsText = chkntfsText;
+        row.BootExecuteText = bootExecuteText;
+        row.IsExcludedFromBootCheck = isExcluded;
+    }
+
+    // ================================================================================
+    // #340: online chkdsk /scan runner - streamed line-by-line into a scrollable log, cancellable.
+    // ================================================================================
+
+    private async Task RunChkdskScanAsync()
+    {
+        string? drive = SelectedChkdskVolume;
+        if (drive is null || IsChkdskScanning) return;
+
+        _chkdskScanCts = new CancellationTokenSource();
+        var token = _chkdskScanCts.Token;
+        var dispatcher = System.Windows.Application.Current?.Dispatcher;
+
+        IsChkdskScanning = true;
+        ChkdskScanLogText = string.Empty;
+        ChkdskScanStatusText = $"Scanning {drive}: (chkdsk /scan - online, no dismount, no reboot)...";
+        var logBuilder = new System.Text.StringBuilder();
+        try
+        {
+            var (problemsFound, verdict) = await ChkdskService.RunOnlineScanAsync(drive, line =>
+            {
+                dispatcher?.Invoke(() =>
+                {
+                    logBuilder.AppendLine(line);
+                    ChkdskScanLogText = logBuilder.ToString();
+                });
+            }, token);
+
+            ChkdskScanStatusText = verdict;
+
+            ChkdskService.AppendScanRecord(new ChkdskScanRecord
+            {
+                DriveLetter = drive,
+                Timestamp = DateTime.Now,
+                Source = "Online scan (/scan)",
+                ProblemsFound = problemsFound,
+                Summary = verdict,
+            });
+            UpdateChkdskLastScanText(drive);
+        }
+        catch (OperationCanceledException)
+        {
+            ChkdskScanStatusText = $"Scan cancelled - {logBuilder.ToString().Split('\n').Length} line(s) logged before cancelling.";
+        }
+        catch (Exception ex)
+        {
+            ChkdskScanStatusText = $"Failed: {ex.Message}";
+        }
+        finally
+        {
+            IsChkdskScanning = false;
+            _chkdskScanCts?.Dispose();
+            _chkdskScanCts = null;
+        }
+    }
+
+    private void UpdateChkdskLastScanText(string driveLetter)
+    {
+        var last = ChkdskService.LastScanFor(driveLetter);
+        ChkdskLastScanText = last is null
+            ? $"{driveLetter}: never scanned by this app."
+            : $"Last scanned: {last.Timestamp:g} - {(last.ProblemsFound ? "problems found" : "no problems found")} ({last.Source}).";
+    }
+
+    // ================================================================================
+    // #341: MSFT_Volume.Repair - Scan/SpotFix/OfflineScanAndFix. SpotFix and OfflineScanAndFix are
+    // confirmed first (Offline dismounts the volume), matching the Yes/No MessageBox.Show pattern
+    // ProcessesViewModel.EndSelected already uses for a different destructive action - no separate
+    // confirmation mechanism invented for this.
+    // ================================================================================
+
+    private async Task RunVolumeRepairAsync(VolumeRepairMode mode)
+    {
+        string? drive = SelectedChkdskVolume;
+        if (drive is null || IsRunningVolumeRepair) return;
+
+        if (mode != VolumeRepairMode.Scan)
+        {
+            string question = mode == VolumeRepairMode.OfflineScanAndFix
+                ? $"Run an OFFLINE scan and fix on {drive}:?\n\nThe volume will be dismounted for the duration of the repair - anything with open files or handles on it will be interrupted."
+                : $"Run a spot-fix repair on {drive}:?\n\nThis repairs specific known-corrupt areas online, without a full offline scan.";
+            var confirm = System.Windows.MessageBox.Show(question, "Repair volume", System.Windows.MessageBoxButton.YesNo, System.Windows.MessageBoxImage.Warning);
+            if (confirm != System.Windows.MessageBoxResult.Yes) return;
+        }
+
+        IsRunningVolumeRepair = true;
+        VolumeRepairStatusText = $"Running ({mode})...";
+        try
+        {
+            var (success, _, codeText, extraDetail) = await ChkdskService.RunVolumeRepairAsync(drive, mode);
+            VolumeRepairStatusText = extraDetail.Length > 0 ? $"{codeText} {extraDetail}" : codeText;
+
+            ChkdskService.AppendScanRecord(new ChkdskScanRecord
+            {
+                DriveLetter = drive,
+                Timestamp = DateTime.Now,
+                Source = $"WMI {mode}",
+                ProblemsFound = !success,
+                Summary = VolumeRepairStatusText,
+            });
+            UpdateChkdskLastScanText(drive);
+        }
+        catch (Exception ex)
+        {
+            VolumeRepairStatusText = $"Failed: {ex.Message}";
+        }
+        finally
+        {
+            IsRunningVolumeRepair = false;
+        }
+    }
+
+    // ================================================================================
+    // #342: filesystem check history.
+    // ================================================================================
+
+    private async Task RefreshChkdskHistoryAsync()
+    {
+        IsLoadingChkdskHistory = true;
+        ChkdskHistoryStatusText = "Loading...";
+        ChkdskHistory.Clear();
+        try
+        {
+            var entries = await Task.Run(() => ChkdskService.ReadCombinedHistory());
+            foreach (var e in entries) ChkdskHistory.Add(e);
+            ChkdskHistoryStatusText = entries.Count == 0
+                ? "No chkdsk runs found - neither this app's own history nor Windows' own event-logged reports."
+                : $"{entries.Count} entr{(entries.Count == 1 ? "y" : "ies")} (most recent first - this app's own runs and Windows' own event-logged reports combined; see the Source column).";
+        }
+        catch (Exception ex)
+        {
+            ChkdskHistoryStatusText = $"Failed: {ex.Message}";
+        }
+        finally
+        {
+            IsLoadingChkdskHistory = false;
+        }
+    }
+
+    // ================================================================================
+    // #344: NTFS corruption event feed.
+    // ================================================================================
+
+    private async Task CheckNtfsCorruptionEventsAsync()
+    {
+        IsCheckingNtfsCorruptionEvents = true;
+        NtfsCorruptionEventsStatusText = "Checking the System log for Ntfs corruption/resource-exhaustion events...";
+        NtfsCorruptionEvents.Clear();
+        try
+        {
+            var events = await Task.Run(() => NtfsCorruptionEventService.ReadEvents());
+            foreach (var e in events) NtfsCorruptionEvents.Add(e);
+            NtfsCorruptionEventsStatusText = events.Count == 0
+                ? "No Ntfs corruption/resource-exhaustion events found in the last 60 days."
+                : $"{events.Count} event(s) in the last 60 days, grouped by volume.";
+        }
+        catch (Exception ex)
+        {
+            NtfsCorruptionEventsStatusText = $"Failed: {ex.Message}";
+        }
+        finally
+        {
+            IsCheckingNtfsCorruptionEvents = false;
+        }
     }
 }
