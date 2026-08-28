@@ -51,6 +51,11 @@ public sealed class ProcessMonitorService : IDisposable
     /// ordinary signed-in user account when auditing the process list for something unexpected.</summary>
     private static readonly string[] HighPrivilegeAccounts = { "SYSTEM", "LOCAL SERVICE", "NETWORK SERVICE" };
 
+    /// <summary>#404: warn once a process's GDI/USER object count reaches this fraction of its
+    /// per-process quota (GdiQuotaService) - 80% is early enough to act before creation starts
+    /// failing outright, not so early that ordinary GUI-heavy apps trip it under normal use.</summary>
+    private const double GdiUserQuotaWarningFraction = 0.8;
+
     /// <summary>
     /// Builds the current snapshot of processes. Safe to call from a background thread.
     /// </summary>
@@ -136,6 +141,12 @@ public sealed class ProcessMonitorService : IDisposable
                 int gdiHandles = 0, userHandles = 0;
                 try { (gdiHandles, userHandles) = ProcessControlService.ReadGuiResourceCounts(proc.Handle); } catch { /* ignore */ }
 
+                // #404: GDI/USER quota warning - past 80% of the per-process quota Windows
+                // enforces (GdiQuotaService), object creation for that type starts failing
+                // outright soon after, so this is meant to be caught well before that happens.
+                bool isGdiQuotaWarning = gdiHandles >= GdiQuotaService.GdiQuota * GdiUserQuotaWarningFraction;
+                bool isUserQuotaWarning = userHandles >= GdiQuotaService.UserQuota * GdiUserQuotaWarningFraction;
+
                 bool isSuspended = false;
                 try { isSuspended = ProcessControlService.IsSuspended(proc); } catch { /* ignore */ }
 
@@ -190,6 +201,8 @@ public sealed class ProcessMonitorService : IDisposable
                     GdiHandleCount = gdiHandles,
                     UserHandleCount = userHandles,
                     IsSuspended = isSuspended,
+                    IsGdiQuotaWarning = isGdiQuotaWarning,
+                    IsUserQuotaWarning = isUserQuotaWarning,
                 });
             }
             catch (Exception)

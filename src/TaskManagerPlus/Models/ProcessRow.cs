@@ -153,4 +153,40 @@ public sealed class ProcessRow : ObservableObject
     public long PagedPoolBytes { get => _pagedPoolBytes; set => SetProperty(ref _pagedPoolBytes, value); }
 
     public double MemoryMb => MemoryBytes / 1024.0 / 1024.0;
+
+    /// <summary>#401: recent private-bytes samples (oldest first) for this image name, from the
+    /// persistent cross-restart history - see ProcessHistoryService. Replaced wholesale each tick
+    /// (not mutated in place) so the Processes grid's sparkline column re-renders on the
+    /// PropertyChanged this setter raises, same as every other per-tick field on this row.</summary>
+    private IReadOnlyList<double> _memorySparkline = Array.Empty<double>();
+    public IReadOnlyList<double> MemorySparkline { get => _memorySparkline; set => SetProperty(ref _memorySparkline, value); }
+
+    /// <summary>#402: least-squares slope of this image name's private-bytes history, in
+    /// MB/hour, and the fit's R² (0-1) - a magnitude and a confidence, distinguishing a steady
+    /// climb from a sawtooth allocate/free pattern, on top of the plain IsLeakSuspect dot above.
+    /// See ProcessHistoryService.Regress.</summary>
+    private double _leakSlopeMbPerHour;
+    public double LeakSlopeMbPerHour { get => _leakSlopeMbPerHour; set => SetProperty(ref _leakSlopeMbPerHour, value); }
+
+    private double _leakRSquared;
+    public double LeakRSquared { get => _leakRSquared; set => SetProperty(ref _leakRSquared, value); }
+
+    /// <summary>#403: handle count has grown steadily while private bytes stayed flat - the
+    /// classic kernel-object-leak signature. See ProcessHistoryService.ApplyComputedFields.</summary>
+    private bool _isHandleLeakSuspect;
+    public bool IsHandleLeakSuspect { get => _isHandleLeakSuspect; set => SetProperty(ref _isHandleLeakSuspect, value); }
+
+    /// <summary>#405: thread count has grown steadily with no plateau - a thread-pool leak or
+    /// unbounded worker creation. See ProcessHistoryService.ApplyComputedFields.</summary>
+    private bool _isThreadRunawaySuspect;
+    public bool IsThreadRunawaySuspect { get => _isThreadRunawaySuspect; set => SetProperty(ref _isThreadRunawaySuspect, value); }
+
+    /// <summary>#404: GdiHandleCount/UserHandleCount above are at or past 80% of the per-process
+    /// quota Windows enforces (GdiQuotaService) - past this, GDI/USER object creation starts
+    /// failing outright. See ProcessMonitorService.Sample.</summary>
+    private bool _isGdiQuotaWarning;
+    public bool IsGdiQuotaWarning { get => _isGdiQuotaWarning; set => SetProperty(ref _isGdiQuotaWarning, value); }
+
+    private bool _isUserQuotaWarning;
+    public bool IsUserQuotaWarning { get => _isUserQuotaWarning; set => SetProperty(ref _isUserQuotaWarning, value); }
 }

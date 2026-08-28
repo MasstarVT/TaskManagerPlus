@@ -426,10 +426,13 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
         return col;
     }
 
-    private const float CoreStrokeWidth = 2f;
-    private const float GlowStrokeWidth = 7f;
+    internal const float CoreStrokeWidth = 2f;
+    internal const float GlowStrokeWidth = 7f;
 
-    private static (LineSeries<double> Glow, LineSeries<double> Core) LineOf(ObservableCollection<double> values, SKColor color, string? name = null)
+    /// <summary>Internal (not private) so LeakWatchViewModel's per-watched-process mini charts
+    /// (#406) can reuse the exact same glow+gradient pair every other history chart in this app
+    /// uses, instead of duplicating the visual recipe.</summary>
+    internal static (LineSeries<double> Glow, LineSeries<double> Core) LineOf(ObservableCollection<double> values, SKColor color, string? name = null)
     {
         // The glow series shares the same Values as its core line, is drawn first (so the core
         // line renders crisply on top of it), and is hidden from tooltips/legends so it reads

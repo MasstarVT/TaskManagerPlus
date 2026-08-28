@@ -213,6 +213,140 @@
                 </StackPanel>
             </Border>
 
+            <!-- #403: "Leak watch" - processes whose handle count has grown steadily while
+                 private bytes stayed flat (the classic kernel-object-leak signature), re-using
+                 the Processes tab's already-polling collection, live-filtered - see
+                 MemoryViewModel.HandleLeakWatch and ProcessHistoryService.ApplyComputedFields. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <TextBlock Text="Leak watch" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Handle count climbing steadily while private bytes stay roughly flat - a quick flag worth a second look, not a confirmed leak."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+                    <TextBlock Text="No processes currently flagged." Opacity="0.7">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding HandleLeakWatch.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <ItemsControl ItemsSource="{Binding HandleLeakWatch}" MaxHeight="200">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                                        <TextBlock Text="{Binding Name}" FontSize="12.5" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Style="{StaticResource SubStat}" FontSize="10.5">
+                                            <Run Text="PID " /><Run Text="{Binding Pid, Mode=OneWay}" />
+                                            <Run Text=" · slope " /><Run Text="{Binding LeakSlopeMbPerHour, StringFormat={}{0:0.00} MB/hr, Mode=OneWay}" />
+                                        </TextBlock>
+                                    </StackPanel>
+                                    <TextBlock Grid.Column="1" Text="{Binding HandleCount, StringFormat={}{0:N0} handles}"
+                                               FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="{DynamicResource WarningBrush}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #404: GDI/USER object quota alerts - processes at/above 80% of the per-process
+                 GDI or USER object quota Windows enforces (GdiQuotaService); also fires a toast
+                 the first tick a process crosses that threshold (ProcessesViewModel). -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <TextBlock Text="GDI/USER object quota" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="No processes currently near their GDI/USER object quota." Opacity="0.7" Margin="0,-4,0,0">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding GdiUserQuotaWatch.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <ItemsControl ItemsSource="{Binding GdiUserQuotaWatch}" MaxHeight="200">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                                        <TextBlock Text="{Binding Name}" FontSize="12.5" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Style="{StaticResource SubStat}" FontSize="10.5">
+                                            <Run Text="PID " /><Run Text="{Binding Pid, Mode=OneWay}" />
+                                        </TextBlock>
+                                    </StackPanel>
+                                    <TextBlock Grid.Column="1" FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="{DynamicResource WarningBrush}">
+                                        <Run Text="{Binding GdiHandleCount, Mode=OneWay, StringFormat={}GDI {0:N0}}" />
+                                        <Run Text=" · " />
+                                        <Run Text="{Binding UserHandleCount, Mode=OneWay, StringFormat={}USER {0:N0}}" />
+                                    </TextBlock>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #406: pinned leak-watch list - right-click a process in the Processes tab
+                 ("Watch for leaks") to add it here. Sampled independently at a fixed 5s interval
+                 regardless of the Processes tab's own poll interval - see LeakWatchViewModel. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <TextBlock Text="Leak watch list" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Pinned processes, sampled every 5 seconds regardless of the Processes tab's poll interval. Right-click a process there and choose &quot;Watch for leaks&quot; to add one."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+                    <TextBlock Text="Nothing pinned yet." Opacity="0.7">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding LeakWatch.WatchedProcesses.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <ItemsControl ItemsSource="{Binding LeakWatch.WatchedProcesses}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Padding="10,8" Margin="0,0,0,10" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
+                                    <StackPanel>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" Text="{Binding ImageName}" FontSize="12.5" FontWeight="SemiBold" />
+                                            <TextBlock Grid.Column="1" Text="{Binding LatestValueText}" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        </Grid>
+                                        <lvc:CartesianChart Series="{Binding Series}"
+                                                             XAxes="{Binding DataContext.LeakWatch.HiddenXAxes, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                             YAxes="{Binding DataContext.LeakWatch.MemoryBytesYAxes, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                             Height="110" TooltipPosition="Hidden" LegendPosition="Hidden" Background="Transparent" Margin="0,6,0,0" />
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
         </StackPanel>
     </ScrollViewer>
 </UserControl>

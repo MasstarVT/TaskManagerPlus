@@ -13,8 +13,15 @@ namespace TaskManagerPlus.ViewModels;
 public sealed class ProcessesViewModel : ObservableObject, IDisposable
 {
     private readonly ProcessMonitorService _monitor = new();
+    private readonly ProcessHistoryService _processHistory;
+    private readonly LeakWatchViewModel _leakWatch;
     private readonly DispatcherTimer _timer;
     private bool _isRefreshing;
+
+    // #404: edge-triggered GDI/USER quota toasts - one toast per pid per threshold crossing, not
+    // one every tick a sustained warning stays above the threshold. See CheckGdiUserQuotaAlerts.
+    private readonly HashSet<int> _gdiAlertedPids = new();
+    private readonly HashSet<int> _userAlertedPids = new();
 
     public ObservableCollection<ProcessRow> Processes { get; } = new();
     public ICollectionView ProcessesView { get; }
@@ -104,6 +111,11 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
     public RelayCommand ApplyAffinityCommand { get; }
     public RelayCommand SetPriorityCommand { get; }
 
+    /// <summary>#406: right-click "Watch for leaks" - adds/removes SelectedProcess's image name
+    /// from the pinned leak-watch list (LeakWatchViewModel), which then samples it independently
+    /// at a fixed 5s interval and charts it on the Memory tab.</summary>
+    public RelayCommand ToggleLeakWatchCommand { get; }
+
     private string _filterText = string.Empty;
     public string FilterText
     {
@@ -136,8 +148,11 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
     public RelayCommand EndProcessTreeCommand { get; }
     public RelayCommand RefreshNowCommand { get; }
 
-    public ProcessesViewModel()
+    public ProcessesViewModel(ProcessHistoryService processHistory, LeakWatchViewModel leakWatch)
     {
+        _processHistory = processHistory;
+        _leakWatch = leakWatch;
+
         ProcessesView = CollectionViewSource.GetDefaultView(Processes);
         ProcessesView.Filter = FilterPredicate;
 
@@ -154,6 +169,7 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
         ResumeCommand = new RelayCommand(_ => SetSuspended(false), _ => SelectedProcess is not null);
         ApplyAffinityCommand = new RelayCommand(_ => ApplyAffinity(), _ => SelectedProcess is not null && AffinityCores.Count > 0);
         SetPriorityCommand = new RelayCommand(_ => SetPriority(), _ => SelectedProcess is not null);
+        ToggleLeakWatchCommand = new RelayCommand(_ => ToggleLeakWatch(), _ => SelectedProcess is not null);
 
         // Round 12, #100: configurable poll interval - see PollIntervalSettingsService's remarks.
         _timer = new DispatcherTimer(DispatcherPriority.Background)
@@ -210,7 +226,17 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
         _isRefreshing = true;
         try
         {
-            var latest = await Task.Run(() => _monitor.Sample());
+            // #401: history recording (and its regression-based #402/#403/#405 fields) runs here,
+            // inside the same background Task.Run as the sample itself - the rows aren't yet
+            // attached to the UI-bound Processes collection, so mutating them off the UI thread
+            // is safe, the same reasoning ProcessMonitorService.Sample already relies on for its
+            // own per-row computed fields.
+            var latest = await Task.Run(() =>
+            {
+                var rows = _monitor.Sample();
+                _processHistory.RecordSample(rows);
+                return rows;
+            });
             MergeInto(latest);
             ProcessCount = Processes.Count;
 
@@ -222,6 +248,8 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
 
             if (ShowTree)
                 BuildProcessTree();
+
+            CheckGdiUserQuotaAlerts();
         }
         catch
         {
@@ -266,6 +294,15 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
                 existing.SpawnGroupSize = fresh.SpawnGroupSize;
                 existing.DuplicateInstanceCount = fresh.DuplicateInstanceCount;
                 existing.IsDuplicateInstanceOutlier = fresh.IsDuplicateInstanceOutlier;
+                existing.IsGdiQuotaWarning = fresh.IsGdiQuotaWarning;
+                existing.IsUserQuotaWarning = fresh.IsUserQuotaWarning;
+                // #401/#402/#403/#405: regression-derived fields computed by
+                // ProcessHistoryService.RecordSample just before this merge ran.
+                existing.MemorySparkline = fresh.MemorySparkline;
+                existing.LeakSlopeMbPerHour = fresh.LeakSlopeMbPerHour;
+                existing.LeakRSquared = fresh.LeakRSquared;
+                existing.IsHandleLeakSuspect = fresh.IsHandleLeakSuspect;
+                existing.IsThreadRunawaySuspect = fresh.IsThreadRunawaySuspect;
                 // CommandLine/FilePath/StartTime/User/ParentPid/ParentName don't change for the
                 // lifetime of a pid - no need to reassign them every tick like the values above
                 // that actually vary.
@@ -524,9 +561,65 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
         if (success) _ = RefreshAsync();
     }
 
+    /// <summary>#406: toggles SelectedProcess's image name in the pinned leak-watch list.</summary>
+    private void ToggleLeakWatch()
+    {
+        var target = SelectedProcess;
+        if (target is null) return;
+
+        bool wasWatched = _leakWatch.IsWatched(target.Name);
+        bool ok = _leakWatch.Toggle(target.Name);
+
+        StatusMessage = !ok
+            ? $"Can't watch {target.Name}: the leak-watch list is full - unwatch something else first."
+            : wasWatched
+                ? $"Stopped watching {target.Name} for leaks."
+                : $"Watching {target.Name} for leaks - see the Memory tab's Leak watch list.";
+    }
+
+    /// <summary>#404: fires a toast the first tick a process's GDI or USER handle count reaches
+    /// the quota warning threshold, and again if it drops back under and later re-crosses -
+    /// edge-triggered per pid so a sustained warning doesn't spam a toast every tick. Pids no
+    /// longer present (process exited) are dropped from both tracking sets so they don't leak
+    /// forever.</summary>
+    private void CheckGdiUserQuotaAlerts()
+    {
+        var livePids = new HashSet<int>();
+        foreach (var row in Processes)
+        {
+            livePids.Add(row.Pid);
+
+            if (row.IsGdiQuotaWarning)
+            {
+                if (_gdiAlertedPids.Add(row.Pid))
+                    ToastService.Show("GDI object quota warning",
+                        $"{row.Name} (PID {row.Pid}) is using {row.GdiHandleCount:N0} of {GdiQuotaService.GdiQuota:N0} GDI objects - 80%+ of its quota.");
+            }
+            else
+            {
+                _gdiAlertedPids.Remove(row.Pid);
+            }
+
+            if (row.IsUserQuotaWarning)
+            {
+                if (_userAlertedPids.Add(row.Pid))
+                    ToastService.Show("USER object quota warning",
+                        $"{row.Name} (PID {row.Pid}) is using {row.UserHandleCount:N0} of {GdiQuotaService.UserQuota:N0} USER objects - 80%+ of its quota.");
+            }
+            else
+            {
+                _userAlertedPids.Remove(row.Pid);
+            }
+        }
+
+        _gdiAlertedPids.RemoveWhere(pid => !livePids.Contains(pid));
+        _userAlertedPids.RemoveWhere(pid => !livePids.Contains(pid));
+    }
+
     public void Dispose()
     {
         _timer.Stop();
         _monitor.Dispose();
+        _processHistory.Flush();
     }
 }

@@ -29,6 +29,7 @@
             <conv:IntEqualsConverter x:Key="IntEqualsConverter" />
             <conv:BoolToVisibilityConverter x:Key="BoolToVisibilityConverter" />
             <conv:ActivePlanSuffixConverter x:Key="ActivePlanSuffixConverter" />
+            <conv:SparklinePointsConverter x:Key="SparklinePointsConverter" />
         </ResourceDictionary>
     </Application.Resources>
 </Application>

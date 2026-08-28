@@ -27,6 +27,7 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
     private readonly SystemSpecsViewModel _systemSpecs;
     private readonly NetworkViewModel _network;
     private readonly StabilityViewModel _stability;
+    private readonly ProcessHistoryService _processHistory;
     private readonly DispatcherTimer _healthTimer;
 
     /// <summary>Round 10, #67: exposed publicly (the field above stays for this class's own
@@ -168,7 +169,8 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
 
     public SummaryViewModel(PerformanceViewModel performance, ProcessesViewModel processes,
         ServicesViewModel services, EnergyThermalsViewModel energyThermals,
-        SystemSpecsViewModel systemSpecs, NetworkViewModel network, StabilityViewModel stability)
+        SystemSpecsViewModel systemSpecs, NetworkViewModel network, StabilityViewModel stability,
+        ProcessHistoryService processHistory)
     {
         Performance = performance;
         Processes = processes;
@@ -177,6 +179,7 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         _systemSpecs = systemSpecs;
         _network = network;
         _stability = stability;
+        _processHistory = processHistory;
 
         GenerateReportCommand = new RelayCommand(_ => GenerateReport());
         GenerateHtmlReportCommand = new RelayCommand(_ => GenerateHtmlReport());
@@ -339,8 +342,39 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         Line("|---|---|---|---|");
         foreach (var p in Processes.Processes.OrderByDescending(p => p.MemoryBytes).Take(10))
             Line($"| {p.Name} | {p.Pid} | {Formatting.FormatBytes(p.MemoryBytes)} | {p.CpuPercent:0.0} |");
+        Line();
+
+        AppendLeakEvidenceMarkdown(Line);
 
         return sb.ToString();
+    }
+
+    /// <summary>#407: "Memory leak evidence" report section - built entirely from the recorded,
+    /// cross-restart per-image-name history (#401/#402/#403/#405), not a live snapshot, so it
+    /// reflects the trend observed over whatever window this app has actually been running and
+    /// watching, not just the instant the report was generated.</summary>
+    private void AppendLeakEvidenceMarkdown(Action<string> line)
+    {
+        line("## Memory leak evidence");
+        line("Derived from recorded per-process history (private bytes/handles/threads), not a live snapshot. " +
+             "A steady climb over the observation window is a quick flag worth a second look, not a confirmed leak.");
+        line("");
+
+        var top = _processHistory.GetTopGrowthSummaries(8);
+        if (top.Count == 0)
+        {
+            line("Not enough history recorded yet.");
+            return;
+        }
+
+        line("| Process | Private bytes slope (MB/hr) | R² | Handle slope (/hr) | Handle R² | Thread slope (/hr) | Observation window |");
+        line("|---|---|---|---|---|---|---|");
+        foreach (var s in top)
+        {
+            string window = $"{s.FirstSampleUtc.ToLocalTime():g} to {s.LastSampleUtc.ToLocalTime():g} ({s.SampleCount} samples)";
+            line($"| {s.ImageName} | {s.PrivateBytesSlopeMbPerHour:0.00} | {s.PrivateBytesRSquared:0.00} | " +
+                 $"{s.HandleSlopePerHour:0.0} | {s.HandleRSquared:0.00} | {s.ThreadSlopePerHour:0.0} | {window} |");
+        }
     }
 
     /// <summary>#97: the HTML twin of GenerateReport() above - same underlying data, rendered as
@@ -426,8 +460,36 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
             Line($"<tr><td>{Esc(p.Name)}</td><td>{p.Pid}</td><td>{p.CpuPercent:0.0}</td><td>{Esc(Formatting.FormatBytes(p.MemoryBytes))}</td></tr>");
         Line("</table>");
 
+        AppendLeakEvidenceHtml(Line, Esc);
+
         Line("</body></html>");
         return sb.ToString();
+    }
+
+    /// <summary>#407: HTML twin of AppendLeakEvidenceMarkdown above - same underlying recorded
+    /// history, rendered as a table matching the rest of this report's style.</summary>
+    private void AppendLeakEvidenceHtml(Action<string> line, Func<string, string> esc)
+    {
+        line("<h2>Memory leak evidence</h2>");
+        line("<p class=\"muted\">Derived from recorded per-process history (private bytes/handles/threads), not a live snapshot. " +
+             "A steady climb over the observation window is a quick flag worth a second look, not a confirmed leak.</p>");
+
+        var top = _processHistory.GetTopGrowthSummaries(8);
+        if (top.Count == 0)
+        {
+            line("<p>Not enough history recorded yet.</p>");
+            return;
+        }
+
+        line("<table><tr><th>Process</th><th>Private bytes slope (MB/hr)</th><th>R²</th><th>Handle slope (/hr)</th>" +
+             "<th>Handle R²</th><th>Thread slope (/hr)</th><th>Observation window</th></tr>");
+        foreach (var s in top)
+        {
+            string window = $"{esc(s.FirstSampleUtc.ToLocalTime().ToString("g"))} to {esc(s.LastSampleUtc.ToLocalTime().ToString("g"))} ({s.SampleCount} samples)";
+            line($"<tr><td>{esc(s.ImageName)}</td><td>{s.PrivateBytesSlopeMbPerHour:0.00}</td><td>{s.PrivateBytesRSquared:0.00}</td>" +
+                 $"<td>{s.HandleSlopePerHour:0.0}</td><td>{s.HandleRSquared:0.00}</td><td>{s.ThreadSlopePerHour:0.0}</td><td>{window}</td></tr>");
+        }
+        line("</table>");
     }
 
     /// <summary>Renders one history buffer (0-100 range, 60 samples) as a small inline SVG

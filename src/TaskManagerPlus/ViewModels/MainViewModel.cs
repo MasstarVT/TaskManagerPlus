@@ -10,7 +10,14 @@ namespace TaskManagerPlus.ViewModels;
 public sealed class MainViewModel : ObservableObject, IDisposable
 {
     public ThemeViewModel Theme { get; } = new();
-    public ProcessesViewModel Processes { get; } = new();
+
+    // #401/#406: cross-restart per-process history and the pinned leak-watch sampler - both
+    // field-initialized (no dependencies of their own) so they're ready before ProcessesViewModel
+    // needs them below.
+    public ProcessHistoryService ProcessHistory { get; } = new();
+    public LeakWatchViewModel LeakWatch { get; } = new();
+
+    public ProcessesViewModel Processes { get; }
     public PerformanceViewModel Performance { get; } = new();
     public ServicesViewModel Services { get; } = new();
     public StartupViewModel Startup { get; } = new();
@@ -190,17 +197,21 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     public MainViewModel()
     {
+        // Processes now needs ProcessHistory/LeakWatch (both already field-initialized above) for
+        // #401/#406, so it's constructed here rather than as a field initializer of its own.
+        Processes = new ProcessesViewModel(ProcessHistory, LeakWatch);
+
         // EnergyThermals now needs to be constructed before Cpu/Storage (both take a reference
         // to it - Cpu for its thermal-throttle flag, Storage for its per-drive temperature list -
         // see each view-model's remarks) and before Summary as before (#64's Health Check card).
         EnergyThermals = new EnergyThermalsViewModel(Performance);
         Cpu = new CpuViewModel(Performance, EnergyThermals, Processes);
-        Memory = new MemoryViewModel(Performance, Processes);
+        Memory = new MemoryViewModel(Performance, Processes, LeakWatch);
         Storage = new StorageViewModel(Performance, EnergyThermals);
         Network = new NetworkViewModel(Performance);
         Gpu = new GpuViewModel(Processes);
         Logging = new LoggingViewModel(Performance, EnergyThermals);
-        Summary = new SummaryViewModel(Performance, Processes, Services, EnergyThermals, SystemSpecs, Network, Stability);
+        Summary = new SummaryViewModel(Performance, Processes, Services, EnergyThermals, SystemSpecs, Network, Stability, ProcessHistory);
         Search = new GlobalSearchViewModel(Processes, Services, Startup, SystemSpecs);
 
         RemoteMonitor = new RemoteMonitorService(BuildRemoteMetricsSnapshot) { RequiredToken = _remoteMonitorSettings.Token };
@@ -367,6 +378,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Gpu.Dispose();
         Logging.Dispose();
         Summary.Dispose();
+        LeakWatch.Dispose();
+        ProcessHistory.Flush();
         _miniDashboard?.Close();
         RemoteMonitor.Dispose();
         Hotkey.Dispose();

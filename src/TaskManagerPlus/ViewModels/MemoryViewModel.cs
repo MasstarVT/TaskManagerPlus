@@ -25,9 +25,23 @@ public sealed class MemoryViewModel
     /// TopMemoryProcesses above, no new process sampling.</summary>
     public ICollectionView TopPoolProcesses { get; }
 
-    public MemoryViewModel(PerformanceViewModel performance, ProcessesViewModel processes)
+    /// <summary>#403: live-filtered view of the already-polling Processes collection, showing
+    /// only rows currently flagged IsHandleLeakSuspect - the "Leak watch" card.</summary>
+    public ICollectionView HandleLeakWatch { get; }
+
+    /// <summary>#404: live-filtered view of processes currently at/above 80% of their GDI or
+    /// USER object quota - see ProcessMonitorService.Sample/GdiQuotaService.</summary>
+    public ICollectionView GdiUserQuotaWatch { get; }
+
+    /// <summary>#406: pinned leak-watch list (right-click a process in the Processes tab -
+    /// "Watch for leaks") - one independently-sampled glow+gradient chart per watched process,
+    /// rendered by the Memory tab's "Leak watch list" panel.</summary>
+    public LeakWatchViewModel LeakWatch { get; }
+
+    public MemoryViewModel(PerformanceViewModel performance, ProcessesViewModel processes, LeakWatchViewModel leakWatch)
     {
         Performance = performance;
+        LeakWatch = leakWatch;
 
         var view = new CollectionViewSource { Source = processes.Processes }.View;
         if (view is ICollectionViewLiveShaping liveShaping && liveShaping.CanChangeLiveSorting)
@@ -47,5 +61,24 @@ public sealed class MemoryViewModel
         }
         poolView.SortDescriptions.Add(new SortDescription(nameof(ProcessRow.NonpagedPoolBytes), ListSortDirection.Descending));
         TopPoolProcesses = poolView;
+
+        var handleLeakView = new CollectionViewSource { Source = processes.Processes }.View;
+        handleLeakView.Filter = o => o is ProcessRow r && r.IsHandleLeakSuspect;
+        if (handleLeakView is ICollectionViewLiveShaping handleLeakLiveShaping && handleLeakLiveShaping.CanChangeLiveSorting)
+        {
+            handleLeakLiveShaping.LiveFilteringProperties.Add(nameof(ProcessRow.IsHandleLeakSuspect));
+            handleLeakLiveShaping.IsLiveFiltering = true;
+        }
+        HandleLeakWatch = handleLeakView;
+
+        var gdiUserView = new CollectionViewSource { Source = processes.Processes }.View;
+        gdiUserView.Filter = o => o is ProcessRow r && (r.IsGdiQuotaWarning || r.IsUserQuotaWarning);
+        if (gdiUserView is ICollectionViewLiveShaping gdiUserLiveShaping && gdiUserLiveShaping.CanChangeLiveSorting)
+        {
+            gdiUserLiveShaping.LiveFilteringProperties.Add(nameof(ProcessRow.IsGdiQuotaWarning));
+            gdiUserLiveShaping.LiveFilteringProperties.Add(nameof(ProcessRow.IsUserQuotaWarning));
+            gdiUserLiveShaping.IsLiveFiltering = true;
+        }
+        GdiUserQuotaWatch = gdiUserView;
     }
 }
