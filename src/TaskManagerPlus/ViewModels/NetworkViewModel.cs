@@ -535,6 +535,129 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
     private string _adapterWinnerText = "Refresh routing to see which adapter Windows currently prefers for outbound traffic.";
     public string AdapterWinnerText { get => _adapterWinnerText; private set => SetProperty(ref _adapterWinnerText, value); }
 
+    // ---- suggestions.md #536-546: Wi-Fi diagnostics -----------------------------------------------
+    // Extends the existing #23 Wi-Fi card (Wifi/WifiInfo above stays exactly as-is - it's still the
+    // card's visibility gate and the SSID GatewayFingerprintService keys profiles by) rather than
+    // replacing it. #536/#540/#545 are native-WLAN-API/registry readouts refreshed on the same 2s
+    // cadence WifiSignalMonitorService already samples RSSI on for #537 (see that class's remarks
+    // for why it's safe to poll continuously, unlike the #538 scan); #538/#539/#546 are one on-demand
+    // netsh neighbour scan and three views over its result; #541/#542 are an on-demand event-log
+    // scan; #543 is a one-shot report generator; #544 is an on-demand profile audit with a per-row
+    // delete action.
+    private readonly WlanNativeService _wlan = new();
+    private readonly WifiSignalMonitorService _wifiSignalMonitor;
+
+    // #536/#540/#545: headline readout - null whenever WifiSignalMonitorService isn't running (no
+    // live Wi-Fi association) or the native API had nothing to report; the view hides these rows
+    // rather than showing a stale/guessed value.
+    private WifiRadioSnapshot? _wifiRadio;
+    public WifiRadioSnapshot? WifiRadio { get => _wifiRadio; private set => SetProperty(ref _wifiRadio, value); }
+
+    /// <summary>#536: "good / marginal / poor" band for the dBm readout - informational thresholds
+    /// (roughly the same -65/-75 dBm break points commonly cited for reliable data vs. marginal vs.
+    /// poor Wi-Fi), not a hard spec.</summary>
+    public string WifiRssiBandText => WifiRadio?.RssiDbm switch
+    {
+        null => "Unknown",
+        >= -65 => "Good",
+        >= -75 => "Marginal",
+        _ => "Poor",
+    };
+
+    /// <summary>#536: SNR - only ever non-null once <see cref="WifiRadioSnapshot.NoiseDbm"/> has a
+    /// real driver-supplied reading (it doesn't today; see that field's remarks), so this stays
+    /// hidden rather than shown as "Unknown" on every machine.</summary>
+    public string? WifiSnrText => WifiRadio?.RssiDbm is { } rssi && WifiRadio?.NoiseDbm is { } noise ? $"{rssi - noise}" : null;
+
+    private WifiPowerSavingInfo? _wifiPowerSaving;
+    public WifiPowerSavingInfo? WifiPowerSaving { get => _wifiPowerSaving; private set => SetProperty(ref _wifiPowerSaving, value); }
+
+    // #537: RSSI + link-rate history, glow/core paired like every other chart in the app (see
+    // LatencyLineOf's remarks) - rebuilt in full from WifiSignalMonitorService.GetWindow() every
+    // cycle rather than pushed-and-trimmed incrementally, so the #537 roam markers' X-indices always
+    // line up 1:1 with the chart data they're drawn against (the same "clear+rebuild is simpler for
+    // a read-only display list" tradeoff CLAUDE.md documents for Energy & Thermals' sensor lists).
+    public ObservableCollection<double> WifiRssiHistory { get; } = new();
+    public ObservableCollection<double> WifiRxRateHistory { get; } = new();
+    public ObservableCollection<RectangularSection> WifiRoamMarkers { get; } = new();
+
+    private readonly LineSeries<double> _wifiRssiGlow, _wifiRssiCore;
+    private readonly LineSeries<double> _wifiRateGlow, _wifiRateCore;
+    public ISeries[] WifiRssiSeries { get; }
+    public ISeries[] WifiRateSeries { get; }
+    public Axis[] WifiHiddenXAxes { get; }
+    public Axis[] WifiRssiYAxes { get; }
+    public Axis[] WifiRateYAxes { get; }
+
+    // #538/#539/#546: on-demand neighbour/channel scan ("Airspace" expander) - a fresh active scan,
+    // distinct from #537's passive continuous sampling (see WifiChannelScanService's remarks on why
+    // this one needs an explicit button).
+    private bool _isScanningAirspace;
+    public bool IsScanningAirspace { get => _isScanningAirspace; private set => SetProperty(ref _isScanningAirspace, value); }
+
+    private string _airspaceStatusText = "Not scanned yet - scanning briefly interrupts your own connection's data flow, so this is on-demand rather than continuous.";
+    public string AirspaceStatusText { get => _airspaceStatusText; private set => SetProperty(ref _airspaceStatusText, value); }
+
+    public ObservableCollection<WifiChannelOccupancy> AirspaceOccupancy24 { get; } = new();
+    public ObservableCollection<WifiChannelOccupancy> AirspaceOccupancy5 { get; } = new();
+    public ObservableCollection<WifiChannelOccupancy> AirspaceOccupancy6 { get; } = new();
+
+    private string? _airspaceRecommendation24;
+    public string? AirspaceRecommendation24 { get => _airspaceRecommendation24; private set => SetProperty(ref _airspaceRecommendation24, value); }
+    private string? _airspaceRecommendation5;
+    public string? AirspaceRecommendation5 { get => _airspaceRecommendation5; private set => SetProperty(ref _airspaceRecommendation5, value); }
+    private string? _airspaceRecommendation6;
+    public string? AirspaceRecommendation6 { get => _airspaceRecommendation6; private set => SetProperty(ref _airspaceRecommendation6, value); }
+
+    // #539: 2.4 GHz overlap verdict against the current channel - null when not on 2.4 GHz or no
+    // scan has run yet.
+    private string? _wifiOverlapText;
+    public string? WifiOverlapText { get => _wifiOverlapText; private set => SetProperty(ref _wifiOverlapText, value); }
+
+    // #540: band-steering suggestion - null (hidden) unless a scan has actually seen the same SSID
+    // with a usable signal on a different band while this machine sits on 2.4 GHz.
+    private string? _wifiBandSteeringHintText;
+    public string? WifiBandSteeringHintText { get => _wifiBandSteeringHintText; private set => SetProperty(ref _wifiBandSteeringHintText, value); }
+
+    // #546: same-SSID BSSID groups from the same scan - the mesh/extender "sticky client" view.
+    public ObservableCollection<WifiSsidGroup> WifiMeshGroups { get; } = new();
+
+    public AsyncRelayCommand RunAirspaceScanCommand { get; }
+
+    // #541/#542: Wi-Fi events timeline - its own lookback window, mirroring #524/#530's on-demand
+    // event-log scans.
+    private double _wifiEventScanWindowHours = 24.0;
+    public double WifiEventScanWindowHours { get => _wifiEventScanWindowHours; set => SetProperty(ref _wifiEventScanWindowHours, Math.Clamp(value, 1.0, 720.0)); }
+
+    private bool _isScanningWifiEvents;
+    public bool IsScanningWifiEvents { get => _isScanningWifiEvents; private set => SetProperty(ref _isScanningWifiEvents, value); }
+
+    private string _wifiEventStatusText = "Not scanned yet.";
+    public string WifiEventStatusText { get => _wifiEventStatusText; private set => SetProperty(ref _wifiEventStatusText, value); }
+
+    public ObservableCollection<WifiConnectionEvent> WifiEvents { get; } = new();
+    public AsyncRelayCommand ScanWifiEventsCommand { get; }
+
+    // #543: one-click wireless report.
+    private bool _isRunningWlanReport;
+    public bool IsRunningWlanReport { get => _isRunningWlanReport; private set => SetProperty(ref _isRunningWlanReport, value); }
+
+    private string _wlanReportStatusText = "Generates Windows' own built-in wireless diagnostics report and opens it in your browser.";
+    public string WlanReportStatusText { get => _wlanReportStatusText; private set => SetProperty(ref _wlanReportStatusText, value); }
+
+    public AsyncRelayCommand RunWlanReportCommand { get; }
+
+    // #544: saved-profile audit.
+    private bool _isLoadingWifiProfiles;
+    public bool IsLoadingWifiProfiles { get => _isLoadingWifiProfiles; private set => SetProperty(ref _isLoadingWifiProfiles, value); }
+
+    private string _wifiProfilesStatusText = "Not loaded yet.";
+    public string WifiProfilesStatusText { get => _wifiProfilesStatusText; private set => SetProperty(ref _wifiProfilesStatusText, value); }
+
+    public ObservableCollection<WifiProfileAudit> WifiProfiles { get; } = new();
+    public AsyncRelayCommand RefreshWifiProfilesCommand { get; }
+    public AsyncRelayCommand DeleteWifiProfileCommand { get; }
+
     public NetworkViewModel(PerformanceViewModel performance)
     {
         Performance = performance;
@@ -699,6 +822,33 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
 
         _ = RefreshAddressingAsync();
         _ = RefreshArpAsync();
+
+        // #536-546: Wi-Fi diagnostics wiring. _wifiSignalMonitor itself is started/stopped from
+        // CheckConnectivityAsync as the existing Wifi (netsh) association check comes and goes -
+        // see RefreshWifiRadioMonitorState's remarks.
+        _wifiSignalMonitor = new WifiSignalMonitorService(_wlan);
+        _wifiSignalMonitor.CycleCompleted += OnWifiSignalCycleCompleted;
+
+        WifiHiddenXAxes = new[] { new Axis { IsVisible = false, ShowSeparatorLines = false } };
+        WifiRssiYAxes = new[]
+        {
+            new Axis { Labeler = v => $"{v:0} dBm", LabelsPaint = LatencyAxisTextPaint(), SeparatorsPaint = LatencyAxisSeparatorPaint() },
+        };
+        WifiRateYAxes = new[]
+        {
+            new Axis { MinLimit = 0, Labeler = v => $"{v:0} Mbps", LabelsPaint = LatencyAxisTextPaint(), SeparatorsPaint = LatencyAxisSeparatorPaint() },
+        };
+
+        (_wifiRssiGlow, _wifiRssiCore) = LatencyLineOf(WifiRssiHistory, SKColors.DeepSkyBlue, "RSSI (dBm)");
+        WifiRssiSeries = new ISeries[] { _wifiRssiGlow, _wifiRssiCore };
+        (_wifiRateGlow, _wifiRateCore) = LatencyLineOf(WifiRxRateHistory, SKColors.LimeGreen, "Rx rate (Mbps)");
+        WifiRateSeries = new ISeries[] { _wifiRateGlow, _wifiRateCore };
+
+        RunAirspaceScanCommand = new AsyncRelayCommand(RunAirspaceScanAsync, () => !IsScanningAirspace);
+        ScanWifiEventsCommand = new AsyncRelayCommand(ScanWifiEventsAsync, () => !IsScanningWifiEvents);
+        RunWlanReportCommand = new AsyncRelayCommand(RunWlanReportAsync, () => !IsRunningWlanReport);
+        RefreshWifiProfilesCommand = new AsyncRelayCommand(RefreshWifiProfilesAsync, () => !IsLoadingWifiProfiles);
+        DeleteWifiProfileCommand = new AsyncRelayCommand(param => DeleteWifiProfileAsync(param as WifiProfileAudit), _ => !IsLoadingWifiProfiles);
     }
 
     private async Task CheckConnectivityAsync()
@@ -776,6 +926,7 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
             foreach (var e in monthTotals.Take(8)) HistoryThisMonth.Add(e);
 
             Wifi = await WifiDiagnosticsService.ReadCurrentWifiAsync();
+            RefreshWifiRadioMonitorState();
         }
         catch
         {
@@ -1715,6 +1866,246 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         }
     }
 
+    // ---- #536-546 helpers --------------------------------------------------------------------
+
+    /// <summary>Starts/stops the #537 continuous sampler in step with the existing #23 Wifi
+    /// (netsh) association check, and refreshes the #536/#540/#545 headline readouts from whatever
+    /// the sampler has (or, on the very first tick after a fresh association, doesn't yet have -
+    /// the row just stays hidden until the next cycle). Called once per 15s connectivity tick,
+    /// which only gates start/stop; the readouts themselves update every ~2s via
+    /// OnWifiSignalCycleCompleted.</summary>
+    private void RefreshWifiRadioMonitorState()
+    {
+        if (Wifi is null)
+        {
+            if (_wifiSignalMonitor.IsRunning) _wifiSignalMonitor.Stop();
+            WifiRadio = null;
+            WifiPowerSaving = null;
+            return;
+        }
+
+        if (!_wifiSignalMonitor.IsRunning) _wifiSignalMonitor.Start();
+    }
+
+    /// <summary>Fired on WifiSignalMonitorService's own background-loop thread - marshal to the UI
+    /// thread before touching any bound property/collection, same contract every other
+    /// CycleCompleted handler in this class follows.</summary>
+    private void OnWifiSignalCycleCompleted() => System.Windows.Application.Current?.Dispatcher.Invoke(RefreshWifiSignalDisplay);
+
+    private void RefreshWifiSignalDisplay()
+    {
+        var snapshot = _wifiSignalMonitor.GetLatestSnapshot();
+        WifiRadio = snapshot;
+        OnPropertyChanged(nameof(WifiRssiBandText));
+        OnPropertyChanged(nameof(WifiSnrText));
+
+        // #545: refreshed alongside the radio snapshot rather than on its own timer - a cheap
+        // registry read, and the adapter it's scoped to only changes when the association itself
+        // does.
+        WifiPowerSaving = WifiPowerSavingService.Read(_wlan.GetConnectedInterfaceGuid());
+
+        // #537: full rebuild from the rolling window rather than push-and-trim, so the roam
+        // markers' X-indices always match the chart data 1:1 - see WifiRssiHistory's remarks.
+        var window = _wifiSignalMonitor.GetWindow();
+        WifiRssiHistory.Clear();
+        WifiRxRateHistory.Clear();
+        WifiRoamMarkers.Clear();
+        for (int i = 0; i < window.Count; i++)
+        {
+            var sample = window[i];
+            WifiRssiHistory.Add(sample.RssiDbm ?? -100); // -100 dBm reads as "no signal" - a floor, not a fabricated real reading
+            WifiRxRateHistory.Add(sample.RxRateMbps ?? 0);
+            if (sample.RoamedFromPrevious)
+            {
+                WifiRoamMarkers.Add(new RectangularSection
+                {
+                    Xi = i,
+                    Xj = i,
+                    Stroke = new SolidColorPaint(SKColors.OrangeRed, 2),
+                    Label = "Roam",
+                    LabelSize = 10,
+                    LabelPaint = new SolidColorPaint(SKColors.OrangeRed),
+                });
+            }
+        }
+    }
+
+    /// <summary>#538/#539/#546: on-demand active neighbour scan via WifiChannelScanService, plus
+    /// the #539 overlap verdict and #540 band-steering hint derived from the same scan result -
+    /// see that service's remarks for why this can't run on a timer.</summary>
+    private async Task RunAirspaceScanAsync()
+    {
+        if (IsScanningAirspace) return;
+        IsScanningAirspace = true;
+        AirspaceStatusText = "Scanning - this briefly interrupts your own connection...";
+        try
+        {
+            string? myBssid = WifiRadio?.Bssid;
+            var result = await WifiChannelScanService.ScanAsync(myBssid);
+
+            void Fill(ObservableCollection<WifiChannelOccupancy> target, string band)
+            {
+                target.Clear();
+                foreach (var o in result.Occupancy.Where(o => o.Band == band)) target.Add(o);
+            }
+            Fill(AirspaceOccupancy24, "2.4 GHz");
+            Fill(AirspaceOccupancy5, "5 GHz");
+            Fill(AirspaceOccupancy6, "6 GHz");
+
+            AirspaceRecommendation24 = WifiChannelScanService.RecommendChannelText(result.Occupancy, "2.4 GHz");
+            AirspaceRecommendation5 = result.Occupancy.Any(o => o.Band == "5 GHz") ? WifiChannelScanService.RecommendChannelText(result.Occupancy, "5 GHz") : null;
+            AirspaceRecommendation6 = result.Occupancy.Any(o => o.Band == "6 GHz") ? WifiChannelScanService.RecommendChannelText(result.Occupancy, "6 GHz") : null;
+
+            // #539: overlap verdict for whatever channel this machine is actually on.
+            WifiOverlapText = WifiChannelScanService.ComputeOverlapVerdict(result.Networks, (int?)WifiRadio?.Channel, myBssid);
+
+            // #546: same-SSID BSSID groups.
+            WifiMeshGroups.Clear();
+            foreach (var g in WifiChannelScanService.GroupBySsid(result.Networks)) WifiMeshGroups.Add(g);
+
+            // #540: band-steering suggestion - only meaningful when this machine is currently on
+            // 2.4 GHz and the scan actually saw the same SSID with a usable signal elsewhere.
+            WifiBandSteeringHintText = ComputeBandSteeringHint(result.Networks);
+
+            AirspaceStatusText = $"Scanned {result.Networks.Count} BSSID(s) across {result.Networks.Select(n => n.Ssid).Distinct(StringComparer.OrdinalIgnoreCase).Count()} network(s) at {result.ScannedAtUtc:t} UTC.";
+        }
+        catch (Exception ex)
+        {
+            AirspaceStatusText = $"Scan failed: {ex.Message}";
+        }
+        finally
+        {
+            IsScanningAirspace = false;
+        }
+    }
+
+    /// <summary>#540: flags the common "stuck on a crowded 2.4 GHz channel while the same SSID is
+    /// available on a cleaner band" case - worded as a suggestion to check band steering, not a
+    /// verdict, since this app has no way to tell whether the client's own band preference,
+    /// capability, or the AP's own steering policy is what actually kept it on 2.4 GHz.</summary>
+    private static string? ComputeBandSteeringHint(List<WifiScanNetwork> networks)
+    {
+        var mine = networks.FirstOrDefault(n => n.IsCurrentBssid);
+        if (mine is null || mine.Band != "2.4 GHz") return null;
+
+        var betterBand = networks.FirstOrDefault(n =>
+            string.Equals(n.Ssid, mine.Ssid, StringComparison.OrdinalIgnoreCase)
+            && n.Band is "5 GHz" or "6 GHz"
+            && (n.SignalPercent ?? 0) >= 50);
+        if (betterBand is null) return null;
+
+        return $"\"{mine.Ssid}\" is also visible on {betterBand.Band} (channel {betterBand.Channel}, {betterBand.SignalPercent}% signal) while this machine is associated on 2.4 GHz "
+             + $"(channel {mine.Channel}, {mine.SignalPercent}% signal) - worth checking whether band steering is enabled on the AP. Quick flag, not a verdict.";
+    }
+
+    /// <summary>#541/#542: on-demand WLAN-AutoConfig event-log scan - see WifiEventLogService's
+    /// remarks for the field-extraction/reason-decoding approach.</summary>
+    private async Task ScanWifiEventsAsync()
+    {
+        if (IsScanningWifiEvents) return;
+        IsScanningWifiEvents = true;
+        WifiEventStatusText = "Scanning...";
+        try
+        {
+            var window = TimeSpan.FromHours(WifiEventScanWindowHours);
+            var result = await Task.Run(() => WifiEventLogService.Scan(window));
+
+            WifiEvents.Clear();
+            foreach (var e in result.Events) WifiEvents.Add(e);
+
+            WifiEventStatusText = !result.ChannelAvailable
+                ? "The WLAN-AutoConfig Operational log couldn't be read (access denied, or the channel is disabled/absent on this machine)."
+                : result.Events.Count == 0
+                    ? $"No connect/disconnect/roam events in the last {WifiEventScanWindowHours:0.#}h."
+                    : $"{result.Events.Count} event(s) in the last {WifiEventScanWindowHours:0.#}h.";
+        }
+        catch (Exception ex)
+        {
+            WifiEventStatusText = $"Scan failed: {ex.Message}";
+        }
+        finally
+        {
+            IsScanningWifiEvents = false;
+        }
+    }
+
+    /// <summary>#543: one-click `netsh wlan show wlanreport`, then open the result.</summary>
+    private async Task RunWlanReportAsync()
+    {
+        if (IsRunningWlanReport) return;
+        IsRunningWlanReport = true;
+        WlanReportStatusText = "Generating report...";
+        try
+        {
+            var (_, message, _) = await WifiProfileService.RunWlanReportAsync();
+            WlanReportStatusText = message;
+        }
+        catch (Exception ex)
+        {
+            WlanReportStatusText = $"Failed: {ex.Message}";
+        }
+        finally
+        {
+            IsRunningWlanReport = false;
+        }
+    }
+
+    /// <summary>#544: on-demand saved-profile audit.</summary>
+    private async Task RefreshWifiProfilesAsync()
+    {
+        if (IsLoadingWifiProfiles) return;
+        IsLoadingWifiProfiles = true;
+        WifiProfilesStatusText = "Loading...";
+        try
+        {
+            var profiles = await WifiProfileService.ListProfilesAsync();
+            WifiProfiles.Clear();
+            foreach (var p in profiles) WifiProfiles.Add(p);
+
+            int flagged = profiles.Count(p => p.IsHiddenSsid || p.IsWeakSecurity || p.AutoConnectsToOpenNetwork);
+            WifiProfilesStatusText = profiles.Count == 0
+                ? "No saved profiles found."
+                : $"{profiles.Count} saved profile(s), {flagged} flagged.";
+        }
+        catch (Exception ex)
+        {
+            WifiProfilesStatusText = $"Couldn't load saved profiles: {ex.Message}";
+        }
+        finally
+        {
+            IsLoadingWifiProfiles = false;
+        }
+    }
+
+    /// <summary>#544: delete one saved profile, behind an explicit Yes/No confirmation - same
+    /// MessageBox.Show confirm-first pattern ReleaseSelectedAdapter/ProcessesViewModel.EndSelected
+    /// already use for their own irreversible/disruptive actions.</summary>
+    private async Task DeleteWifiProfileAsync(WifiProfileAudit? target)
+    {
+        if (target is null || IsLoadingWifiProfiles) return;
+
+        var confirm = MessageBox.Show(
+            $"Delete the saved Wi-Fi profile \"{target.Name}\"?\nWindows will forget this network's password and settings - you'll need to reconnect manually next time it's in range.",
+            "Delete Wi-Fi profile", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        IsLoadingWifiProfiles = true;
+        WifiProfilesStatusText = $"Deleting \"{target.Name}\"...";
+        try
+        {
+            await WifiProfileService.DeleteProfileAsync(target.Name, target.InterfaceName);
+        }
+        catch (Exception ex)
+        {
+            WifiProfilesStatusText = $"Delete failed: {ex.Message}";
+        }
+        finally
+        {
+            IsLoadingWifiProfiles = false;
+        }
+        await RefreshWifiProfilesAsync();
+    }
+
     public void Dispose()
     {
         _timer.Stop();
@@ -1724,5 +2115,8 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         _mtr.Dispose();
         _dnsResponseMonitor.CycleCompleted -= OnDnsResponseCycleCompleted;
         _dnsResponseMonitor.Dispose();
+        _wifiSignalMonitor.CycleCompleted -= OnWifiSignalCycleCompleted;
+        _wifiSignalMonitor.Dispose();
+        _wlan.Dispose();
     }
 }

@@ -1383,8 +1383,11 @@
                 </StackPanel>
             </Border>
 
-            <!-- #23: current Wi-Fi association - collapsed entirely on a wired connection, no
-                 Wi-Fi adapter, or a non-English Windows install (see WifiDiagnosticsService). -->
+            <!-- #23/#536-546: current Wi-Fi association + diagnostics - collapsed entirely on a
+                 wired connection, no Wi-Fi adapter, or a non-English Windows install (Wifi/SSID
+                 still comes from WifiDiagnosticsService's netsh parse, which stays the card's
+                 visibility gate; everything else below is either the native-WLAN-API readout
+                 WifiSignalMonitorService keeps warm on a 2s cadence, or an on-demand scan/action). -->
             <Border Margin="0,0,0,16">
                 <Border.Style>
                     <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
@@ -1400,12 +1403,300 @@
                     <TextBlock Text="Wi-Fi" Style="{StaticResource CardTitle}" />
                     <TextBlock FontSize="12.5">
                         <Run Text="{Binding Wifi.Ssid, Mode=OneWay}" FontWeight="SemiBold" />
-                        <Run Text=" · " /><Run Text="{Binding Wifi.RadioType, Mode=OneWay}" />
+                        <Run Text=" · " /><Run Text="{Binding WifiRadio.PhyType, TargetNullValue='', Mode=OneWay}" />
                     </TextBlock>
+
+                    <!-- #536: real RSSI in dBm + good/marginal/poor band, replacing the old plain
+                         signal-percent readout. -->
                     <TextBlock Style="{StaticResource SubStat}" Margin="0,4,0,0">
-                        <Run Text="Signal " /><Run Text="{Binding Wifi.SignalPercent, TargetNullValue=Unknown, Mode=OneWay}" /><Run Text="%" />
-                        <Run Text=" · Channel " /><Run Text="{Binding Wifi.Channel, TargetNullValue=Unknown, Mode=OneWay}" />
+                        <Run Text="RSSI " /><Run Text="{Binding WifiRadio.RssiDbm, TargetNullValue=Unknown, Mode=OneWay}" /><Run Text=" dBm (" />
+                        <Run Text="{Binding WifiRssiBandText, Mode=OneWay}" FontWeight="SemiBold" /><Run Text=")" />
+                        <Run Text=" · Channel " /><Run Text="{Binding WifiRadio.Channel, TargetNullValue=Unknown, Mode=OneWay}" />
+                        <Run Text=" (" /><Run Text="{Binding WifiRadio.BandLabel, Mode=OneWay}" /><Run Text=")" />
+                        <Run Text=" · Link quality " /><Run Text="{Binding WifiRadio.LinkQualityPercent, TargetNullValue=Unknown, Mode=OneWay}" /><Run Text="%" />
                     </TextBlock>
+
+                    <!-- #536: noise floor / SNR - hidden entirely today since Windows exposes no
+                         standard noise-floor API (see WifiRadioSnapshot.NoiseDbm's remarks); wired
+                         up for whenever a driver-specific source is added rather than removed. -->
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,2,0,0" Visibility="{Binding WifiSnrText, Converter={StaticResource NullToVisibilityConverter}}">
+                        <Run Text="Noise floor " /><Run Text="{Binding WifiRadio.NoiseDbm, Mode=OneWay}" /><Run Text=" dBm · SNR " /><Run Text="{Binding WifiSnrText, Mode=OneWay}" /><Run Text=" dB" />
+                    </TextBlock>
+
+                    <!-- #540: negotiated Rx/Tx rate, plus the band-steering suggestion once an
+                         Airspace scan below has actually seen the same SSID elsewhere. -->
+                    <TextBlock Style="{StaticResource SubStat}" Margin="0,2,0,0">
+                        <Run Text="Rx " /><Run Text="{Binding WifiRadio.RxRateMbps, TargetNullValue=Unknown, StringFormat={}{0:0.#}, Mode=OneWay}" /><Run Text=" Mbps" />
+                        <Run Text=" · Tx " /><Run Text="{Binding WifiRadio.TxRateMbps, TargetNullValue=Unknown, StringFormat={}{0:0.#}, Mode=OneWay}" /><Run Text=" Mbps" />
+                    </TextBlock>
+                    <TextBlock Text="{Binding WifiBandSteeringHintText}" Style="{StaticResource SubStat}" Margin="0,4,0,0" TextWrapping="Wrap"
+                               Foreground="{DynamicResource WarningBrush}" FontWeight="SemiBold"
+                               Visibility="{Binding WifiBandSteeringHintText, Converter={StaticResource NullToVisibilityConverter}}" />
+
+                    <!-- #545: power-saving mode - hidden entirely when the adapter doesn't expose
+                         the advanced-property keyword this reads (not every driver does). Run
+                         has no Visibility property in WPF, so the "aggressive" caveat is a
+                         separate TextBlock rather than a conditionally-hidden Run. -->
+                    <StackPanel Visibility="{Binding WifiPowerSaving, Converter={StaticResource NullToVisibilityConverter}}">
+                        <TextBlock Style="{StaticResource SubStat}" Margin="0,4,0,0" TextWrapping="Wrap">
+                            <Run Text="Power saving: " /><Run Text="{Binding WifiPowerSaving.Label, Mode=OneWay}" FontWeight="SemiBold" />
+                        </TextBlock>
+                        <TextBlock Text="Aggressive power saving is a known cause of random idle disconnects and latency spikes on battery. Quick flag, not a verdict."
+                                   Style="{StaticResource SubStat}" Margin="0,2,0,0" TextWrapping="Wrap" Foreground="{DynamicResource WarningBrush}"
+                                   Visibility="{Binding WifiPowerSaving.IsAggressive, Converter={StaticResource BoolToVisibilityConverter}}" />
+                    </StackPanel>
+
+                    <!-- #537: RSSI + link-rate history, with vertical roam markers so a mid-session
+                         dropout can be matched to a BSSID change. Same glow/core LineSeries pairing
+                         every history chart in the app uses. -->
+                    <TextBlock Text="Signal history" Style="{StaticResource SpecLabel}" Margin="0,12,0,4" />
+                    <lvc:CartesianChart Series="{Binding WifiRssiSeries}" XAxes="{Binding WifiHiddenXAxes}" YAxes="{Binding WifiRssiYAxes}" Sections="{Binding WifiRoamMarkers}"
+                                         Height="120" TooltipPosition="Hidden" LegendPosition="Hidden" Background="Transparent" />
+                    <lvc:CartesianChart Series="{Binding WifiRateSeries}" XAxes="{Binding WifiHiddenXAxes}" YAxes="{Binding WifiRateYAxes}" Sections="{Binding WifiRoamMarkers}"
+                                         Height="100" Margin="0,6,0,0" TooltipPosition="Hidden" LegendPosition="Hidden" Background="Transparent" />
+                    <TextBlock Text="Orange vertical lines mark a BSSID change (roam)." Style="{StaticResource SubStat}" Margin="0,4,0,0" Opacity="0.85" />
+
+                    <!-- #543: one-click built-in wireless report. -->
+                    <Grid Margin="0,14,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="{Binding WlanReportStatusText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,10,0" />
+                        <Button Grid.Column="1" Content="Generate wireless report" Padding="10,4" Command="{Binding RunWlanReportCommand}" />
+                    </Grid>
+
+                    <!-- #538/#539/#546: Airspace - on-demand neighbour/channel scan. -->
+                    <Expander Margin="0,16,0,0" Background="Transparent" BorderThickness="0" Foreground="{DynamicResource TextPrimaryBrush}" IsExpanded="False">
+                        <Expander.Header>
+                            <TextBlock Text="Airspace (channel congestion scan)" Style="{StaticResource CardTitle}" Margin="0" FontSize="13" />
+                        </Expander.Header>
+                        <StackPanel Margin="0,10,0,0">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="{Binding AirspaceStatusText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,10,0" />
+                                <Button Grid.Column="1" Content="Scan airspace" Padding="10,4" Command="{Binding RunAirspaceScanCommand}" />
+                            </Grid>
+
+                            <!-- #539: 2.4 GHz overlap verdict for whatever channel this machine is on. -->
+                            <TextBlock Text="{Binding WifiOverlapText}" Style="{StaticResource SubStat}" Margin="0,8,0,0" TextWrapping="Wrap"
+                                       Visibility="{Binding WifiOverlapText, Converter={StaticResource NullToVisibilityConverter}}" />
+
+                            <!-- #538: per-band channel occupancy + recommendation. -->
+                            <TextBlock Text="2.4 GHz channel occupancy" Style="{StaticResource SpecLabel}" Margin="0,12,0,4" />
+                            <ItemsControl ItemsSource="{Binding AirspaceOccupancy24}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,3">
+                                            <Run Text="Ch. " /><Run Text="{Binding Channel}" FontFamily="Consolas" FontWeight="SemiBold" />
+                                            <Run Text=" — " /><Run Text="{Binding ApCount}" /><Run Text=" network(s), summed signal " /><Run Text="{Binding SummedSignalPercent}" /><Run Text="%" />
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <TextBlock Text="{Binding AirspaceRecommendation24}" Style="{StaticResource SubStat}" Margin="0,2,0,0" TextWrapping="Wrap" FontWeight="SemiBold" />
+
+                            <StackPanel>
+                                <StackPanel.Style>
+                                    <Style TargetType="StackPanel">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding AirspaceOccupancy5.Count}" Value="0">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </StackPanel.Style>
+                                <TextBlock Text="5 GHz channel occupancy" Style="{StaticResource SpecLabel}" Margin="0,12,0,4" />
+                                <ItemsControl ItemsSource="{Binding AirspaceOccupancy5}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,3">
+                                                <Run Text="Ch. " /><Run Text="{Binding Channel}" FontFamily="Consolas" FontWeight="SemiBold" />
+                                                <Run Text=" — " /><Run Text="{Binding ApCount}" /><Run Text=" network(s), summed signal " /><Run Text="{Binding SummedSignalPercent}" /><Run Text="%" />
+                                            </TextBlock>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <TextBlock Text="{Binding AirspaceRecommendation5}" Style="{StaticResource SubStat}" Margin="0,2,0,0" TextWrapping="Wrap" FontWeight="SemiBold" />
+                            </StackPanel>
+
+                            <StackPanel>
+                                <StackPanel.Style>
+                                    <Style TargetType="StackPanel">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding AirspaceOccupancy6.Count}" Value="0">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </StackPanel.Style>
+                                <TextBlock Text="6 GHz channel occupancy" Style="{StaticResource SpecLabel}" Margin="0,12,0,4" />
+                                <ItemsControl ItemsSource="{Binding AirspaceOccupancy6}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,3">
+                                                <Run Text="Ch. " /><Run Text="{Binding Channel}" FontFamily="Consolas" FontWeight="SemiBold" />
+                                                <Run Text=" — " /><Run Text="{Binding ApCount}" /><Run Text=" network(s), summed signal " /><Run Text="{Binding SummedSignalPercent}" /><Run Text="%" />
+                                            </TextBlock>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <TextBlock Text="{Binding AirspaceRecommendation6}" Style="{StaticResource SubStat}" Margin="0,2,0,0" TextWrapping="Wrap" FontWeight="SemiBold" />
+                            </StackPanel>
+
+                            <!-- #546: same-SSID BSSID groups - the mesh/extender "sticky client" view. -->
+                            <TextBlock Text="Same-SSID BSSIDs (mesh / extender view)" Style="{StaticResource SpecLabel}" Margin="0,14,0,4" />
+                            <ItemsControl ItemsSource="{Binding WifiMeshGroups}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Margin="0,0,0,8" Padding="8" CornerRadius="6" BorderThickness="1" BorderBrush="{DynamicResource BorderSubtleBrush}">
+                                            <StackPanel>
+                                                <TextBlock Text="{Binding Ssid}" FontWeight="SemiBold" FontSize="12.5" />
+                                                <ItemsControl ItemsSource="{Binding Bssids}" Margin="0,4,0,0">
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate>
+                                                            <!-- Run has no Visibility property in WPF, so the "(connected)"
+                                                                 marker is a separate TextBlock rather than a conditionally-
+                                                                 hidden Run. -->
+                                                            <StackPanel Orientation="Horizontal" Margin="0,0,0,2">
+                                                                <TextBlock Style="{StaticResource SubStat}" FontFamily="Consolas">
+                                                                    <Run Text="{Binding Bssid}" />
+                                                                    <Run Text=" — " /><Run Text="{Binding Band}" /><Run Text=" ch." /><Run Text="{Binding Channel, TargetNullValue=?}" />
+                                                                    <Run Text=", " /><Run Text="{Binding SignalPercent, TargetNullValue=Unknown}" /><Run Text="%" />
+                                                                </TextBlock>
+                                                                <TextBlock Text=" (connected)" Style="{StaticResource SubStat}" FontWeight="SemiBold"
+                                                                           Visibility="{Binding IsCurrentBssid, Converter={StaticResource BoolToVisibilityConverter}}" />
+                                                            </StackPanel>
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                            </StackPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <TextBlock Text="No scan results yet - click &quot;Scan airspace&quot; above.">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding WifiMeshGroups.Count}" Value="0">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </StackPanel>
+                    </Expander>
+
+                    <!-- #541/#542: Wi-Fi events timeline - on-demand WLAN-AutoConfig/Operational scan. -->
+                    <Grid Margin="0,16,0,6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Wi-Fi events" Style="{StaticResource SpecLabel}" Margin="0" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="1" Text="Window (h)" VerticalAlignment="Center" Margin="0,0,6,0" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        <TextBox Grid.Column="2" Width="50" Margin="0,0,8,0" VerticalContentAlignment="Center"
+                                 Text="{Binding WifiEventScanWindowHours, UpdateSourceTrigger=LostFocus, StringFormat={}{0:0.#}}" />
+                        <Button Grid.Column="3" Content="Scan" Padding="10,4" Command="{Binding ScanWifiEventsCommand}" />
+                    </Grid>
+                    <TextBlock Text="{Binding WifiEventStatusText}" Style="{StaticResource SubStat}" Margin="0,6,0,0" TextWrapping="Wrap" />
+                    <DataGrid ItemsSource="{Binding WifiEvents}" AutoGenerateColumns="False" IsReadOnly="True" HeadersVisibility="Column" CanUserSortColumns="True"
+                              MaxHeight="320" Margin="0,8,0,0">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Time" Binding="{Binding TimeUtc, StringFormat={}{0:g}}" Width="1.3*" />
+                            <DataGridTextColumn Header="Event" Binding="{Binding Kind}" Width="1.1*" />
+                            <DataGridTextColumn Header="SSID" Binding="{Binding Ssid, TargetNullValue=''}" Width="1.1*" />
+                            <DataGridTextColumn Header="BSSID" Binding="{Binding Bssid, TargetNullValue=''}" Width="1.2*" />
+                            <DataGridTextColumn Header="Duration" Binding="{Binding Duration, TargetNullValue='', StringFormat={}{0:hh\:mm\:ss}}" Width="0.9*" />
+                            <!-- #542: decoded reason/status text attached to each row. -->
+                            <DataGridTextColumn Header="Reason" Binding="{Binding ReasonText, TargetNullValue=''}" Width="2.2*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <TextBlock Text="No Wi-Fi events loaded yet - set a window above and click Scan.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding WifiEvents.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
+                    <!-- #544: saved-profile audit. -->
+                    <Expander Margin="0,16,0,0" Background="Transparent" BorderThickness="0" Foreground="{DynamicResource TextPrimaryBrush}" IsExpanded="False">
+                        <Expander.Header>
+                            <TextBlock Text="Saved Wi-Fi profiles" Style="{StaticResource CardTitle}" Margin="0" FontSize="13" />
+                        </Expander.Header>
+                        <StackPanel Margin="0,10,0,0">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="{Binding WifiProfilesStatusText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,10,0" />
+                                <Button Grid.Column="1" Content="Refresh" Padding="10,4" Command="{Binding RefreshWifiProfilesCommand}" />
+                            </Grid>
+                            <DataGrid ItemsSource="{Binding WifiProfiles}" AutoGenerateColumns="False" IsReadOnly="True" HeadersVisibility="Column" CanUserSortColumns="True"
+                                      MaxHeight="320" Margin="0,8,0,0">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="1.4*" />
+                                    <DataGridTextColumn Header="Connect" Binding="{Binding ConnectionMode}" Width="1.2*" />
+                                    <DataGridTextColumn Header="Auth" Binding="{Binding Authentication}" Width="1.1*" />
+                                    <DataGridTextColumn Header="Cipher" Binding="{Binding Cipher}" Width="0.9*" />
+                                    <!-- Run has no Visibility property in WPF, so each flag is its own
+                                         TextBlock rather than a conditionally-hidden Run. -->
+                                    <DataGridTemplateColumn Header="Flags" Width="1.8*">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <StackPanel VerticalAlignment="Center">
+                                                    <TextBlock Text="Hidden SSID" FontSize="11.5" TextWrapping="Wrap" Foreground="{DynamicResource WarningBrush}"
+                                                               Visibility="{Binding IsHiddenSsid, Converter={StaticResource BoolToVisibilityConverter}}" />
+                                                    <TextBlock Text="Weak security (WEP/TKIP)" FontSize="11.5" TextWrapping="Wrap" Foreground="{DynamicResource WarningBrush}"
+                                                               Visibility="{Binding IsWeakSecurity, Converter={StaticResource BoolToVisibilityConverter}}" />
+                                                    <TextBlock Text="Auto-connects to any open network" FontSize="11.5" TextWrapping="Wrap" Foreground="{DynamicResource WarningBrush}"
+                                                               Visibility="{Binding AutoConnectsToOpenNetwork, Converter={StaticResource BoolToVisibilityConverter}}" />
+                                                </StackPanel>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTemplateColumn Header="" Width="80">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <Button Content="Delete" Padding="8,3"
+                                                        Command="{Binding DataContext.DeleteWifiProfileCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                        CommandParameter="{Binding}" />
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                </DataGrid.Columns>
+                            </DataGrid>
+                            <TextBlock Text="No saved profiles loaded yet - click Refresh above.">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding WifiProfiles.Count}" Value="0">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </StackPanel>
+                    </Expander>
                 </StackPanel>
             </Border>
 
