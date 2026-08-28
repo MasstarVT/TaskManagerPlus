@@ -125,8 +125,8 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
     // ScheduledTaskService/ServiceControlService's recovery-action reader already take, since
     // power plans essentially never change outside a direct user action.
     public ObservableCollection<PowerPlanInfo> PowerPlans { get; } = new();
-    public RelayCommand LoadPowerInfoCommand { get; }
-    public RelayCommand SetPowerPlanCommand { get; }
+    public AsyncRelayCommand LoadPowerInfoCommand { get; }
+    public AsyncRelayCommand SetPowerPlanCommand { get; }
 
     private string _sleepStateSupportText = string.Empty;
     /// <summary>Round 12, #91: Modern Standby (S0) vs. legacy S3 sleep support - see
@@ -361,13 +361,13 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         };
         FanRpmSeries = new ISeries[] { _fanRpmGlow, _fanRpmCore };
 
-        LoadPowerInfoCommand = new RelayCommand(_ => LoadPowerInfo());
-        SetPowerPlanCommand = new RelayCommand(p =>
+        LoadPowerInfoCommand = new AsyncRelayCommand(LoadPowerInfoAsync);
+        SetPowerPlanCommand = new AsyncRelayCommand(async p =>
         {
             if (p is not string guid || string.IsNullOrWhiteSpace(guid)) return;
-            var (success, error) = PowerPlanService.SetActivePlan(guid);
+            var (success, error) = await PowerPlanService.SetActivePlanAsync(guid);
             PowerPlanStatusText = success ? "Power plan switched." : $"Couldn't switch power plan: {error}";
-            if (success) LoadPowerInfo();
+            if (success) await LoadPowerInfoAsync();
         });
         LoadUsbDevicesCommand = new RelayCommand(_ => LoadUsbDevices());
 
@@ -407,13 +407,13 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
     /// <summary>Round 12, #90/#91: loads both the power-scheme list and the sleep-state support
     /// text in one on-demand action - both are cheap powercfg shell-outs, so there's no reason to
     /// split them into two separate buttons.</summary>
-    private void LoadPowerInfo()
+    private async Task LoadPowerInfoAsync()
     {
-        var plans = PowerPlanService.ListPowerPlans();
+        var plans = await PowerPlanService.ListPowerPlansAsync();
         PowerPlans.Clear();
         foreach (var p in plans) PowerPlans.Add(p);
 
-        SleepStateSupportText = PowerPlanService.ReadSleepStateSupport();
+        SleepStateSupportText = await PowerPlanService.ReadSleepStateSupportAsync();
         PowerPlanStatusText = plans.Count == 0 ? "Couldn't read power plans (powercfg unavailable)." : string.Empty;
     }
 

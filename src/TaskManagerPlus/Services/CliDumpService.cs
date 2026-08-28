@@ -14,7 +14,7 @@ namespace TaskManagerPlus.Services;
 /// </summary>
 public static class CliDumpService
 {
-    public static void DumpSnapshot(string outputPath)
+    public static async Task DumpSnapshotAsync(string outputPath)
     {
         using var hardware = new HardwareMonitorService();
         // Rate-based counters (CPU%, disk/network throughput) read 0 on their very first sample
@@ -25,7 +25,7 @@ public static class CliDumpService
         var snapshot = hardware.Sample();
 
         var specsService = new SystemSpecsService();
-        var specs = specsService.Query();
+        var specs = await specsService.QueryAsync();
 
         using var sensors = new SensorMonitorService();
         var readings = sensors.Sample();

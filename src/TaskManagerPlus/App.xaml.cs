@@ -14,7 +14,13 @@ public partial class App : Application
     /// CLI path (#77) can skip showing any UI at all rather than flashing a window open and
     /// immediately closing it.
     /// </summary>
-    protected override void OnStartup(StartupEventArgs e)
+    // async void is otherwise avoided in this app, but OnStartup is a framework-invoked,
+    // event-handler-shaped entry point (like a button click) with no caller waiting on its
+    // return - the same reasoning that makes AsyncRelayCommand.Execute itself async void.
+    // CliDumpService.DumpSnapshotAsync's awaits resume on WPF's DispatcherSynchronizationContext,
+    // which starts pumping messages as soon as this method returns at its first await, so this
+    // does not block/deadlock the way a synchronous `.GetAwaiter().GetResult()` call here would.
+    protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
 
@@ -29,7 +35,7 @@ public partial class App : Application
             string outputPath = e.Args[dumpIndex + 1];
             try
             {
-                CliDumpService.DumpSnapshot(outputPath);
+                await CliDumpService.DumpSnapshotAsync(outputPath);
             }
             catch (Exception ex)
             {

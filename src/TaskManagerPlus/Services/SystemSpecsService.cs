@@ -19,7 +19,7 @@ public sealed class SystemSpecsService
 {
     private const string DisplayClassGuid = "{4d36e968-e325-11ce-bfc1-08002be10318}";
 
-    public SystemSpecs Query()
+    public async Task<SystemSpecs> QueryAsync()
     {
         var (osName, osVersion, osArch, osInstallDate, osInstallAgeDays) = ReadOperatingSystem();
         var (manufacturer, model, systemType) = ReadComputerSystem();
@@ -60,7 +60,7 @@ public sealed class SystemSpecsService
 
             Gpus = ReadGpus(),
             Disks = ReadDisks(),
-            Volumes = ReadVolumes(),
+            Volumes = await ReadVolumesAsync(),
 
             Security = ReadSecurityInfo(),
             OutdatedDrivers = ReadOutdatedDrivers(),
@@ -821,10 +821,10 @@ public sealed class SystemSpecsService
     /// WMI) since it already handles removable/unready drives cleanly via IsReady. Round 9 adds
     /// four more per-volume facts (BitLocker, Recycle Bin size, VSS usage, TRIM status) - see
     /// VolumeDiagnosticsService for each one's own degradation story.</summary>
-    private static List<VolumeInfo> ReadVolumes()
+    private static async Task<List<VolumeInfo>> ReadVolumesAsync()
     {
         var volumes = new List<VolumeInfo>();
-        var shadowUsageByVolume = VolumeDiagnosticsService.ReadShadowCopyUsageByVolume();
+        var shadowUsageByVolume = await VolumeDiagnosticsService.ReadShadowCopyUsageByVolumeAsync();
 
         foreach (var drive in DriveInfo.GetDrives())
         {
@@ -835,6 +835,10 @@ public sealed class SystemSpecsService
             {
                 string driveLetter = drive.Name.TrimEnd('\\'); // e.g. "C:"
                 string mediaType = drive.DriveType == DriveType.Fixed ? DiskFragmentationService.GetMediaType(driveLetter) : "Unknown";
+                // TRIM is only a meaningful question for an SSD volume - same "hidden for the
+                // media type it doesn't apply to" pattern HDD fragmentation already uses in
+                // reverse.
+                bool? trimEnabled = mediaType == "SSD" ? await VolumeDiagnosticsService.ReadTrimStatusAsync(driveLetter) : null;
 
                 volumes.Add(new VolumeInfo
                 {
@@ -847,10 +851,7 @@ public sealed class SystemSpecsService
                     BitLockerStatus = VolumeDiagnosticsService.ReadBitLockerStatus(driveLetter),
                     RecycleBinBytes = VolumeDiagnosticsService.ReadRecycleBinBytes(drive.Name),
                     ShadowCopyBytes = shadowUsageByVolume.TryGetValue(driveLetter.TrimEnd(':'), out var used) ? used : null,
-                    // TRIM is only a meaningful question for an SSD volume - same "hidden for the
-                    // media type it doesn't apply to" pattern HDD fragmentation already uses in
-                    // reverse.
-                    TrimEnabled = mediaType == "SSD" ? VolumeDiagnosticsService.ReadTrimStatus(driveLetter) : null,
+                    TrimEnabled = trimEnabled,
                 });
             }
             catch
