@@ -59,7 +59,10 @@
 
                     <!-- #501: continuous ring - Gateway/First hop/Resolver, glow+core paired like
                          every other history chart in the app (PerformanceViewModel.LineOf). -->
+                    <!-- #597: LatencyEventMarkers overlays #596 timeline events onto this chart's
+                         own rolling window - see NetworkViewModel.RecomputeEventMarkers' remarks. -->
                     <lvc:CartesianChart Series="{Binding LatencySeries}" XAxes="{Binding LatencyHiddenXAxes}" YAxes="{Binding LatencyMsYAxes}"
+                                         Sections="{Binding LatencyEventMarkers}"
                                          Height="160" TooltipPosition="Top" LegendPosition="Bottom" Background="Transparent"
                                          LegendTextPaint="{Binding Performance.LegendTextPaint}" LegendBackgroundPaint="{Binding Performance.LegendBackgroundPaint}"
                                          TooltipTextPaint="{Binding Performance.TooltipTextPaint}" TooltipBackgroundPaint="{Binding Performance.TooltipBackgroundPaint}" />
@@ -313,7 +316,10 @@
                         <Border Style="{StaticResource ColorDot}" Background="{Binding Performance.NetworkColor, Converter={StaticResource ColorToBrushConverter}}" />
                         <TextBlock Text="Throughput" Style="{StaticResource CardTitle}" Margin="0" />
                     </StackPanel>
+                    <!-- #597: ThroughputEventMarkers overlays #596 timeline events onto this
+                         chart's own rolling window, the same way LatencyEventMarkers does above. -->
                     <lvc:CartesianChart Series="{Binding Performance.NetworkSeries}" XAxes="{Binding Performance.HiddenXAxes}" YAxes="{Binding Performance.NetworkYAxes}"
+                                         Sections="{Binding ThroughputEventMarkers}"
                                          Height="200" TooltipPosition="Top" LegendPosition="Bottom" Background="Transparent"
                                          LegendTextPaint="{Binding Performance.LegendTextPaint}" LegendBackgroundPaint="{Binding Performance.LegendBackgroundPaint}"
                                          TooltipTextPaint="{Binding Performance.TooltipTextPaint}" TooltipBackgroundPaint="{Binding Performance.TooltipBackgroundPaint}" />
@@ -573,6 +579,171 @@
                     <TextBlock Style="{StaticResource SubStat}" Margin="0,10,0,0" TextWrapping="Wrap">
                         <Run Text="Proxy: " /><Run Text="{Binding ProxyStatusText, Mode=OneWay}" />
                     </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- suggestions.md #593: NLA / "No internet, secured" explainer - combines the NCSI
+                 active-probe configuration, NlaSvc's own service state, and live results of the
+                 same DNS-probe/HTTP-probe pair Windows itself runs, so when Windows' connectivity
+                 icon disagrees with "but everything actually works" this shows exactly which of
+                 the three checks is the one failing. Extends the Connectivity card's own #51
+                 captive-portal flag above with the full picture, rather than duplicating it. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="NCSI (&quot;No internet, secured&quot; explainer)" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Re-check" Padding="10,4" Command="{Binding RunNcsiCheckCommand}" />
+                    </Grid>
+                    <TextBlock Text="Windows decides &quot;Internet access&quot; vs. &quot;No internet, secured&quot; vs. &quot;Limited&quot; from three checks: NlaSvc running, a DNS probe, and an HTTP probe. This re-runs the same two live probes so you can see which one actually failed."
+                               Style="{StaticResource SubStat}" Margin="0,0,0,10" TextWrapping="Wrap" Opacity="0.7" />
+
+                    <TextBlock Text="Checking..." Style="{StaticResource SubStat}" Margin="0,0,0,10" Visibility="{Binding IsCheckingNcsi, Converter={StaticResource BoolToVisibilityConverter}}" />
+
+                    <StackPanel Visibility="{Binding NcsiResult, Converter={StaticResource NullToVisibilityConverter}}">
+                        <TextBlock Text="{Binding NcsiResult.ExplainerText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,10" FontWeight="SemiBold" />
+                        <UniformGrid Columns="3">
+                            <StackPanel Margin="0,0,8,0">
+                                <TextBlock Text="NlaSvc" Style="{StaticResource SpecLabel}" Margin="0" />
+                                <TextBlock Text="{Binding NcsiResult.NlaSvcStateText}" Style="{StaticResource SubStat}" Margin="0,4,0,0" FontWeight="SemiBold" />
+                            </StackPanel>
+                            <StackPanel Margin="8,0,8,0">
+                                <TextBlock Text="DNS probe" Style="{StaticResource SpecLabel}" Margin="0" />
+                                <TextBlock Text="{Binding NcsiResult.DnsProbeOkText}" Style="{StaticResource SubStat}" Margin="0,4,0,0" FontWeight="SemiBold" />
+                                <TextBlock Text="{Binding NcsiResult.DnsProbeDetail}" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,2,0,0" />
+                            </StackPanel>
+                            <StackPanel Margin="8,0,0,0">
+                                <TextBlock Text="HTTP probe" Style="{StaticResource SpecLabel}" Margin="0" />
+                                <TextBlock Text="{Binding NcsiResult.WebProbeOkText}" Style="{StaticResource SubStat}" Margin="0,4,0,0" FontWeight="SemiBold" />
+                                <TextBlock Text="{Binding NcsiResult.WebProbeDetail}" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,2,0,0" />
+                            </StackPanel>
+                        </UniformGrid>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- suggestions.md #591/#592/#594: IPv6 - decodes the DisabledComponents registry
+                 override into readable terms, shows the RFC 6724 prefix-policy table, an on-demand
+                 A-vs-AAAA dual-stack reachability comparison, and Teredo/6to4/ISATAP transition-
+                 tunnel state (hidden when every tunnel is dormant). -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="IPv6" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Refresh" Padding="10,4" Command="{Binding RefreshIpv6Command}" />
+                    </Grid>
+
+                    <!-- #591: DisabledComponents decode. -->
+                    <TextBlock Text="IPv6 stack configuration" Style="{StaticResource SpecLabel}" Margin="0,8,0,4" />
+                    <TextBlock Text="{Binding Ipv6DisabledComponents.SummaryText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,4" FontWeight="SemiBold" />
+                    <ItemsControl ItemsSource="{Binding Ipv6DisabledComponents.SetFlags}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding Description}" FontSize="11.5" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" Margin="0,0,0,2" />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock TextWrapping="Wrap" FontSize="11.5" Foreground="{DynamicResource WarningBrush}" Margin="0,0,0,2"
+                               Visibility="{Binding Ipv6DisabledComponents.UnrecognizedBitsHex, Converter={StaticResource NullToVisibilityConverter}}">
+                        <Run Text="Also has unrecognized bit(s) set: " /><Run Text="{Binding Ipv6DisabledComponents.UnrecognizedBitsHex}" FontFamily="Consolas" />
+                    </TextBlock>
+
+                    <!-- #591: prefix-policy table. -->
+                    <TextBlock Text="Prefix policy table (netsh int ipv6 show prefixpolicies)" Style="{StaticResource SpecLabel}" Margin="0,14,0,4" />
+                    <DataGrid ItemsSource="{Binding Ipv6PrefixPolicies}" AutoGenerateColumns="False" IsReadOnly="True" HeadersVisibility="Column" MaxHeight="200">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Precedence" Binding="{Binding Precedence}" Width="1*" />
+                            <DataGridTextColumn Header="Label" Binding="{Binding Label}" Width="1*" />
+                            <DataGridTextColumn Header="Prefix" Binding="{Binding Prefix}" Width="2*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <TextBlock Text="A ::ffff:0:0/96 row ranked ahead of ::/0 means Windows is currently preferring IPv4 over native IPv6 for dual-stack destinations."
+                               Style="{StaticResource SubStat}" Margin="0,4,0,0" TextWrapping="Wrap" Opacity="0.7" />
+
+                    <!-- #594: transition-tunnel state - hidden entirely when every tunnel is dormant. -->
+                    <StackPanel Margin="0,14,0,0">
+                        <StackPanel.Style>
+                            <Style TargetType="StackPanel">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding TransitionTunnels.AllDormant}" Value="False">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </StackPanel.Style>
+                        <TextBlock Text="Transition tunnels" Style="{StaticResource SpecLabel}" Margin="0,0,0,6" />
+                        <ItemsControl ItemsSource="{Binding TransitionTunnels.Tunnels}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Margin="0,0,0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="{Binding Kind}" FontWeight="SemiBold" FontSize="12.5" />
+                                        <TextBlock Grid.Column="1" Text="{Binding StateText}" FontSize="12.5">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding LooksActive}" Value="True">
+                                                            <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                            <Setter Property="FontWeight" Value="SemiBold" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <TextBlock Text="An active tunnel adapter can add latency or break name resolution if it's half-configured - worth checking if things feel slow only sometimes."
+                                   Style="{StaticResource SubStat}" Margin="0,4,0,0" TextWrapping="Wrap" Opacity="0.7" />
+                    </StackPanel>
+
+                    <!-- #592: dual-stack (A vs. AAAA) reachability comparison. -->
+                    <TextBlock Text="Dual-stack reachability test" Style="{StaticResource SpecLabel}" Margin="0,14,0,6" />
+                    <TextBlock Text="Resolves both A and AAAA for a hostname and times a TCP connect over each family separately - catches the classic &quot;AAAA is advertised but IPv6 is broken&quot; multi-second stall."
+                               Style="{StaticResource SubStat}" Margin="0,0,0,6" TextWrapping="Wrap" Opacity="0.7" />
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBox Grid.Column="0" Margin="0,0,8,0" VerticalContentAlignment="Center" Text="{Binding DualStackHostname, UpdateSourceTrigger=PropertyChanged}" />
+                        <Button Grid.Column="1" Content="Test" Padding="10,4" Command="{Binding RunDualStackTestCommand}" />
+                    </Grid>
+                    <StackPanel Visibility="{Binding DualStackResult, Converter={StaticResource NullToVisibilityConverter}}" Margin="0,8,0,0">
+                        <TextBlock Text="{Binding DualStackResult.Verdict}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,6" FontWeight="SemiBold" />
+                        <UniformGrid Columns="2">
+                            <StackPanel Margin="0,0,8,0">
+                                <TextBlock Text="IPv4 (A)" Style="{StaticResource SpecLabel}" Margin="0" />
+                                <TextBlock Style="{StaticResource SubStat}" Margin="0,4,0,0" TextWrapping="Wrap">
+                                    <Run Text="{Binding DualStackResult.V4.Address, TargetNullValue='No A record'}" FontFamily="Consolas" />
+                                    <Run Text=" — " />
+                                    <Run Text="{Binding DualStackResult.V4.ConnectedText}" />
+                                    <Run Text=" (" /><Run Text="{Binding DualStackResult.V4.ConnectMs, StringFormat={}{0:0} ms}" /><Run Text=")" />
+                                </TextBlock>
+                            </StackPanel>
+                            <StackPanel Margin="8,0,0,0">
+                                <TextBlock Text="IPv6 (AAAA)" Style="{StaticResource SpecLabel}" Margin="0" />
+                                <TextBlock Style="{StaticResource SubStat}" Margin="0,4,0,0" TextWrapping="Wrap">
+                                    <Run Text="{Binding DualStackResult.V6.Address, TargetNullValue='No AAAA record'}" FontFamily="Consolas" />
+                                    <Run Text=" — " />
+                                    <Run Text="{Binding DualStackResult.V6.ConnectedText}" />
+                                    <Run Text=" (" /><Run Text="{Binding DualStackResult.V6.ConnectMs, StringFormat={}{0:0} ms}" /><Run Text=")" />
+                                </TextBlock>
+                            </StackPanel>
+                        </UniformGrid>
+                    </StackPanel>
                 </StackPanel>
             </Border>
 
@@ -1099,14 +1270,34 @@
                     </ItemsControl>
 
                     <!-- Round 9, #52: metered-connection flag - relevant context for this app's
-                         own logging/remote-monitoring bandwidth use, not just informational. -->
+                         own logging/remote-monitoring bandwidth use, not just informational.
+                         #595 adds the network Category (Public/Private/Domain) alongside it, from
+                         the same per-profile registry read - see MeteredConnectionService's
+                         remarks for why every Public profile gets the same hedged flag rather than
+                         trying to guess "should this be Private". -->
                     <ItemsControl ItemsSource="{Binding MeteredAdapters}" Margin="0,4,0,0">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,4">
-                                    <Run Text="{Binding ProfileName}" FontWeight="SemiBold" />
-                                    <Run Text=" — " /><Run Text="{Binding CostText}" />
-                                </TextBlock>
+                                <StackPanel Margin="0,0,0,6">
+                                    <TextBlock Style="{StaticResource SubStat}">
+                                        <Run Text="{Binding ProfileName}" FontWeight="SemiBold" />
+                                        <Run Text=" — " /><Run Text="{Binding CostText}" />
+                                        <Run Text="   Category: " /><Run Text="{Binding CategoryText}" FontWeight="SemiBold" />
+                                    </TextBlock>
+                                    <TextBlock Text="Public network - discovery, printer sharing and inbound SMB are blocked while this is set. If this is actually a home or office network, you can change it in Settings &gt; Network &amp; Internet."
+                                               FontSize="11" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" Margin="0,2,0,0">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding LooksStuckPublic}" Value="True">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </StackPanel>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
@@ -3853,6 +4044,171 @@
                         <TextBlock Text="A share that has silently gone offline still lets edits appear to save locally, without actually reaching the server - watch for the &quot;Offline&quot; flag above."
                                    Style="{StaticResource SubStat}" TextWrapping="Wrap" Opacity="0.7" Margin="0,4,0,0" />
                     </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- suggestions.md #596/#597/#598: unified network event timeline - merges Tcpip,
+                 DHCP, DNS, WLAN, NlaSvc, NetworkProfile, SMBClient and NIC miniport link-state
+                 events into one chronological, filterable grid over a chosen window, behind an
+                 explicit Scan button (never a timer - this is a genuinely heavier scan than any
+                 single source above, since it runs all of them). #597's chart-marker overlays live
+                 on the Latency/Throughput charts themselves further up this page, not here. #598's
+                 sleep/resume derived finding is its own banner below the scan controls. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Network events" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Merges Tcpip, DHCP, DNS, WLAN, NlaSvc, NetworkProfile, SMBClient and NIC link-state events into one timeline - matches a chart gap to the exact disconnect, DHCP renewal or roam that caused it."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+
+                    <Grid Margin="0,0,0,6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Event scan" Style="{StaticResource SpecLabel}" Margin="0" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="1" Text="Window (h)" VerticalAlignment="Center" Margin="0,0,6,0" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        <TextBox Grid.Column="2" Width="50" Margin="0,0,8,0" VerticalContentAlignment="Center"
+                                 Text="{Binding NetworkEventScanWindowHours, UpdateSourceTrigger=LostFocus, StringFormat={}{0:0.#}}" />
+                        <Button Grid.Column="3" Content="Scan" Padding="10,4" Command="{Binding ScanNetworkEventsCommand}" />
+                    </Grid>
+                    <TextBlock Text="{Binding NetworkEventScanStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" />
+
+                    <!-- #598: derived sleep/resume-correlation finding - a "quick flag, not a
+                         verdict" banner, hidden entirely when nothing correlates. -->
+                    <StackPanel Margin="0,0,0,10">
+                        <StackPanel.Style>
+                            <Style TargetType="StackPanel">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding SleepResumeFindings.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </StackPanel.Style>
+                        <Border Background="{DynamicResource WarningBrush}" Opacity="0.15" CornerRadius="4" Padding="10,8">
+                            <StackPanel>
+                                <TextBlock Text="Possible post-sleep networking issue" FontWeight="Bold" FontSize="12.5" Foreground="{DynamicResource WarningBrush}" />
+                                <TextBlock TextWrapping="Wrap" FontSize="11.5" Margin="0,4,0,6" Foreground="{DynamicResource TextPrimaryBrush}">
+                                    <Run Text="{Binding SleepResumeFindings.Count}" FontWeight="SemiBold" />
+                                    <Run Text=" resume(s) from sleep were followed within a few minutes by something that looks like a network problem. The most common cause this app can actually detect is the NIC's own &quot;allow the computer to turn off this device&quot; power-management setting - check the Power management section of the Adapter health card above first. This is a timing correlation, not a diagnosis." />
+                                </TextBlock>
+                                <ItemsControl ItemsSource="{Binding SleepResumeFindings}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <TextBlock FontSize="11" Margin="0,0,0,2" TextWrapping="Wrap">
+                                                <Run Text="{Binding ResumeTimeUtc, StringFormat={}{0:g}}" FontFamily="Consolas" />
+                                                <Run Text=" — " /><Run Text="{Binding IssueSummary}" />
+                                            </TextBlock>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+
+                    <!-- #596: filterable grid. -->
+                    <TextBlock Text="Filter (source, category or message)" Style="{StaticResource SpecLabel}" Margin="0,0,0,4" />
+                    <TextBox Margin="0,0,0,6" VerticalContentAlignment="Center"
+                             Text="{Binding NetworkEventFilterText, UpdateSourceTrigger=PropertyChanged}" />
+                    <DataGrid ItemsSource="{Binding NetworkEvents}" AutoGenerateColumns="False" IsReadOnly="True" HeadersVisibility="Column" CanUserSortColumns="True" MaxHeight="320">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Time" Binding="{Binding TimeUtc, StringFormat={}{0:g}}" Width="1.2*" />
+                            <DataGridTextColumn Header="Source" Binding="{Binding Source}" Width="1.3*" />
+                            <DataGridTextColumn Header="Category" Binding="{Binding Category}" Width="1.1*" />
+                            <DataGridTextColumn Header="Message" Binding="{Binding Message}" Width="3*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- suggestions.md #599: one-click network diagnostic report - bundles adapter config,
+                 routes, DNS settings/cache stats, Wi-Fi association/airspace, firewall profile
+                 state, TCP global settings, a fresh latency/loss run and the recent event timeline
+                 into one document, emitted the same Markdown/HTML way SummaryViewModel's own
+                 report already does (see BuildNetworkReportMarkdown's remarks for why that's the
+                 real "existing report writer" this reuses). -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Diagnostic report" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="{Binding NetworkReportStatusText}" Style="{StaticResource SubStat}" Margin="0,4,0,10" TextWrapping="Wrap" />
+                    <StackPanel Orientation="Horizontal">
+                        <Button Content="Generate Markdown report" Padding="10,4" Margin="0,0,8,0" Command="{Binding GenerateNetworkReportMarkdownCommand}" />
+                        <Button Content="Generate HTML report" Padding="10,4" Command="{Binding GenerateNetworkReportHtmlCommand}" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- suggestions.md #600: rolling network black-box recorder - a bounded in-memory ring
+                 buffer, written to a timestamped file only on a detected disconnect/link-down
+                 transition (never continuously) - see NetworkBlackBoxRecorderService's remarks. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" Style="{StaticResource TitleRow}" Margin="0">
+                            <Border Width="9" Height="9" CornerRadius="4.5" Margin="0,0,8,0" VerticalAlignment="Center">
+                                <Border.Style>
+                                    <Style TargetType="Border">
+                                        <Setter Property="Background" Value="{DynamicResource TextSecondaryBrush}" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsBlackBoxRecording}" Value="True">
+                                                <Setter Property="Background" Value="{DynamicResource SuccessBrush}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Border.Style>
+                            </Border>
+                            <TextBlock Text="Black-box recorder" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        </StackPanel>
+                        <Button Grid.Column="1" Content="Open incidents folder" Padding="10,4" Margin="0,0,8,0" Command="{Binding OpenBlackBoxIncidentsFolderCommand}" />
+                        <Button Grid.Column="2" Padding="10,4">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                    <Setter Property="Content" Value="Start recording" />
+                                    <Setter Property="Command" Value="{Binding ToggleBlackBoxRecordingCommand}" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsBlackBoxRecording}" Value="True">
+                                            <Setter Property="Content" Value="Stop recording" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                    </Grid>
+                    <TextBlock Text="{Binding BlackBoxStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,10" TextWrapping="Wrap" />
+
+                    <TextBlock Text="Captured incidents" Style="{StaticResource SpecLabel}" Margin="0,0,0,6" />
+                    <ItemsControl ItemsSource="{Binding BlackBoxIncidents}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,4" TextWrapping="Wrap">
+                                    <Run Text="{Binding TriggeredAtUtc, StringFormat={}{0:g}}" FontFamily="Consolas" FontWeight="SemiBold" />
+                                    <Run Text=" — " /><Run Text="{Binding TriggerReason}" />
+                                    <Run Text=" (" /><Run Text="{Binding SampleCount}" /><Run Text=" sample(s)) — " />
+                                    <Run Text="{Binding FilePath}" FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                </TextBlock>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="No incidents captured yet.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding BlackBoxIncidents.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
                 </StackPanel>
             </Border>
 

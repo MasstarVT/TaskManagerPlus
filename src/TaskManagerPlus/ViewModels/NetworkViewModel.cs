@@ -1,12 +1,15 @@
 using System.Collections.ObjectModel;
 using System.Diagnostics;
+using System.IO;
 using System.Net.NetworkInformation;
+using System.Text;
 using System.Windows;
 using System.Windows.Threading;
 using LiveChartsCore;
 using LiveChartsCore.Measure;
 using LiveChartsCore.SkiaSharpView;
 using LiveChartsCore.SkiaSharpView.Painting;
+using Microsoft.Win32;
 using SkiaSharp;
 using TaskManagerPlus.Common;
 using TaskManagerPlus.Models;
@@ -1222,6 +1225,123 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
     private OfflineFilesState? _offlineFiles;
     public OfflineFilesState? OfflineFiles { get => _offlineFiles; private set => SetProperty(ref _offlineFiles, value); }
 
+    // ---- suggestions.md #591-595: IPv6, network location awareness and connectivity semantics ---
+    // New "IPv6" card (#591/#592/#594) plus an "NCSI" card (#593) alongside the existing
+    // Connectivity card, and #595's category extension to the existing metered-connection card
+    // (view-only change - MeteredAdapters/MeteredAdapterInfo itself now carries Category/
+    // LooksStuckPublic, see MeteredConnectionService's remarks). All four IPv6/NCSI reads are
+    // read-only snapshots, refreshed once at startup plus an explicit Refresh - the same "queried
+    // once, plus a button" shape #563's port-reservation read already uses - rather than riding the
+    // 15s connectivity tick, since none of them change on their own between explicit network
+    // reconfigurations.
+
+    // #591: DisabledComponents decode + prefix-policy table.
+    private Ipv6DisabledComponentsInfo _ipv6DisabledComponents = new(null, new List<Ipv6DisabledComponentFlag>(), null, "Not loaded yet.");
+    public Ipv6DisabledComponentsInfo Ipv6DisabledComponents { get => _ipv6DisabledComponents; private set => SetProperty(ref _ipv6DisabledComponents, value); }
+
+    public ObservableCollection<Ipv6PrefixPolicyEntry> Ipv6PrefixPolicies { get; } = new();
+
+    private bool _isLoadingIpv6;
+    public bool IsLoadingIpv6 { get => _isLoadingIpv6; private set => SetProperty(ref _isLoadingIpv6, value); }
+
+    public AsyncRelayCommand RefreshIpv6Command { get; }
+
+    // #594: transition-tunnel (Teredo/6to4/ISATAP) state - null until the first load completes; the
+    // view hides the whole section on null or on AllDormant, per this item's own text.
+    private TransitionTunnelInfo? _transitionTunnels;
+    public TransitionTunnelInfo? TransitionTunnels { get => _transitionTunnels; private set => SetProperty(ref _transitionTunnels, value); }
+
+    // #592: dual-stack (A vs. AAAA) reachability comparison - on-demand, in the IPv6 card.
+    private string _dualStackHostname = string.Empty;
+    public string DualStackHostname { get => _dualStackHostname; set => SetProperty(ref _dualStackHostname, value); }
+
+    private bool _isRunningDualStackTest;
+    public bool IsRunningDualStackTest { get => _isRunningDualStackTest; private set => SetProperty(ref _isRunningDualStackTest, value); }
+
+    private DualStackReachabilityResult? _dualStackResult;
+    public DualStackReachabilityResult? DualStackResult { get => _dualStackResult; private set => SetProperty(ref _dualStackResult, value); }
+
+    public AsyncRelayCommand RunDualStackTestCommand { get; }
+
+    // #593: NCSI explainer - new card, extends the existing Connectivity card's own #51
+    // captive-portal flag with the full DNS-probe/HTTP-probe/NlaSvc picture.
+    private NcsiCheckResult? _ncsiResult;
+    public NcsiCheckResult? NcsiResult { get => _ncsiResult; private set => SetProperty(ref _ncsiResult, value); }
+
+    private bool _isCheckingNcsi;
+    public bool IsCheckingNcsi { get => _isCheckingNcsi; private set => SetProperty(ref _isCheckingNcsi, value); }
+
+    public AsyncRelayCommand RunNcsiCheckCommand { get; }
+
+    // ---- suggestions.md #596-600: Event correlation and reporting --------------------------------
+    // New "Network events" sub-panel (#596/#597/#598), a one-click diagnostic report (#599), and a
+    // rolling black-box recorder (#600).
+
+    // #596: unified event timeline - on-demand, behind an explicit Scan button, mirroring this tab's
+    // other on-demand event-log scans (#524/#530/#541/#548/#589)'s own lookback-window shape.
+    private double _networkEventScanWindowHours = 24.0;
+    public double NetworkEventScanWindowHours { get => _networkEventScanWindowHours; set => SetProperty(ref _networkEventScanWindowHours, Math.Clamp(value, 1.0, 720.0)); }
+
+    private bool _isScanningNetworkEvents;
+    public bool IsScanningNetworkEvents { get => _isScanningNetworkEvents; private set => SetProperty(ref _isScanningNetworkEvents, value); }
+
+    private string _networkEventScanStatusText = "Not scanned yet - merges Tcpip, DHCP, DNS, WLAN, NlaSvc, NetworkProfile, SMBClient and NIC link-state events into one timeline.";
+    public string NetworkEventScanStatusText { get => _networkEventScanStatusText; private set => SetProperty(ref _networkEventScanStatusText, value); }
+
+    private List<NetworkTimelineEvent> _allNetworkEvents = new();
+    public ObservableCollection<NetworkTimelineEvent> NetworkEvents { get; } = new();
+
+    // #596: "filterable grid" - a free-text filter over Source/Category/Message, applied client-side
+    // against the last scan's own results (no re-scan on every keystroke).
+    private string _networkEventFilterText = string.Empty;
+    public string NetworkEventFilterText
+    {
+        get => _networkEventFilterText;
+        set { if (SetProperty(ref _networkEventFilterText, value)) ApplyNetworkEventFilter(); }
+    }
+
+    // #598: derived sleep/resume-correlation findings from the same scan.
+    public ObservableCollection<SleepResumeFinding> SleepResumeFindings { get; } = new();
+
+    public AsyncRelayCommand ScanNetworkEventsCommand { get; }
+
+    // #597: chart-marker overlays onto the existing Latency and Throughput charts, rebuilt (full
+    // clear+rebuild, matching WifiRoamMarkers' own approach above) every time either chart's
+    // rolling window advances, from whatever the most recent #596 scan found - empty (no markers)
+    // until a scan has actually run.
+    public ObservableCollection<RectangularSection> LatencyEventMarkers { get; } = new();
+    public ObservableCollection<RectangularSection> ThroughputEventMarkers { get; } = new();
+
+    // #599: one-click diagnostic report - bundles adapter config, routing, DNS, Wi-Fi, firewall,
+    // TCP settings, a fresh latency/loss run and the recent event timeline into one document. Two
+    // commands (Markdown/HTML) mirroring SummaryViewModel's own GenerateReport/GenerateHtmlReport
+    // twin-command shape - see BuildNetworkReportMarkdown's remarks for why this app's actual
+    // Markdown/HTML report-writing code lives inline in a ViewModel rather than in LoggingService
+    // (a CSV-row writer, a different job).
+    private bool _isGeneratingNetworkReport;
+    public bool IsGeneratingNetworkReport { get => _isGeneratingNetworkReport; private set => SetProperty(ref _isGeneratingNetworkReport, value); }
+
+    private string _networkReportStatusText = "Bundles adapter config, routing, DNS, Wi-Fi, firewall, TCP settings, a fresh latency/loss run and the recent event timeline into one file.";
+    public string NetworkReportStatusText { get => _networkReportStatusText; private set => SetProperty(ref _networkReportStatusText, value); }
+
+    public AsyncRelayCommand GenerateNetworkReportMarkdownCommand { get; }
+    public AsyncRelayCommand GenerateNetworkReportHtmlCommand { get; }
+
+    // #600: rolling black-box recorder - a toggle plus the incident list it's written so far
+    // (including from a previous session - see NetworkBlackBoxRecorderService.LoadIncidentHistory).
+    private readonly NetworkBlackBoxRecorderService _blackBoxRecorder = new();
+
+    private bool _isBlackBoxRecording;
+    public bool IsBlackBoxRecording { get => _isBlackBoxRecording; private set => SetProperty(ref _isBlackBoxRecording, value); }
+
+    public ObservableCollection<BlackBoxIncident> BlackBoxIncidents { get; } = new();
+
+    private string _blackBoxStatusText = "Off - keeps a rolling record of latency/loss/link/RSSI/adapter-error data and automatically saves it whenever a disconnect is detected, so you have the lead-up, not just the moment it happened.";
+    public string BlackBoxStatusText { get => _blackBoxStatusText; private set => SetProperty(ref _blackBoxStatusText, value); }
+
+    public RelayCommand ToggleBlackBoxRecordingCommand { get; }
+    public RelayCommand OpenBlackBoxIncidentsFolderCommand { get; }
+
     public NetworkViewModel(PerformanceViewModel performance)
     {
         Performance = performance;
@@ -1526,7 +1646,12 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         Performance.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName is nameof(PerformanceViewModel.NetworkReceiveBps) or nameof(PerformanceViewModel.NetworkSendBps))
+            {
                 RecomputeLinkUtilization();
+                // #597: reposition the Throughput chart's own event markers on the same 1s tick
+                // that chart itself scrolls on.
+                RecomputeEventMarkers(ThroughputEventMarkers, ThroughputHistoryLength, 1.0, SKColors.OrangeRed);
+            }
         };
         RecomputeLinkUtilization();
 
@@ -1538,6 +1663,24 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         DisconnectMappedDriveCommand = new AsyncRelayCommand(DisconnectMappedDriveAsync);
         ScanSmbEventsCommand = new AsyncRelayCommand(ScanSmbEventsAsync, () => !IsScanningSmbEvents);
         _ = RefreshNetworkDrivesAsync();
+
+        // #591-595: IPv6/NCSI card wiring - both read-only snapshots, loaded once at startup plus
+        // an explicit Refresh, same shape #552/#563's own one-time reads already use.
+        RefreshIpv6Command = new AsyncRelayCommand(RefreshIpv6Async, () => !IsLoadingIpv6);
+        RunDualStackTestCommand = new AsyncRelayCommand(RunDualStackTestAsync, () => !IsRunningDualStackTest && !string.IsNullOrWhiteSpace(DualStackHostname));
+        RunNcsiCheckCommand = new AsyncRelayCommand(RunNcsiCheckAsync, () => !IsCheckingNcsi);
+        _ = RefreshIpv6Async();
+        _ = RunNcsiCheckAsync();
+
+        // #596-600: Network events panel, diagnostic report and black-box recorder wiring.
+        ScanNetworkEventsCommand = new AsyncRelayCommand(ScanNetworkEventsAsync, () => !IsScanningNetworkEvents);
+        GenerateNetworkReportMarkdownCommand = new AsyncRelayCommand(() => GenerateNetworkReportAsync(html: false), () => !IsGeneratingNetworkReport);
+        GenerateNetworkReportHtmlCommand = new AsyncRelayCommand(() => GenerateNetworkReportAsync(html: true), () => !IsGeneratingNetworkReport);
+        ToggleBlackBoxRecordingCommand = new RelayCommand(_ => ToggleBlackBoxRecording());
+        OpenBlackBoxIncidentsFolderCommand = new RelayCommand(_ => OpenBlackBoxIncidentsFolder());
+
+        foreach (var incident in NetworkBlackBoxRecorderService.LoadIncidentHistory().OrderByDescending(i => i.TriggeredAtUtc))
+            BlackBoxIncidents.Add(incident);
     }
 
     private async Task CheckConnectivityAsync()
@@ -1674,6 +1817,22 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
             var shareLatencies = await Task.Run(SmbShareService.ReadShareLatencies);
             SmbShareLatencies.Clear();
             foreach (var s in shareLatencies) SmbShareLatencies.Add(s);
+
+            // #600: black-box recorder - a no-op read (AddSample itself checks IsRecording) fed
+            // from data this tick already gathered above, not a fresh probe of its own.
+            var blackBoxSample = new BlackBoxSample(
+                DateTime.UtcNow,
+                result.GatewayReachable == true ? result.GatewayRoundtripMs : null,
+                _latencyMonitor.GetStats(LatencyTier.Gateway).LossPercent,
+                NetworkInterface.GetIsNetworkAvailable(),
+                WifiRadio?.RssiDbm,
+                AdapterHealth.Sum(a => a.RxErrorsDelta), AdapterHealth.Sum(a => a.TxErrorsDelta),
+                AdapterHealth.Sum(a => a.RxDiscardsDelta), AdapterHealth.Sum(a => a.TxDiscardsDelta));
+            if (_blackBoxRecorder.AddSample(blackBoxSample) is { } incident)
+            {
+                BlackBoxIncidents.Insert(0, incident);
+                BlackBoxStatusText = $"Recording - wrote an incident at {incident.TriggeredAtUtc.ToLocalTime():T} ({incident.TriggerReason}, {incident.SampleCount} sample(s)).";
+            }
         }
         catch
         {
@@ -2139,6 +2298,10 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         PushLatency(GatewayLatencyHistory, LatencyTier.Gateway);
         PushLatency(FirstHopLatencyHistory, LatencyTier.FirstHop);
         PushLatency(ResolverLatencyHistory, LatencyTier.Resolver);
+
+        // #597: reposition the Latency chart's event markers now that the window shifted by one
+        // sample - see RecomputeEventMarkers' remarks.
+        RecomputeEventMarkers(LatencyEventMarkers, LatencyHistoryLength, LatencyIntervalSeconds, SKColors.OrangeRed);
 
         // #503: matrix - all four tiers, from the same rolling window the charts above read.
         LatencyMatrix.Clear();
@@ -3904,6 +4067,425 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         finally
         {
             IsScanningSmbEvents = false;
+        }
+    }
+
+    // ---- #591-595 helpers (IPv6, dual-stack, NCSI) ---------------------------------------------
+
+    /// <summary>#591/#594: DisabledComponents decode, prefix-policy table, and transition-tunnel
+    /// state - three independent reads sharing one Refresh button since they're all "the IPv6
+    /// stack's own configuration", queried once at startup plus on demand, like #552/#563's own
+    /// one-time reads.</summary>
+    private async Task RefreshIpv6Async()
+    {
+        if (IsLoadingIpv6) return;
+        IsLoadingIpv6 = true;
+        try
+        {
+            var disabledComponentsTask = Task.Run(Ipv6DiagnosticsService.ReadDisabledComponents);
+            var prefixPoliciesTask = Ipv6DiagnosticsService.ReadPrefixPoliciesAsync();
+            var tunnelsTask = Ipv6DiagnosticsService.ReadTunnelStateAsync();
+            await Task.WhenAll(disabledComponentsTask, prefixPoliciesTask, tunnelsTask);
+
+            Ipv6DisabledComponents = disabledComponentsTask.Result;
+            Ipv6PrefixPolicies.Clear();
+            foreach (var p in prefixPoliciesTask.Result) Ipv6PrefixPolicies.Add(p);
+            TransitionTunnels = tunnelsTask.Result;
+        }
+        catch
+        {
+            // Best-effort - whatever loaded before a failure stays displayed.
+        }
+        finally
+        {
+            IsLoadingIpv6 = false;
+        }
+    }
+
+    /// <summary>#592: on-demand A-vs-AAAA reachability comparison for a chosen hostname.</summary>
+    private async Task RunDualStackTestAsync()
+    {
+        if (IsRunningDualStackTest || string.IsNullOrWhiteSpace(DualStackHostname)) return;
+        IsRunningDualStackTest = true;
+        try
+        {
+            DualStackResult = await DualStackReachabilityService.CompareAsync(DualStackHostname.Trim());
+        }
+        catch (Exception ex)
+        {
+            var failure = new AddressFamilyProbeResult(false, null, false, null, ex.Message);
+            DualStackResult = new DualStackReachabilityResult(DualStackHostname, failure, failure, $"Test failed: {ex.Message}");
+        }
+        finally
+        {
+            IsRunningDualStackTest = false;
+        }
+    }
+
+    /// <summary>#593: NCSI explainer - run once at startup (mirroring the existing Proxy card's own
+    /// auto-load) plus on demand, since "which of the three checks is failing" is exactly the kind
+    /// of thing worth re-running the moment Windows' own icon changes.</summary>
+    private async Task RunNcsiCheckAsync()
+    {
+        if (IsCheckingNcsi) return;
+        IsCheckingNcsi = true;
+        try
+        {
+            NcsiResult = await NcsiDiagnosticsService.RunAsync();
+        }
+        catch
+        {
+            // Best-effort - leave the previous result (or null) in place.
+        }
+        finally
+        {
+            IsCheckingNcsi = false;
+        }
+    }
+
+    // ---- #596-598 helpers (unified network event timeline) --------------------------------------
+
+    private async Task ScanNetworkEventsAsync()
+    {
+        if (IsScanningNetworkEvents) return;
+        IsScanningNetworkEvents = true;
+        NetworkEventScanStatusText = "Scanning Tcpip, DHCP, DNS, WLAN, NlaSvc, NetworkProfile, SMBClient and NIC link-state events...";
+        try
+        {
+            var window = TimeSpan.FromHours(NetworkEventScanWindowHours);
+            var result = await NetworkEventTimelineService.ScanAsync(window);
+
+            _allNetworkEvents = result.Events;
+            ApplyNetworkEventFilter();
+
+            SleepResumeFindings.Clear();
+            foreach (var f in result.SleepResumeFindings) SleepResumeFindings.Add(f);
+
+            NetworkEventScanStatusText = result.UnavailableSources.Count == 0
+                ? $"{result.Events.Count} event(s) in the last {NetworkEventScanWindowHours:0.#}h across all sources."
+                : $"{result.Events.Count} event(s) in the last {NetworkEventScanWindowHours:0.#}h. Unavailable (often just disabled by default): {string.Join(", ", result.UnavailableSources)}.";
+
+            // #597: reposition both charts' markers immediately with the fresh scan rather than
+            // waiting for their own next tick.
+            RecomputeEventMarkers(LatencyEventMarkers, LatencyHistoryLength, LatencyIntervalSeconds, SKColors.OrangeRed);
+            RecomputeEventMarkers(ThroughputEventMarkers, ThroughputHistoryLength, 1.0, SKColors.OrangeRed);
+        }
+        catch (Exception ex)
+        {
+            NetworkEventScanStatusText = $"Scan failed: {ex.Message}";
+        }
+        finally
+        {
+            IsScanningNetworkEvents = false;
+        }
+    }
+
+    private void ApplyNetworkEventFilter()
+    {
+        NetworkEvents.Clear();
+        IEnumerable<NetworkTimelineEvent> filtered = _allNetworkEvents;
+        if (!string.IsNullOrWhiteSpace(NetworkEventFilterText))
+        {
+            string needle = NetworkEventFilterText.Trim();
+            filtered = filtered.Where(e =>
+                e.Source.Contains(needle, StringComparison.OrdinalIgnoreCase) ||
+                e.Category.Contains(needle, StringComparison.OrdinalIgnoreCase) ||
+                e.Message.Contains(needle, StringComparison.OrdinalIgnoreCase));
+        }
+        foreach (var e in filtered) NetworkEvents.Add(e);
+    }
+
+    // Mirrors PerformanceViewModel.HistoryLength (private to that class) - the Throughput chart's
+    // own rolling window is 60 one-second samples.
+    private const int ThroughputHistoryLength = 60;
+
+    /// <summary>#597: full clear+rebuild of one chart's event-marker overlay from the last #596
+    /// scan's results (same "clear+rebuild on every refresh" tradeoff WifiRoamMarkers above already
+    /// takes), mapping each event's wall-clock timestamp onto an index position in that chart's own
+    /// rolling window. Approximate, not frame-exact: the chart's own samples and this scan's event
+    /// timestamps come from two different clocks/cadences, so an event snaps to the nearest sample
+    /// index rather than claiming ms-precision alignment - good enough for "which drop was this."</summary>
+    private void RecomputeEventMarkers(ObservableCollection<RectangularSection> markers, int historyLength, double secondsPerSample, SKColor color)
+    {
+        markers.Clear();
+        if (_allNetworkEvents.Count == 0 || secondsPerSample <= 0) return;
+
+        var now = DateTime.UtcNow;
+        double windowSeconds = historyLength * secondsPerSample;
+        var cutoff = now.AddSeconds(-windowSeconds);
+
+        foreach (var e in _allNetworkEvents)
+        {
+            if (e.TimeUtc < cutoff || e.TimeUtc > now) continue;
+
+            double secondsAgo = (now - e.TimeUtc).TotalSeconds;
+            int index = historyLength - 1 - (int)Math.Round(secondsAgo / secondsPerSample);
+            index = Math.Clamp(index, 0, historyLength - 1);
+
+            markers.Add(new RectangularSection
+            {
+                Xi = index,
+                Xj = index,
+                Stroke = new SolidColorPaint(color, 1.5f),
+                Label = e.Category,
+                LabelSize = 9,
+                LabelPaint = new SolidColorPaint(color),
+            });
+        }
+    }
+
+    // ---- #599 helpers (one-click diagnostic report) ----------------------------------------------
+
+    /// <summary>#599: gathers adapter config, routing, DNS, Wi-Fi, firewall and TCP settings from
+    /// this ViewModel's own already-loaded state, runs one fresh quick latency/loss reading, reuses
+    /// (or, if nothing's been scanned yet this session, freshly runs) the #596 event timeline, and
+    /// writes the result as Markdown or HTML.</summary>
+    private async Task GenerateNetworkReportAsync(bool html)
+    {
+        if (IsGeneratingNetworkReport) return;
+
+        var dialog = new SaveFileDialog
+        {
+            Title = html ? "Generate HTML network diagnostic report" : "Generate network diagnostic report",
+            Filter = html ? "HTML files (*.html)|*.html|All files (*.*)|*.*" : "Markdown files (*.md)|*.md|All files (*.*)|*.*",
+            DefaultExt = html ? ".html" : ".md",
+            FileName = $"TaskManagerPlus-NetworkReport-{DateTime.Now:yyyy-MM-dd_HH-mm-ss}.{(html ? "html" : "md")}",
+        };
+        if (dialog.ShowDialog() != true) return;
+
+        IsGeneratingNetworkReport = true;
+        NetworkReportStatusText = "Gathering data (adapter config, routes, DNS, Wi-Fi, firewall, TCP settings, a quick latency/loss run, and the event timeline)...";
+        try
+        {
+            // A fresh, quick loss/latency reading - reuses the same on-demand jitter-test
+            // primitive the #50 card already exposes, rather than depending on the #501 monitor
+            // being turned on.
+            string pingHost = string.IsNullOrWhiteSpace(JitterTestHost) ? "1.1.1.1" : JitterTestHost;
+            var jitter = await NetworkDiagnosticsService.RunJitterTestAsync(pingHost, count: 6);
+
+            // Reuse whatever the Network events panel already has from a previous Scan click;
+            // only run a fresh one if nothing's been scanned yet this session, so a repeat report
+            // click doesn't re-run all eight sources every time.
+            var timelineEvents = _allNetworkEvents;
+            if (timelineEvents.Count == 0)
+            {
+                try
+                {
+                    var freshTimeline = await NetworkEventTimelineService.ScanAsync(TimeSpan.FromHours(24));
+                    timelineEvents = freshTimeline.Events;
+                }
+                catch
+                {
+                    // Best-effort - the report still stands without a timeline section.
+                }
+            }
+
+            string content = html ? BuildNetworkReportHtml(jitter, timelineEvents) : BuildNetworkReportMarkdown(jitter, timelineEvents);
+            File.WriteAllText(dialog.FileName, content);
+            NetworkReportStatusText = $"Report saved to {dialog.FileName}.";
+        }
+        catch (Exception ex)
+        {
+            NetworkReportStatusText = $"Report failed: {ex.Message}";
+        }
+        finally
+        {
+            IsGeneratingNetworkReport = false;
+        }
+    }
+
+    /// <summary>The Markdown half of #599's report. This app's actual Markdown/HTML report-writing
+    /// code lives inline in a ViewModel (a StringBuilder + a small Line() helper), not in
+    /// LoggingService (a CSV-row streaming writer for the always-on logging feature - a different
+    /// job) - see SummaryViewModel.BuildReportMarkdown for the established precedent this method
+    /// follows rather than inventing a new report-building shape.</summary>
+    private string BuildNetworkReportMarkdown(JitterTestResult jitter, List<NetworkTimelineEvent> timelineEvents)
+    {
+        var sb = new StringBuilder();
+        void Line(string s = "") => sb.Append(s).Append('\n');
+
+        Line("# Task Manager Plus network diagnostic report");
+        Line($"Generated {DateTime.Now:F}");
+        Line();
+
+        Line("## Adapters");
+        Line("| Adapter | Link speed | Configured speed/duplex |");
+        Line("|---|---|---|");
+        foreach (var a in AdapterLinks)
+            Line($"| {a.Name} | {a.SpeedMbps:0} Mbps{(a.LooksDegraded ? " (degraded)" : string.Empty)} | {a.ConfiguredSpeedDuplex ?? "—"} |");
+        Line();
+
+        Line("## Addressing");
+        Line("| Adapter | IPv4 | Gateway | DHCP |");
+        Line("|---|---|---|---|");
+        foreach (var a in Addressing)
+            Line($"| {a.AdapterName} | {a.IpAddress} | {a.DefaultGateway ?? "—"} | {(a.DhcpEnabled ? "Yes" : "No")} |");
+        Line();
+
+        Line("## Routing");
+        Line($"{Routes.Count} route(s) known. {AdapterWinnerText}");
+        Line();
+
+        Line("## DNS");
+        Line($"- Primary suffix: {PrimaryDnsSuffixText}");
+        Line($"- Cache entries loaded: {DnsCacheEntries.Count}");
+        foreach (var r in ConfiguredResolvers) Line($"- {r.AdapterName} → {r.ResolverIp}");
+        Line();
+
+        Line("## Wi-Fi");
+        if (Wifi is null)
+        {
+            Line("Not associated (wired connection, or no Wi-Fi adapter).");
+        }
+        else
+        {
+            Line($"- SSID: {Wifi.Ssid}, signal {(Wifi.SignalPercent is { } sp ? $"{sp}%" : "Unknown")}");
+            if (WifiRadio is not null) Line($"- RSSI: {WifiRadio.RssiDbm?.ToString() ?? "Unknown"} dBm ({WifiRssiBandText})");
+            Line($"- Airspace scan: {AirspaceOccupancy24.Count} network(s) seen on 2.4 GHz, {AirspaceOccupancy5.Count} on 5 GHz, {AirspaceOccupancy6.Count} on 6 GHz (from the last Airspace scan, if any).");
+        }
+        Line();
+
+        Line("## Firewall profiles");
+        foreach (var p in FirewallProfiles) Line($"- {p.ProfileName}: {p.EnabledText} (inbound {p.InboundPolicy}, outbound {p.OutboundPolicy})");
+        Line();
+
+        Line("## TCP global settings");
+        Line($"- Receive-Side Scaling: {TcpGlobalSettings.ReceiveSideScalingState}");
+        Line($"- Receive Window Auto-Tuning: {TcpGlobalSettings.ReceiveWindowAutoTuningLevel}");
+        Line($"- Congestion provider: {TcpGlobalSettings.CongestionProvider}");
+        Line($"- ECN capability: {TcpGlobalSettings.EcnCapability}");
+        Line();
+
+        Line("## Latency / loss (fresh reading)");
+        Line(jitter.Message);
+        Line();
+
+        Line("## Recent network events");
+        if (timelineEvents.Count == 0)
+        {
+            Line("None captured (no scan has run, or every source came back empty/unavailable).");
+        }
+        else
+        {
+            Line("| Time | Source | Category | Message |");
+            Line("|---|---|---|---|");
+            foreach (var e in timelineEvents.Take(50))
+            {
+                var message = e.Message.Replace("\n", " ").Replace("\r", "").Replace("|", "\\|");
+                if (message.Length > 120) message = message[..120] + "…";
+                Line($"| {e.TimeUtc.ToLocalTime():g} | {e.Source} | {e.Category} | {message} |");
+            }
+        }
+
+        return sb.ToString();
+    }
+
+    /// <summary>The HTML twin of BuildNetworkReportMarkdown above - same data, same inline-style
+    /// self-contained-file shape SummaryViewModel.BuildReportHtml already establishes.</summary>
+    private string BuildNetworkReportHtml(JitterTestResult jitter, List<NetworkTimelineEvent> timelineEvents)
+    {
+        static string Esc(string s) => System.Net.WebUtility.HtmlEncode(s);
+
+        var sb = new StringBuilder();
+        void Line(string s = "") => sb.Append(s).Append('\n');
+
+        Line("<!doctype html><html><head><meta charset=\"utf-8\">");
+        Line($"<title>Task Manager Plus network report - {Esc(DateTime.Now.ToString("F"))}</title>");
+        Line("<style>" +
+             "body{font-family:Segoe UI,Arial,sans-serif;background:#1c1c1f;color:#e4e4e7;max-width:900px;margin:32px auto;padding:0 16px}" +
+             "h1{font-size:20px}h2{font-size:15px;border-bottom:1px solid #3a3a42;padding-bottom:6px;margin-top:28px}" +
+             "table{border-collapse:collapse;width:100%;font-size:13px}td,th{padding:4px 8px;text-align:left;border-bottom:1px solid #2c2c33}" +
+             ".muted{color:#9a9aa2;font-size:12px}</style></head><body>");
+
+        Line($"<h1>Task Manager Plus network diagnostic report</h1><p class=\"muted\">Generated {Esc(DateTime.Now.ToString("F"))}</p>");
+
+        Line("<h2>Adapters</h2><table><tr><th>Adapter</th><th>Link speed</th><th>Configured speed/duplex</th></tr>");
+        foreach (var a in AdapterLinks)
+            Line($"<tr><td>{Esc(a.Name)}</td><td>{a.SpeedMbps:0} Mbps{(a.LooksDegraded ? " (degraded)" : string.Empty)}</td><td>{Esc(a.ConfiguredSpeedDuplex ?? "—")}</td></tr>");
+        Line("</table>");
+
+        Line("<h2>Addressing</h2><table><tr><th>Adapter</th><th>IPv4</th><th>Gateway</th><th>DHCP</th></tr>");
+        foreach (var a in Addressing)
+            Line($"<tr><td>{Esc(a.AdapterName)}</td><td>{Esc(a.IpAddress)}</td><td>{Esc(a.DefaultGateway ?? "—")}</td><td>{(a.DhcpEnabled ? "Yes" : "No")}</td></tr>");
+        Line("</table>");
+
+        Line($"<h2>Routing</h2><p>{Routes.Count} route(s) known. {Esc(AdapterWinnerText)}</p>");
+
+        Line("<h2>DNS</h2><ul>");
+        Line($"<li>Primary suffix: {Esc(PrimaryDnsSuffixText)}</li>");
+        Line($"<li>Cache entries loaded: {DnsCacheEntries.Count}</li>");
+        Line("</ul>");
+
+        Line("<h2>Wi-Fi</h2>");
+        if (Wifi is null)
+        {
+            Line("<p>Not associated (wired connection, or no Wi-Fi adapter).</p>");
+        }
+        else
+        {
+            Line($"<p>SSID: {Esc(Wifi.Ssid)}, signal {(Wifi.SignalPercent is { } sp ? $"{sp}%" : "Unknown")}</p>");
+            if (WifiRadio is not null) Line($"<p>RSSI: {WifiRadio.RssiDbm?.ToString() ?? "Unknown"} dBm ({Esc(WifiRssiBandText)})</p>");
+        }
+
+        Line("<h2>Firewall profiles</h2><table><tr><th>Profile</th><th>State</th><th>Inbound</th><th>Outbound</th></tr>");
+        foreach (var p in FirewallProfiles)
+            Line($"<tr><td>{Esc(p.ProfileName)}</td><td>{Esc(p.EnabledText)}</td><td>{Esc(p.InboundPolicy)}</td><td>{Esc(p.OutboundPolicy)}</td></tr>");
+        Line("</table>");
+
+        Line("<h2>TCP global settings</h2><table>");
+        Line($"<tr><td>Receive-Side Scaling</td><td>{Esc(TcpGlobalSettings.ReceiveSideScalingState)}</td></tr>");
+        Line($"<tr><td>Receive Window Auto-Tuning</td><td>{Esc(TcpGlobalSettings.ReceiveWindowAutoTuningLevel)}</td></tr>");
+        Line($"<tr><td>Congestion provider</td><td>{Esc(TcpGlobalSettings.CongestionProvider)}</td></tr>");
+        Line("</table>");
+
+        Line($"<h2>Latency / loss (fresh reading)</h2><p>{Esc(jitter.Message)}</p>");
+
+        Line("<h2>Recent network events</h2>");
+        if (timelineEvents.Count == 0)
+        {
+            Line("<p>None captured (no scan has run, or every source came back empty/unavailable).</p>");
+        }
+        else
+        {
+            Line("<table><tr><th>Time</th><th>Source</th><th>Category</th><th>Message</th></tr>");
+            foreach (var e in timelineEvents.Take(50))
+                Line($"<tr><td>{e.TimeUtc.ToLocalTime():g}</td><td>{Esc(e.Source)}</td><td>{Esc(e.Category)}</td><td>{Esc(e.Message)}</td></tr>");
+            Line("</table>");
+        }
+
+        Line("</body></html>");
+        return sb.ToString();
+    }
+
+    // ---- #600 helpers (rolling black-box recorder) ------------------------------------------------
+
+    private void ToggleBlackBoxRecording()
+    {
+        if (IsBlackBoxRecording)
+        {
+            _blackBoxRecorder.Stop();
+            IsBlackBoxRecording = false;
+            BlackBoxStatusText = "Off - keeps a rolling record of latency/loss/link/RSSI/adapter-error data and automatically saves it whenever a disconnect is detected, so you have the lead-up, not just the moment it happened.";
+        }
+        else
+        {
+            _blackBoxRecorder.Start();
+            IsBlackBoxRecording = true;
+            BlackBoxStatusText = "Recording - watching the existing 15s connectivity tick for a disconnect/link-down transition.";
+        }
+    }
+
+    private static void OpenBlackBoxIncidentsFolder()
+    {
+        try
+        {
+            string dir = AppPaths.GetPath("NetworkIncidents");
+            Directory.CreateDirectory(dir);
+            Process.Start(new ProcessStartInfo("explorer.exe", $"\"{dir}\"") { UseShellExecute = true });
+        }
+        catch
+        {
+            // Best-effort - if Explorer can't launch there's nothing more useful this app can do here.
         }
     }
 
