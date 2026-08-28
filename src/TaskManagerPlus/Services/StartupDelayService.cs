@@ -96,7 +96,11 @@ public static class StartupDelayService
                     (impactText, impactDetail) = ScoreImpact(delaySeconds, cpuPercent, memoryBytes);
                 }
 
-                result[item] = new StartupMeasurement(delayText, impactText, impactDetail);
+                // #748: the numeric delay (when this item matched a running process this scan) is
+                // handed to StartupHistoryService by the caller so it can persist a per-item
+                // sample history - null for "not currently running", never a fabricated 0.
+                double? measuredDelaySeconds = delays.TryGetValue(item, out var delay) ? delay.TotalSeconds : null;
+                result[item] = new StartupMeasurement(delayText, impactText, impactDetail, measuredDelaySeconds);
             }
         }
         finally
@@ -180,5 +184,6 @@ public static class StartupDelayService
 }
 
 /// <summary>Result of one StartupDelayService.ComputeDelays scan for a single item - the measured
-/// boot delay text (#91) plus the combined impact score (#22).</summary>
-public sealed record StartupMeasurement(string DelayText, string ImpactText, string ImpactDetailText);
+/// boot delay text (#91) plus the combined impact score (#22), plus the raw numeric delay in
+/// seconds (#748, null when the item isn't currently running) for StartupHistoryService to persist.</summary>
+public sealed record StartupMeasurement(string DelayText, string ImpactText, string ImpactDetailText, double? DelaySeconds);

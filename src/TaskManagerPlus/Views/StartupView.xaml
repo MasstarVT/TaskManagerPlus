@@ -148,6 +148,35 @@
                     <!-- #91: measured (not estimated) delay since boot, for whichever items are
                          still running - see StartupDelayService's remarks. -->
                     <DataGridTextColumn Header="Measured delay" Binding="{Binding MeasuredDelayText}" Width="1.3*" />
+                    <!-- #748: median across this item's persisted startup-history.json sample
+                         history, plus a small trend sparkline, instead of trusting the single
+                         (volatile) scan above on its own - see StartupHistoryService. -->
+                    <DataGridTextColumn Header="Median delay" Binding="{Binding MedianDelayText}" Width="1.2*" />
+                    <DataGridTemplateColumn Header="Trend" Width="80">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <Viewbox Width="56" Height="16" Stretch="Fill" HorizontalAlignment="Left" ToolTip="{Binding DelayTrendFlag}">
+                                    <Canvas Width="60" Height="18">
+                                        <Polyline Points="{Binding SparklinePointsText}" StrokeThickness="1.6">
+                                            <Polyline.Style>
+                                                <Style TargetType="Polyline">
+                                                    <!-- #748: red when the growth flag fired (see StartupHistoryService.BuildStats),
+                                                         muted otherwise - default assumes flagged so the x:Null trigger only has to
+                                                         cover the (far more common) "no flag" case. -->
+                                                    <Setter Property="Stroke" Value="{DynamicResource DangerBrush}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding DelayTrendFlag}" Value="{x:Null}">
+                                                            <Setter Property="Stroke" Value="{DynamicResource TextSecondaryBrush}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Polyline.Style>
+                                        </Polyline>
+                                    </Canvas>
+                                </Viewbox>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
                     <!-- #22: combined startup-impact score, blending the measured delay above with
                          a quick CPU/memory footprint sample of the running process. -->
                     <DataGridTemplateColumn Header="Impact" Width="110" SortMemberPath="ImpactText">
@@ -174,10 +203,26 @@
                     <DataGridTemplateColumn Header="Status" Width="140">
                         <DataGridTemplateColumn.CellTemplate>
                             <DataTemplate>
-                                <Button Content="{Binding IsEnabled, Converter={StaticResource BoolToEnableDisableTextConverter}}"
-                                        Command="{Binding DataContext.ToggleEnabledCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                <!-- #742: disabled (not hidden) for a location with no StartupApproved
+                                     equivalent - see StartupItem.SupportsToggle - so it's still obvious
+                                     the row exists and why it can't be toggled here. -->
+                                <Button Command="{Binding DataContext.ToggleEnabledCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                         CommandParameter="{Binding}"
+                                        IsEnabled="{Binding SupportsToggle}"
+                                        ToolTip="No approval flag exists for this autorun location - it can be seen here but not toggled."
                                         Padding="10,3">
+                                    <TextBlock>
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Text" Value="{Binding IsEnabled, Converter={StaticResource BoolToEnableDisableTextConverter}}" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding SupportsToggle}" Value="False">
+                                                        <Setter Property="Text" Value="No toggle" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
                                     <Button.Style>
                                         <!-- A Style can't swap its own element's Style via a Setter (WPF throws
                                              "Style object is not allowed to affect the Style property of the object
@@ -191,6 +236,9 @@
                                                 <DataTrigger Binding="{Binding IsEnabled}" Value="True">
                                                     <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
                                                     <Setter Property="BorderBrush" Value="{DynamicResource DangerMutedBrush}" />
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding SupportsToggle}" Value="False">
+                                                    <Setter Property="Opacity" Value="0.5" />
                                                 </DataTrigger>
                                             </Style.Triggers>
                                         </Style>
@@ -1899,6 +1947,244 @@
                             <DataGridTextColumn Header="Category" Binding="{Binding Category}" Width="2*" />
                             <DataGridTextColumn Header="Approved" Binding="{Binding ApprovedText}" Width="90" />
                             <DataGridTextColumn Header="DLL" Binding="{Binding DllPath}" Width="3*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- #743: Active Setup component inventory - StubPath commands that run once per user
+                 at their next sign-in, tracked by comparing HKLM's "should run" Version against
+                 each user's HKCU copy of the same value - see ActiveSetupService. -->
+            <Border Margin="0,20,0,0" BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,1,0,0" Padding="0,16,0,0">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding ActiveSetupComponents.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Active Setup components" Style="{StaticResource CardTitle}" Margin="0,0,0,4" />
+                    <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap"
+                               Text="StubPath commands that run once per user, the first time that user signs in after the component's version changes." />
+                    <DataGrid Height="180" Margin="0,8,0,0" ItemsSource="{Binding ActiveSetupComponents}" IsReadOnly="True">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Component" Binding="{Binding DisplayName}" Width="2*" />
+                            <DataGridTextColumn Header="View" Binding="{Binding ViewLabel}" Width="70" />
+                            <DataGridTemplateColumn Header="State" Width="220" SortMemberPath="State">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding State}" VerticalAlignment="Center" TextWrapping="Wrap">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding State}" Value="Pending - will run at this user's next sign-in">
+                                                            <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTextColumn Header="HKLM version" Binding="{Binding HklmVersion}" Width="120" />
+                            <DataGridTextColumn Header="HKCU version" Binding="{Binding HkcuVersion}" Width="150" />
+                            <DataGridTextColumn Header="StubPath" Binding="{Binding StubPath}" Width="3*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- #744: Winlogon shell chain integrity check - Shell/Userinit/Taskman/AppSetup/
+                 GinaDLL vs. Windows' own defaults. Quick flag, not a verdict - see
+                 WinlogonIntegrityService's remarks. -->
+            <Border Margin="0,20,0,0" BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,1,0,0" Padding="0,16,0,0">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding WinlogonChecks.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Winlogon shell chain integrity" Style="{StaticResource CardTitle}" Margin="0,0,0,4" />
+                    <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap"
+                               Text="Quick flag, not a verdict - Shell/Userinit control what launches at sign-in below even the Run keys/Startup folders above; Taskman/AppSetup/GinaDLL are normally unset entirely." />
+                    <ItemsControl ItemsSource="{Binding WinlogonChecks}" Margin="0,8,0,0">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,8" Margin="0,0,8,8" Width="260">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsMismatch}" Value="True">
+                                                    <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
+                                                    <Setter Property="BorderBrush" Value="{DynamicResource DangerBrush}" />
+                                                    <Setter Property="BorderThickness" Value="1" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
+                                    <StackPanel>
+                                        <TextBlock FontSize="12" FontWeight="SemiBold" TextWrapping="Wrap">
+                                            <Run Text="{Binding ValueName}" /><Run Text=" — " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding Scope}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        </TextBlock>
+                                        <TextBlock FontSize="11" Margin="0,3,0,0" TextWrapping="Wrap">
+                                            <Run Text="Expected: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding ExpectedText}" FontFamily="Consolas" />
+                                        </TextBlock>
+                                        <TextBlock FontSize="11" Margin="0,1,0,0" TextWrapping="Wrap">
+                                            <Run Text="Actual: " Foreground="{DynamicResource TextSecondaryBrush}" />
+                                            <Run Text="{Binding ActualText}" FontFamily="Consolas">
+                                                <Run.Style>
+                                                    <Style TargetType="Run">
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsMismatch}" Value="True">
+                                                                <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Run.Style>
+                                            </Run>
+                                        </TextBlock>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #745: Image File Execution Options hijack audit - a Debugger value redirects every
+                 launch of that executable, and SilentProcessExit\MonitorProcess fires silently on
+                 exit. Quick flag, not a verdict - see ImageFileExecutionOptionsService's remarks.
+                 Cross-linked to the Processes tab (filtered to that exe name) when it's currently
+                 running - same #708/#723 SelectTabByName pattern (StartupView.xaml.cs). -->
+            <Border Margin="0,20,0,0" BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,1,0,0" Padding="0,16,0,0">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding ImageFileExecutionOptionsEntries.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Image File Execution Options hijack audit" Style="{StaticResource CardTitle}" Margin="0,0,0,4" />
+                    <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap"
+                               Text="Quick flag, not a verdict - a Debugger redirect is also how real debuggers and compatibility shims attach. Only executables with a Debugger, GlobalFlag, or SilentProcessExit monitor set are listed." />
+                    <DataGrid Height="200" Margin="0,8,0,0" ItemsSource="{Binding ImageFileExecutionOptionsEntries}" IsReadOnly="True">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Executable" Binding="{Binding ExecutableName}" Width="1.5*" />
+                            <DataGridTemplateColumn Header="Debugger" Width="2*" SortMemberPath="DebuggerText">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding DebuggerText}" VerticalAlignment="Center" TextWrapping="Wrap">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding HasDebugger}" Value="True">
+                                                            <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTextColumn Header="GlobalFlag" Binding="{Binding GlobalFlagText}" Width="100" />
+                            <DataGridTextColumn Header="Silent-exit monitor" Binding="{Binding MonitorProcessText}" Width="2*" />
+                            <DataGridTemplateColumn Header="" Width="130">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <Button Content="View in Processes" Padding="8,3" FontSize="11" Tag="{Binding ProcessNameForFilter}"
+                                                Click="ViewIfeoExeInProcesses_Click">
+                                            <Button.Style>
+                                                <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsCurrentlyRunning}" Value="True">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Button.Style>
+                                        </Button>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- #746: global DLL injection audit - AppInit_DLLs (both registry views), AppCertDlls,
+                 LSA security/authentication packages, and KnownDLLs anomalies, each with a
+                 signature status. Quick flag, not a verdict - see DllInjectionAuditService's remarks. -->
+            <Border Margin="0,20,0,0" BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,1,0,0" Padding="0,16,0,0">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding DllInjectionAudit}" Value="{x:Null}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Global DLL injection audit" Style="{StaticResource CardTitle}" Margin="0,0,0,4" />
+                    <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap"
+                               Text="AppInit_DLLs, AppCertDlls, LSA security/authentication packages, and KnownDLLs anomalies - the locations that load a DLL into many/every process rather than one specific app." />
+                    <TextBlock Margin="0,4,0,0" FontSize="11.5" TextWrapping="Wrap">
+                        <Run Text="AppInit_DLLs (64-bit): " Foreground="{DynamicResource TextSecondaryBrush}" />
+                        <Run Text="{Binding DllInjectionAudit.AppInitEnabled64Text}" />
+                        <Run Text="   ·   AppInit_DLLs (32-bit): " Foreground="{DynamicResource TextSecondaryBrush}" />
+                        <Run Text="{Binding DllInjectionAudit.AppInitEnabled32Text}" />
+                    </TextBlock>
+                    <DataGrid Height="220" Margin="0,8,0,0" ItemsSource="{Binding DllInjectionAudit.Entries}" IsReadOnly="True">
+                        <DataGrid.RowStyle>
+                            <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsFlagged}" Value="True">
+                                        <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </DataGrid.RowStyle>
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Category" Binding="{Binding Category}" Width="1.8*" />
+                            <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="1.5*" />
+                            <DataGridTextColumn Header="Resolved path" Binding="{Binding ResolvedPath}" Width="2.5*" />
+                            <DataGridTemplateColumn Header="Signature" Width="90" SortMemberPath="SignatureStatus">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding SignatureStatus}" VerticalAlignment="Center">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding SignatureStatus}" Value="Unsigned">
+                                                            <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTextColumn Header="Note" Binding="{Binding Note}" Width="2.5*" />
                         </DataGrid.Columns>
                     </DataGrid>
                 </StackPanel>

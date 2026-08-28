@@ -44,4 +44,16 @@ public partial class StartupView : UserControl
         if (window.DataContext is MainViewModel mainViewModel) mainViewModel.Processes.FilterText = processName;
         window.SelectTabByName("Processes");
     }
+
+    /// <summary>#745: cross-link from a flagged Image File Execution Options entry over to the
+    /// Processes tab, filtered to that executable's name - same SelectTabByName/FilterText
+    /// mechanism as ViewLeakedProcessInProcesses_Click above (#723). Only shown in the XAML when
+    /// ImageFileExecutionOptionsEntry.IsCurrentlyRunning is true.</summary>
+    private void ViewIfeoExeInProcesses_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { Tag: string processName } || string.IsNullOrWhiteSpace(processName)) return;
+        if (Window.GetWindow(this) is not MainWindow window) return;
+        if (window.DataContext is MainViewModel mainViewModel) mainViewModel.Processes.FilterText = processName;
+        window.SelectTabByName("Processes");
+    }
 }

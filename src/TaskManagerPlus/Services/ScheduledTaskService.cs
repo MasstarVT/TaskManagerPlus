@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Xml.Linq;
 using TaskManagerPlus.Models;
 
 namespace TaskManagerPlus.Services;
@@ -148,6 +149,105 @@ public static class ScheduledTaskService
     }
 
     private static int ParseGroup(Group g) => g.Success && int.TryParse(g.Value, out int v) ? v : 0;
+
+    /// <summary>
+    /// #747: boot- and logon-triggered scheduled tasks, folded into the Startup tab's main grid as
+    /// first-class rows. Reads one combined `schtasks /query /xml ONE` export (every registered
+    /// task's XML in one shelled-out call) rather than fetching each task's individual XML - the
+    /// same "one shared read, not N per-item reads" tradeoff BcdInspectorService's single
+    /// ReadAsync() snapshot already takes, important here since a system can have hundreds of
+    /// tasks. `/xml ONE` concatenates one `&lt;?xml ...?&gt;&lt;Task&gt;...&lt;/Task&gt;` document
+    /// per task back to back rather than wrapping them in one shared root - not valid XML as a
+    /// whole, so this splits on each XML declaration and parses one task fragment at a time (a
+    /// malformed fragment is skipped rather than failing the whole scan).
+    /// </summary>
+    public static async Task<List<ScheduledTaskTriggerInfo>> ListBootAndLogonTriggeredAsync()
+    {
+        var result = new List<ScheduledTaskTriggerInfo>();
+        try
+        {
+            string xml = (await RunCapturedAsync("schtasks.exe", "/query /xml ONE", timeoutMs: 20000)).Output;
+            if (xml.Length == 0) return result;
+
+            foreach (var block in SplitXmlDeclarations(xml))
+            {
+                XDocument doc;
+                try { doc = XDocument.Parse(block); }
+                catch { continue; } // one malformed fragment shouldn't drop the rest of the scan
+
+                if (doc.Root is null) continue;
+                XNamespace ns = doc.Root.Name.Namespace;
+
+                // `/xml ONE`'s actual wrapping shape (one root `<Task>` per declaration, vs. all
+                // tasks nested under one `<Tasks>` root) isn't a documented, versioned contract, so
+                // this handles either: if the root itself is a Task, use it directly; otherwise
+                // look for `<Task>` descendants.
+                var taskElements = doc.Root.Name.LocalName == "Task"
+                    ? new[] { doc.Root }
+                    : doc.Descendants(ns + "Task").ToArray();
+
+                foreach (var taskEl in taskElements)
+                {
+                    try
+                    {
+                        bool hasBoot = taskEl.Descendants(ns + "BootTrigger").Any();
+                        bool hasLogon = taskEl.Descendants(ns + "LogonTrigger").Any();
+                        if (!hasBoot && !hasLogon) continue;
+
+                        string uri = taskEl.Descendants(ns + "RegistrationInfo").FirstOrDefault()?.Element(ns + "URI")?.Value
+                            ?? "(unknown task)";
+
+                        var exec = taskEl.Descendants(ns + "Exec").FirstOrDefault();
+                        string command = exec?.Element(ns + "Command")?.Value ?? string.Empty;
+                        string args = exec?.Element(ns + "Arguments")?.Value ?? string.Empty;
+                        string fullCommand = args.Length > 0 ? $"{command} {args}" : command;
+
+                        bool enabled = taskEl.Descendants(ns + "Settings").FirstOrDefault()?.Element(ns + "Enabled")?.Value != "false";
+
+                        result.Add(new ScheduledTaskTriggerInfo
+                        {
+                            TaskName = uri,
+                            Command = fullCommand,
+                            HasBootTrigger = hasBoot,
+                            HasLogonTrigger = hasLogon,
+                            IsEnabled = enabled,
+                        });
+                    }
+                    catch { /* one task's fragment shouldn't drop the rest */ }
+                }
+            }
+        }
+        catch
+        {
+            // schtasks unavailable/failed - empty list, same degrade-on-failure pattern as ListAsync.
+        }
+        return result.OrderBy(t => t.TaskName, StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    /// <summary>Splits schtasks' `/xml ONE` output on each `&lt;?xml` declaration - see
+    /// ListBootAndLogonTriggeredAsync's remarks for why the raw output isn't one well-formed
+    /// document. Returns the whole string as a single block when there's zero or one declaration
+    /// (nothing to split, or a single well-formed document).</summary>
+    private static List<string> SplitXmlDeclarations(string combined)
+    {
+        var starts = new List<int>();
+        int idx = 0;
+        while ((idx = combined.IndexOf("<?xml", idx, StringComparison.Ordinal)) >= 0)
+        {
+            starts.Add(idx);
+            idx += 5;
+        }
+        if (starts.Count == 0) return new List<string> { combined };
+
+        var blocks = new List<string>(starts.Count);
+        for (int i = 0; i < starts.Count; i++)
+        {
+            int start = starts[i];
+            int end = i + 1 < starts.Count ? starts[i + 1] : combined.Length;
+            blocks.Add(combined[start..end]);
+        }
+        return blocks;
+    }
 
     /// <summary>
     /// Shells out and captures combined stdout+stderr, bounded by a real timeout - the same

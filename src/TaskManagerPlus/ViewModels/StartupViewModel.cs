@@ -326,6 +326,38 @@ public sealed class StartupViewModel : ObservableObject
 
     #endregion
 
+    #region #742-748 - Autostart coverage beyond the Run keys
+
+    // #742 (full autorun location sweep) has no dedicated ViewModel state - it's handled entirely
+    // inside StartupManagerService.Sample() and StartupItem.SourceDescription/SupportsToggle, so
+    // the new rows just show up in the existing Items grid alongside everything else.
+
+    // #743: Active Setup component inventory - registry-only, cheap enough to read on every
+    // Refresh rather than needing its own "Load" button (unlike Scheduled Tasks/browser
+    // extensions below, which are each a heavier scan).
+    public ObservableCollection<ActiveSetupComponent> ActiveSetupComponents { get; } = new();
+
+    // #744: Winlogon shell chain integrity check - a quick flag, not a verdict.
+    public ObservableCollection<WinlogonCheckEntry> WinlogonChecks { get; } = new();
+
+    // #745: Image File Execution Options hijack audit.
+    public ObservableCollection<ImageFileExecutionOptionsEntry> ImageFileExecutionOptionsEntries { get; } = new();
+
+    // #746: global DLL injection audit (AppInit_DLLs x2 views, AppCertDlls, LSA security/
+    // authentication packages, KnownDLLs anomalies).
+    private DllInjectionAuditResult? _dllInjectionAudit;
+    public DllInjectionAuditResult? DllInjectionAudit { get => _dllInjectionAudit; private set => SetProperty(ref _dllInjectionAudit, value); }
+
+    // #747 (boot/logon-triggered scheduled tasks) has no dedicated ViewModel state either - see
+    // LoadScheduledTaskStartupRowsAsync, which appends them straight into the main Items grid as
+    // regular StartupItem rows (Source = StartupSource.ScheduledTaskTrigger).
+
+    // #748 (persisted per-item startup cost history) also has no dedicated ViewModel state beyond
+    // what's already on StartupItem (MedianDelayText/SparklinePointsText/DelayTrendFlag) - see
+    // Refresh()'s delay-scan block, which now also calls StartupHistoryService.RecordAndCompute.
+
+    #endregion
+
     public StartupViewModel()
     {
         _bootHistoryLine = new LineSeries<double>
@@ -433,6 +465,7 @@ public sealed class StartupViewModel : ObservableObject
         LoadBcdInspector();
         LoadFastStartupAndHibernation();
         LoadSystemPartitions();
+        LoadAutostartAudits();
         _ = CheckPendingCaptureWorkflowsAsync();
     }
 
@@ -843,6 +876,110 @@ public sealed class StartupViewModel : ObservableObject
         if (error is not null) StatusMessage = $"Couldn't measure recovery partition free space: {error}";
     }
 
+    /// <summary>#743-746: Active Setup component inventory, the Winlogon shell-chain integrity
+    /// check, the IFEO hijack audit, and the global DLL injection audit - one Task.Run off the UI
+    /// thread like every other on-demand read this tab does at load/refresh time. #743/#744 are
+    /// plain registry reads; #745 additionally enumerates running processes per flagged exe (for
+    /// the "View in Processes" cross-link) and #746 reads a couple of files off disk for signature
+    /// checks, so all four are grouped into one background pass rather than four separate ones.</summary>
+    private void LoadAutostartAudits()
+    {
+        _ = Task.Run(() =>
+        {
+            var activeSetup = ActiveSetupService.List();
+            var winlogonChecks = WinlogonIntegrityService.Read();
+            var ifeoEntries = ImageFileExecutionOptionsService.Read();
+            var dllAudit = DllInjectionAuditService.Read();
+
+            Application.Current?.Dispatcher.Invoke(() =>
+            {
+                ActiveSetupComponents.Clear();
+                foreach (var c in activeSetup) ActiveSetupComponents.Add(c);
+
+                WinlogonChecks.Clear();
+                foreach (var w in winlogonChecks) WinlogonChecks.Add(w);
+
+                ImageFileExecutionOptionsEntries.Clear();
+                foreach (var i in ifeoEntries) ImageFileExecutionOptionsEntries.Add(i);
+
+                DllInjectionAudit = dllAudit;
+            });
+        });
+    }
+
+    /// <summary>#747: boot/logon-triggered scheduled tasks, folded into the main Items grid as
+    /// first-class rows - schtasks can take a moment on a system with hundreds of tasks, so these
+    /// rows appear once the scan completes rather than blocking the synchronous registry-based
+    /// rows Refresh() already populated. Runs the same #91/#22 delay/impact scan and #18 signature
+    /// check the rest of the grid gets, so a still-running boot/logon task looks like every other
+    /// row rather than a second-class one.</summary>
+    private async Task LoadScheduledTaskStartupRowsAsync()
+    {
+        List<ScheduledTaskTriggerInfo> triggered;
+        try
+        {
+            triggered = await ScheduledTaskService.ListBootAndLogonTriggeredAsync();
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Couldn't load boot/logon-triggered scheduled tasks: {ex.Message}";
+            return;
+        }
+
+        if (triggered.Count == 0) return;
+
+        var newItems = triggered.Select(t => new StartupItem
+        {
+            Name = t.TaskName,
+            Command = t.Command,
+            Source = StartupSource.ScheduledTaskTrigger,
+            IsEnabled = t.IsEnabled,
+        }).ToList();
+
+        foreach (var item in newItems) Items.Add(item);
+
+        _ = Task.Run(() =>
+        {
+            var measurements = StartupDelayService.ComputeDelays(newItems);
+            var statuses = newItems.ToDictionary(item => item, item => SignatureCheckService.GetStatus(StartupManagerService.ExtractPath(item.Command)));
+            var historyStats = StartupHistoryService.RecordAndCompute(measurements.Select(kv => (kv.Key.Name, kv.Value.DelaySeconds)));
+
+            Application.Current?.Dispatcher.Invoke(() =>
+            {
+                foreach (var (item, measurement) in measurements)
+                {
+                    item.MeasuredDelayText = measurement.DelayText;
+                    item.ImpactText = measurement.ImpactText;
+                    item.ImpactDetailText = measurement.ImpactDetailText;
+                    if (historyStats.TryGetValue(item.Name, out var stats))
+                    {
+                        item.MedianDelayText = stats.MedianText;
+                        item.SparklinePointsText = stats.SparklinePointsText;
+                        item.DelayTrendFlag = stats.TrendFlag;
+                    }
+                }
+                foreach (var (item, status) in statuses) item.SignatureStatus = status;
+            });
+        });
+    }
+
+    /// <summary>#747: toggles a merged scheduled-task row via ScheduledTaskService.SetEnabledAsync
+    /// (schtasks /change) instead of StartupManagerService's StartupApproved flag-flip - see
+    /// Toggle()'s branch for why these rows need a different code path.</summary>
+    private async Task ToggleScheduledTaskStartupItemAsync(StartupItem item, bool newState)
+    {
+        var (success, error) = await ScheduledTaskService.SetEnabledAsync(item.Name, newState);
+        if (success)
+        {
+            item.IsEnabled = newState;
+            StatusMessage = $"{item.Name} {(newState ? "enabled" : "disabled")}.";
+        }
+        else
+        {
+            StatusMessage = $"Couldn't change {item.Name}: {error}";
+        }
+    }
+
     /// <summary>#739: `reagentc /enable` - confirmed first.</summary>
     private async Task EnableWinReAsync()
     {
@@ -1176,9 +1313,13 @@ public sealed class StartupViewModel : ObservableObject
         // #91/#22: measured startup delay + combined impact score, off the UI thread (Process
         // enumeration + per-process StartTime/CPU/memory reads) - applied back via Dispatcher, the
         // same pattern StorageViewModel's background WMI queries use.
+        // #748: the same scan's numeric per-item delay also feeds StartupHistoryService, which
+        // persists it to startup-history.json and hands back this item's median/sparkline/growth
+        // flag over its retained sample history - written once per scan, not on any timer.
         _ = Task.Run(() =>
         {
             var measurements = StartupDelayService.ComputeDelays(items);
+            var historyStats = StartupHistoryService.RecordAndCompute(measurements.Select(kv => (kv.Key.Name, kv.Value.DelaySeconds)));
             System.Windows.Application.Current?.Dispatcher.Invoke(() =>
             {
                 foreach (var (item, measurement) in measurements)
@@ -1186,6 +1327,12 @@ public sealed class StartupViewModel : ObservableObject
                     item.MeasuredDelayText = measurement.DelayText;
                     item.ImpactText = measurement.ImpactText;
                     item.ImpactDetailText = measurement.ImpactDetailText;
+                    if (historyStats.TryGetValue(item.Name, out var stats))
+                    {
+                        item.MedianDelayText = stats.MedianText;
+                        item.SparklinePointsText = stats.SparklinePointsText;
+                        item.DelayTrendFlag = stats.TrendFlag;
+                    }
                 }
             });
         });
@@ -1201,6 +1348,11 @@ public sealed class StartupViewModel : ObservableObject
                 foreach (var (item, status) in statuses) item.SignatureStatus = status;
             });
         });
+
+        // #747: boot/logon-triggered scheduled tasks, folded into this same grid as first-class
+        // rows - see LoadScheduledTaskStartupRowsAsync's remarks for why this rides alongside
+        // Refresh() rather than needing its own button.
+        _ = LoadScheduledTaskStartupRowsAsync();
     }
 
     private void Toggle(StartupItem? item)
@@ -1208,6 +1360,16 @@ public sealed class StartupViewModel : ObservableObject
         if (item is null) return;
 
         bool newState = !item.IsEnabled;
+
+        // #747: a merged scheduled-task row has no StartupApproved flag to flip - it's toggled via
+        // schtasks /change instead (ScheduledTaskService.SetEnabledAsync), same as the standalone
+        // Scheduled Tasks grid's own ToggleScheduledTaskAsync above.
+        if (item.Source == StartupSource.ScheduledTaskTrigger)
+        {
+            _ = ToggleScheduledTaskStartupItemAsync(item, newState);
+            return;
+        }
+
         var (success, error) = StartupManagerService.SetEnabled(item, newState);
         if (success)
         {
