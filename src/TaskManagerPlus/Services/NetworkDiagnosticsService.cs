@@ -29,8 +29,13 @@ public sealed record ProxyConfigInfo(bool Enabled, string ProxyServer, string Au
 public sealed record AdapterDriverInfo(string DeviceName, string DriverVersion, DateTime? DriverDate, bool LooksOld);
 
 /// <summary>Min/max/avg round-trip and packet loss over N pings (round 9, #50) - a jitter/loss
-/// quick test, distinct from the single-shot gateway/DNS ping above.</summary>
-public sealed record JitterTestResult(string Host, int Sent, int Received, double LossPercent, long MinMs, long MaxMs, double AvgMs, double JitterMs, string Message);
+/// quick test, distinct from the single-shot gateway/DNS ping above. <see cref="JitterMs"/> is
+/// the original mean-absolute-deviation figure; <see cref="RfcJitterMs"/> (#507) is the same
+/// samples run through the proper RFC 3550 smoothed interarrival-jitter formula, and
+/// <see cref="MosEstimate"/> (#507) is a rough VoIP/gaming call-quality estimate derived from
+/// latency + jitter + loss - see NetworkDiagnosticsService.EstimateMos's remarks for why it's
+/// explicitly an estimate, not a measurement of an actual call.</summary>
+public sealed record JitterTestResult(string Host, int Sent, int Received, double LossPercent, long MinMs, long MaxMs, double AvgMs, double JitterMs, double RfcJitterMs, double MosEstimate, string Message);
 
 /// <summary>
 /// Answers "is my router even reachable" / "can I reach the internet at all" with a quick ICMP
@@ -217,12 +222,12 @@ public sealed class NetworkDiagnosticsService
         }
         catch (Exception ex)
         {
-            return new JitterTestResult(host, sent, received, 100, 0, 0, 0, 0, $"Test failed: {ex.Message}");
+            return new JitterTestResult(host, sent, received, 100, 0, 0, 0, 0, 0, 1.0, $"Test failed: {ex.Message}");
         }
 
         double lossPercent = sent == 0 ? 100 : (sent - received) * 100.0 / sent;
         if (times.Count == 0)
-            return new JitterTestResult(host, sent, received, lossPercent, 0, 0, 0, 0, "No successful replies.");
+            return new JitterTestResult(host, sent, received, lossPercent, 0, 0, 0, 0, 0, 1.0, "No successful replies.");
 
         long min = times.Min(), max = times.Max();
         double avg = times.Average();
@@ -230,9 +235,65 @@ public sealed class NetworkDiagnosticsService
         // "how much does the latency wobble" figure, not a formal RFC 3550 jitter calculation.
         double jitter = times.Count < 2 ? 0 : times.Zip(times.Skip(1), (a, b) => Math.Abs(b - a)).Average();
 
-        return new JitterTestResult(host, sent, received, lossPercent, min, max, avg, jitter,
-            $"{received}/{sent} replies ({lossPercent:0.#}% loss) — min {min} ms, avg {avg:0.#} ms, max {max} ms, jitter {jitter:0.#} ms");
+        // #507: the actual RFC 3550 smoothed interarrival jitter, plus a rough MOS-style call
+        // quality estimate derived from it.
+        double rfcJitter = ComputeRfc3550Jitter(times);
+        double mos = EstimateMos(avg, rfcJitter, lossPercent);
+
+        return new JitterTestResult(host, sent, received, lossPercent, min, max, avg, jitter, rfcJitter, mos,
+            $"{received}/{sent} replies ({lossPercent:0.#}% loss) — min {min} ms, avg {avg:0.#} ms, max {max} ms, jitter {jitter:0.#} ms " +
+            $"(RFC 3550: {rfcJitter:0.#} ms). Estimated call quality (MOS, not a measurement of an actual call): {mos:0.0}/4.5 ({MosQualityLabel(mos)}).");
     }
+
+    /// <summary>#507: RFC 3550 §6.4.1's smoothed interarrival jitter formula, applied to
+    /// round-trip samples - ICMP only gives us round-trip timing, not the one-way send/receive
+    /// timestamps the RFC actually assumes, so this is the same "good enough" approximation
+    /// consumer network-quality tools commonly use, not a strict protocol-compliance claim.
+    /// J(i) = J(i-1) + (|D(i-1,i)| - J(i-1)) / 16, the RFC's own gain factor.</summary>
+    public static double ComputeRfc3550Jitter(IReadOnlyList<long> roundtripsMs)
+    {
+        if (roundtripsMs.Count < 2) return 0;
+        double j = 0;
+        for (int i = 1; i < roundtripsMs.Count; i++)
+        {
+            double d = Math.Abs(roundtripsMs[i] - roundtripsMs[i - 1]);
+            j += (d - j) / 16.0;
+        }
+        return j;
+    }
+
+    /// <summary>#507: a rough MOS (Mean Opinion Score, 1.0-4.5) estimate from the simplified
+    /// ITU-T G.107 E-model, folding in latency, jitter, and loss the same way several consumer
+    /// VoIP-quality tools do. Explicitly an estimate of what a call would probably sound like
+    /// over this path right now, NOT a measurement of any actual call - this app places no VoIP
+    /// call to measure. "Quick flag, not a verdict" applies here as much as anywhere else in this
+    /// app's heuristics.</summary>
+    public static double EstimateMos(double avgRoundtripMs, double jitterMs, double lossPercent)
+    {
+        // Effective latency folds one-way delay (approximated as half the round-trip) and
+        // jitter's playout-buffer cost into a single "how much delay does this really feel like"
+        // figure - the same shape of adjustment the E-model's Id term is built from.
+        double effectiveLatencyMs = (avgRoundtripMs / 2.0) + (jitterMs * 2.0) + 10.0;
+
+        double r = effectiveLatencyMs < 160
+            ? 93.2 - (effectiveLatencyMs / 40.0)
+            : 93.2 - ((effectiveLatencyMs - 120.0) / 10.0);
+
+        r -= lossPercent * 2.5; // packet loss directly erodes the R-factor
+        r = Math.Clamp(r, 0, 100);
+
+        double mos = 1 + 0.035 * r + 0.000007 * r * (r - 60) * (100 - r);
+        return Math.Clamp(mos, 1.0, 4.5);
+    }
+
+    private static string MosQualityLabel(double mos) => mos switch
+    {
+        >= 4.0 => "excellent",
+        >= 3.6 => "good",
+        >= 3.1 => "fair",
+        >= 2.6 => "poor",
+        _ => "bad",
+    };
 
     private static async Task<long?> TimeDnsLookupAsync()
     {
@@ -308,7 +369,11 @@ public sealed class NetworkDiagnosticsService
         return names;
     }
 
-    private static string? FindDefaultGateway()
+    /// <summary>The default gateway of the first active, non-loopback/non-tunnel adapter with
+    /// one configured - exposed publicly (originally private to this class) so
+    /// LatencyMonitorService's continuous probe ring (#501/#503) can target the same gateway
+    /// this tab's existing one-shot connectivity check does, rather than re-deriving it.</summary>
+    public static string? FindDefaultGateway()
     {
         try
         {

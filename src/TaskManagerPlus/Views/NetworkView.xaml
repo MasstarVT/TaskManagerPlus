@@ -10,6 +10,248 @@
     <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16">
         <StackPanel>
 
+            <!-- suggestions.md #501-509: always-on latency/jitter/packet-loss monitor - a
+                 continuous probe ring with its own start/stop toggle, distinct from the
+                 Connectivity card's existing single-shot 15s gateway/DNS check further down. See
+                 LatencyMonitorService's remarks for the full design. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" Style="{StaticResource TitleRow}" Margin="0">
+                            <Border Width="9" Height="9" CornerRadius="4.5" Margin="0,0,8,0" VerticalAlignment="Center">
+                                <Border.Style>
+                                    <Style TargetType="Border">
+                                        <Setter Property="Background" Value="{DynamicResource TextSecondaryBrush}" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsLatencyMonitoring}" Value="True">
+                                                <Setter Property="Background" Value="{DynamicResource SuccessBrush}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Border.Style>
+                            </Border>
+                            <TextBlock Text="Latency" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Orientation="Horizontal">
+                            <TextBlock Text="Interval (s)" VerticalAlignment="Center" Margin="0,0,6,0" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" />
+                            <TextBox Width="46" Margin="0,0,10,0" VerticalContentAlignment="Center"
+                                     Text="{Binding LatencyIntervalSeconds, UpdateSourceTrigger=LostFocus, StringFormat={}{0:0.#}}" />
+                            <Button Padding="10,4">
+                                <Button.Style>
+                                    <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                        <Setter Property="Content" Value="Start monitoring" />
+                                        <Setter Property="Command" Value="{Binding ToggleLatencyMonitorCommand}" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsLatencyMonitoring}" Value="True">
+                                                <Setter Property="Content" Value="Stop monitoring" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Button.Style>
+                            </Button>
+                        </StackPanel>
+                    </Grid>
+
+                    <!-- #501: continuous ring - Gateway/First hop/Resolver, glow+core paired like
+                         every other history chart in the app (PerformanceViewModel.LineOf). -->
+                    <lvc:CartesianChart Series="{Binding LatencySeries}" XAxes="{Binding LatencyHiddenXAxes}" YAxes="{Binding LatencyMsYAxes}"
+                                         Height="160" TooltipPosition="Top" LegendPosition="Bottom" Background="Transparent"
+                                         LegendTextPaint="{Binding Performance.LegendTextPaint}" LegendBackgroundPaint="{Binding Performance.LegendBackgroundPaint}"
+                                         TooltipTextPaint="{Binding Performance.TooltipTextPaint}" TooltipBackgroundPaint="{Binding Performance.TooltipBackgroundPaint}" />
+
+                    <!-- #504: baseline deviation badges - hidden individually when there's no
+                         baseline yet or nothing to flag. -->
+                    <StackPanel Margin="0,10,0,0">
+                        <TextBlock Text="{Binding GatewayDeviationText}" Style="{StaticResource SubStat}" Foreground="{DynamicResource WarningBrush}"
+                                   TextWrapping="Wrap" Margin="0,0,0,3" Visibility="{Binding GatewayDeviationText, Converter={StaticResource NullToVisibilityConverter}}" />
+                        <TextBlock Text="{Binding FirstHopDeviationText}" Style="{StaticResource SubStat}" Foreground="{DynamicResource WarningBrush}"
+                                   TextWrapping="Wrap" Margin="0,0,0,3" Visibility="{Binding FirstHopDeviationText, Converter={StaticResource NullToVisibilityConverter}}" />
+                        <TextBlock Text="{Binding ResolverDeviationText}" Style="{StaticResource SubStat}" Foreground="{DynamicResource WarningBrush}"
+                                   TextWrapping="Wrap" Visibility="{Binding ResolverDeviationText, Converter={StaticResource NullToVisibilityConverter}}" />
+                        <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                            <TextBlock Text="Flag when over" VerticalAlignment="Center" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" />
+                            <TextBox Width="40" Margin="6,0,4,0" VerticalContentAlignment="Center"
+                                     Text="{Binding DeviationMultiplier, UpdateSourceTrigger=LostFocus, StringFormat={}{0:0.#}}" />
+                            <TextBlock Text="x your usual latency" VerticalAlignment="Center" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        </StackPanel>
+                    </StackPanel>
+
+                    <!-- #508: route-flap (TTL-change) summary. -->
+                    <TextBlock Text="{Binding RouteFlapText}" Style="{StaticResource SubStat}" Margin="0,8,0,0" TextWrapping="Wrap" />
+
+                    <!-- #502: packet-loss timeline strips, one per charted tier, plus a combined
+                         "quick flag, not a verdict" caption distinguishing isolated drops from bursts. -->
+                    <StackPanel Margin="0,14,0,0">
+                        <TextBlock Text="Packet loss" Style="{StaticResource SpecLabel}" Margin="0,0,0,6" />
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                            <TextBlock Text="Gateway" Width="70" VerticalAlignment="Center" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+                            <ItemsControl ItemsSource="{Binding GatewayLossStrip}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate><WrapPanel Orientation="Horizontal" /></ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Width="5" Height="14" Margin="1,0,0,0" CornerRadius="1">
+                                            <Border.Style>
+                                                <Style TargetType="Border">
+                                                    <Setter Property="Background" Value="{DynamicResource SuccessBrush}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding Success}" Value="False">
+                                                            <Setter Property="Background" Value="{DynamicResource WarningBrush}" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding PartOfBurst}" Value="True">
+                                                            <Setter Property="Background" Value="{DynamicResource DangerBrush}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Border.Style>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                            <TextBlock Text="First hop" Width="70" VerticalAlignment="Center" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+                            <ItemsControl ItemsSource="{Binding FirstHopLossStrip}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate><WrapPanel Orientation="Horizontal" /></ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Width="5" Height="14" Margin="1,0,0,0" CornerRadius="1">
+                                            <Border.Style>
+                                                <Style TargetType="Border">
+                                                    <Setter Property="Background" Value="{DynamicResource SuccessBrush}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding Success}" Value="False">
+                                                            <Setter Property="Background" Value="{DynamicResource WarningBrush}" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding PartOfBurst}" Value="True">
+                                                            <Setter Property="Background" Value="{DynamicResource DangerBrush}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Border.Style>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                            <TextBlock Text="Resolver" Width="70" VerticalAlignment="Center" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+                            <ItemsControl ItemsSource="{Binding ResolverLossStrip}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate><WrapPanel Orientation="Horizontal" /></ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Width="5" Height="14" Margin="1,0,0,0" CornerRadius="1">
+                                            <Border.Style>
+                                                <Style TargetType="Border">
+                                                    <Setter Property="Background" Value="{DynamicResource SuccessBrush}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding Success}" Value="False">
+                                                            <Setter Property="Background" Value="{DynamicResource WarningBrush}" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding PartOfBurst}" Value="True">
+                                                            <Setter Property="Background" Value="{DynamicResource DangerBrush}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Border.Style>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                        <TextBlock Text="{Binding LossBreakdownText}" Style="{StaticResource SubStat}" Margin="0,4,0,0" TextWrapping="Wrap" Opacity="0.85" />
+                    </StackPanel>
+
+                    <!-- #503: LAN vs ISP vs internet matrix - four fixed tiers, read live from the
+                         same rolling window the chart above is built from. -->
+                    <StackPanel Margin="0,14,0,0">
+                        <TextBlock Text="Latency matrix (LAN / ISP / internet)" Style="{StaticResource SpecLabel}" Margin="0,0,0,6" />
+                        <DataGrid ItemsSource="{Binding LatencyMatrix}" AutoGenerateColumns="False" IsReadOnly="True" HeadersVisibility="Column">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Tier" Binding="{Binding Label}" Width="1.1*" />
+                                <DataGridTextColumn Header="Target" Binding="{Binding TargetHost}" Width="1.3*" />
+                                <DataGridTextColumn Header="Min" Binding="{Binding MinMs, StringFormat={}{0:0.#} ms}" Width="0.8*" />
+                                <DataGridTextColumn Header="Avg" Binding="{Binding AvgMs, StringFormat={}{0:0.#} ms}" Width="0.8*" />
+                                <DataGridTextColumn Header="Max" Binding="{Binding MaxMs, StringFormat={}{0:0.#} ms}" Width="0.8*" />
+                                <DataGridTextColumn Header="Loss" Binding="{Binding LossPercent, StringFormat={}{0:0.#}%}" Width="0.7*" />
+                            </DataGrid.Columns>
+                        </DataGrid>
+                        <TextBlock Text="Gateway bad points at your router/Wi-Fi, first-hop bad points at your ISP's local plant, only the resolver bad points upstream/peering - not started, or no data yet, shows as an empty table."
+                                   Style="{StaticResource SubStat}" Margin="0,6,0,0" TextWrapping="Wrap" Opacity="0.7" />
+                    </StackPanel>
+
+                    <!-- #506: persisted 24h/7d latency history for the Gateway tier. -->
+                    <StackPanel Margin="0,14,0,0">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="History (Gateway)" Style="{StaticResource SpecLabel}" Margin="0" VerticalAlignment="Center" />
+                            <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                <Button Content="24h" Command="{Binding ShowLatencyHistoryDayCommand}" Padding="8,3" Margin="0,0,4,0" />
+                                <Button Content="7d" Command="{Binding ShowLatencyHistoryWeekCommand}" Padding="8,3" />
+                            </StackPanel>
+                        </Grid>
+                        <ItemsControl ItemsSource="{Binding LatencyHistoryPoints}" Margin="0,8,0,0">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Margin="0,0,0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="{Binding BucketStartLocal, StringFormat='{}{0:MM/dd HH:mm}'}" FontSize="12" Margin="0,0,10,0" />
+                                        <TextBlock Grid.Column="1" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}">
+                                            <Run Text="avg " /><Run Text="{Binding AvgMs, StringFormat={}{0:0.#} ms}" />
+                                            <Run Text="  ·  max " /><Run Text="{Binding MaxMs, StringFormat={}{0:0.#} ms}" />
+                                            <Run Text="  ·  loss " /><Run Text="{Binding LossPercent, StringFormat={}{0:0.#}%}" />
+                                        </TextBlock>
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <TextBlock Text="No history recorded yet - leave the monitor running for a while." Margin="0,4,0,0">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding LatencyHistoryPoints.Count}" Value="0">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- #505: latency-under-load overlay - the existing throughput series plus the
+                 Gateway latency series on a shared time axis (own right-hand scale), so a ping
+                 spike lining up with a throughput spike reads as self-inflicted congestion
+                 instead of an ISP fault. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Latency under load" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Throughput (left axis) and Gateway latency (right axis) on one shared time axis."
+                               Style="{StaticResource SubStat}" Margin="0,-8,0,10" TextWrapping="Wrap" />
+                    <lvc:CartesianChart Series="{Binding LatencyOverlaySeries}" XAxes="{Binding Performance.HiddenXAxes}" YAxes="{Binding OverlayYAxes}"
+                                         Height="200" TooltipPosition="Top" LegendPosition="Bottom" Background="Transparent"
+                                         LegendTextPaint="{Binding Performance.LegendTextPaint}" LegendBackgroundPaint="{Binding Performance.LegendBackgroundPaint}"
+                                         TooltipTextPaint="{Binding Performance.TooltipTextPaint}" TooltipBackgroundPaint="{Binding Performance.TooltipBackgroundPaint}" />
+                </StackPanel>
+            </Border>
+
             <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
                 <StackPanel>
                     <StackPanel Style="{StaticResource TitleRow}" Margin="0,0,0,4">
