@@ -31,6 +31,10 @@ public sealed class VolumeRow
     /// <summary>True when the file system dirty bit is set (#29) - needs a chkdsk pass.</summary>
     public bool IsDirty { get; init; }
 
+    /// <summary>#974: "NTFS"/"FAT32"/"exFAT"/... - backs RemediationPreconditionService's
+    /// RequiresNtfsVolume check.</summary>
+    public string FileSystem { get; init; } = "Unknown";
+
     // Round 9, #37/#40/#42/#44 - four more per-volume facts, see VolumeDiagnosticsService.
     public string BitLockerStatus { get; init; } = "Unknown";
     public bool BitLockerOn { get; init; }
@@ -316,6 +320,7 @@ public sealed class SystemSpecsViewModel : ObservableObject
                 SizeText = $"{Formatting.FormatBytes(v.FreeBytes)} free of {Formatting.FormatBytes(v.TotalBytes)}",
                 PercentUsed = v.PercentUsed,
                 IsDirty = v.IsDirty == true,
+                FileSystem = v.FileSystem,
                 // #37: BitLocker - "Not applicable"/"Unknown" both render as the neutral (non-on)
                 // badge state; only a confirmed "On" gets the encrypted badge.
                 BitLockerStatus = v.BitLockerStatus,

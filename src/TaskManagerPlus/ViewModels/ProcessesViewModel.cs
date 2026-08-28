@@ -141,19 +141,23 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
         ProcessesView = CollectionViewSource.GetDefaultView(Processes);
         ProcessesView.Filter = FilterPredicate;
 
-        EndTaskCommand = new RelayCommand(_ => EndSelected(tree: false), _ => SelectedProcess is not null);
-        EndProcessTreeCommand = new RelayCommand(_ => EndSelected(tree: true), _ => SelectedProcess is not null);
+        // #980: read-only mode disables every mutating process command below but leaves the
+        // read-only lookups (modules/environment/handle types/hosted services/file-lock/refresh)
+        // working - each predicate ANDs in !ReadOnlyModeService.IsReadOnly alongside its existing
+        // SelectedProcess check, per that suggestion's own "AND into existing CanExecute" guidance.
+        EndTaskCommand = new RelayCommand(_ => EndSelected(tree: false), _ => !ReadOnlyModeService.IsReadOnly && SelectedProcess is not null);
+        EndProcessTreeCommand = new RelayCommand(_ => EndSelected(tree: true), _ => !ReadOnlyModeService.IsReadOnly && SelectedProcess is not null);
         RefreshNowCommand = new RelayCommand(_ => _ = RefreshAsync());
         ViewModulesCommand = new RelayCommand(_ => LoadSelectedProcessModules(), _ => SelectedProcess is not null);
         ViewEnvironmentCommand = new RelayCommand(_ => LoadSelectedProcessEnvironment(), _ => SelectedProcess is not null);
         ViewHandleTypesCommand = new RelayCommand(_ => _ = LoadSelectedProcessHandleTypesAsync(), _ => SelectedProcess is not null);
         ViewHostedServicesCommand = new RelayCommand(_ => LoadSelectedProcessHostedServices(), _ => IsSvchostSelected());
         LookupFileLockCommand = new RelayCommand(_ => _ = LookupFileLockAsync(), _ => !string.IsNullOrWhiteSpace(FileLockPath));
-        TrimWorkingSetCommand = new RelayCommand(_ => TrimWorkingSet(), _ => SelectedProcess is not null);
-        SuspendCommand = new RelayCommand(_ => SetSuspended(true), _ => SelectedProcess is not null);
-        ResumeCommand = new RelayCommand(_ => SetSuspended(false), _ => SelectedProcess is not null);
-        ApplyAffinityCommand = new RelayCommand(_ => ApplyAffinity(), _ => SelectedProcess is not null && AffinityCores.Count > 0);
-        SetPriorityCommand = new RelayCommand(_ => SetPriority(), _ => SelectedProcess is not null);
+        TrimWorkingSetCommand = new RelayCommand(_ => TrimWorkingSet(), _ => !ReadOnlyModeService.IsReadOnly && SelectedProcess is not null);
+        SuspendCommand = new RelayCommand(_ => SetSuspended(true), _ => !ReadOnlyModeService.IsReadOnly && SelectedProcess is not null);
+        ResumeCommand = new RelayCommand(_ => SetSuspended(false), _ => !ReadOnlyModeService.IsReadOnly && SelectedProcess is not null);
+        ApplyAffinityCommand = new RelayCommand(_ => ApplyAffinity(), _ => !ReadOnlyModeService.IsReadOnly && SelectedProcess is not null && AffinityCores.Count > 0);
+        SetPriorityCommand = new RelayCommand(_ => SetPriority(), _ => !ReadOnlyModeService.IsReadOnly && SelectedProcess is not null);
 
         // Round 12, #100: configurable poll interval - see PollIntervalSettingsService's remarks.
         _timer = new DispatcherTimer(DispatcherPriority.Background)

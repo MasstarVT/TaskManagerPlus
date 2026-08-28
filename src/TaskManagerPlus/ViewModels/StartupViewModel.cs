@@ -108,10 +108,12 @@ public sealed class StartupViewModel : ObservableObject
         };
 
         RefreshCommand = new RelayCommand(_ => Refresh());
-        ToggleEnabledCommand = new RelayCommand(param => Toggle(param as StartupItem ?? SelectedItem));
+        // #980: read-only mode disables the enable/disable toggle (mutating) but leaves Refresh
+        // and every read-only lookup on this tab working.
+        ToggleEnabledCommand = new RelayCommand(param => Toggle(param as StartupItem ?? SelectedItem), _ => !ReadOnlyModeService.IsReadOnly);
 
         LoadScheduledTasksCommand = new AsyncRelayCommand(LoadScheduledTasksAsync);
-        ToggleScheduledTaskCommand = new AsyncRelayCommand(param => ToggleScheduledTaskAsync(param as ScheduledTaskRow ?? SelectedScheduledTask));
+        ToggleScheduledTaskCommand = new AsyncRelayCommand(param => ToggleScheduledTaskAsync(param as ScheduledTaskRow ?? SelectedScheduledTask), _ => !ReadOnlyModeService.IsReadOnly);
         CheckLogonDelayCommand = new AsyncRelayCommand(CheckLogonDelayAsync, () => SelectedScheduledTask is not null);
 
         LoadBrowserExtensionsCommand = new AsyncRelayCommand(LoadBrowserExtensionsAsync);

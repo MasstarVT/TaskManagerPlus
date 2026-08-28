@@ -272,6 +272,11 @@ public sealed class VolumeInfo
     /// media-type associator chain to decide which volumes TRIM status is even meaningful for.</summary>
     public string MediaType { get; init; } = "Unknown";
 
+    /// <summary>#974: DriveInfo.DriveFormat verbatim ("NTFS", "FAT32", "exFAT", ...) - "Unknown"
+    /// when DriveInfo itself couldn't report one. Backs RemediationPreconditionService's
+    /// RequiresNtfsVolume check for the chkdsk remediation actions.</summary>
+    public string FileSystem { get; init; } = "Unknown";
+
     /// <summary>BitLocker conversion/protection status (round 9, #37), from Win32_EncryptableVolume
     /// in root\CIMV2\Security\MicrosoftVolumeEncryption - see VolumeDiagnosticsService.ReadBitLockerStatus
     /// for why this degrades to "Unknown" rather than a false "Off" on several legitimate failure

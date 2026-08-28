@@ -367,9 +367,33 @@
                             <!-- Round 12, #99: a handful of plain-text lines for pasting straight
                                  into a chat message or support ticket - distinct from the full
                                  Markdown/HTML report above. -->
-                            <Button Content="Copy summary" Command="{Binding CopySummaryCommand}" />
+                            <Button Content="Copy summary" Command="{Binding CopySummaryCommand}" Margin="0,0,8,0" />
+                            <!-- #976: batches every currently-fired finding whose fix is entirely
+                                 low-risk and reversible - anything Medium/High risk or
+                                 non-undoable stays one-at-a-time via its own "Fix this" button. -->
+                            <Button Content="{Binding SafeFixes.Items.Count, StringFormat='Run safe fixes ({0})'}"
+                                    Command="{Binding OpenSafeFixBatchCommand}"
+                                    ToolTip="Only low-risk, reversible fixes are batched." />
                         </StackPanel>
                     </Grid>
+
+                    <!-- #978: "restart pending — including from N fix(es) you ran" - a derived
+                         rollup over SystemSpecsViewModel's existing RebootPending flag and this
+                         app's own remediation history, not a second disconnected reboot flag. -->
+                    <Border Background="{DynamicResource BgElevatedBrush}" BorderBrush="{DynamicResource WarningBrush}"
+                            BorderThickness="1" CornerRadius="8" Padding="10,8" Margin="0,10,0,0">
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding RebootBannerText}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                        <TextBlock Text="{Binding RebootBannerText}" FontSize="12.5" TextWrapping="Wrap" />
+                    </Border>
                     <TextBlock Text="{Binding CopySummaryStatusText}" Margin="0,4,0,0" TextWrapping="Wrap">
                         <TextBlock.Style>
                             <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">

@@ -363,7 +363,9 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         FanRpmSeries = new ISeries[] { _fanRpmGlow, _fanRpmCore };
 
         LoadPowerInfoCommand = new AsyncRelayCommand(_ => LoadPowerInfoAsync());
-        SetPowerPlanCommand = new AsyncRelayCommand(SetPowerPlanAsync);
+        // #980: read-only mode disables the power-plan switch (mutating) but leaves the read-only
+        // power-info/USB-device loads working.
+        SetPowerPlanCommand = new AsyncRelayCommand(SetPowerPlanAsync, _ => !ReadOnlyModeService.IsReadOnly);
         LoadUsbDevicesCommand = new AsyncRelayCommand(_ => LoadUsbDevicesAsync());
 
         // Round 12, #100: configurable poll interval - see PollIntervalSettingsService's remarks.

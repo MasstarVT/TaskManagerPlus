@@ -53,6 +53,35 @@ public static class RestorePointService
         }
     }
 
+    /// <summary>#974: a read-only, non-mutating precheck of whether System Restore looks enabled -
+    /// reused by RemediationPreconditionService's advisory RequiresSystemProtectionOn check so the
+    /// review dialog can show this ahead of time rather than only after a failed
+    /// CreateRestorePointAsync attempt. Deliberately calls Get-ComputerRestorePoint (a query) and
+    /// never Enable-ComputerRestore - a precondition *check* must never have the side effect of
+    /// actually turning System Protection on. Returns null when the check itself couldn't
+    /// determine an answer either way (CLAUDE.md's "degrade to Unknown, never fabricate") -
+    /// callers must not treat null as "enabled".</summary>
+    public static async Task<bool?> CheckSystemProtectionEnabledAsync()
+    {
+        try
+        {
+            const string psCommand =
+                "$ErrorActionPreference='Stop'; try { Get-ComputerRestorePoint | Out-Null; Write-Output 'SR_QUERY_OK' } catch { Write-Output $_.Exception.Message }";
+
+            var (output, exitCode) = await TroubleshootService.RunCapturedAsync(
+                "powershell.exe", $"-NoProfile -NonInteractive -Command \"{psCommand}\"", timeoutMs: 20000);
+
+            if (exitCode is null) return null; // timed out - couldn't determine an answer
+            if (output.Contains("SR_QUERY_OK", StringComparison.Ordinal)) return true;
+            if (LooksLikeSystemProtectionDisabled(output)) return false;
+            return null; // some other failure (PowerShell missing, WMI namespace denied, ...) - unknown, not "off"
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     /// <summary>Opens the Windows "System Protection" settings tab directly - the fallback offered
     /// when CreateRestorePointAsync reports System Protection is disabled.</summary>
     public static void OpenSystemProtectionSettings()

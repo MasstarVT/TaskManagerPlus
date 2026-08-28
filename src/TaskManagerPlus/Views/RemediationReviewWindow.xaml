@@ -73,6 +73,37 @@
                 <TextBox Text="{Binding CommandText, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap"
                          FontFamily="Consolas" FontSize="12" Margin="0,0,0,14" />
 
+                <!-- #974: precondition block reason - shown inline (and as the Run/Preview
+                     buttons' own ToolTip below) whenever a declared precondition currently fails.
+                     Advisory notes (System Protection looking off) are informational only and
+                     never disable anything. -->
+                <TextBlock Text="{Binding PreconditionBlockReason}" TextWrapping="Wrap" FontSize="12"
+                           Foreground="{DynamicResource DangerBrush}" Margin="0,0,0,8">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Visibility" Value="Visible" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding PreconditionBlockReason}" Value="">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+                <TextBlock Text="{Binding PreconditionAdvisoryText}" TextWrapping="Wrap" FontSize="12"
+                           Foreground="{DynamicResource WarningBrush}" Margin="0,0,0,8">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Visibility" Value="Visible" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding PreconditionAdvisoryText}" Value="">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+
                 <!-- #969: dry run. -->
                 <Grid Margin="0,0,0,4">
                     <Grid.ColumnDefinitions>
@@ -80,7 +111,8 @@
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     <TextBlock Grid.Column="0" Text="Preview (dry run)" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
-                    <Button Grid.Column="1" Content="Preview (dry run)" Command="{Binding RunPreviewCommand}" Padding="10,4" />
+                    <Button Grid.Column="1" Content="Preview (dry run)" Command="{Binding RunPreviewCommand}" Padding="10,4"
+                            ToolTip="{Binding PreconditionBlockReason}" />
                 </Grid>
                 <TextBlock Text="{Binding PreviewCommandText}" FontFamily="Consolas" FontSize="11"
                            Foreground="{DynamicResource TextTertiaryBrush}" TextWrapping="Wrap" Margin="0,0,0,4">
@@ -144,16 +176,101 @@
                     </StackPanel>
                 </Border>
 
+                <!-- #979: "Queue for next boot" - offered only for an action that genuinely needs
+                     its target volume offline (SupportsDeferredQueue). -->
+                <Border Padding="12,10" Margin="0,0,0,14">
+                    <Border.Style>
+                        <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding SupportsDeferredQueue}" Value="True">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <StackPanel>
+                        <TextBlock Text="This needs the volume offline - queue it instead of running now?" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,0,0,8" />
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                            <Button Content="Queue for next boot" Command="{Binding QueueForNextBootCommand}" Padding="10,4" Margin="0,0,8,0"
+                                    ToolTip="{Binding PreconditionBlockReason}" />
+                            <TextBlock Text="or at:" VerticalAlignment="Center" Margin="0,0,6,0" Style="{StaticResource SubStat}" />
+                            <DatePicker SelectedDate="{Binding DeferredDate}" Width="110" Margin="0,0,4,0" />
+                            <TextBox Text="{Binding DeferredTimeText, UpdateSourceTrigger=PropertyChanged}" Width="52" Margin="0,0,6,0"
+                                     ToolTip="24-hour time, e.g. 14:30" />
+                            <Button Content="Queue for this time" Command="{Binding QueueForSpecificTimeCommand}" Padding="10,4"
+                                    ToolTip="{Binding PreconditionBlockReason}" />
+                        </StackPanel>
+                        <TextBlock Text="{Binding DeferredQueueStatusText}" TextWrapping="Wrap" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+                    </StackPanel>
+                </Border>
+
                 <!-- Run. -->
                 <Grid Margin="0,0,0,6">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     <TextBlock Grid.Column="0" Text="{Binding StatusMessage}" VerticalAlignment="Center" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" />
-                    <Button Grid.Column="1" Content="Run" Command="{Binding RunActionCommand}" Padding="18,6"
-                            Background="{DynamicResource AccentBrush}" Foreground="{DynamicResource AccentForegroundBrush}" FontWeight="SemiBold" />
+                    <!-- #977: kills the running process mid-run - visible only while something is
+                         actually running. -->
+                    <Button Grid.Column="1" Content="Cancel" Command="{Binding CancelRunCommand}" Padding="12,6" Margin="0,0,8,0">
+                        <Button.Style>
+                            <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsBusy}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Button.Style>
+                    </Button>
+                    <Button Grid.Column="2" Content="Run" Command="{Binding RunActionCommand}" Padding="18,6"
+                            Background="{DynamicResource AccentBrush}" Foreground="{DynamicResource AccentForegroundBrush}" FontWeight="SemiBold"
+                            ToolTip="{Binding PreconditionBlockReason}" />
                 </Grid>
+
+                <!-- #977: real progress bar when the running tool's output is percentage-parseable
+                     (DISM/chkdsk); an indeterminate bar otherwise (sfc, or before the first
+                     progress line arrives) while something is actually running. -->
+                <ProgressBar Height="6" Margin="0,0,0,6" Minimum="0" Maximum="100"
+                             Value="{Binding ProgressPercent, Mode=OneWay, TargetNullValue=0}"
+                             IsIndeterminate="{Binding IsProgressIndeterminate}">
+                    <ProgressBar.Style>
+                        <Style TargetType="ProgressBar">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                            <Style.Triggers>
+                                <MultiDataTrigger>
+                                    <MultiDataTrigger.Conditions>
+                                        <Condition Binding="{Binding IsBusy}" Value="True" />
+                                        <Condition Binding="{Binding IsStreamingSupported}" Value="True" />
+                                    </MultiDataTrigger.Conditions>
+                                    <Setter Property="Visibility" Value="Visible" />
+                                </MultiDataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </ProgressBar.Style>
+                </ProgressBar>
+
+                <!-- #977: live streamed console output for sfc/DISM/chkdsk - a scrolling read-only
+                     list rather than the plain textbox below, so each line appears as it arrives. -->
+                <ListBox ItemsSource="{Binding LiveOutputLines}" Height="180" Margin="0,0,0,10"
+                         FontFamily="Consolas" FontSize="11" Background="{DynamicResource BgElevatedBrush}"
+                         ScrollViewer.HorizontalScrollBarVisibility="Auto" ScrollViewer.VerticalScrollBarVisibility="Auto">
+                    <ListBox.Style>
+                        <Style TargetType="ListBox" BasedOn="{StaticResource {x:Type ListBox}}">
+                            <Setter Property="Visibility" Value="Visible" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsStreamingSupported}" Value="False">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </ListBox.Style>
+                </ListBox>
+
                 <TextBox Text="{Binding RunOutputText, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap"
                          FontFamily="Consolas" FontSize="11.5" MinHeight="80" MaxHeight="220"
                          VerticalScrollBarVisibility="Auto" AcceptsReturn="True" Margin="0,4,0,0">
@@ -164,10 +281,28 @@
                                 <DataTrigger Binding="{Binding RunOutputText}" Value="">
                                     <Setter Property="Visibility" Value="Collapsed" />
                                 </DataTrigger>
+                                <DataTrigger Binding="{Binding IsStreamingSupported}" Value="True">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
                             </Style.Triggers>
                         </Style>
                     </TextBox.Style>
                 </TextBox>
+
+                <!-- #975: re-runs the originating finding's own rule right after Run finishes. -->
+                <Border Background="{DynamicResource AccentMutedBrush}" CornerRadius="8" Padding="10,8" Margin="0,10,0,0">
+                    <Border.Style>
+                        <Style TargetType="Border">
+                            <Setter Property="Visibility" Value="Visible" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding PostActionVerificationText}" Value="">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <TextBlock Text="{Binding PostActionVerificationText}" FontSize="12.5" FontWeight="SemiBold" TextWrapping="Wrap" />
+                </Border>
             </StackPanel>
 
             <Button Content="Close" HorizontalAlignment="Right" Padding="14,5" Margin="0,16,0,0" Click="OnClose" />

@@ -17,6 +17,63 @@ public enum RemediationRiskLevel
     High,
 }
 
+/// <summary>#974: what an action needs to be true before it's safe/meaningful to run - checked by
+/// RemediationPreconditionService against live ViewModel state, never fabricated when that state
+/// can't be read (see PreconditionCheckResult's own remarks on degrading to "couldn't check").</summary>
+public enum PreconditionKind
+{
+    /// <summary>This app already runs fully elevated (app.manifest -> requireAdministrator), so
+    /// this is a defensive check, not something any current action actually needs to declare.</summary>
+    RequiresElevation,
+
+    /// <summary>Parameter is a service name (ServiceRow.ServiceName) - fails when that service is
+    /// no longer registered on this system (e.g. it was uninstalled between the finding firing and
+    /// the review dialog being opened).</summary>
+    RequiresServicePresent,
+
+    /// <summary>Parameter is a drive letter ("C:") - fails when SystemSpecsViewModel.Volumes
+    /// reports a file system other than NTFS for that volume.</summary>
+    RequiresNtfsVolume,
+
+    /// <summary>No parameter. Advisory rather than blocking (see
+    /// RemediationPrecondition.Blocking's remarks) - System Protection being off just means the
+    /// restore-point prompt's "Create restore point" attempt is expected to fail, not that running
+    /// the action itself is unsafe (the existing "Skip - run without one" flow already covers
+    /// that).</summary>
+    RequiresSystemProtectionOn,
+
+    /// <summary>No parameter. Fails while SystemSpecsViewModel.RebootPending is true - a handful of
+    /// servicing operations (DISM's component-store repair, most notably) are documented to be
+    /// unreliable while a prior update's reboot is still outstanding.</summary>
+    RequiresNoRebootPending,
+}
+
+/// <summary>One requirement an action declares - Kind plus whatever context that kind needs
+/// (a service name, a drive letter, or nothing). <see cref="Blocking"/> defaults to true (Run/
+/// Preview disabled on failure); RequiresSystemProtectionOn is the one built-in exception, wired
+/// as advisory-only in RemediationActionCatalog since the review dialog's own restore-point flow
+/// already lets a Medium/High-risk action proceed without one.</summary>
+public sealed class RemediationPrecondition
+{
+    public PreconditionKind Kind { get; init; }
+    public string? Parameter { get; init; }
+    public bool Blocking { get; init; } = true;
+}
+
+/// <summary>Result of evaluating one RemediationPrecondition against live system state -
+/// <see cref="Passed"/> null means the check itself couldn't run (degrade to "unknown", never a
+/// fabricated pass/fail), distinct from a check that ran and returned false.</summary>
+public sealed class PreconditionCheckResult
+{
+    public required RemediationPrecondition Precondition { get; init; }
+    public bool? Passed { get; init; }
+    public string? Reason { get; init; }
+
+    /// <summary>True when this result should keep Run/Preview disabled - a failed Blocking check,
+    /// or a check whose Passed is still unknown (never treat "couldn't check" as "passed").</summary>
+    public bool IsBlocked => Precondition.Blocking && Passed != true;
+}
+
 public sealed class RemediationAction
 {
     /// <summary>Stable id - what <see cref="Rule.ActionIds"/> references and what
@@ -82,6 +139,41 @@ public sealed class RemediationAction
     public string? StartupItemName { get; init; }
     public string? StartupItemCommand { get; init; }
     public string? StartupItemSource { get; init; }
+
+    // ----- #974 preconditions ---------------------------------------------------------------
+
+    /// <summary>Empty for most actions - only the ones with a real, checkable requirement declare
+    /// one (see RemediationActionCatalog's individual factories).</summary>
+    public List<RemediationPrecondition> Preconditions { get; init; } = new();
+
+    // ----- #977 live output streaming (sfc/DISM/chkdsk only) --------------------------------
+
+    /// <summary>Set only for the catalog's long-running shelled-out tools (sfc/DISM/chkdsk) -
+    /// identical contract to <see cref="Execute"/> except it also reports each stdout/stderr line
+    /// as it arrives (second delegate parameter) instead of only the final joined Output. Null for
+    /// every other action, which the review dialog falls back to <see cref="Execute"/> for.</summary>
+    public Func<CancellationToken, Action<string>, Task<RemediationRunResult>>? ExecuteStreaming { get; init; }
+
+    /// <summary>Streaming twin of <see cref="ExecutePreview"/> - null exactly when ExecutePreview
+    /// itself is null (nothing to preview) or the preview is cheap enough not to need it (sfc
+    /// /verifyonly and DISM /ScanHealth both stream too, since they run just as long as their
+    /// mutating counterparts).</summary>
+    public Func<CancellationToken, Action<string>, Task<RemediationRunResult>>? ExecutePreviewStreaming { get; init; }
+
+    /// <summary>#977: parses a tool-specific progress line into a 0-100 percent, or null when the
+    /// line carries no progress info - DISM's "[ XX.X% ]" / chkdsk's "XX percent complete". Left
+    /// null for sfc, whose output isn't cleanly percentage-parseable (an honest indeterminate
+    /// progress state, not a guessed number).</summary>
+    public Func<string, double?>? ParseProgressPercent { get; init; }
+
+    // ----- #979 deferred/scheduled queue -----------------------------------------------------
+
+    /// <summary>True only for an action that genuinely needs the volume offline to do its real
+    /// work (currently just the chkdsk "fix" variant, RemediationActionCatalog.ChkdskFix) - the
+    /// review dialog's "Queue for next boot" option is offered only when this is set, since an
+    /// action that already runs fine online (the /scan variant, sfc, DISM, ...) has no honest
+    /// reason to defer instead of just running now.</summary>
+    public bool SupportsDeferredQueue { get; init; }
 }
 
 /// <summary>Outcome of running (or previewing) a RemediationAction. BeforeValue/AfterValue are
@@ -95,8 +187,15 @@ public sealed class RemediationRunResult
     public string? BeforeValue { get; init; }
     public string? AfterValue { get; init; }
 
+    /// <summary>#977: true only when the user explicitly clicked Cancel mid-run - distinct from a
+    /// plain failure so the review dialog (and the journal entry it writes) can say "cancelled"
+    /// rather than implying the tool itself reported an error.</summary>
+    public bool Cancelled { get; init; }
+
     public static RemediationRunResult Ok(string output, string? before = null, string? after = null) =>
         new() { Success = true, Output = output, BeforeValue = before, AfterValue = after };
 
     public static RemediationRunResult Fail(string output) => new() { Success = false, Output = output };
+
+    public static RemediationRunResult Cancel(string output) => new() { Success = false, Cancelled = true, Output = output };
 }

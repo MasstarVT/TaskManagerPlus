@@ -848,6 +848,8 @@ public sealed class SystemSpecsService
                     FreeBytes = drive.TotalFreeSpace,
                     IsDirty = ReadVolumeDirtyBit(drive.Name),
                     MediaType = mediaType,
+                    // #974: DriveInfo already has this for free - no extra WMI/registry round trip.
+                    FileSystem = string.IsNullOrWhiteSpace(drive.DriveFormat) ? "Unknown" : drive.DriveFormat,
                     BitLockerStatus = VolumeDiagnosticsService.ReadBitLockerStatus(driveLetter),
                     RecycleBinBytes = VolumeDiagnosticsService.ReadRecycleBinBytes(drive.Name),
                     ShadowCopyBytes = shadowUsageByVolume.TryGetValue(driveLetter.TrimEnd(':'), out var used) ? used : null,

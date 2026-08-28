@@ -47,15 +47,25 @@ public sealed class ChangeJournalViewModel : ObservableObject
 {
     public ObservableCollection<ChangeJournalRow> Entries { get; } = new();
 
+    /// <summary>#979: fixes queued for later (next boot, or a chosen time) via the remediation
+    /// review dialog's "Queue for next boot" option - a small sibling section next to the change
+    /// journal above, since both are "everything this app has done or is about to do" panels.</summary>
+    public ObservableCollection<DeferredAction> DeferredActions { get; } = new();
+
     public RelayCommand RefreshCommand { get; }
     public AsyncRelayCommand UndoCommand { get; }
     public AsyncRelayCommand RestoreFromBackupCommand { get; }
+    public AsyncRelayCommand CancelDeferredCommand { get; }
+
+    private string _deferredStatusText = string.Empty;
+    public string DeferredStatusText { get => _deferredStatusText; private set => SetProperty(ref _deferredStatusText, value); }
 
     public ChangeJournalViewModel()
     {
         RefreshCommand = new RelayCommand(_ => Refresh());
         UndoCommand = new AsyncRelayCommand(param => UndoAsync(param as ChangeJournalRow), param => param is ChangeJournalRow { CanUndoNow: true, IsBusy: false });
         RestoreFromBackupCommand = new AsyncRelayCommand(param => RestoreFromBackupAsync(param as ChangeJournalRow), param => param is ChangeJournalRow { HasRegistryBackup: true, IsBusy: false });
+        CancelDeferredCommand = new AsyncRelayCommand(param => CancelDeferredAsync(param as DeferredAction), param => param is DeferredAction);
         Refresh();
     }
 
@@ -67,6 +77,32 @@ public sealed class ChangeJournalViewModel : ObservableObject
             var (canUndo, reason) = Evaluate(entry);
             Entries.Add(new ChangeJournalRow(entry, canUndo, reason));
         }
+
+        RefreshDeferred();
+    }
+
+    private void RefreshDeferred()
+    {
+        DeferredActions.Clear();
+        foreach (var d in DeferredActionService.LoadAll().OrderByDescending(d => d.CreatedUtc))
+            DeferredActions.Add(d);
+    }
+
+    /// <summary>#979: cancels the underlying scheduled task (schtasks /delete) and drops the
+    /// tracking entry either way once the task itself is gone - a task that schtasks reports as
+    /// already missing (e.g. the user removed it from Task Scheduler directly) is still cleaned up
+    /// here rather than left as a permanently-stuck row.</summary>
+    private async Task CancelDeferredAsync(DeferredAction? action)
+    {
+        if (action is null) return;
+
+        DeferredStatusText = $"Cancelling \"{action.ActionTitle}\"...";
+        var (success, error) = await ScheduledTaskService.DeleteAsync(action.TaskName);
+        DeferredActionService.Remove(action.Id);
+        DeferredStatusText = success
+            ? $"Cancelled \"{action.ActionTitle}\"."
+            : $"Removed \"{action.ActionTitle}\" from the queue (schtasks reported: {error}).";
+        RefreshDeferred();
     }
 
     /// <summary>Whether this entry's inverse can be run right now, and why not when it can't -

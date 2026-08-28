@@ -219,6 +219,17 @@
                     </TextBlock.Style>
                 </TextBlock>
 
+                <TextBlock Text="SAFETY" FontSize="10.5" FontWeight="Bold" Foreground="{DynamicResource TextTertiaryBrush}"
+                           Margin="0,0,0,14" />
+
+                <!-- #980: app-wide read-only switch - disables every mutating command (end
+                     process, service start/stop/restart, startup/scheduled-task toggle,
+                     remediation Run/Queue, priority/affinity/suspend/resume/trim, power plan
+                     changes). Preview/dry-run and every read-only lookup still work. -->
+                <CheckBox Content="Read-only mode" IsChecked="{Binding IsReadOnlyMode}" Margin="0,0,0,6" />
+                <TextBlock Text="Disables every action that changes something on this PC - end process, service/startup/scheduled-task toggles, remediation fixes, priority/affinity/suspend/trim, power plan changes. Useful for diagnosing someone else's machine, or a technician's initial assessment pass. Previewing/dry-running a fix still works."
+                           Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,22" />
+
                 <TextBlock Text="DISPLAY" FontSize="10.5" FontWeight="Bold" Foreground="{DynamicResource TextTertiaryBrush}"
                            Margin="0,0,0,14" />
 

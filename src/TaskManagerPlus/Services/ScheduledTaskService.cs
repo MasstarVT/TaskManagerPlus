@@ -70,6 +70,52 @@ public static class ScheduledTaskService
 
     private static string At(List<string> fields, int index) => index >= 0 && index < fields.Count ? fields[index] : string.Empty;
 
+    /// <summary>#979: creates a one-shot task that runs `command` the next time this machine
+    /// boots, as SYSTEM - used by the remediation review dialog's "Queue for next boot" option for
+    /// an action that needs its target volume offline (chkdsk /f being the catalog's one example
+    /// so far). `/f` overwrites a same-named task left over from a prior queue/cancel cycle rather
+    /// than erroring on it.</summary>
+    public static Task<(bool Success, string? Error)> CreateOnStartAsync(string taskName, string command) =>
+        CreateAsync(taskName, command, "/sc onstart");
+
+    /// <summary>#979: the "pick a specific time" alternative to CreateOnStartAsync - a single
+    /// one-time trigger at `whenLocal`, still as SYSTEM so it doesn't depend on a user session
+    /// being active at that time.</summary>
+    public static Task<(bool Success, string? Error)> CreateOnceAsync(string taskName, string command, DateTime whenLocal) =>
+        CreateAsync(taskName, command, $"/sc once /st {whenLocal:HH:mm} /sd {whenLocal:MM/dd/yyyy}");
+
+    private static async Task<(bool Success, string? Error)> CreateAsync(string taskName, string command, string scheduleArgs)
+    {
+        try
+        {
+            // schtasks /tr takes one token - a command with arguments has to be quoted as a whole,
+            // with any embedded quotes doubled the way schtasks itself expects.
+            string quotedCommand = "\"" + command.Replace("\"", "\"\"") + "\"";
+            var (output, exitCode) = await RunCapturedAsync(
+                "schtasks.exe", $"/create /tn \"{taskName}\" {scheduleArgs} /tr {quotedCommand} /ru SYSTEM /rl HIGHEST /f", timeoutMs: 15000);
+            return exitCode == 0 ? (true, null) : (false, string.IsNullOrWhiteSpace(output) ? "schtasks /create failed (unknown error)." : output.Trim());
+        }
+        catch (Exception ex)
+        {
+            return (false, ex.Message);
+        }
+    }
+
+    /// <summary>#979: cancels a previously queued task - used both by the review dialog's own
+    /// "Cancel queued fix" and by the Changes panel's deferred-actions section.</summary>
+    public static async Task<(bool Success, string? Error)> DeleteAsync(string taskName)
+    {
+        try
+        {
+            var (output, exitCode) = await RunCapturedAsync("schtasks.exe", $"/delete /tn \"{taskName}\" /f", timeoutMs: 15000);
+            return exitCode == 0 ? (true, null) : (false, string.IsNullOrWhiteSpace(output) ? "schtasks /delete failed (unknown error)." : output.Trim());
+        }
+        catch (Exception ex)
+        {
+            return (false, ex.Message);
+        }
+    }
+
     public static async Task<(bool Success, string? Error)> SetEnabledAsync(string taskName, bool enabled)
     {
         try

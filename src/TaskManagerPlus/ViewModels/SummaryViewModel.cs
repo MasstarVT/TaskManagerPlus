@@ -105,6 +105,20 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
     /// is a rare, silent no-op rather than a dead button shown as broken.</summary>
     public RelayCommand FixFindingCommand { get; }
 
+    /// <summary>#976: the "Run safe fixes" batch runner - rebuilt every RefreshHealthIssues pass
+    /// (see the call near the end of that method) so it always reflects the currently-fired
+    /// findings.</summary>
+    public SafeFixBatchViewModel SafeFixes { get; }
+
+    public RelayCommand OpenSafeFixBatchCommand { get; }
+
+    // #978: "restart pending — including from N fix(es) you ran" - a derived rollup over the
+    // existing SystemSpecsViewModel.RebootPending flag plus this app's own
+    // PendingRebootActionsService list, recomputed alongside RefreshHealthIssues rather than a
+    // separate timer.
+    private string _rebootBannerText = string.Empty;
+    public string RebootBannerText { get => _rebootBannerText; private set => SetProperty(ref _rebootBannerText, value); }
+
     // #933: sort order for HealthIssues/GroupedHealthIssues - persisted only in memory for this
     // session (see RefreshHealthIssues/SortIssues for the composite "Impact" score formula).
     public static Array FindingSortModes { get; } = Enum.GetValues(typeof(HealthFindingSortMode));
@@ -275,6 +289,9 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
             }
         });
         FixFindingCommand = new RelayCommand(p => OpenFixDialog(p), p => p is HealthIssue { HasFixAction: true });
+
+        SafeFixes = new SafeFixBatchViewModel(_services);
+        OpenSafeFixBatchCommand = new RelayCommand(_ => OpenSafeFixBatchDialog(), _ => SafeFixes.Items.Count > 0);
 
         NotAProblemCommand = new RelayCommand(p => RecordNotAProblemFeedback(p));
         SuppressLastFeedbackRuleCommand = new RelayCommand(_ => SuppressLastFeedbackRule(), _ => _lastFeedbackRuleId is not null);
@@ -905,6 +922,38 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         // resolved transitions - edge-triggered only (see FindingsHistoryEntry's remarks on why
         // "still-firing" is never logged on every 2s tick a chronic finding keeps firing).
         RecordFindingsHistory(issues);
+
+        // #976: keep the "Run safe fixes" batch in sync with what's currently firing.
+        SafeFixes.Refresh(issues);
+
+        // #978: cross-check this app's own "actions that said they'd need a reboot" list against
+        // the existing RebootPending registry detection - once RebootPending itself goes false
+        // (the user actually restarted, or whatever set it resolved another way), this app's own
+        // list is stale either way, so it's cleared rather than kept around forever.
+        RefreshRebootBanner();
+    }
+
+    /// <summary>#978: builds RebootBannerText - empty when no restart is pending at all; otherwise
+    /// a plain "restart pending" line, extended with "— including from N fix(es) you ran" only
+    /// when this app's own PendingRebootActionsService list is non-empty too, so the two reboot
+    /// signals (Windows' own registry flag, and this app's own remediation history) read as one
+    /// connected fact instead of two separate banners.</summary>
+    private void RefreshRebootBanner()
+    {
+        if (!_systemSpecs.RebootPending)
+        {
+            PendingRebootActionsService.ClearAll();
+            RebootBannerText = string.Empty;
+            return;
+        }
+
+        var mine = PendingRebootActionsService.LoadAll();
+        RebootBannerText = mine.Count switch
+        {
+            0 => "A restart is pending on this system.",
+            1 => $"A restart is pending on this system — including from 1 fix you ran ({mine[0].ActionTitle}).",
+            _ => $"A restart is pending on this system — including from {mine.Count} fixes you ran.",
+        };
     }
 
     /// <summary>#933: orders `issues` by the selected sort mode. "Impact" is a composite proxy -
@@ -1079,12 +1128,43 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         var actions = RemediationActionCatalog.Resolve(issue, _services);
         if (actions.Count == 0) return; // couldn't resolve a concrete target this pass - see FixFindingCommand's remarks
 
-        var dialogViewModel = new RemediationReviewViewModel(issue, actions);
+        var dialogViewModel = new RemediationReviewViewModel(issue, actions, _services, _systemSpecs, ReEvaluateFinding);
         var window = new Views.RemediationReviewWindow(dialogViewModel)
         {
             Owner = System.Windows.Application.Current?.MainWindow,
         };
         window.ShowDialog();
+
+        // A remediation run (or a #979 queue) may have changed live state this card cares about
+        // (a service restarted, a startup item disabled, a reboot now pending) - refresh
+        // immediately rather than waiting up to 2s for the next timer tick.
+        RefreshHealthIssues();
+    }
+
+    /// <summary>#976: opens the "Run safe fixes" batch dialog - SafeFixes is already kept current
+    /// by RefreshHealthIssues, so this just shows it.</summary>
+    private void OpenSafeFixBatchDialog()
+    {
+        var window = new Views.SafeFixBatchWindow(SafeFixes)
+        {
+            Owner = System.Windows.Application.Current?.MainWindow,
+        };
+        window.ShowDialog();
+        RefreshHealthIssues();
+    }
+
+    /// <summary>#975: re-runs the rules engine fresh (a real re-check, not an assumption) and
+    /// reports whether `ruleId` is still in the fired set - null when there's no rule to check
+    /// (a hand-rolled finding with no RuleId), true when it's still firing, false when it's
+    /// cleared. Passed into RemediationReviewViewModel as a closure so that ViewModel doesn't need
+    /// its own RulesEngineService/ViewModel references just for this one post-run check.</summary>
+    private bool? ReEvaluateFinding(string? ruleId)
+    {
+        if (string.IsNullOrEmpty(ruleId)) return null;
+
+        var bag = RulesEngineService.BuildMetricBag(Performance, _energyThermals, _systemSpecs, _services, Processes, out var unavailableMetrics);
+        var result = _rulesEngine.Evaluate(bag, unavailableMetrics);
+        return result.Findings.Any(f => string.Equals(f.RuleId, ruleId, StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>#935: records a "not a problem" click to feedback.jsonl (purely local - see

@@ -35,9 +35,16 @@ public static class RemediationActionCatalog
         RequiresReboot = false,
         IsUndoable = false,
         NotUndoableReason = "One-shot repair tool run - there's nothing to reverse.",
+        // #974: advisory only (see PreconditionKind.RequiresSystemProtectionOn's remarks) - Medium/
+        // High-risk actions already let the user Skip the restore-point prompt and run anyway.
+        Preconditions = { new RemediationPrecondition { Kind = PreconditionKind.RequiresSystemProtectionOn, Blocking = false } },
         PreviewCommand = "sfc /verifyonly",
         ExecutePreview = _ => RunToolAsync("sfc.exe", "/verifyonly", timeoutMs: 1_800_000),
         Execute = _ => RunToolAsync("sfc.exe", "/scannow", timeoutMs: 1_800_000),
+        // #977: sfc's own output isn't cleanly percentage-parseable - streamed live, but with no
+        // ParseProgressPercent, so the review dialog shows an honest indeterminate progress state.
+        ExecutePreviewStreaming = (ct, onLine) => RunToolStreamingAsync("sfc.exe", "/verifyonly", onLine, ct, timeoutMs: 1_800_000),
+        ExecuteStreaming = (ct, onLine) => RunToolStreamingAsync("sfc.exe", "/scannow", onLine, ct, timeoutMs: 1_800_000),
     };
 
     public static RemediationAction DismRestoreHealth() => new()
@@ -50,9 +57,21 @@ public static class RemediationActionCatalog
         RequiresReboot = false,
         IsUndoable = false,
         NotUndoableReason = "One-shot repair tool run - there's nothing to reverse.",
+        // #974: DISM's component-store repair is documented to be unreliable while a prior
+        // update's reboot is still outstanding - a real, blocking requirement (unlike the advisory
+        // System Protection check below).
+        Preconditions =
+        {
+            new RemediationPrecondition { Kind = PreconditionKind.RequiresNoRebootPending, Blocking = true },
+            new RemediationPrecondition { Kind = PreconditionKind.RequiresSystemProtectionOn, Blocking = false },
+        },
         PreviewCommand = "DISM /Online /Cleanup-Image /ScanHealth",
         ExecutePreview = _ => RunToolAsync("DISM.exe", "/Online /Cleanup-Image /ScanHealth", timeoutMs: 900_000),
         Execute = _ => RunToolAsync("DISM.exe", "/Online /Cleanup-Image /RestoreHealth", timeoutMs: 1_800_000),
+        // #977: DISM's own progress readout ("[ XX.X% ]") is cleanly parseable - a real progress bar.
+        ExecutePreviewStreaming = (ct, onLine) => RunToolStreamingAsync("DISM.exe", "/Online /Cleanup-Image /ScanHealth", onLine, ct, timeoutMs: 900_000),
+        ExecuteStreaming = (ct, onLine) => RunToolStreamingAsync("DISM.exe", "/Online /Cleanup-Image /RestoreHealth", onLine, ct, timeoutMs: 1_800_000),
+        ParseProgressPercent = ParseDismProgressPercent,
     };
 
     public static RemediationAction NetshResetTcpIp() => new()
@@ -65,9 +84,24 @@ public static class RemediationActionCatalog
         RequiresReboot = true,
         IsUndoable = false,
         NotUndoableReason = "Resets to Windows' default network configuration - whatever custom settings were in place aren't recorded anywhere to restore.",
+        Preconditions = { new RemediationPrecondition { Kind = PreconditionKind.RequiresSystemProtectionOn, Blocking = false } },
         PreviewCommand = null, // no safe read-only equivalent exists for a stack reset
         Execute = _ => RunToolAsync("netsh.exe", "int ip reset", timeoutMs: 30_000),
     };
+
+    /// <summary>#977: DISM's "[ XX.X% ]" progress readout.</summary>
+    private static double? ParseDismProgressPercent(string line)
+    {
+        var m = Regex.Match(line, @"\[\s*=*\s*(\d+(?:\.\d+)?)%\s*=*\s*\]");
+        return m.Success && double.TryParse(m.Groups[1].Value, out var pct) ? pct : null;
+    }
+
+    /// <summary>#977: chkdsk's "NN percent complete" progress lines.</summary>
+    private static double? ParseChkdskProgressPercent(string line)
+    {
+        var m = Regex.Match(line, @"(\d{1,3})\s*percent complete", RegexOptions.IgnoreCase);
+        return m.Success && double.TryParse(m.Groups[1].Value, out var pct) ? pct : null;
+    }
 
     /// <summary>Ties directly to the built-in pack's CPU-hot rules: a power plan stuck with a high
     /// minimum processor state keeps the CPU (and fans) from ever idling down, independent of
@@ -132,7 +166,7 @@ public static class RemediationActionCatalog
     /// PreviewCommand of its own; it already IS the safe/informational variant.</summary>
     public static RemediationAction ChkdskScan(string driveLetter)
     {
-        string drive = driveLetter.TrimEnd(':').Trim().ToUpperInvariant() + ":";
+        string drive = NormalizeDrive(driveLetter);
         return new RemediationAction
         {
             Id = "storage.chkdsk-scan",
@@ -143,10 +177,44 @@ public static class RemediationActionCatalog
             RequiresReboot = false,
             IsUndoable = false,
             NotUndoableReason = "A read-only scan doesn't change anything - there's nothing to undo.",
+            // #974: this app offers the guided chkdsk fix only for NTFS volumes, so the scan
+            // variant is held to the same requirement (a scan against a volume this app would then
+            // refuse to offer /f for isn't a useful first step here).
+            Preconditions = { new RemediationPrecondition { Kind = PreconditionKind.RequiresNtfsVolume, Parameter = drive, Blocking = true } },
             PreviewCommand = null,
             Execute = _ => RunToolAsync("chkdsk.exe", $"{drive} /scan", timeoutMs: 300_000),
+            ExecuteStreaming = (ct, onLine) => RunToolStreamingAsync("chkdsk.exe", $"{drive} /scan", onLine, ct, timeoutMs: 300_000),
+            ParseProgressPercent = ParseChkdskProgressPercent,
         };
     }
+
+    /// <summary>#979: the "/f" repair variant - unlike the read-only scan above, this needs the
+    /// volume offline whenever it's the system/boot drive (chkdsk schedules itself for the next
+    /// boot in that case, same as the classic Task Manager/Disk Management flow) - the review
+    /// dialog's "Queue for next boot" option exists specifically for this action.</summary>
+    public static RemediationAction ChkdskFix(string driveLetter)
+    {
+        string drive = NormalizeDrive(driveLetter);
+        return new RemediationAction
+        {
+            Id = "storage.chkdsk-fix",
+            Title = $"Fix file system errors on {drive}",
+            PlainEnglishDescription = $"Runs chkdsk {drive} /f, which actually repairs file system errors rather than just reporting them. If {drive} is in use (the system drive almost always is), Windows can't lock it live - queue this for next boot instead of running it now.",
+            Command = $"chkdsk {drive} /f",
+            RiskLevel = RemediationRiskLevel.Medium,
+            RequiresReboot = false,
+            IsUndoable = false,
+            NotUndoableReason = "A file system repair pass doesn't record what it changed - there's nothing to reverse.",
+            Preconditions = { new RemediationPrecondition { Kind = PreconditionKind.RequiresNtfsVolume, Parameter = drive, Blocking = true } },
+            PreviewCommand = null,
+            SupportsDeferredQueue = true,
+            Execute = _ => RunToolAsync("chkdsk.exe", $"{drive} /f", timeoutMs: 300_000),
+            ExecuteStreaming = (ct, onLine) => RunToolStreamingAsync("chkdsk.exe", $"{drive} /f", onLine, ct, timeoutMs: 300_000),
+            ParseProgressPercent = ParseChkdskProgressPercent,
+        };
+    }
+
+    private static string NormalizeDrive(string driveLetter) => driveLetter.TrimEnd(':').Trim().ToUpperInvariant() + ":";
 
     /// <summary>Reuses ServiceControlService.Restart - the same call the Services tab's own
     /// Restart button already makes.</summary>
@@ -162,6 +230,13 @@ public static class RemediationActionCatalog
         NotUndoableReason = "A restart can't be meaningfully undone - the service is simply left running.",
         JournalKind = ChangeKind.ServiceStateChange,
         ServiceName = serviceName,
+        // #974: the service that fired this finding may no longer exist by the time the review
+        // dialog is opened (uninstalled, or the finding is from a stale/reopened past run).
+        Preconditions =
+        {
+            new RemediationPrecondition { Kind = PreconditionKind.RequiresServicePresent, Parameter = serviceName, Blocking = true },
+            new RemediationPrecondition { Kind = PreconditionKind.RequiresSystemProtectionOn, Blocking = false },
+        },
         PreviewCommand = null,
         Execute = _ => Task.Run(() =>
         {
@@ -272,7 +347,13 @@ public static class RemediationActionCatalog
                     break;
                 case "storage.chkdsk-scan":
                     var drive = ExtractDriveFromMessage(issue.Message);
-                    if (drive is not null) result.Add(ChkdskScan(drive));
+                    if (drive is not null)
+                    {
+                        result.Add(ChkdskScan(drive));
+                        // #979: the /f "actually fix it" variant alongside the read-only scan -
+                        // both selectable from the same review dialog's Action combo box.
+                        result.Add(ChkdskFix(drive));
+                    }
                     break;
                 case "services.restart-failed":
                     var failed = services.Services.FirstOrDefault(s => s.HasFailedToStart);
@@ -304,5 +385,70 @@ public static class RemediationActionCatalog
         return exitCode is not null
             ? RemediationRunResult.Ok(output)
             : RemediationRunResult.Fail(string.IsNullOrWhiteSpace(output) ? "Command timed out or failed to start." : output);
+    }
+
+    /// <summary>
+    /// #977: the streaming twin of RunToolAsync/TroubleshootService.RunCapturedAsync - reports each
+    /// stdout/stderr line to `onLine` as it arrives (Process.OutputDataReceived/
+    /// ErrorDataReceived + BeginOutputReadLine, the standard non-deadlocking async-read pattern)
+    /// instead of only returning the full text after the process exits. `ct` is the *user's*
+    /// cancel token (RemediationReviewViewModel's Cancel button) - cancelling it kills the process
+    /// and returns RemediationRunResult.Cancel rather than .Fail, so the review dialog and the
+    /// journal entry it writes can say "cancelled" honestly. A separate internal timeout applies
+    /// regardless of user cancellation, same ceiling every other catalog action already uses.
+    /// </summary>
+    private static async Task<RemediationRunResult> RunToolStreamingAsync(string exe, string args, Action<string> onLine, CancellationToken ct, int timeoutMs)
+    {
+        var psi = new ProcessStartInfo(exe, args)
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+
+        var allOutput = new System.Text.StringBuilder();
+        void HandleLine(string? line)
+        {
+            if (line is null) return;
+            lock (allOutput) allOutput.AppendLine(line);
+            try { onLine(line); } catch { /* a misbehaving UI-side handler must never take the process down */ }
+        }
+
+        using var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
+        process.OutputDataReceived += (_, e) => HandleLine(e.Data);
+        process.ErrorDataReceived += (_, e) => HandleLine(e.Data);
+
+        try
+        {
+            process.Start();
+        }
+        catch (Exception ex)
+        {
+            return RemediationRunResult.Fail($"Couldn't start {exe}: {ex.Message}");
+        }
+
+        process.BeginOutputReadLine();
+        process.BeginErrorReadLine();
+
+        using var timeoutCts = new CancellationTokenSource(timeoutMs);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
+        try
+        {
+            await process.WaitForExitAsync(linked.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            try { process.Kill(entireProcessTree: true); } catch { /* best-effort */ }
+            string soFar;
+            lock (allOutput) soFar = allOutput.ToString();
+            return ct.IsCancellationRequested
+                ? RemediationRunResult.Cancel(soFar)
+                : RemediationRunResult.Fail(soFar + "\n(command timed out)");
+        }
+
+        string finalOutput;
+        lock (allOutput) finalOutput = allOutput.ToString();
+        return process.ExitCode == 0 ? RemediationRunResult.Ok(finalOutput) : RemediationRunResult.Fail(finalOutput);
     }
 }

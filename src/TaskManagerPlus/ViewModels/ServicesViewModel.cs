@@ -142,8 +142,10 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
         }
     }
 
-    private bool CanStart() => !IsBusy && SelectedService is { CanStart: true };
-    private bool CanStop() => !IsBusy && SelectedService is { CanStop: true };
+    // #980: read-only mode disables Start/Stop/Restart (mutating) but leaves everything else on
+    // this tab (Refresh, failure-actions view, start-durations, config baseline/drift) working.
+    private bool CanStart() => !IsBusy && !ReadOnlyModeService.IsReadOnly && SelectedService is { CanStart: true };
+    private bool CanStop() => !IsBusy && !ReadOnlyModeService.IsReadOnly && SelectedService is { CanStop: true };
 
     private bool FilterPredicate(object obj)
     {

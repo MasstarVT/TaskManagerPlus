@@ -183,6 +183,21 @@ public sealed class ThemeViewModel : ObservableObject
         }
     }
 
+    // #980: thin wrapper over the static ReadOnlyModeService - lives here (rather than a new
+    // ViewModel) since SettingsPanel.xaml's DataContext is already ThemeViewModel and every other
+    // one-off app-wide toggle on that panel (CompactRows, AlwaysOnTop via the Window DataContext,
+    // ...) follows the same "small settings-backed property directly on the panel's own VM" shape.
+    public bool IsReadOnlyMode
+    {
+        get => ReadOnlyModeService.IsReadOnly;
+        set
+        {
+            if (ReadOnlyModeService.IsReadOnly == value) return;
+            ReadOnlyModeService.IsReadOnly = value;
+            OnPropertyChanged();
+        }
+    }
+
     // Round 11, #78: dense/compact DataGrid row height - swaps two small resource values
     // (row height, cell padding) the same "mutate the resource dictionary" way ApplyPalette
     // already repaints colors, so every DataGrid across the app (Processes/Services/Startup/...)
