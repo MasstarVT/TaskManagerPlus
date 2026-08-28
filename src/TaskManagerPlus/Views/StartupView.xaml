@@ -366,6 +366,436 @@
                 </StackPanel>
             </Border>
 
+            <!-- #715/#716/#717: Sign-in breakdown - Winlogon notification-subscriber timing,
+                 Group Policy total processing time charted per boot, and the ranked slowest
+                 client-side-extension list. See LogonDiagnosticsService's remarks. -->
+            <Border Margin="0,20,0,0" BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,1,0,0" Padding="0,16,0,0">
+                <StackPanel>
+                    <TextBlock Text="Sign-in breakdown" Style="{StaticResource CardTitle}" Margin="0,0,0,4" />
+                    <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,10"
+                               Text="Who Windows spent time waiting on during the last sign-in: Winlogon notification subscribers (GPClient, Profiles, TermSrv, Sens, ...) plus Group Policy processing time." />
+
+                    <!-- #715 -->
+                    <StackPanel Margin="0,0,0,12">
+                        <StackPanel.Style>
+                            <Style TargetType="StackPanel">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding SignInSubscriberTimings.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </StackPanel.Style>
+                        <TextBlock Text="Winlogon notification subscribers" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                        <ItemsControl ItemsSource="{Binding SignInSubscriberTimings}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,6" Margin="0,0,8,8">
+                                        <TextBlock FontSize="11.5">
+                                            <Run Text="{Binding SubscriberName}" FontWeight="SemiBold" />
+                                            <Run Text=": " /><Run Text="{Binding DurationMs, Converter={StaticResource BootMsToSecondsConverter}}" />
+                                        </TextBlock>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+
+                    <!-- #716 -->
+                    <StackPanel Margin="0,0,0,12">
+                        <StackPanel.Style>
+                            <Style TargetType="StackPanel">
+                                <Style.Triggers>
+                                    <MultiDataTrigger>
+                                        <MultiDataTrigger.Conditions>
+                                            <Condition Binding="{Binding GpComputerPolicyMs.Count}" Value="0" />
+                                            <Condition Binding="{Binding GpUserPolicyMs.Count}" Value="0" />
+                                        </MultiDataTrigger.Conditions>
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </MultiDataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </StackPanel.Style>
+                        <TextBlock Text="Group Policy total processing time (per boot/sign-in)" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                        <lvc:CartesianChart Series="{Binding GroupPolicyProcessingSeries}" XAxes="{Binding GroupPolicyProcessingXAxes}" YAxes="{Binding GroupPolicyProcessingYAxes}"
+                                             Height="120" TooltipPosition="Top" LegendPosition="Bottom" Background="Transparent" />
+                    </StackPanel>
+
+                    <!-- #717 -->
+                    <StackPanel>
+                        <StackPanel.Style>
+                            <Style TargetType="StackPanel">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding SlowestGroupPolicyExtensions.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </StackPanel.Style>
+                        <TextBlock Text="Slowest Group Policy client-side extensions" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                        <ItemsControl ItemsSource="{Binding SlowestGroupPolicyExtensions}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,6" Margin="0,0,0,6">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                                                <TextBlock FontSize="12" FontWeight="SemiBold" Text="{Binding ExtensionName}" />
+                                                <TextBlock FontSize="11" Foreground="{DynamicResource WarningBrush}" Text=" (slow/warned)" Margin="4,0,0,0">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding WasSlowOrWarned}" Value="True">
+                                                                    <Setter Property="Visibility" Value="Visible" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+                                            </StackPanel>
+                                            <TextBlock Grid.Column="1" VerticalAlignment="Center" FontWeight="SemiBold" FontSize="12.5"
+                                                       Text="{Binding ElapsedMs, Converter={StaticResource BootMsToSecondsConverter}}" />
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- #718: synchronous foreground policy audit - read-only, each value explained in
+                 plain language. See SyncForegroundPolicyAudit's remarks. -->
+            <Border Margin="0,20,0,0" BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,1,0,0" Padding="0,16,0,0">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding SyncForegroundAudit}" Value="{x:Null}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Synchronous foreground policy" Style="{StaticResource CardTitle}" Margin="0,0,0,4" />
+                    <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,8"
+                               Text="These policy values, when configured by a domain administrator, force the desktop to wait for policy/scripts to finish before sign-in completes - a classic 'domain PC takes 3 minutes to sign in' cause." />
+                    <Border Background="{DynamicResource DangerMutedBrush}" BorderBrush="{DynamicResource DangerBrush}"
+                            BorderThickness="1" CornerRadius="8" Padding="10,8" Margin="0,0,0,8">
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding SyncForegroundAudit.AnyForcesSynchronousWait}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                        <TextBlock Foreground="{DynamicResource DangerBrush}" FontSize="11.5" TextWrapping="Wrap"
+                                   Text="Quick flag, not a verdict - at least one policy below forces sign-in to wait synchronously. This is often intentional on a domain-managed PC, but is a common cause of a slow sign-in." />
+                    </Border>
+                    <StackPanel Margin="0,0,0,4">
+                        <TextBlock FontSize="12" FontWeight="SemiBold" Text="SyncForegroundPolicy" />
+                        <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Text="{Binding SyncForegroundAudit.SyncForegroundPolicyText}" />
+                    </StackPanel>
+                    <StackPanel Margin="0,8,0,4">
+                        <TextBlock FontSize="12" FontWeight="SemiBold" Text="GpNetworkStartTimeoutPolicyValue" />
+                        <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Text="{Binding SyncForegroundAudit.GpNetworkStartTimeoutText}" />
+                    </StackPanel>
+                    <StackPanel Margin="0,8,0,4">
+                        <TextBlock FontSize="12" FontWeight="SemiBold" Text="RunLogonScriptSync" />
+                        <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Text="{Binding SyncForegroundAudit.RunLogonScriptSyncText}" />
+                    </StackPanel>
+                    <StackPanel Margin="0,8,0,0">
+                        <TextBlock FontSize="12" FontWeight="SemiBold" Text="DelayedDesktopSwitchTimeout" />
+                        <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Text="{Binding SyncForegroundAudit.DelayedDesktopSwitchTimeoutText}" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- #719: logon/startup/logoff/shutdown script inventory, plus the legacy
+                 UserInitMprLogonScript value - each script's existence/last-modified time, with an
+                 unresolvable (configured but missing) path flagged. -->
+            <Border Margin="0,20,0,0" BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,1,0,0" Padding="0,16,0,0">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding LogonScripts.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Logon &amp; startup scripts" Style="{StaticResource CardTitle}" Margin="0,0,0,4" />
+                    <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,10"
+                               Text="Local Group Policy scripts and the legacy per-user logon script value - each runs (or is supposed to run) as part of sign-in." />
+                    <ItemsControl ItemsSource="{Binding LogonScripts}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,8" Margin="0,0,0,6">
+                                    <StackPanel>
+                                        <TextBlock FontSize="12.5" FontWeight="SemiBold">
+                                            <Run Text="{Binding Category}" /><Run Text="  " />
+                                            <Run Text="{Binding StatusText}">
+                                                <Run.Style>
+                                                    <Style TargetType="Run">
+                                                        <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                                        <Setter Property="FontWeight" Value="Normal" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding Exists}" Value="False">
+                                                                <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Run.Style>
+                                            </Run>
+                                        </TextBlock>
+                                        <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap">
+                                            <Run Text="{Binding Path}" />
+                                            <Run Text=" · " /><Run Text="{Binding LastModifiedUtc, StringFormat={}{0:g}, TargetNullValue=Unknown}" />
+                                        </TextBlock>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #720/#721/#722/#723: Profile health - load duration, on-demand size walk, temp/
+                 corrupt profile detection, roaming profile audit, and registry-handle-leak
+                 (slow-logoff) detection, all correlated off the same ProfileList registry scan
+                 and User Profile Service event reads. See ProfileDiagnosticsService's remarks. -->
+            <Border Margin="0,20,0,0" BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,1,0,0" Padding="0,16,0,0">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding ProfileListEntries.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Profile health" Style="{StaticResource CardTitle}" Margin="0,0,0,4" />
+                    <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,10"
+                               Text="Profile load time, every profile Windows knows about on this machine (temp/corrupt/roaming flags), and registry hives still held open by another process after sign-out." />
+
+                    <!-- #720: profile load duration -->
+                    <StackPanel Margin="0,0,0,12">
+                        <StackPanel.Style>
+                            <Style TargetType="StackPanel">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding ProfileLoadTimings.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </StackPanel.Style>
+                        <TextBlock Text="Profile load duration" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                        <ItemsControl ItemsSource="{Binding ProfileLoadTimings}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,6" Margin="0,0,8,8">
+                                        <TextBlock FontSize="11.5">
+                                            <Run Text="{Binding LoadStart, StringFormat={}{0:g}, Mode=OneWay}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                            <Run Text=": " /><Run Text="{Binding DurationMs, Converter={StaticResource BootMsToSecondsConverter}}" FontWeight="SemiBold" />
+                                        </TextBlock>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+
+                    <!-- #721/#722: every SID this machine's ProfileList knows about, with a
+                         per-row "Measure size" button (#720) and a flag summary
+                         (.bak/state/refcount/missing-path/roaming). -->
+                    <ItemsControl ItemsSource="{Binding ProfileListEntries}" Margin="0,0,0,12">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border CornerRadius="6" Padding="10,8" Margin="0,0,0,6">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Setter Property="Background" Value="{DynamicResource BgElevatedBrush}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding LooksLikeTempOrCorrupt}" Value="True">
+                                                    <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
+                                    <StackPanel>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" FontSize="12" TextTrimming="CharacterEllipsis">
+                                                <Run Text="{Binding ProfileImagePath, TargetNullValue=(unknown path)}" FontWeight="SemiBold" />
+                                                <Run Text=" — " /><Run Text="{Binding Sid}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                            </TextBlock>
+                                            <Button Grid.Column="1" Padding="8,2" FontSize="11" Margin="8,0,0,0"
+                                                    Command="{Binding DataContext.MeasureProfileSizeCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                    CommandParameter="{Binding}">
+                                                <TextBlock>
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock">
+                                                            <Setter Property="Text" Value="Measure size" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding IsMeasuringSize}" Value="True">
+                                                                    <Setter Property="Text" Value="Measuring..." />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+                                            </Button>
+                                        </Grid>
+                                        <TextBlock FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding LooksLikeTempOrCorrupt}" Value="True">
+                                                            <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                            <Run Text="{Binding FlagSummary}" />
+                                        </TextBlock>
+                                        <TextBlock FontSize="11" TextWrapping="Wrap" Margin="0,2,0,0" Foreground="{DynamicResource TextSecondaryBrush}">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding SizeInfo}" Value="{x:Null}">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                            <Run Text="{Binding SizeInfo.SummaryText}" />
+                                        </TextBlock>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <!-- #722: roaming-profile-only subset - collapses entirely on a machine with
+                         no roaming profiles configured. -->
+                    <StackPanel Margin="0,0,0,12">
+                        <StackPanel.Style>
+                            <Style TargetType="StackPanel">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding RoamingProfiles.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </StackPanel.Style>
+                        <TextBlock Text="Roaming profiles" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                        <ItemsControl ItemsSource="{Binding RoamingProfiles}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,6" Margin="0,0,0,6">
+                                        <TextBlock FontSize="11.5" TextWrapping="Wrap">
+                                            <Run Text="{Binding Sid}" FontWeight="SemiBold" />
+                                            <Run Text=" → " /><Run Text="{Binding CentralProfile}" />
+                                        </TextBlock>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <TextBlock Text="Related roaming-profile events (copy/sync errors) appear below, under &quot;Registry &amp; roaming profile events.&quot;"
+                                   Style="{StaticResource SubStat}" Margin="0,6,0,0" TextWrapping="Wrap" />
+                    </StackPanel>
+
+                    <!-- #721/#722: correlated User Profile Service events (1500/1502/1511/1515
+                         temp/corrupt family, 1509/1521 roaming copy/sync errors). -->
+                    <StackPanel Margin="0,0,0,12">
+                        <StackPanel.Style>
+                            <Style TargetType="StackPanel">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding ProfileServiceEvents.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </StackPanel.Style>
+                        <TextBlock Text="Registry &amp; roaming profile events" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                        <ItemsControl ItemsSource="{Binding ProfileServiceEvents}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,8" Margin="0,0,0,6">
+                                        <StackPanel>
+                                            <TextBlock FontSize="12" FontWeight="SemiBold">
+                                                <Run Text="{Binding CategoryText}" /><Run Text=" (" /><Run Text="{Binding EventId}" /><Run Text=")" />
+                                                <Run Text="  " /><Run Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}" Foreground="{DynamicResource TextSecondaryBrush}" FontWeight="Normal" />
+                                            </TextBlock>
+                                            <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Text="{Binding Message}" />
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+
+                    <!-- #723: registry-handle-leak / slow-logoff detection (event 1530), each
+                         offending process name cross-linked to the Processes tab. -->
+                    <StackPanel>
+                        <StackPanel.Style>
+                            <Style TargetType="StackPanel">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding RegistryHandleLeaks.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </StackPanel.Style>
+                        <TextBlock Text="Registry handle leaks (slow sign-out/shutdown)" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                        <ItemsControl ItemsSource="{Binding RegistryHandleLeaks}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="{DynamicResource DangerMutedBrush}" BorderBrush="{DynamicResource DangerBrush}" BorderThickness="1"
+                                            CornerRadius="6" Padding="10,8" Margin="0,0,0,6">
+                                        <StackPanel>
+                                            <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}" />
+                                            <TextBlock FontSize="11.5" TextWrapping="Wrap" Foreground="{DynamicResource DangerBrush}" Margin="0,2,0,6" Text="{Binding Message}" />
+                                            <ItemsControl ItemsSource="{Binding LeakedProcessNames}">
+                                                <ItemsControl.ItemsPanel>
+                                                    <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                                                </ItemsControl.ItemsPanel>
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <Button Content="{Binding}" Tag="{Binding}" Padding="8,3" FontSize="11" Margin="0,0,6,6"
+                                                                Click="ViewLeakedProcessInProcesses_Click"
+                                                                ToolTip="View this process on the Processes tab" />
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
             <!-- #708: boot-start/system-start driver and service load failures (Service Control
                  Manager 7026/7000/7001) - cross-linked to the Services tab's driver list. Collapsed
                  when nothing failed to load this boot (the common case). -->

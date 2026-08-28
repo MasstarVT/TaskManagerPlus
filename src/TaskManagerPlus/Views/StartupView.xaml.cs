@@ -31,4 +31,17 @@ public partial class StartupView : UserControl
         if (Window.GetWindow(this) is MainWindow window)
             window.SelectTabByName("Stability");
     }
+
+    /// <summary>#723: cross-link from a registry-handle-leak entry's offending process name over
+    /// to the Processes tab, filtered to that name - same SelectTabByName mechanism as
+    /// ViewDriversInServices_Click above, plus setting ProcessesViewModel.FilterText (the same
+    /// property its own search box binds to) so the leaked process is easy to find rather than
+    /// just switching tabs and leaving the user to search manually.</summary>
+    private void ViewLeakedProcessInProcesses_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { Tag: string processName } || string.IsNullOrWhiteSpace(processName)) return;
+        if (Window.GetWindow(this) is not MainWindow window) return;
+        if (window.DataContext is MainViewModel mainViewModel) mainViewModel.Processes.FilterText = processName;
+        window.SelectTabByName("Processes");
+    }
 }

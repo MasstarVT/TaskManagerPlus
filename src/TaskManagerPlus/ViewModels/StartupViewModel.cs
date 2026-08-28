@@ -160,6 +160,55 @@ public sealed class StartupViewModel : ObservableObject
     private BootExecuteInfo? _bootExecuteInfo;
     public BootExecuteInfo? BootExecuteInfo { get => _bootExecuteInfo; private set => SetProperty(ref _bootExecuteInfo, value); }
 
+    #region #715-723 - Sign-in section (logon breakdown, Group Policy, profile health)
+
+    // #715: Winlogon notification-subscriber timing (GPClient/Profiles/TermSrv/Sens, whichever
+    // subscribers this boot's sign-in actually notified) - see LogonDiagnosticsService.ReadSubscriberTimings.
+    public ObservableCollection<LogonSubscriberTiming> SignInSubscriberTimings { get; } = new();
+
+    // #716: Group Policy total processing time per boot (computer 8000 / user 8001), charted
+    // alongside the boot-time trend above using the same LineSeries-pair-per-collection shape.
+    public ObservableCollection<double> GpComputerPolicyMs { get; } = new();
+    public ObservableCollection<double> GpUserPolicyMs { get; } = new();
+    private readonly LineSeries<double> _gpComputerPolicyLine;
+    private readonly LineSeries<double> _gpUserPolicyLine;
+    public ISeries[] GroupPolicyProcessingSeries { get; }
+    public Axis[] GroupPolicyProcessingXAxes { get; }
+    public Axis[] GroupPolicyProcessingYAxes { get; }
+
+    // #717: slowest Group Policy client-side extensions (Drive Maps, Scripts, Folder Redirection,
+    // Registry, ...) ranked under the chart above - see LogonDiagnosticsService.ReadSlowestExtensions.
+    public ObservableCollection<GroupPolicyCseEntry> SlowestGroupPolicyExtensions { get; } = new();
+
+    // #718: synchronous foreground policy audit - read-only, see SyncForegroundPolicyAudit's remarks.
+    private SyncForegroundPolicyAudit? _syncForegroundAudit;
+    public SyncForegroundPolicyAudit? SyncForegroundAudit { get => _syncForegroundAudit; private set => SetProperty(ref _syncForegroundAudit, value); }
+
+    // #719: logon/startup/logoff/shutdown script inventory, plus the legacy UserInitMprLogonScript value.
+    public ObservableCollection<LogonScriptInfo> LogonScripts { get; } = new();
+
+    // #720: profile load duration per sign-in (event 1/2 pairing) - see ProfileDiagnosticsService.ReadProfileLoadTimings.
+    public ObservableCollection<ProfileLoadTiming> ProfileLoadTimings { get; } = new();
+
+    // #721/#722: every SID this machine's ProfileList registry key knows about, plus the subset
+    // with a roaming CentralProfile configured (a separate collection so the roaming card can
+    // collapse entirely on a machine with no roaming profiles - see StartupView.xaml).
+    public ObservableCollection<ProfileListEntry> ProfileListEntries { get; } = new();
+    public ObservableCollection<ProfileListEntry> RoamingProfiles { get; } = new();
+
+    // #721/#722: correlated User Profile Service Application-log events (1500/1502/1511/1515 -
+    // temp/corrupt profile family; 1509/1521 - roaming copy/sync errors).
+    public ObservableCollection<ProfileServiceEventEntry> ProfileServiceEvents { get; } = new();
+
+    // #723: the 1530 "registry file is still in use" subset of the events above, each with the
+    // leaked hive's holding process names parsed out for the Processes-tab cross-link - see
+    // StartupView.xaml.cs's ViewLeakedProcessInProcesses_Click.
+    public ObservableCollection<ProfileServiceEventEntry> RegistryHandleLeaks { get; } = new();
+
+    public AsyncRelayCommand MeasureProfileSizeCommand { get; }
+
+    #endregion
+
     public StartupViewModel()
     {
         _bootHistoryLine = new LineSeries<double>
@@ -173,6 +222,39 @@ public sealed class StartupViewModel : ObservableObject
         BootHistorySeries = new ISeries[] { _bootHistoryLine };
         BootHistoryXAxes = new[] { new Axis { IsVisible = false, ShowSeparatorLines = false } };
         BootHistoryYAxes = new[]
+        {
+            new Axis
+            {
+                MinLimit = 0,
+                Labeler = v => $"{v / 1000.0:0.#}s",
+                LabelsPaint = new SolidColorPaint(new SKColor(0x9A, 0x9A, 0xA2)),
+                SeparatorsPaint = new SolidColorPaint(new SKColor(0x33, 0x33, 0x3A, 160)) { StrokeThickness = 1 },
+            },
+        };
+
+        // #716: computer/user Group Policy processing-time trend, same pair-of-collections/one-
+        // axis-set shape as the boot-time trend above.
+        _gpComputerPolicyLine = new LineSeries<double>
+        {
+            Name = "Computer boot policy",
+            Values = GpComputerPolicyMs,
+            Stroke = new SolidColorPaint(SKColors.MediumPurple, 2f),
+            Fill = null,
+            GeometrySize = 5,
+            LineSmoothness = 0.2,
+        };
+        _gpUserPolicyLine = new LineSeries<double>
+        {
+            Name = "User logon policy",
+            Values = GpUserPolicyMs,
+            Stroke = new SolidColorPaint(SKColors.Orange, 2f),
+            Fill = null,
+            GeometrySize = 5,
+            LineSmoothness = 0.2,
+        };
+        GroupPolicyProcessingSeries = new ISeries[] { _gpComputerPolicyLine, _gpUserPolicyLine };
+        GroupPolicyProcessingXAxes = new[] { new Axis { IsVisible = false, ShowSeparatorLines = false } };
+        GroupPolicyProcessingYAxes = new[]
         {
             new Axis
             {
@@ -203,8 +285,11 @@ public sealed class StartupViewModel : ObservableObject
         RestorePrefetchDefaultsCommand = new AsyncRelayCommand(RestorePrefetchDefaultsAsync);
         EnableDiagnosticsChannelCommand = new AsyncRelayCommand(EnableDiagnosticsChannelAsync, () => BootDataAvailability?.CanOfferEnable == true);
 
+        MeasureProfileSizeCommand = new AsyncRelayCommand(param => MeasureProfileSizeAsync(param as ProfileListEntry));
+
         Refresh();
         LoadBootPerformance();
+        LoadSignInDiagnostics();
         _ = CheckPendingCaptureWorkflowsAsync();
     }
 
@@ -252,6 +337,8 @@ public sealed class StartupViewModel : ObservableObject
         var sepSk = new SKColor(separator.R, separator.G, separator.B, separator.A);
         BootHistoryYAxes[0].LabelsPaint = new SolidColorPaint(textSk);
         BootHistoryYAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
+        GroupPolicyProcessingYAxes[0].LabelsPaint = new SolidColorPaint(textSk);
+        GroupPolicyProcessingYAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
     }
 
     private void LoadBootPerformance()
@@ -321,6 +408,93 @@ public sealed class StartupViewModel : ObservableObject
                 BootDataAvailability = availability;
             });
         });
+    }
+
+    /// <summary>#715-719/#721-723: the Startup tab's "Sign-in" section - Winlogon subscriber
+    /// timing, Group Policy processing time + slowest CSEs, the synchronous-foreground-policy
+    /// audit, the logon/startup script inventory, profile load duration, and the ProfileList/
+    /// User-Profile-Service correlation for temp/corrupt/roaming profiles and registry-handle
+    /// leaks. All event-log/registry/file-system reads, same "expensive, so run once off the UI
+    /// thread at load/refresh time rather than on a tick" tradeoff as LoadBootPerformance above -
+    /// #720's actual size *walk* is the one piece gated behind its own explicit button
+    /// (MeasureProfileSizeCommand), never run automatically here.</summary>
+    private void LoadSignInDiagnostics()
+    {
+        _ = Task.Run(() =>
+        {
+            var subscriberTimings = LogonDiagnosticsService.ReadSubscriberTimings();
+            var gpProcessingTimes = LogonDiagnosticsService.ReadProcessingTimes();
+            var slowestExtensions = LogonDiagnosticsService.ReadSlowestExtensions();
+            var syncForegroundAudit = LogonDiagnosticsService.ReadSyncForegroundPolicyAudit();
+            var logonScripts = LogonDiagnosticsService.ReadLogonScripts();
+
+            var profileLoadTimings = ProfileDiagnosticsService.ReadProfileLoadTimings();
+            var profileListEntries = ProfileDiagnosticsService.ReadProfileListEntries();
+            var profileServiceEvents = ProfileDiagnosticsService.ReadProfileServiceEvents();
+
+            System.Windows.Application.Current?.Dispatcher.Invoke(() =>
+            {
+                SignInSubscriberTimings.Clear();
+                foreach (var t in subscriberTimings) SignInSubscriberTimings.Add(t);
+
+                // #716: split by IsUserPolicy into the two chart series - both share the same
+                // x-index scheme as the boot-time trend (one point per recorded event, oldest
+                // first), not aligned to a shared calendar axis, same "index, not timestamp, is
+                // the x-axis" shape BootHistorySeries already uses.
+                GpComputerPolicyMs.Clear();
+                foreach (var e in gpProcessingTimes.Where(e => !e.IsUserPolicy)) GpComputerPolicyMs.Add(e.ElapsedMs);
+                GpUserPolicyMs.Clear();
+                foreach (var e in gpProcessingTimes.Where(e => e.IsUserPolicy)) GpUserPolicyMs.Add(e.ElapsedMs);
+
+                SlowestGroupPolicyExtensions.Clear();
+                foreach (var e in slowestExtensions) SlowestGroupPolicyExtensions.Add(e);
+
+                SyncForegroundAudit = syncForegroundAudit;
+
+                LogonScripts.Clear();
+                foreach (var s in logonScripts) LogonScripts.Add(s);
+
+                ProfileLoadTimings.Clear();
+                foreach (var p in profileLoadTimings) ProfileLoadTimings.Add(p);
+
+                ProfileListEntries.Clear();
+                foreach (var p in profileListEntries) ProfileListEntries.Add(p);
+
+                // #722: the roaming subset gets its own collection so the card can collapse
+                // entirely on a machine with no roaming profiles configured - see StartupView.xaml.
+                RoamingProfiles.Clear();
+                foreach (var p in profileListEntries.Where(p => p.IsRoaming)) RoamingProfiles.Add(p);
+
+                ProfileServiceEvents.Clear();
+                RegistryHandleLeaks.Clear();
+                foreach (var e in profileServiceEvents)
+                {
+                    ProfileServiceEvents.Add(e);
+                    if (e.EventId == 1530) RegistryHandleLeaks.Add(e);
+                }
+            });
+        });
+    }
+
+    /// <summary>#720: on-demand size/file-count walk for one ProfileList row's ProfileImagePath -
+    /// gated behind the "Measure size" button on that row, never run automatically (a recursive
+    /// walk of an entire profile folder is exactly the kind of file-system walk this app's
+    /// on-demand-vs-polled convention reserves for an explicit click). Result is stored on the row
+    /// itself (ProfileListEntry.SizeInfo) rather than a single ViewModel-wide property, so
+    /// measuring one row doesn't clobber another row's already-measured result.</summary>
+    private async Task MeasureProfileSizeAsync(ProfileListEntry? entry)
+    {
+        if (entry?.ProfileImagePath is not { } path) return;
+
+        entry.IsMeasuringSize = true;
+        try
+        {
+            entry.SizeInfo = await Task.Run(() => ProfileDiagnosticsService.ComputeProfileSize(path));
+        }
+        finally
+        {
+            entry.IsMeasuringSize = false;
+        }
     }
 
     /// <summary>#709/#710: checks whether a boot log capture and/or a boot ETW trace was armed in
