@@ -9,7 +9,8 @@ namespace TaskManagerPlus.Services;
 /// <summary>One active TCP connection, with its owning process (#21 - a themed "netstat -b"). A
 /// mutable class rather than a record - same "annotate after the fact" shape RouteEntry already
 /// uses - since #525's reverse-DNS enrichment fills in <see cref="RemoteHostName"/> after a row has
-/// already been created, sometimes from a memory cache with no fresh I/O at all.</summary>
+/// already been created, sometimes from a memory cache with no fresh I/O at all, and #559's
+/// SYN_SENT-age tracking below does the same across polls rather than at construction time.</summary>
 public sealed class TcpConnectionInfo
 {
     public string LocalAddress { get; init; } = string.Empty;
@@ -20,9 +21,33 @@ public sealed class TcpConnectionInfo
     public int Pid { get; init; }
     public string ProcessName { get; init; } = string.Empty;
 
+    /// <summary>#562: "IPv4" or "IPv6" - which of the two GetExtendedTcpTable calls
+    /// NetworkConnectionsService.Sample now makes produced this row.</summary>
+    public string AddressFamily { get; init; } = "IPv4";
+
     /// <summary>#525: the remote address's PTR name, filled in by ReverseDnsService - null until a
     /// resolution has actually been attempted (cached or fresh), never a guess.</summary>
     public string? RemoteHostName { get; set; }
+
+    // #559: set by SynSentStallTracker.Annotate below - null/false/0 for every connection not
+    // currently in SYN_SENT, or on the very first poll a SYN_SENT connection is ever seen.
+    public DateTime? SynSentSinceUtc { get; set; }
+    public double? SynSentAgeSeconds { get; set; }
+    public bool IsStalledSynSent { get; set; }
+    public string? StalledSynReason { get; set; }
+}
+
+/// <summary>One active UDP "connection" (really just a bound local endpoint - UDP is connectionless,
+/// so there's no remote address/port or state to show, unlike <see cref="TcpConnectionInfo"/>) with
+/// its owning process (#561). Read via GetExtendedUdpTable, the UDP sibling of the GetExtendedTcpTable
+/// call the existing #21 grid already uses.</summary>
+public sealed class UdpConnectionInfo
+{
+    public string LocalAddress { get; init; } = string.Empty;
+    public int LocalPort { get; init; }
+    public int Pid { get; init; }
+    public string ProcessName { get; init; } = string.Empty;
+    public string AddressFamily { get; init; } = "IPv4";
 }
 
 /// <summary>
@@ -37,42 +62,135 @@ public sealed class TcpConnectionInfo
 /// </summary>
 public sealed record NetworkProcessUsage(int Pid, string ProcessName, int ConnectionCount, int EstablishedCount);
 
+/// <summary>#558: one connection state's count in the current sample, plus an "excess" flag/reason
+/// when that count crosses one of the informal thresholds <see cref="NetworkConnectionsService.BuildStateHistogram"/>
+/// applies - TIME_WAIT (port churn), CLOSE_WAIT (a leaking socket, named by owning process), and
+/// SYN_SENT (outbound being blocked) each mean something different, so each gets its own worded
+/// flag rather than one generic "too many" message.</summary>
+public sealed record ConnectionStateHistogramEntry(string State, int Count, bool IsFlagged, string? FlagReason);
+
+/// <summary>#560's one match for a port lookup - which table it came from (TCP/UDP), the owning
+/// process, and (when readable) its image path and start time, the two things eyeballing the plain
+/// connections grid can't answer.</summary>
+public sealed record PortLookupResult(
+    int Port, string Protocol, string AddressFamily, string LocalAddress, string State,
+    int Pid, string ProcessName, string? ProcessPath, DateTime? ProcessStartTime);
+
 /// <summary>
 /// Lists active TCP connections with their owning process. .NET exposes no managed API for the
 /// owning PID of a connection (IPGlobalProperties.GetActiveTcpConnections() doesn't carry one) -
 /// this uses the same GetExtendedTcpTable native call `netstat -b` itself is built on. Same
 /// interop-risk tier as CpuTopologyService's native calls - wrapped to return an empty list on
-/// any failure rather than throwing.
+/// any failure rather than throwing. #561/#562 extend this with the UDP table
+/// (GetExtendedUdpTable) and the IPv6 address family (both calls also accept AF_INET6), reusing
+/// one generic native-table reader for all four family/protocol combinations rather than four
+/// near-duplicate P/Invoke call sites.
 /// </summary>
 public static class NetworkConnectionsService
 {
-    private const int AfInet = 2; // IPv4 only - matches what the Network tab's other diagnostics already scope to.
-    private const int TcpTableOwnerPidAll = 5;
+    private const int AfInet = 2; // AF_INET
+    private const int AfInet6 = 23; // AF_INET6 (#562)
+    private const int TcpTableOwnerPidAll = 5; // TCP_TABLE_OWNER_PID_ALL
+    private const int UdpTableOwnerPid = 1; // UDP_TABLE_OWNER_PID (#561)
 
     public static List<TcpConnectionInfo> Sample()
     {
         var results = new List<TcpConnectionInfo>();
+        var processNames = BuildProcessNameCache();
+
         try
         {
-            var processNames = BuildProcessNameCache();
-            foreach (var row in ReadTcpTable())
+            foreach (var row in ReadTable<MIB_TCPROW_OWNER_PID>(AfInet, TcpTableOwnerPidAll, isUdp: false))
             {
                 results.Add(new TcpConnectionInfo
                 {
+                    AddressFamily = "IPv4",
                     LocalAddress = new IPAddress(row.LocalAddr).ToString(),
                     LocalPort = ExtractPort(row.LocalPort),
                     RemoteAddress = new IPAddress(row.RemoteAddr).ToString(),
                     RemotePort = ExtractPort(row.RemotePort),
                     State = StateName(row.State),
                     Pid = (int)row.OwningPid,
-                    ProcessName = processNames.TryGetValue((int)row.OwningPid, out var name) ? name : "(unknown)",
+                    ProcessName = ResolveProcessName(processNames, (int)row.OwningPid),
                 });
             }
         }
         catch
         {
-            // Best-effort - an empty list just means nothing to show.
+            // Best-effort - an empty IPv4 table just means nothing to show from this family.
         }
+
+        try
+        {
+            foreach (var row in ReadTable<MIB_TCP6ROW_OWNER_PID>(AfInet6, TcpTableOwnerPidAll, isUdp: false))
+            {
+                results.Add(new TcpConnectionInfo
+                {
+                    AddressFamily = "IPv6",
+                    LocalAddress = new IPAddress(row.LocalAddr, row.LocalScopeId).ToString(),
+                    LocalPort = ExtractPort(row.LocalPort),
+                    RemoteAddress = new IPAddress(row.RemoteAddr, row.RemoteScopeId).ToString(),
+                    RemotePort = ExtractPort(row.RemotePort),
+                    State = StateName(row.State),
+                    Pid = (int)row.OwningPid,
+                    ProcessName = ResolveProcessName(processNames, (int)row.OwningPid),
+                });
+            }
+        }
+        catch
+        {
+            // #562: IPv6 can be disabled/unsupported on some machines - degrade to IPv4-only
+            // rather than losing the whole table over one family's failure.
+        }
+
+        return results;
+    }
+
+    /// <summary>#561: the UDP sibling of <see cref="Sample"/> - both address families, same
+    /// per-family-isolated degrade-on-failure shape.</summary>
+    public static List<UdpConnectionInfo> SampleUdp()
+    {
+        var results = new List<UdpConnectionInfo>();
+        var processNames = BuildProcessNameCache();
+
+        try
+        {
+            foreach (var row in ReadTable<MIB_UDPROW_OWNER_PID>(AfInet, UdpTableOwnerPid, isUdp: true))
+            {
+                results.Add(new UdpConnectionInfo
+                {
+                    AddressFamily = "IPv4",
+                    LocalAddress = new IPAddress(row.LocalAddr).ToString(),
+                    LocalPort = ExtractPort(row.LocalPort),
+                    Pid = (int)row.OwningPid,
+                    ProcessName = ResolveProcessName(processNames, (int)row.OwningPid),
+                });
+            }
+        }
+        catch
+        {
+            // Best-effort - an empty IPv4 UDP table just means nothing to show from this family.
+        }
+
+        try
+        {
+            foreach (var row in ReadTable<MIB_UDP6ROW_OWNER_PID>(AfInet6, UdpTableOwnerPid, isUdp: true))
+            {
+                results.Add(new UdpConnectionInfo
+                {
+                    AddressFamily = "IPv6",
+                    LocalAddress = new IPAddress(row.LocalAddr, row.LocalScopeId).ToString(),
+                    LocalPort = ExtractPort(row.LocalPort),
+                    Pid = (int)row.OwningPid,
+                    ProcessName = ResolveProcessName(processNames, (int)row.OwningPid),
+                });
+            }
+        }
+        catch
+        {
+            // #562-adjacent: same "degrade to IPv4-only" tolerance for the UDP table's IPv6 half.
+        }
+
         return results;
     }
 
@@ -86,6 +204,94 @@ public static class NetworkConnectionsService
             .OrderByDescending(u => u.ConnectionCount)
             .ToList();
 
+    // #558: informal "worth a look" thresholds - deliberately low enough to catch a real problem on
+    // an ordinary desktop's connection count, not a tuned production-server baseline. Worded as a
+    // flag with a stated reason, never a hard verdict, matching this app's other pattern-matched
+    // indicators.
+    private const int TimeWaitFlagThreshold = 50;
+    private const int CloseWaitFlagThreshold = 5;
+    private const int SynSentFlagThreshold = 3;
+
+    /// <summary>#558: groups the already-sampled connection list by state, flagging an excess of
+    /// TIME_WAIT (port churn - usually harmless on its own), CLOSE_WAIT (a lingering local socket
+    /// the remote side already closed - the closest thing to a leak signature this table can show,
+    /// named by owning process), or SYN_SENT (outbound connection attempts that never completed -
+    /// worth checking against a firewall/proxy). No extra I/O - purely derived from the connections
+    /// Sample() already returned.</summary>
+    public static List<ConnectionStateHistogramEntry> BuildStateHistogram(IEnumerable<TcpConnectionInfo> connections)
+    {
+        var list = connections.ToList();
+        var entries = new List<ConnectionStateHistogramEntry>();
+
+        foreach (var group in list.GroupBy(c => c.State).OrderByDescending(g => g.Count()))
+        {
+            int count = group.Count();
+            string? reason = group.Key switch
+            {
+                "TIME_WAIT" when count >= TimeWaitFlagThreshold =>
+                    $"{count} connections sitting in TIME_WAIT - usually just rapid connection churn (lots of short-lived connections opening and closing), not a fault by itself.",
+                "CLOSE_WAIT" when count >= CloseWaitFlagThreshold =>
+                    $"{count} connections stuck in CLOSE_WAIT (remote side already closed, local app hasn't) held by {DescribeTopProcesses(list, "CLOSE_WAIT")} - can point at a socket leak in that process.",
+                "SYN_SENT" when count >= SynSentFlagThreshold =>
+                    $"{count} outbound connections stuck in SYN_SENT - can mean a firewall, proxy, or dead route is silently dropping them. See the age column below for how long each has been stuck.",
+                _ => null,
+            };
+            entries.Add(new ConnectionStateHistogramEntry(group.Key, count, reason is not null, reason));
+        }
+
+        return entries;
+    }
+
+    private static string DescribeTopProcesses(List<TcpConnectionInfo> connections, string state) =>
+        string.Join(", ", connections
+            .Where(c => c.State == state)
+            .GroupBy(c => c.ProcessName, StringComparer.OrdinalIgnoreCase)
+            .OrderByDescending(g => g.Count())
+            .Take(3)
+            .Select(g => $"{g.Key} ({g.Count()})"));
+
+    /// <summary>Item #560: "what is using port N" - scans the already-sampled TCP and UDP tables
+    /// (every address family and state, including bare listeners) for a given local port and
+    /// enriches each match with its owning process's image path and start time - the two things
+    /// eyeballing the plain connections grid can't answer. Reading MainModule/StartTime can be
+    /// denied even from this (elevated) app on a handful of protected system processes - degrades
+    /// those two fields to null rather than failing the whole lookup.</summary>
+    public static List<PortLookupResult> FindByPort(int port, IEnumerable<TcpConnectionInfo> tcp, IEnumerable<UdpConnectionInfo> udp)
+    {
+        var results = new List<PortLookupResult>();
+
+        foreach (var c in tcp.Where(c => c.LocalPort == port))
+        {
+            var (path, started) = ReadProcessDetails(c.Pid);
+            results.Add(new PortLookupResult(port, "TCP", c.AddressFamily, c.LocalAddress, c.State, c.Pid, c.ProcessName, path, started));
+        }
+
+        foreach (var u in udp.Where(u => u.LocalPort == port))
+        {
+            var (path, started) = ReadProcessDetails(u.Pid);
+            results.Add(new PortLookupResult(port, "UDP", u.AddressFamily, u.LocalAddress, "(stateless)", u.Pid, u.ProcessName, path, started));
+        }
+
+        return results;
+    }
+
+    private static (string? Path, DateTime? StartTime) ReadProcessDetails(int pid)
+    {
+        try
+        {
+            using var proc = Process.GetProcessById(pid);
+            string? path = null;
+            try { path = proc.MainModule?.FileName; } catch { /* access denied on a protected process - leave null, never guess */ }
+            DateTime? start = null;
+            try { start = proc.StartTime; } catch { /* same as above */ }
+            return (path, start);
+        }
+        catch
+        {
+            return (null, null); // process exited between the table sample and this lookup
+        }
+    }
+
     private static Dictionary<int, string> BuildProcessNameCache()
     {
         var dict = new Dictionary<int, string>();
@@ -97,8 +303,12 @@ public static class NetworkConnectionsService
         return dict;
     }
 
+    private static string ResolveProcessName(Dictionary<int, string> processNames, int pid) =>
+        processNames.TryGetValue(pid, out var name) ? name : "(unknown)";
+
     /// <summary>The native struct's port fields are a DWORD but only the low 16 bits are used, in
-    /// network (big-endian) byte order - swap to host order to get the real port number.</summary>
+    /// network (big-endian) byte order - swap to host order to get the real port number. Shared by
+    /// every TCP/UDP, v4/v6 row type below - the port encoding is identical across all four.</summary>
     private static int ExtractPort(uint raw) => IPAddress.NetworkToHostOrder((short)(ushort)raw) & 0xFFFF;
 
     private static string StateName(uint state) => state switch
@@ -109,24 +319,28 @@ public static class NetworkConnectionsService
         _ => "UNKNOWN",
     };
 
-    private static List<MIB_TCPROW_OWNER_PID> ReadTcpTable()
+    /// <summary>One generic native-table reader shared by TCP v4/v6 (GetExtendedTcpTable) and UDP
+    /// v4/v6 (GetExtendedUdpTable, #561) - all four calls share the same "ask for the size, allocate,
+    /// call again, read a 4-byte row count then a packed row array" shape, differing only in which
+    /// native function to call, the address family, the table class, and the row struct layout.</summary>
+    private static List<T> ReadTable<T>(int family, int tableClass, bool isUdp) where T : struct
     {
-        var list = new List<MIB_TCPROW_OWNER_PID>();
+        var list = new List<T>();
         int bufSize = 0;
-        GetExtendedTcpTable(IntPtr.Zero, ref bufSize, sort: true, AfInet, TcpTableOwnerPidAll, 0);
+        NativeGetTable(isUdp, IntPtr.Zero, ref bufSize, family, tableClass);
         if (bufSize <= 0) return list;
 
         IntPtr buffer = Marshal.AllocHGlobal(bufSize);
         try
         {
-            uint result = GetExtendedTcpTable(buffer, ref bufSize, sort: true, AfInet, TcpTableOwnerPidAll, 0);
+            uint result = NativeGetTable(isUdp, buffer, ref bufSize, family, tableClass);
             if (result != 0) return list; // non-zero = a Win32 error, not NO_ERROR
 
             int numEntries = Marshal.ReadInt32(buffer);
             IntPtr rowPtr = IntPtr.Add(buffer, 4);
-            int rowSize = Marshal.SizeOf<MIB_TCPROW_OWNER_PID>();
+            int rowSize = Marshal.SizeOf<T>();
             for (int i = 0; i < numEntries; i++)
-                list.Add(Marshal.PtrToStructure<MIB_TCPROW_OWNER_PID>(IntPtr.Add(rowPtr, i * rowSize)));
+                list.Add(Marshal.PtrToStructure<T>(IntPtr.Add(rowPtr, i * rowSize)));
         }
         finally
         {
@@ -135,8 +349,15 @@ public static class NetworkConnectionsService
         return list;
     }
 
+    private static uint NativeGetTable(bool isUdp, IntPtr buffer, ref int bufSize, int family, int tableClass) => isUdp
+        ? GetExtendedUdpTable(buffer, ref bufSize, sort: true, family, tableClass, 0)
+        : GetExtendedTcpTable(buffer, ref bufSize, sort: true, family, tableClass, 0);
+
     [DllImport("iphlpapi.dll", SetLastError = true)]
     private static extern uint GetExtendedTcpTable(IntPtr pTcpTable, ref int dwOutBufLen, bool sort, int ipVersion, int tableClass, uint reserved);
+
+    [DllImport("iphlpapi.dll", SetLastError = true)]
+    private static extern uint GetExtendedUdpTable(IntPtr pUdpTable, ref int dwOutBufLen, bool sort, int ipVersion, int tableClass, uint reserved);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct MIB_TCPROW_OWNER_PID
@@ -147,6 +368,94 @@ public static class NetworkConnectionsService
         public uint RemoteAddr;
         public uint RemotePort;
         public uint OwningPid;
+    }
+
+    /// <summary>#562: MIB_TCP6ROW_OWNER_PID - the IPv6 sibling of <see cref="MIB_TCPROW_OWNER_PID"/>,
+    /// 16-byte addresses plus a scope ID instead of a bare DWORD.</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MIB_TCP6ROW_OWNER_PID
+    {
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 16)] public byte[] LocalAddr;
+        public uint LocalScopeId;
+        public uint LocalPort;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 16)] public byte[] RemoteAddr;
+        public uint RemoteScopeId;
+        public uint RemotePort;
+        public uint State;
+        public uint OwningPid;
+    }
+
+    /// <summary>#561: MIB_UDPROW_OWNER_PID - no state, no remote endpoint (UDP is connectionless).</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MIB_UDPROW_OWNER_PID
+    {
+        public uint LocalAddr;
+        public uint LocalPort;
+        public uint OwningPid;
+    }
+
+    /// <summary>#561/#562 combined: MIB_UDP6ROW_OWNER_PID.</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MIB_UDP6ROW_OWNER_PID
+    {
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 16)] public byte[] LocalAddr;
+        public uint LocalScopeId;
+        public uint LocalPort;
+        public uint OwningPid;
+    }
+}
+
+/// <summary>
+/// Item #559: tracks how long each connection has sat continuously in SYN_SENT across successive
+/// <see cref="NetworkConnectionsService.Sample"/> calls, and flags any that persist past
+/// <see cref="StallThresholdSeconds"/> - "the precise signature of a firewall, proxy or dead route
+/// silently swallowing outbound traffic" this item calls out. An instance (not static) class
+/// because it has to remember each connection's first-seen timestamp between calls, the same
+/// "instantiate once, call every tick" shape AdapterErrorCounterService already uses for its own
+/// per-cycle state. Since the connections grid refreshes on this tab's existing 15s tick rather than
+/// a fast per-second poll, the recorded age can lag true onset by up to one interval - the UI caption
+/// says so rather than claiming second-level precision.
+/// </summary>
+public sealed class SynSentStallTracker
+{
+    private const double StallThresholdSeconds = 5.0;
+
+    private readonly Dictionary<string, DateTime> _firstSeenUtc = new(StringComparer.Ordinal);
+
+    /// <summary>Mutates every SYN_SENT row in <paramref name="connections"/> in place (see
+    /// TcpConnectionInfo's remarks for why this class's fields are mutable) and forgets any
+    /// previously-tracked connection that isn't SYN_SENT (or isn't present at all) this time - a
+    /// connection that completed, was reset, or simply aged out of the table starts fresh if it
+    /// ever shows SYN_SENT again later.</summary>
+    public void Annotate(IEnumerable<TcpConnectionInfo> connections)
+    {
+        var now = DateTime.UtcNow;
+        var seenKeys = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var c in connections)
+        {
+            if (c.State != "SYN_SENT") continue;
+
+            string key = $"{c.Pid}|{c.AddressFamily}|{c.LocalAddress}:{c.LocalPort}|{c.RemoteAddress}:{c.RemotePort}";
+            seenKeys.Add(key);
+
+            if (!_firstSeenUtc.TryGetValue(key, out var firstSeen))
+            {
+                firstSeen = now;
+                _firstSeenUtc[key] = firstSeen;
+            }
+
+            double age = (now - firstSeen).TotalSeconds;
+            c.SynSentSinceUtc = firstSeen;
+            c.SynSentAgeSeconds = age;
+            c.IsStalledSynSent = age >= StallThresholdSeconds;
+            c.StalledSynReason = c.IsStalledSynSent
+                ? $"Stuck in SYN_SENT for {age:0}s - {c.ProcessName} (PID {c.Pid}) trying to reach {c.RemoteAddress}:{c.RemotePort}. Often a firewall, proxy, or dead route silently dropping the handshake."
+                : null;
+        }
+
+        foreach (var stale in _firstSeenUtc.Keys.Where(k => !seenKeys.Contains(k)).ToList())
+            _firstSeenUtc.Remove(stale);
     }
 }
 

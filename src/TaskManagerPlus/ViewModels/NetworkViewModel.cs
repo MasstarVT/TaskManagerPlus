@@ -746,7 +746,7 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
     // #552: machine-wide TCP offload settings - read once at startup, like AdapterDrivers, since
     // these don't change without an explicit `netsh int tcp set global` command this app itself
     // never issues.
-    private TcpGlobalSettings _tcpGlobalSettings = new("Unknown", "Unknown", "Unknown");
+    private TcpGlobalSettings _tcpGlobalSettings = new("Unknown", "Unknown", "Unknown", "Unknown", "Unknown", "Unknown", "Unknown");
     public TcpGlobalSettings TcpGlobalSettings { get => _tcpGlobalSettings; private set => SetProperty(ref _tcpGlobalSettings, value); }
 
     // #548: on-demand link-flap/reset scan - its own lookback window, mirroring #524/#530/#541's
@@ -781,6 +781,95 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
     // (same ShellExecute-a-known-tool shape #46's OpenHostsFileCommand already uses) rather than
     // leaving the guidance text as a dead end.
     public RelayCommand OpenDeviceManagerCommand { get; }
+
+    // ---- suggestions.md #557-565: TCP stack, connections and ports ------------------------------
+    // Two new cards - "TCP health" (#557, #565) and "Ports" (#563, #564) - plus four extensions to
+    // the existing #21 connections grid (#558 state histogram, #559 stalled-SYN age column, #560
+    // port lookup, #561/#562 UDP + IPv6 rows). All of it rides the same 15s CheckConnectivityAsync
+    // tick the grid itself already refreshes on (per CLAUDE.md's on-demand-vs-polled guidance, these
+    // are all cheap reads on top of data already sampled) except #563/#565, which are read once at
+    // startup plus an explicit Refresh button, like #552's own one-time TcpGlobalSettings read above.
+
+    // #557: TCP-layer retransmit/reset health (IPv4 + IPv6) - see TcpHealthCounterService's remarks.
+    private readonly TcpHealthCounterService _tcpHealthCounters = new();
+    private const double RetransmitRateFlagPercent = 2.0;
+
+    public ObservableCollection<TcpHealthSample> TcpHealthSamples { get; } = new();
+
+    // #557: IPv4 retransmit-rate-as-percent-of-segments-sent history - glow/core paired like every
+    // other chart in the app, reusing LatencyLineOf/NewLatencyHistory below rather than duplicating
+    // the pairing helper for one more chart. IPv6 isn't separately charted (most machines carry
+    // little-to-no IPv6 TCP traffic today), but its own numbers are still in TcpHealthSamples above.
+    public ObservableCollection<double> TcpRetransmitRateHistory { get; } = NewLatencyHistory();
+    private readonly LineSeries<double> _tcpRetransmitGlow, _tcpRetransmitCore;
+    public ISeries[] TcpRetransmitSeries { get; }
+    public Axis[] TcpRetransmitPercentYAxes { get; }
+
+    private string _tcpHealthStatusText = "Not sampled yet.";
+    public string TcpHealthStatusText { get => _tcpHealthStatusText; private set => SetProperty(ref _tcpHealthStatusText, value); }
+
+    // #558: connection-state histogram, derived entirely from the connections table already sampled
+    // below - no extra I/O.
+    public ObservableCollection<ConnectionStateHistogramEntry> ConnectionStateHistogram { get; } = new();
+
+    // #559: stalled-SYN_SENT tracker + its one combined status line - the per-connection age itself
+    // lives on each TcpConnectionInfo row in Connections (see that class's remarks), refreshed via
+    // SynSentStallTracker.Annotate before Connections is rebuilt each tick.
+    private readonly SynSentStallTracker _synSentTracker = new();
+
+    private string _stalledSynStatusText = "No SYN_SENT connection has been stuck long enough to flag.";
+    public string StalledSynStatusText { get => _stalledSynStatusText; private set => SetProperty(ref _stalledSynStatusText, value); }
+
+    // #560: "what is using port N" - looks up whatever's currently in Connections/UdpConnections
+    // below (no fresh sample of its own), so results always reflect the tables as of the last 15s
+    // tick, not a separate live query.
+    private string _portLookupQuery = string.Empty;
+    public string PortLookupQuery { get => _portLookupQuery; set => SetProperty(ref _portLookupQuery, value); }
+
+    public ObservableCollection<PortLookupResult> PortLookupResults { get; } = new();
+
+    private bool _isLookingUpPort;
+    public bool IsLookingUpPort { get => _isLookingUpPort; private set => SetProperty(ref _isLookingUpPort, value); }
+
+    private string _portLookupStatusText = "Enter a port number above and click Look up.";
+    public string PortLookupStatusText { get => _portLookupStatusText; private set => SetProperty(ref _portLookupStatusText, value); }
+
+    public AsyncRelayCommand LookupPortCommand { get; }
+
+    /// <summary>#560's "End process" action - reuses ProcessMonitorService.EndProcess, the same
+    /// disruptive action ProcessesViewModel's own "End process" button already calls, behind the
+    /// same MessageBox.Show confirm-first pattern used throughout this ViewModel.</summary>
+    public AsyncRelayCommand EndPortLookupProcessCommand { get; }
+
+    // #561: UDP table alongside the existing TCP-only Connections grid - its own small
+    // TCP/UDP toggle rather than merging two differently-shaped row types into one DataGrid (UDP
+    // has no remote endpoint or state to show).
+    public ObservableCollection<UdpConnectionInfo> UdpConnections { get; } = new();
+
+    private bool _showUdpConnections;
+    public bool ShowUdpConnections { get => _showUdpConnections; private set => SetProperty(ref _showUdpConnections, value); }
+
+    public RelayCommand ShowTcpConnectionsCommand { get; }
+    public RelayCommand ShowUdpConnectionsCommand { get; }
+
+    // #563: port exclusion ranges + the TCP dynamic port range, plus which excluded ranges overlap
+    // it - read once at startup and from an explicit Refresh button, like #513's routing table.
+    private PortReservationInfo _portReservation = PortReservationInfo.Empty;
+    public PortReservationInfo PortReservation { get => _portReservation; private set => SetProperty(ref _portReservation, value); }
+
+    private bool _isLoadingPortReservation;
+    public bool IsLoadingPortReservation { get => _isLoadingPortReservation; private set => SetProperty(ref _isLoadingPortReservation, value); }
+
+    private string _portReservationStatusText = "Not loaded yet.";
+    public string PortReservationStatusText { get => _portReservationStatusText; private set => SetProperty(ref _portReservationStatusText, value); }
+
+    public AsyncRelayCommand RefreshPortReservationCommand { get; }
+
+    // #564: ephemeral-port utilization - recomputed (no extra I/O) whenever either input changes,
+    // i.e. after every connections refresh and after every #563 reload. Null until a dynamic port
+    // range has actually been read once.
+    private PortExhaustionInfo? _portExhaustion;
+    public PortExhaustionInfo? PortExhaustion { get => _portExhaustion; private set => SetProperty(ref _portExhaustion, value); }
 
     public NetworkViewModel(PerformanceViewModel performance)
     {
@@ -984,12 +1073,35 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         RestartAdapterCommand = new RelayCommand(RestartSelectedAdapter, () => !string.IsNullOrWhiteSpace(SelectedHealthAdapterName) && !IsRestartingAdapter);
         OpenDeviceManagerCommand = new RelayCommand(_ => OpenDeviceManager());
 
-        // #552: one-time machine-wide TCP offload read - see TcpGlobalSettings' remarks.
+        // #552/#565: one-time machine-wide TCP offload/tuning read - see TcpGlobalSettings' remarks.
         _ = Task.Run(async () =>
         {
             var tcp = await TcpGlobalSettingsService.ReadAsync();
             System.Windows.Application.Current?.Dispatcher.Invoke(() => TcpGlobalSettings = tcp);
         });
+
+        // #557-565: TCP health / Ports card wiring.
+        (_tcpRetransmitGlow, _tcpRetransmitCore) = LatencyLineOf(TcpRetransmitRateHistory, SKColors.OrangeRed, "Retransmit rate (IPv4)");
+        TcpRetransmitSeries = new ISeries[] { _tcpRetransmitGlow, _tcpRetransmitCore };
+        TcpRetransmitPercentYAxes = new[]
+        {
+            new Axis
+            {
+                MinLimit = 0,
+                Labeler = v => $"{v:0.0}%",
+                LabelsPaint = LatencyAxisTextPaint(),
+                SeparatorsPaint = LatencyAxisSeparatorPaint(),
+            },
+        };
+
+        LookupPortCommand = new AsyncRelayCommand(LookupPortAsync, () => !IsLookingUpPort && !string.IsNullOrWhiteSpace(PortLookupQuery));
+        EndPortLookupProcessCommand = new AsyncRelayCommand(param => EndPortLookupProcessAsync(param as PortLookupResult), _ => !IsLookingUpPort);
+
+        ShowTcpConnectionsCommand = new RelayCommand(_ => ShowUdpConnections = false);
+        ShowUdpConnectionsCommand = new RelayCommand(_ => ShowUdpConnections = true);
+
+        RefreshPortReservationCommand = new AsyncRelayCommand(RefreshPortReservationAsync, () => !IsLoadingPortReservation);
+        _ = RefreshPortReservationAsync();
     }
 
     private async Task CheckConnectivityAsync()
@@ -1051,9 +1163,51 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
             // I/O, so this is safe on every 15s refresh even though the fresh names themselves
             // only come from an explicit user action.
             ReverseDnsService.ApplyCached(connections);
+            // #559: annotate SYN_SENT rows with how long they've persisted across polls, before
+            // the snapshot is sorted and handed to the grid below.
+            _synSentTracker.Annotate(connections);
             Connections.Clear();
             foreach (var c in connections.OrderByDescending(c => c.State == "ESTABLISHED").ThenBy(c => c.ProcessName, StringComparer.OrdinalIgnoreCase))
                 Connections.Add(c);
+
+            // #558: state histogram - derived entirely from the sample just taken, no extra I/O.
+            var histogram = NetworkConnectionsService.BuildStateHistogram(connections);
+            ConnectionStateHistogram.Clear();
+            foreach (var h in histogram) ConnectionStateHistogram.Add(h);
+
+            // #559: one combined status line for whatever's currently stuck.
+            var stalled = connections.Where(c => c.IsStalledSynSent).ToList();
+            StalledSynStatusText = stalled.Count == 0
+                ? "No SYN_SENT connection has been stuck long enough to flag."
+                : $"{stalled.Count} outbound connection(s) stuck in SYN_SENT for {stalled.Min(c => c.SynSentAgeSeconds).GetValueOrDefault():0}s+ - " +
+                  string.Join(", ", stalled.Take(3).Select(c => $"{c.ProcessName} → {c.RemoteAddress}:{c.RemotePort}")) +
+                  (stalled.Count > 3 ? $", and {stalled.Count - 3} more" : string.Empty) +
+                  ". Often a firewall, proxy, or dead route silently swallowing outbound traffic.";
+
+            // #561: UDP table alongside the existing TCP-only table above.
+            var udpConnections = await Task.Run(() => NetworkConnectionsService.SampleUdp());
+            UdpConnections.Clear();
+            foreach (var u2 in udpConnections.OrderBy(u2 => u2.ProcessName, StringComparer.OrdinalIgnoreCase).ThenBy(u2 => u2.LocalPort))
+                UdpConnections.Add(u2);
+
+            // #557: TCP-layer retransmit/reset health (IPv4 + IPv6).
+            var tcpHealth = await Task.Run(() => _tcpHealthCounters.Sample());
+            TcpHealthSamples.Clear();
+            foreach (var h in tcpHealth) TcpHealthSamples.Add(h);
+
+            var ipv4Health = tcpHealth.FirstOrDefault(h => h.AddressFamily == "IPv4");
+            double retransmitPercent = ipv4Health is { IsAvailable: true } ? ipv4Health.RetransmitRatePercent : 0;
+            TcpRetransmitRateHistory.Add(retransmitPercent);
+            if (TcpRetransmitRateHistory.Count > LatencyHistoryLength) TcpRetransmitRateHistory.RemoveAt(0);
+            TcpHealthStatusText = ipv4Health is not { IsAvailable: true }
+                ? "TCP health counters unavailable on this machine."
+                : retransmitPercent > RetransmitRateFlagPercent
+                    ? $"IPv4 retransmit rate {retransmitPercent:0.0}% of segments sent - above a couple of percent is the cleanest objective evidence of a lossy path."
+                    : $"IPv4 retransmit rate {retransmitPercent:0.0}% of segments sent - within normal range.";
+
+            // #564: recompute now that the TCP/UDP tables above are fresh - a no-op (stays null)
+            // until #563 has read a dynamic port range at least once.
+            RecomputePortExhaustion();
 
             var topProcesses = NetworkConnectionsService.SummarizeByProcess(connections);
             TopNetworkProcesses.Clear();
@@ -1836,6 +1990,104 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
             IsResolvingConnectionNames = false;
         }
     }
+
+    // ---- #557-565 helpers ---------------------------------------------------------------------
+
+    /// <summary>#560: looks up whatever's currently in Connections/UdpConnections (no fresh
+    /// network sample of its own - see this property group's remarks) for the entered port,
+    /// enriching each match with its process path/start time off the UI thread since reading
+    /// MainModule can briefly block.</summary>
+    private async Task LookupPortAsync()
+    {
+        if (IsLookingUpPort) return;
+
+        if (!int.TryParse(PortLookupQuery.Trim(), out int port) || port is <= 0 or > 65535)
+        {
+            PortLookupResults.Clear();
+            PortLookupStatusText = "Enter a valid port number (1-65535).";
+            return;
+        }
+
+        IsLookingUpPort = true;
+        PortLookupStatusText = "Looking up...";
+        try
+        {
+            var tcpSnapshot = Connections.ToList();
+            var udpSnapshot = UdpConnections.ToList();
+            var results = await Task.Run(() => NetworkConnectionsService.FindByPort(port, tcpSnapshot, udpSnapshot));
+
+            PortLookupResults.Clear();
+            foreach (var r in results) PortLookupResults.Add(r);
+
+            PortLookupStatusText = results.Count == 0
+                ? $"Nothing is using port {port} right now (checked TCP + UDP, both address families)."
+                : $"{results.Count} match(es) for port {port}.";
+        }
+        catch (Exception ex)
+        {
+            PortLookupStatusText = $"Lookup failed: {ex.Message}";
+        }
+        finally
+        {
+            IsLookingUpPort = false;
+        }
+    }
+
+    /// <summary>#560's "End process" action - same MessageBox.Show confirm-first pattern
+    /// ProcessesViewModel.EndSelected/ReleaseSelectedAdapter already use for their own disruptive
+    /// actions, reusing ProcessMonitorService.EndProcess rather than a second kill implementation.</summary>
+    private async Task EndPortLookupProcessAsync(PortLookupResult? target)
+    {
+        if (target is null) return;
+
+        var confirm = MessageBox.Show(
+            $"End \"{target.ProcessName}\" (PID {target.Pid})?\nAny unsaved data in this process will be lost.",
+            "End process", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        var (success, error) = ProcessMonitorService.EndProcess(target.Pid);
+        PortLookupStatusText = success
+            ? $"Ended {target.ProcessName} (PID {target.Pid})."
+            : $"Couldn't end {target.ProcessName}: {error}";
+
+        if (success) await LookupPortAsync();
+    }
+
+    /// <summary>#563: reloads the excluded/dynamic port ranges via netsh, then recomputes #564's
+    /// exhaustion figure (its dynamic-range input may have just changed).</summary>
+    private async Task RefreshPortReservationAsync()
+    {
+        if (IsLoadingPortReservation) return;
+        IsLoadingPortReservation = true;
+        PortReservationStatusText = "Reading port ranges (netsh)...";
+        try
+        {
+            PortReservation = await PortReservationService.ReadAsync();
+            PortReservationStatusText = !PortReservation.CommandsSucceeded
+                ? "Couldn't read port ranges from netsh."
+                : PortReservation.OverlappingExclusions.Count == 0
+                    ? $"{PortReservation.ExcludedRanges.Count} excluded range(s)" +
+                      (PortReservation.DynamicRange is { } r ? $"; dynamic port range {r.StartPort}-{r.EndPort}." : ".") +
+                      " No overlap with the dynamic range found."
+                    : $"{PortReservation.OverlappingExclusions.Count} excluded range(s) overlap the dynamic port range - " +
+                      "a common Hyper-V/WinNAT reservation bug that can make a port look free in netstat while an app still can't bind it.";
+        }
+        catch (Exception ex)
+        {
+            PortReservationStatusText = $"Failed: {ex.Message}";
+        }
+        finally
+        {
+            IsLoadingPortReservation = false;
+            RecomputePortExhaustion();
+        }
+    }
+
+    /// <summary>#564: recomputes the ephemeral-port utilization figure from whatever's currently in
+    /// Connections/UdpConnections and PortReservation.DynamicRange - no I/O, safe to call after
+    /// either input changes.</summary>
+    private void RecomputePortExhaustion() =>
+        PortExhaustion = PortReservationService.ComputeExhaustion(Connections, UdpConnections, PortReservation.DynamicRange);
 
     // ---- #517-526 helpers -------------------------------------------------------------------
 

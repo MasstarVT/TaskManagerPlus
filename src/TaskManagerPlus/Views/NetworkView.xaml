@@ -2090,7 +2090,122 @@
                 </StackPanel>
             </Border>
 
-            <!-- #21: active TCP connections with owning process - see NetworkConnectionsService. -->
+            <!-- suggestions.md #557/#565: TCP health - retransmit/reset counters from
+                 Win32_PerfRawData_Tcpip_TCPv4/TCPv6 (#557), charted as a retransmit-rate
+                 percentage of segments sent ("above a couple of percent is the cleanest objective
+                 evidence of a lossy path"), plus a full read of `netsh int tcp show global`'s
+                 tuning/offload knobs (#565) with a one-line explanation of each and a flag on a
+                 disabled/restricted receive-window autotuning level. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="TCP health" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="Transport-layer retransmit/reset counters and the machine-wide TCP tuning knobs that most often explain a slow or capped connection."
+                               Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+
+                    <!-- #557: retransmit-rate chart (IPv4) - glow/core paired like every other
+                         history chart in the app. -->
+                    <lvc:CartesianChart Series="{Binding TcpRetransmitSeries}" XAxes="{Binding LatencyHiddenXAxes}" YAxes="{Binding TcpRetransmitPercentYAxes}"
+                                         Height="120" TooltipPosition="Top" LegendPosition="Hidden" Background="Transparent"
+                                         TooltipTextPaint="{Binding Performance.TooltipTextPaint}" TooltipBackgroundPaint="{Binding Performance.TooltipBackgroundPaint}" />
+                    <TextBlock Text="{Binding TcpHealthStatusText}" Style="{StaticResource SubStat}" Margin="0,6,0,10" TextWrapping="Wrap" />
+
+                    <ItemsControl ItemsSource="{Binding TcpHealthSamples}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="50" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="{Binding AddressFamily}" FontWeight="SemiBold" VerticalAlignment="Top" />
+                                    <TextBlock Grid.Column="1" Text="Not available (the TCP performance counters for this family couldn't be read)."
+                                               TextWrapping="Wrap">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsAvailable}" Value="False">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                    <TextBlock Grid.Column="1" TextWrapping="Wrap">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsAvailable}" Value="False">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                        <Run Text="Retransmitted " /><Run Text="{Binding SegmentsRetransmittedPerSec, StringFormat={}{0:0.0}/s}" />
+                                        <Run Text="   Sent " /><Run Text="{Binding SegmentsSentPerSec, StringFormat={}{0:0.0}/s}" />
+                                        <Run Text="   Rate " /><Run Text="{Binding RetransmitRatePercent, StringFormat={}{0:0.00}%}" FontWeight="SemiBold" />
+                                        <LineBreak />
+                                        <Run Text="Connection failures " /><Run Text="{Binding ConnectionFailuresDelta}" /><Run Text=" since last refresh (" /><Run Text="{Binding ConnectionFailuresTotal}" /><Run Text=" this session)" />
+                                        <Run Text="   Resets " /><Run Text="{Binding ConnectionsResetDelta}" /><Run Text=" since last refresh (" /><Run Text="{Binding ConnectionsResetTotal}" /><Run Text=" this session)" />
+                                    </TextBlock>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <!-- #565: full TCP global parameter audit, read once and reused from
+                         TcpGlobalSettings - the same read #552's Adapter health card already shows
+                         a 3-field subset of. -->
+                    <TextBlock Text="TCP global parameters (netsh int tcp show global)" Style="{StaticResource SpecLabel}" Margin="0,10,0,4" />
+                    <TextBlock Text="Read-only - this app never changes these." Style="{StaticResource SubStat}" Margin="0,0,0,8" Opacity="0.7" />
+
+                    <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,6">
+                        <Run Text="Receive-Side Scaling: " FontWeight="SemiBold" /><Run Text="{Binding TcpGlobalSettings.ReceiveSideScalingState}" />
+                        <LineBreak /><Run Text="Spreads incoming packet processing across multiple CPU cores instead of just one - normally left enabled." Foreground="{DynamicResource TextSecondaryBrush}" />
+                    </TextBlock>
+                    <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,6">
+                        <Run Text="Chimney Offload: " FontWeight="SemiBold" /><Run Text="{Binding TcpGlobalSettings.ChimneyOffloadState}" />
+                        <LineBreak /><Run Text="Offloads TCP processing onto the NIC itself - dropped from netsh's own output on newer Windows builds, so 'Unknown' here often just means this Windows version no longer reports it." Foreground="{DynamicResource TextSecondaryBrush}" />
+                    </TextBlock>
+                    <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,6">
+                        <Run Text="Receive Segment Coalescing: " FontWeight="SemiBold" /><Run Text="{Binding TcpGlobalSettings.ReceiveSegmentCoalescingState}" />
+                        <LineBreak /><Run Text="Merges multiple incoming TCP segments into one before handing them to the app - saves CPU, but a buggy driver with this on can produce a stalled-but-not-dead connection that looks like a server problem." Foreground="{DynamicResource TextSecondaryBrush}" />
+                    </TextBlock>
+                    <TextBlock TextWrapping="Wrap" Margin="0,0,0,6">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding TcpGlobalSettings.IsAutoTuningLimited}" Value="True">
+                                        <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                        <Run Text="Receive Window Auto-Tuning: " FontWeight="SemiBold" /><Run Text="{Binding TcpGlobalSettings.ReceiveWindowAutoTuningLevel}" />
+                        <LineBreak /><Run Text="How aggressively the receive window grows to fill available bandwidth on longer/higher-latency links. 'disabled' or 'restricted' caps throughput regardless of available bandwidth - a very common bad 'optimization guide' edit." Foreground="{DynamicResource TextSecondaryBrush}" />
+                    </TextBlock>
+                    <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,6">
+                        <Run Text="Congestion provider: " FontWeight="SemiBold" /><Run Text="{Binding TcpGlobalSettings.CongestionProvider}" />
+                        <LineBreak /><Run Text="Which congestion-control algorithm governs how fast this machine ramps up (and backs off) its own sending rate." Foreground="{DynamicResource TextSecondaryBrush}" />
+                    </TextBlock>
+                    <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,6">
+                        <Run Text="ECN capability: " FontWeight="SemiBold" /><Run Text="{Binding TcpGlobalSettings.EcnCapability}" />
+                        <LineBreak /><Run Text="Explicit Congestion Notification - lets a supporting router signal congestion without dropping a packet. Off by default; safe either way on most home/office networks." Foreground="{DynamicResource TextSecondaryBrush}" />
+                    </TextBlock>
+                    <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap">
+                        <Run Text="RFC 1323 timestamps: " FontWeight="SemiBold" /><Run Text="{Binding TcpGlobalSettings.TimestampsState}" />
+                        <LineBreak /><Run Text="Per-packet timestamps used for more accurate round-trip-time estimation and to guard against wrapped sequence numbers on very fast links." Foreground="{DynamicResource TextSecondaryBrush}" />
+                    </TextBlock>
+                    <TextBlock Text="Auto-tuning is disabled/restricted - throughput on longer or higher-latency links is capped regardless of available bandwidth. If nothing intentionally set this, it's worth reverting."
+                               Style="{StaticResource SubStat}" Foreground="{DynamicResource WarningBrush}" Margin="0,10,0,0" TextWrapping="Wrap"
+                               Visibility="{Binding TcpGlobalSettings.IsAutoTuningLimited, Converter={StaticResource BoolToVisibilityConverter}}" />
+                </StackPanel>
+            </Border>
+
+            <!-- #21: active TCP connections with owning process - see NetworkConnectionsService.
+                 Extended by #558 (state histogram), #559 (stalled-SYN age column + status line),
+                 #560 (port lookup box), and #561/#562 (a UDP table alongside this TCP one, now
+                 spanning both address families). -->
             <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
                 <StackPanel>
                     <Grid Margin="0,0,0,10">
@@ -2116,20 +2231,288 @@
                             </Button.Style>
                         </Button>
                     </Grid>
+
+                    <!-- #558: connection-state histogram, derived entirely from the sample below -
+                         no extra I/O. TIME_WAIT/CLOSE_WAIT/SYN_SENT chips turn the warning color
+                         and carry a tooltip once their count crosses an informal "worth a look"
+                         threshold. -->
+                    <ItemsControl ItemsSource="{Binding ConnectionStateHistogram}" Margin="0,0,0,4">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate><WrapPanel Orientation="Horizontal" /></ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border CornerRadius="4" Padding="8,3" Margin="0,0,6,6">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Setter Property="Background" Value="{DynamicResource BgElevatedBrush}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsFlagged}" Value="True">
+                                                    <Setter Property="Background" Value="{DynamicResource WarningBrush}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
+                                    <TextBlock ToolTip="{Binding FlagReason}" FontSize="12">
+                                        <Run Text="{Binding State}" FontWeight="SemiBold" /><Run Text=": " /><Run Text="{Binding Count}" />
+                                    </TextBlock>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <!-- #559: stalled SYN_SENT status line - per-connection age lives on the Age
+                         column below (and highlights that row), this is just the one combined
+                         summary. -->
+                    <TextBlock Text="{Binding StalledSynStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,10" TextWrapping="Wrap" />
+
+                    <!-- #560: "what is using port N" - scans whatever's currently in the TCP/UDP
+                         tables below, no separate live query. -->
+                    <TextBlock Text="What's using a port?" Style="{StaticResource SpecLabel}" Margin="0,0,0,4" />
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="140" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBox Grid.Column="0" Margin="0,0,8,0" VerticalContentAlignment="Center"
+                                 Text="{Binding PortLookupQuery, UpdateSourceTrigger=PropertyChanged}">
+                            <TextBox.InputBindings>
+                                <KeyBinding Key="Return" Command="{Binding LookupPortCommand}" />
+                            </TextBox.InputBindings>
+                        </TextBox>
+                        <Button Grid.Column="1" Padding="10,4" Command="{Binding LookupPortCommand}">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                    <Setter Property="Content" Value="Look up port" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsLookingUpPort}" Value="True">
+                                            <Setter Property="Content" Value="Looking up..." />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                    </Grid>
+                    <TextBlock Text="{Binding PortLookupStatusText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,6" />
+                    <DataGrid ItemsSource="{Binding PortLookupResults}" AutoGenerateColumns="False" IsReadOnly="True" HeadersVisibility="Column" MaxHeight="180" Margin="0,0,0,4">
+                        <DataGrid.Style>
+                            <Style TargetType="DataGrid">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding PortLookupResults.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </DataGrid.Style>
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Proto" Binding="{Binding Protocol}" Width="0.6*" />
+                            <DataGridTextColumn Header="AF" Binding="{Binding AddressFamily}" Width="0.5*" />
+                            <DataGridTextColumn Header="Local address" Binding="{Binding LocalAddress}" Width="1.2*" />
+                            <DataGridTextColumn Header="State" Binding="{Binding State}" Width="1*" />
+                            <DataGridTextColumn Header="Process" Binding="{Binding ProcessName}" Width="1.1*" />
+                            <DataGridTextColumn Header="PID" Binding="{Binding Pid}" Width="60" />
+                            <DataGridTextColumn Header="Path" Binding="{Binding ProcessPath, TargetNullValue='(unknown)'}" Width="1.8*" />
+                            <DataGridTextColumn Header="Started" Binding="{Binding ProcessStartTime, StringFormat={}{0:g}, TargetNullValue='Unknown'}" Width="1.1*" />
+                            <DataGridTemplateColumn Header="" Width="90">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <Button Content="End process" Padding="6,2" FontSize="11"
+                                                Command="{Binding DataContext.EndPortLookupProcessCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                CommandParameter="{Binding}" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+
+                    <!-- #561: TCP/UDP toggle - two differently-shaped row types (UDP has no remote
+                         endpoint or state), so a second small DataGrid rather than one merged grid. -->
+                    <StackPanel Orientation="Horizontal" Margin="0,10,0,6">
+                        <Button Content="TCP" Command="{Binding ShowTcpConnectionsCommand}" Padding="10,4" Margin="0,0,4,0" />
+                        <Button Content="UDP" Command="{Binding ShowUdpConnectionsCommand}" Padding="10,4" />
+                    </StackPanel>
+
                     <DataGrid ItemsSource="{Binding Connections}" Height="260" IsReadOnly="True">
+                        <DataGrid.Style>
+                            <Style TargetType="DataGrid">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding ShowUdpConnections}" Value="True">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </DataGrid.Style>
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Process" Binding="{Binding ProcessName}" Width="1.3*" />
+                            <DataGridTextColumn Header="PID" Binding="{Binding Pid}" Width="60" />
+                            <DataGridTextColumn Header="AF" Binding="{Binding AddressFamily}" Width="0.5*" />
+                            <DataGridTextColumn Header="Local address" Binding="{Binding LocalAddress}" Width="1.2*" />
+                            <DataGridTextColumn Header="Local port" Binding="{Binding LocalPort}" Width="75" />
+                            <DataGridTextColumn Header="Remote address" Binding="{Binding RemoteAddress}" Width="1.2*" />
+                            <DataGridTextColumn Header="Remote port" Binding="{Binding RemotePort}" Width="85" />
+                            <DataGridTextColumn Header="Remote host" Binding="{Binding RemoteHostName, TargetNullValue=''}" Width="1.5*" />
+                            <DataGridTextColumn Header="State" Binding="{Binding State}" Width="100" />
+                            <!-- #559: how long a SYN_SENT connection has persisted across polls. -->
+                            <DataGridTextColumn Header="Age" Binding="{Binding SynSentAgeSeconds, StringFormat={}{0:0}s, TargetNullValue=''}" Width="60" />
+                        </DataGrid.Columns>
+                        <DataGrid.RowStyle>
+                            <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsStalledSynSent}" Value="True">
+                                        <Setter Property="Background" Value="{DynamicResource WarningBrush}" />
+                                        <Setter Property="Opacity" Value="0.85" />
+                                        <Setter Property="ToolTip" Value="{Binding StalledSynReason}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </DataGrid.RowStyle>
+                    </DataGrid>
+
+                    <!-- #561: the UDP table - shown instead of the TCP grid above via the toggle. -->
+                    <DataGrid ItemsSource="{Binding UdpConnections}" Height="260"
+                              IsReadOnly="True" Visibility="{Binding ShowUdpConnections, Converter={StaticResource BoolToVisibilityConverter}}">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="Process" Binding="{Binding ProcessName}" Width="1.4*" />
                             <DataGridTextColumn Header="PID" Binding="{Binding Pid}" Width="70" />
-                            <DataGridTextColumn Header="Local address" Binding="{Binding LocalAddress}" Width="1.3*" />
-                            <DataGridTextColumn Header="Local port" Binding="{Binding LocalPort}" Width="80" />
-                            <DataGridTextColumn Header="Remote address" Binding="{Binding RemoteAddress}" Width="1.3*" />
-                            <DataGridTextColumn Header="Remote port" Binding="{Binding RemotePort}" Width="90" />
-                            <DataGridTextColumn Header="Remote host" Binding="{Binding RemoteHostName, TargetNullValue=''}" Width="1.6*" />
-                            <DataGridTextColumn Header="State" Binding="{Binding State}" Width="110" />
+                            <DataGridTextColumn Header="AF" Binding="{Binding AddressFamily}" Width="0.6*" />
+                            <DataGridTextColumn Header="Local address" Binding="{Binding LocalAddress}" Width="1.5*" />
+                            <DataGridTextColumn Header="Local port" Binding="{Binding LocalPort}" Width="90" />
                         </DataGrid.Columns>
                     </DataGrid>
+                    <TextBlock Text="UDP is connectionless - Windows tracks no remote address, port, or state for a bound local endpoint, so this table only ever shows what's listening/bound locally (DNS, QUIC, game traffic, VPN tunnels, ...)."
+                               Style="{StaticResource SubStat}" Margin="0,6,0,0" TextWrapping="Wrap" Opacity="0.7"
+                               Visibility="{Binding ShowUdpConnections, Converter={StaticResource BoolToVisibilityConverter}}" />
+
                     <TextBlock Text="PTR-resolves each unique remote address (memory-cached, strict per-lookup timeout) - turns a wall of IPs into recognizable CDN/service names where a reverse record exists."
-                               Style="{StaticResource SubStat}" Margin="0,6,0,0" TextWrapping="Wrap" Opacity="0.7" />
+                               Margin="0,6,0,0" TextWrapping="Wrap">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Opacity" Value="0.7" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding ShowUdpConnections}" Value="True">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- suggestions.md #563/#564: Ports - TCP port exclusion/reservation ranges vs. the
+                 dynamic (ephemeral) port range, flagging any overlap (#563 - the well-known
+                 Hyper-V/WinNAT reservation bug, "the port is free in netstat but the app still
+                 can't bind it"), plus how full that dynamic range currently is from the
+                 connections tables above (#564). -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Ports" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Padding="10,4" Command="{Binding RefreshPortReservationCommand}">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                    <Setter Property="Content" Value="Refresh" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsLoadingPortReservation}" Value="True">
+                                            <Setter Property="Content" Value="Loading..." />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                    </Grid>
+                    <TextBlock Text="{Binding PortReservationStatusText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,10" />
+
+                    <TextBlock Text="TCP port exclusions (netsh int ipv4 show excludedportrange)" Style="{StaticResource SpecLabel}" Margin="0,0,0,4" />
+                    <TextBlock Text="Windows reserves these for its own use - a bind attempt to any port inside one fails even though the port shows as free in a plain netstat listing. Hyper-V/WinNAT virtual switches are the best-known cause of a large, unexpected block; '*' marks a range netsh calls 'administered'."
+                               Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" Opacity="0.7" />
+                    <DataGrid ItemsSource="{Binding PortReservation.ExcludedRanges}" AutoGenerateColumns="False" IsReadOnly="True" HeadersVisibility="Column" MaxHeight="180" Margin="0,0,0,4">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Start" Binding="{Binding StartPort}" Width="0.8*" />
+                            <DataGridTextColumn Header="End" Binding="{Binding EndPort}" Width="0.8*" />
+                            <DataGridTextColumn Header="Ports" Binding="{Binding PortCount}" Width="0.7*" />
+                            <DataGridCheckBoxColumn Header="Administered" Binding="{Binding IsAdministered}" Width="1*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <TextBlock Text="No excluded ranges reported.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Setter Property="Opacity" Value="0.7" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding PortReservation.ExcludedRanges.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
+                    <TextBlock Text="Dynamic (ephemeral) port range (netsh int ipv4 show dynamicport tcp)" Style="{StaticResource SpecLabel}" Margin="0,14,0,4" />
+                    <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,10"
+                               Visibility="{Binding PortReservation.DynamicRange, Converter={StaticResource NullToVisibilityConverter}}">
+                        <Run Text="{Binding PortReservation.DynamicRange.StartPort}" />
+                        <Run Text=" – " />
+                        <Run Text="{Binding PortReservation.DynamicRange.EndPort}" />
+                        <Run Text=" (" /><Run Text="{Binding PortReservation.DynamicRange.PortCount}" /><Run Text=" ports) - the pool Windows assigns a local port from for any outbound connection that doesn't bind an explicit one." />
+                    </TextBlock>
+                    <TextBlock Text="Unknown - refresh above to read it from netsh.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Setter Property="Opacity" Value="0.7" />
+                                <Setter Property="Margin" Value="0,0,0,10" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding PortReservation.DynamicRange}" Value="{x:Null}">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
+                    <!-- #564: ephemeral-port utilization, derived from the TCP/UDP tables the
+                         Active connections card above already samples - no extra I/O. -->
+                    <TextBlock Text="Ephemeral port utilization" Style="{StaticResource SpecLabel}" Margin="0,0,0,4" />
+                    <TextBlock Text="How many currently-open local ports fall inside the dynamic range above - the classic 'new connections fail but existing ones keep working' cause once this gets close to full. Windows doesn't fail at one exact percentage (TIME_WAIT reuse blurs the real ceiling), so treat this as worth investigating, not a hard prediction."
+                               Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" Opacity="0.7" />
+
+                    <StackPanel Visibility="{Binding PortExhaustion, Converter={StaticResource NullToVisibilityConverter}}">
+                        <TextBlock Margin="0,0,0,4">
+                            <Run Text="{Binding PortExhaustion.ConnectionsInRange}" FontWeight="SemiBold" /><Run Text=" of " />
+                            <Run Text="{Binding PortExhaustion.RangeSize}" /><Run Text=" ports in use  •  " />
+                            <Run Text="{Binding PortExhaustion.UtilizationPercent, StringFormat={}{0:0.#}%}" FontWeight="SemiBold" />
+                        </TextBlock>
+                        <TextBlock Text="Above ~80% used - worth checking which process(es) below are holding the most ports." Style="{StaticResource SubStat}"
+                                   Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" Margin="0,0,0,6"
+                                   Visibility="{Binding PortExhaustion.IsHighUtilization, Converter={StaticResource BoolToVisibilityConverter}}" />
+                        <ItemsControl ItemsSource="{Binding PortExhaustion.TopContributors}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,2">
+                                        <Run Text="{Binding ProcessName}" /><Run Text="  —  " /><Run Text="{Binding Count}" /><Run Text=" port(s)" />
+                                    </TextBlock>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                    <TextBlock Text="Refresh the port ranges above to see utilization.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Setter Property="Opacity" Value="0.7" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding PortExhaustion}" Value="{x:Null}">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
                 </StackPanel>
             </Border>
 
