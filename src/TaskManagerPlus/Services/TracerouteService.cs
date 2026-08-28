@@ -56,6 +56,11 @@ public static class TracerouteService
 
     public static async Task<string> RunAsync(string host, CancellationToken cancellationToken = default)
     {
+        // #999: Offline mode hard-disables this call - see NetworkActivityCatalogService's remarks
+        // for the boundary.
+        if (UiPreferencesService.Load().OfflineMode)
+            return "Offline mode is on (Settings) - network lookups are disabled. Turn it off to run a traceroute.";
+
         host = host.Trim();
         if (host.Length == 0) return "Enter a host name or IP address first.";
         if (host.Length > 255 || !ValidHostRegex.IsMatch(host)) return "That doesn't look like a valid host name or IP address.";

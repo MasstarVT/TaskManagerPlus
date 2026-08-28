@@ -162,6 +162,15 @@ public sealed class LoggingViewModel : ObservableObject, IDisposable
     private string? _replayMarkerStatusText;
     public string? ReplayMarkerStatusText { get => _replayMarkerStatusText; private set => SetProperty(ref _replayMarkerStatusText, value); }
 
+    // #942 (Timeline panel): the raw parsed result behind ReplaySeries above, exposed so
+    // TimelineViewModel can feed the same CPU/RAM/Disk series into its "Perf spikes" lane without
+    // this view-model needing to know anything about the Timeline panel itself - it just remembers
+    // the last successfully-loaded replay for the rest of this session. Null until a log has
+    // actually been loaded via LoadLogFileCommand; TimelineViewModel treats that as "no log loaded
+    // this session" per #942's task instructions, rather than auto-scanning the Logs folder.
+    private LogReplayResult? _lastReplayResult;
+    public LogReplayResult? LastReplayResult { get => _lastReplayResult; private set => SetProperty(ref _lastReplayResult, value); }
+
     public LoggingViewModel(PerformanceViewModel performance, EnergyThermalsViewModel energyThermals)
     {
         _performance = performance;
@@ -284,6 +293,8 @@ public sealed class LoggingViewModel : ObservableObject, IDisposable
             ReplayMarkerStatusText = null;
             return;
         }
+
+        LastReplayResult = result;
 
         var cpuColor = SKColors.DeepSkyBlue;
         var ramColor = SKColors.MediumPurple;

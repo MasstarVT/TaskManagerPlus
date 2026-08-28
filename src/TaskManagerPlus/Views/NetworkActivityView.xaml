@@ -1,0 +1,97 @@
+<UserControl x:Class="TaskManagerPlus.Views.NetworkActivityView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:TaskManagerPlus.ViewModels"
+             xmlns:models="clr-namespace:TaskManagerPlus.Models"
+             d:DataContext="{d:DesignInstance Type=vm:NetworkActivityViewModel}"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d">
+    <UserControl.Resources>
+        <!-- suggestions.md #999: one outbound-call row. -->
+        <DataTemplate x:Key="NetworkActivityRowTemplate" DataType="{x:Type models:NetworkActivityEntry}">
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,8" Padding="12,10">
+                <StackPanel>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="{Binding Name}" FontSize="13" FontWeight="SemiBold" />
+                        <TextBlock Grid.Column="1" Text="Gated by Offline mode" FontSize="10.5" FontWeight="SemiBold"
+                                   Foreground="{DynamicResource SuccessBrush}" VerticalAlignment="Center">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding GatedByOfflineMode}" Value="True">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                        <TextBlock Grid.Column="1" Text="Not gated - user-initiated" FontSize="10.5"
+                                   Foreground="{DynamicResource TextTertiaryBrush}" VerticalAlignment="Center">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding GatedByOfflineMode}" Value="False">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </Grid>
+                    <TextBlock FontSize="11.5" TextWrapping="Wrap" Margin="0,4,0,0">
+                        <Run Text="Triggered by: " Foreground="{DynamicResource TextTertiaryBrush}" />
+                        <Run Text="{Binding Trigger, Mode=OneWay}" />
+                    </TextBlock>
+                    <TextBlock FontSize="11.5" TextWrapping="Wrap" Margin="0,2,0,0" FontFamily="Consolas">
+                        <Run Text="Destination: " Foreground="{DynamicResource TextTertiaryBrush}" FontFamily="Segoe UI" />
+                        <Run Text="{Binding Destination, Mode=OneWay}" />
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+        </DataTemplate>
+    </UserControl.Resources>
+    <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16">
+        <StackPanel>
+            <Grid Margin="0,0,0,10">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <!-- HideNetworkActivityCommand lives on TroubleshootViewModel - AncestorLevel=2
+                     skips this UserControl to reach TroubleshootView, the same pattern
+                     TimelineView/ChangeJournalView/GlossaryView use. -->
+                <Button Grid.Column="0" Content="&#8592; Back"
+                        Command="{Binding DataContext.HideNetworkActivityCommand, RelativeSource={RelativeSource AncestorType=UserControl, AncestorLevel=2}}"
+                        Padding="10,4" Margin="0,0,14,0" VerticalAlignment="Center"
+                        AutomationProperties.Name="Back to Troubleshoot landing page" />
+                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                    <TextBlock Text="Network activity" FontSize="17" FontWeight="SemiBold" />
+                    <TextBlock Text="Every outbound network call this app can make on its own, what triggers it, and where it goes."
+                               Style="{StaticResource SubStat}" TextWrapping="Wrap" />
+                </StackPanel>
+            </Grid>
+
+            <!-- #999: the toggle itself, right alongside the disclosure it explains. Bound via
+                 AncestorType=Window (MainViewModel) - the same reachable-from-anywhere pattern the
+                 Settings drawer's own copy of this switch uses. -->
+            <Border Style="{StaticResource CardStyle}" Padding="12,10" Margin="0,0,0,14">
+                <StackPanel>
+                    <CheckBox Content="Offline mode - hard-disable the calls marked &quot;Gated by Offline mode&quot; below"
+                              IsChecked="{Binding DataContext.OfflineMode, RelativeSource={RelativeSource AncestorType=Window}}"
+                              AutomationProperties.Name="Offline mode toggle" />
+                    <TextBlock TextWrapping="Wrap" FontSize="11.5" Margin="0,6,0,0" Foreground="{DynamicResource TextTertiaryBrush}"
+                               Text="A &quot;Learn more&quot; or &quot;Read more (offline)&quot; link you click yourself is never gated - it hands a URL or a local file to your own default browser, which is not this app making a network call on its own. The connectivity check used by the Troubleshoot tab's &quot;No internet&quot; symptom is also not gated, since that check's entire purpose is testing whether the network works." />
+                </StackPanel>
+            </Border>
+
+            <ItemsControl ItemsSource="{Binding Entries}" ItemTemplate="{StaticResource NetworkActivityRowTemplate}" />
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

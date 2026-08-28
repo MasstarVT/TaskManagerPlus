@@ -38,7 +38,7 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
 
     // #200: evidence bundle export - composed as a sub-ViewModel (Evidence, below), the same
     // pattern Etw/Servicing already use for their own toggleable overlay panels.
-    public EvidenceBundleViewModel Evidence { get; }
+    public EventLogEvidenceBundleViewModel Evidence { get; }
 
     // Needed only for #106's "which process logged this" PID -> name lookup in the detail pane -
     // reads the already-live Processes collection (no new polling) purely on the UI thread inside
@@ -502,7 +502,7 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
         _processes = processes;
         _services = services;
         _anomaly = new EventAnomalyDetectionService(_service);
-        Evidence = new EvidenceBundleViewModel { ResolveChannels = BuildEvidenceBundleChannelDefaults };
+        Evidence = new EventLogEvidenceBundleViewModel { ResolveChannels = BuildEvidenceBundleChannelDefaults };
 
         RefreshChannelsCommand = new AsyncRelayCommand(RefreshChannelsAsync);
         BuildXPathCommand = new RelayCommand(_ => RawXPathText = BuildXPathFromFilters());

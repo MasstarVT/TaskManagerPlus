@@ -1,0 +1,96 @@
+<Window x:Class="TaskManagerPlus.Views.SafeFixBatchWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="clr-namespace:TaskManagerPlus.ViewModels"
+        xmlns:models="clr-namespace:TaskManagerPlus.Models"
+        d:DataContext="{d:DesignInstance Type=vm:SafeFixBatchViewModel}"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d"
+        Title="Run safe fixes"
+        Height="520" Width="560" MinHeight="360" MinWidth="420"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
+    <Window.Resources>
+        <DataTemplate x:Key="SafeFixItemTemplate" DataType="{x:Type models:SafeFixBatchItem}">
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,8" Padding="12,10">
+                <StackPanel>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="{Binding Title}" FontSize="13" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,0,10,0" />
+                        <TextBlock Grid.Column="1" Text="{Binding StatusText}" FontSize="11.5" FontWeight="SemiBold" VerticalAlignment="Center">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Foreground" Value="{DynamicResource TextTertiaryBrush}" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsRunning}" Value="True">
+                                            <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding IsSucceeded}" Value="True">
+                                            <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding IsFailed}" Value="True">
+                                            <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </Grid>
+                    <TextBlock Text="{Binding ResultText}" FontSize="11" TextWrapping="Wrap" Margin="0,6,0,0" MaxHeight="70"
+                               Foreground="{DynamicResource TextSecondaryBrush}">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding ResultText}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+        </DataTemplate>
+    </Window.Resources>
+
+    <DockPanel Margin="18">
+        <TextBlock DockPanel.Dock="Top" Text="Run safe fixes" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,4" />
+        <TextBlock DockPanel.Dock="Top" TextWrapping="Wrap" Margin="0,0,0,14" Style="{StaticResource SubStat}"
+                   Text="Only low-risk, reversible fixes are batched here - anything Medium/High risk or non-undoable is left for its own &quot;Fix this&quot; button. Each one still runs the same real operation and gets journaled the same way, just without a one-at-a-time review dialog." />
+
+        <Grid DockPanel.Dock="Bottom" Margin="0,14,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" VerticalAlignment="Center" Style="{StaticResource SubStat}">
+                <Run Text="{Binding Items.Count, Mode=OneWay}" /><Run Text=" eligible fix(es)." />
+            </TextBlock>
+            <Button Grid.Column="1" Content="Run safe fixes" Command="{Binding RunSafeFixesCommand}" Padding="16,6" Margin="0,0,8,0"
+                    Background="{DynamicResource AccentBrush}" Foreground="{DynamicResource AccentForegroundBrush}" FontWeight="SemiBold" />
+            <Button Grid.Column="2" Content="Close" Padding="14,5" Click="OnClose" />
+        </Grid>
+
+        <TextBlock Text="Nothing eligible right now - every current finding either has no fix, or its fix isn't both low-risk and reversible." Margin="0,20,0,0">
+            <TextBlock.Style>
+                <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                    <Setter Property="Visibility" Value="Collapsed" />
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding Items.Count}" Value="0">
+                            <Setter Property="Visibility" Value="Visible" />
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </TextBlock.Style>
+        </TextBlock>
+
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <ItemsControl ItemsSource="{Binding Items}" ItemTemplate="{StaticResource SafeFixItemTemplate}" />
+        </ScrollViewer>
+    </DockPanel>
+</Window>

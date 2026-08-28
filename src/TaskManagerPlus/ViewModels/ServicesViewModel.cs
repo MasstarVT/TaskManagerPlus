@@ -340,8 +340,10 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
         }
     }
 
-    private bool CanStart() => !IsBusy && SelectedService is { CanStart: true };
-    private bool CanStop() => !IsBusy && SelectedService is { CanStop: true };
+    // #980: read-only mode disables Start/Stop/Restart (mutating) but leaves everything else on
+    // this tab (Refresh, failure-actions view, start-durations, config baseline/drift) working.
+    private bool CanStart() => !IsBusy && !ReadOnlyModeService.IsReadOnly && SelectedService is { CanStart: true };
+    private bool CanStop() => !IsBusy && !ReadOnlyModeService.IsReadOnly && SelectedService is { CanStop: true };
 
     private bool FilterPredicate(object obj)
     {
@@ -421,6 +423,7 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
         var target = SelectedService;
         if (target is null) return;
 
+        string before = target.Status.ToString();
         IsBusy = true;
         try
         {
@@ -428,11 +431,28 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
             StatusMessage = success
                 ? $"{target.DisplayName} {verbPast}."
                 : $"Couldn't control {target.DisplayName}: {error}";
+
+            await RefreshAsync();
+
+            // #972: record every mutation this app performs - after the refresh above so
+            // AfterValue reflects the service's actual post-action status, not a stale
+            // pre-refresh read (MergeInto updates `target` in place, so it's still the right row).
+            ChangeJournalService.Append(new ChangeJournalEntry
+            {
+                Kind = ChangeKind.ServiceStateChange,
+                Target = target.DisplayName,
+                ActionDescription = $"Service {verbPast}",
+                BeforeValue = before,
+                AfterValue = target.Status.ToString(),
+                TriggeredBy = "Services tab",
+                Success = success,
+                IsUndoable = success,
+                ServiceName = target.ServiceName,
+            });
         }
         finally
         {
             IsBusy = false;
-            await RefreshAsync();
         }
     }
 

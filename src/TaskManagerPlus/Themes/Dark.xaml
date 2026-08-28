@@ -59,6 +59,25 @@
     <sys:Double x:Key="DataGridRowHeightValue">34</sys:Double>
     <Thickness x:Key="DataGridCellPaddingValue">10,4</Thickness>
 
+    <!-- ============================= Focus visual (#1000) ============================= -->
+    <!-- suggestions.md #1000: a visible focus adorner - this app had none before (grep-confirmed:
+         no FocusVisualStyle anywhere in this dictionary). Keying it as the special
+         SystemParameters.FocusVisualStyleKey resource applies it to every control by default
+         (WPF's own convention for a global override), not just the ones this domain's chunks
+         happened to touch - a dashed accent-colored rectangle just outside the focused element's
+         bounds, closely matching the dotted-underline visual language #990's glossary terms
+         already use elsewhere in this app. -->
+    <Style x:Key="{x:Static SystemParameters.FocusVisualStyleKey}" TargetType="Control">
+        <Setter Property="Control.Template">
+            <Setter.Value>
+                <ControlTemplate>
+                    <Rectangle Margin="-2" SnapsToDevicePixels="True" StrokeThickness="1.5"
+                               Stroke="{DynamicResource AccentBrush}" StrokeDashArray="1,2" />
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
     <!-- ============================= Base ============================= -->
     <Style TargetType="{x:Type Window}">
         <Setter Property="Background" Value="{DynamicResource BgBrush}" />

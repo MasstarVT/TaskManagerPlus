@@ -35,7 +35,30 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     // Win32_PnPSignedDriver sweep + per-row registry reads aren't cheap enough to repeat on a tick).
     public DevicesDriversViewModel DevicesDrivers { get; } = new();
 
+    // #916-927: the Health Check card's rules engine - one shared instance (one FileSystemWatcher,
+    // one loaded rule set) between the live Health Check feed (SummaryViewModel) and the Settings
+    // drawer's rule editor/test/import-export panel (RulesEditorViewModel). Constructed in the
+    // constructor body (needs the already-initialized Performance instance for #920's sustained-
+    // condition history lookups), not as a field initializer.
+    public RulesEngineService RulesEngine { get; }
+
     public SummaryViewModel Summary { get; }
+    public RulesEditorViewModel RulesEditor { get; }
+
+    // #901: symptom-picker diagnostics tab - takes the shared Performance/Processes instances so
+    // the "My PC is slow" branch reuses already-polled live data instead of re-sampling from
+    // scratch (see TroubleshootViewModel's remarks).
+    public TroubleshootViewModel Troubleshoot { get; }
+
+    // #943: see the Attach() call in the constructor - logs thermal/throttle transitions to
+    // thermal-events.jsonl for the Timeline panel's Thermal events lane.
+    private readonly ThermalEventLogService _thermalEventLog = new();
+
+    // #959-966: the always-on background health collector - started once here (alongside every
+    // other always-on piece MainViewModel owns), independent of LoggingViewModel's user-started
+    // CSV logger. Exposed publicly only so App-level code could reach it if ever needed; the
+    // Background Health panel (Troubleshoot.BackgroundHealth) is its actual consumer.
+    public BackgroundHealthCollectorService BackgroundHealthCollector { get; }
 
     // Round 13, #801: Security tab - on-demand, same shape as Startup/SystemSpecs/Stability
     // above. Not part of TabShortcutOrder below (Ctrl+1..9 only covers the first nine tabs today).
@@ -179,6 +202,38 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         ? $"Portable ({AppPaths.SettingsDirectory})"
         : $"%AppData%\\TaskManagerPlus (normal mode - relaunch with --portable, or drop a portable.marker file next to the exe, for portable mode)";
 
+    // suggestions.md #998: "technician mode" - portable-mode-only per-machine data partitioning.
+    // A plain read of AppPaths' static state each time (not cached), since it can only actually
+    // change via this same drawer's own controls.
+    public bool IsPortableMode => AppPaths.IsPortable;
+    public string CurrentMachineFingerprint => AppPaths.MachineFingerprint;
+
+    private const string SharedFolderOption = "(shared/flat folder - default)";
+
+    public List<string> MachineOptions => new[] { SharedFolderOption }.Concat(AppPaths.ListMachines()).ToList();
+
+    /// <summary>Switching this takes effect on next launch - AppPaths.SwitchMachine's remarks
+    /// explain why a live hot-swap isn't attempted (most services already cached their own settings
+    /// path at construction, long before this could fire).</summary>
+    public string SelectedMachineOption
+    {
+        get => AppPaths.SelectedMachine ?? SharedFolderOption;
+        set
+        {
+            string? machine = value == SharedFolderOption ? null : value;
+            if (AppPaths.SelectedMachine == machine) return;
+            AppPaths.SwitchMachine(machine);
+            OnPropertyChanged();
+        }
+    }
+
+    public RelayCommand AddCurrentMachineCommand { get; }
+
+    /// <summary>suggestions.md #1000: the discoverable "Keyboard shortcuts" sheet - a plain,
+    /// non-owned Window construction directly from the ViewModel, the same pattern
+    /// ToggleMiniDashboard already establishes for MiniDashboardWindow below.</summary>
+    public RelayCommand OpenKeyboardShortcutsCommand { get; }
+
     private bool _isSettingsOpen;
     public bool IsSettingsOpen
     {
@@ -230,6 +285,37 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
     }
 
+    /// <summary>#991: "Plain English mode" - see UiPreferences.PlainEnglishMode's remarks. Read
+    /// from anywhere in the visual tree via AncestorType=Window (SummaryView's finding rows, the
+    /// remediation review dialog, the Settings drawer's own copy of this toggle) rather than
+    /// threading a UiPreferences reference through every ViewModel that renders a finding.</summary>
+    public bool PlainEnglishMode
+    {
+        get => _uiPreferences.PlainEnglishMode;
+        set
+        {
+            if (_uiPreferences.PlainEnglishMode == value) return;
+            _uiPreferences.PlainEnglishMode = value;
+            UiPreferencesService.Save(_uiPreferences);
+            OnPropertyChanged();
+        }
+    }
+
+    /// <summary>#999: "Offline mode" - see UiPreferences.OfflineMode's remarks. The three gated
+    /// services each re-read UiPreferencesService.Load() at call time rather than watching this
+    /// property, so the toggle takes effect immediately without any extra wiring.</summary>
+    public bool OfflineMode
+    {
+        get => _uiPreferences.OfflineMode;
+        set
+        {
+            if (_uiPreferences.OfflineMode == value) return;
+            _uiPreferences.OfflineMode = value;
+            UiPreferencesService.Save(_uiPreferences);
+            OnPropertyChanged();
+        }
+    }
+
     /// <summary>Round 12, #88: read-only GitHub Releases update check, notify-only - see
     /// UpdateCheckService's remarks. Checked once on startup (Task.Run, no polling) rather than
     /// repeated, since a new release doesn't appear mid-session.</summary>
@@ -240,6 +326,34 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public string UpdateUrl { get => _updateUrl; private set => SetProperty(ref _updateUrl, value); }
 
     public RelayCommand OpenUpdateUrlCommand { get; }
+
+    // suggestions.md #997: "N unattended scans since you last looked, M new findings" - computed
+    // once at startup (UnattendedScanService.CheckAndMarkSeen, a plain file-tracker comparison, not
+    // a poller) and dismissible, same "quiet unless there's something to say" shape as the update
+    // banner above.
+    private string? _unattendedScanBannerText;
+    public string? UnattendedScanBannerText { get => _unattendedScanBannerText; private set => SetProperty(ref _unattendedScanBannerText, value); }
+    public RelayCommand DismissUnattendedScanBannerCommand { get; }
+
+    // suggestions.md #997: "Set up nightly diagnostic scan" - a Settings-drawer frequency picker
+    // (daily/weekly) plus an hour-of-day, backing ScheduledTaskService.CreateRecurringAsync via
+    // UnattendedScanService. Not persisted as its own settings file - the created (or removed)
+    // Scheduled Task itself is the durable state, same "the external artifact IS the state" shape
+    // #979's queued-fix scheduled tasks already take.
+    private bool _unattendedScanWeekly;
+    public bool UnattendedScanWeekly { get => _unattendedScanWeekly; set => SetProperty(ref _unattendedScanWeekly, value); }
+
+    private int _unattendedScanHour = 2;
+    public int UnattendedScanHour { get => _unattendedScanHour; set => SetProperty(ref _unattendedScanHour, Math.Clamp(value, 0, 23)); }
+
+    private bool _unattendedScanScrub;
+    public bool UnattendedScanScrub { get => _unattendedScanScrub; set => SetProperty(ref _unattendedScanScrub, value); }
+
+    private string _unattendedScanStatusText = string.Empty;
+    public string UnattendedScanStatusText { get => _unattendedScanStatusText; private set => SetProperty(ref _unattendedScanStatusText, value); }
+
+    public AsyncRelayCommand SetupUnattendedScanCommand { get; }
+    public AsyncRelayCommand RemoveUnattendedScanCommand { get; }
 
     // Round 12, #85/#86: tray icon + global hotkey - both owned here (not MainWindow.xaml.cs
     // directly) so MainWindow just wires window events to these, keeping the P/Invoke and
@@ -257,7 +371,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public static readonly string[] DefaultTabShortcutOrder =
         {
             "Summary", "CPU", "Memory", "Storage", "Network", "GPU", "Energy & Thermals", "Responsiveness", "Processes", "Services",
-            "Startup", "System", "Stability", "Windows Health",
+            "Startup", "System", "Stability", "Windows Health", "Troubleshoot",
         };
 
     public IReadOnlyList<string> TabShortcutOrder =>
@@ -311,9 +425,22 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         // #295: Responsiveness is a field initializer (constructed above), so it's already a real
         // instance here - Summary reads Responsiveness.SystemScore directly rather than
         // duplicating the composite-score math. #storage: likewise for the DriveHealthVerdict tile.
-        Summary = new SummaryViewModel(Performance, Processes, Services, EnergyThermals, SystemSpecs, Network, Stability, Responsiveness, Storage, ProcessHistory);
-        Search = new GlobalSearchViewModel(Processes, Services, Startup, SystemSpecs);
+        RulesEngine = new RulesEngineService(Performance);
+        Summary = new SummaryViewModel(Performance, Processes, Services, EnergyThermals, SystemSpecs, Network, Stability, Responsiveness, Storage, ProcessHistory, RulesEngine);
+        RulesEditor = new RulesEditorViewModel(RulesEngine, Performance, EnergyThermals, SystemSpecs, Services, Processes);
+        BackgroundHealthCollector = new BackgroundHealthCollectorService(Performance, EnergyThermals, Services, Processes);
+        Troubleshoot = new TroubleshootViewModel(Performance, Processes, Logging, EnergyThermals, SystemSpecs, Services, RulesEngine, BackgroundHealthCollector);
+        // #1000: constructed after Summary/RulesEditor/Troubleshoot - the command-palette reach
+        // extension needs live references to all three (current findings, loaded rules, Timeline/
+        // Glossary sub-pages), not just the original four collections.
+        Search = new GlobalSearchViewModel(Processes, Services, Startup, SystemSpecs, Summary, RulesEditor, Troubleshoot);
         Events = new EventsViewModel(Processes, Services);
+
+        // #943: edge-triggered thermal/throttle event logging for the Timeline panel - a
+        // PropertyChanged subscription on the already-constructed Cpu/EnergyThermals view-models,
+        // not a new poll timer. Wired here (not inside TroubleshootViewModel) so it keeps logging
+        // even if the Timeline panel is never opened this session.
+        _thermalEventLog.Attach(Cpu, EnergyThermals);
 
         RemoteMonitor = new RemoteMonitorService(BuildRemoteMetricsSnapshot) { RequiredToken = _remoteMonitorSettings.Token };
         ToggleRemoteMonitorCommand = new RelayCommand(_ => IsRemoteMonitorEnabled = !IsRemoteMonitorEnabled);
@@ -328,6 +455,35 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             catch { /* best-effort - the banner text still shows the version either way */ }
         });
         _ = CheckForUpdateAsync();
+
+        // suggestions.md #997: one plain synchronous file-tracker comparison at startup - cheap
+        // (a directory listing plus a couple of small JSON reads), same cost class as
+        // UiPreferencesService.Load() above, not worth a Task.Run.
+        UnattendedScanBannerText = UnattendedScanService.CheckAndMarkSeen();
+        DismissUnattendedScanBannerCommand = new RelayCommand(_ => UnattendedScanBannerText = null);
+        SetupUnattendedScanCommand = new AsyncRelayCommand(async () =>
+        {
+            var frequency = UnattendedScanWeekly ? ScheduledTaskFrequency.Weekly : ScheduledTaskFrequency.Daily;
+            var (success, error) = await UnattendedScanService.SetupScheduledScanAsync(
+                frequency, TimeSpan.FromHours(UnattendedScanHour), DayOfWeek.Sunday, UnattendedScanScrub);
+            UnattendedScanStatusText = success
+                ? $"Scheduled: runs {(UnattendedScanWeekly ? "weekly (Sunday)" : "daily")} at {UnattendedScanHour:00}:00, writing results under {UnattendedScanService.UnattendedScansDirectory}."
+                : $"Couldn't set up the scheduled task: {error}";
+        });
+        RemoveUnattendedScanCommand = new AsyncRelayCommand(async () =>
+        {
+            var (success, error) = await UnattendedScanService.RemoveScheduledScanAsync();
+            UnattendedScanStatusText = success ? "Scheduled scan removed." : $"Couldn't remove the scheduled task: {error}";
+        });
+
+        AddCurrentMachineCommand = new RelayCommand(_ =>
+        {
+            AppPaths.RegisterCurrentMachine();
+            OnPropertyChanged(nameof(MachineOptions));
+            OnPropertyChanged(nameof(SelectedMachineOption));
+        });
+
+        OpenKeyboardShortcutsCommand = new RelayCommand(_ => new Views.KeyboardShortcutsWindow().Show());
 
         ApplyThemeToPerformance();
         Theme.ColorsChanged += ApplyThemeToPerformance;
@@ -368,6 +524,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         // #674: GPU tab's VRAM-spillover trend chart.
         ApplyAxisThemeToGpu();
         Theme.ThemeModeChanged += ApplyAxisThemeToGpu;
+
+        ApplyAxisThemeToBaselines();
+        Theme.ThemeModeChanged += ApplyAxisThemeToBaselines;
+
+        ApplyAxisThemeToBackgroundHealth();
+        Theme.ThemeModeChanged += ApplyAxisThemeToBackgroundHealth;
 
         // #734: keep the footer's uptime text live - Performance.Uptime ticks every second, and
         // Startup.FastStartupInfo changes once per Startup tab load/refresh, either of which
@@ -471,6 +633,22 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Logging.ApplyAxisTheme(TextOf("TextSecondaryBrush"), TextOf("BorderBrush2"));
     }
 
+    private void ApplyAxisThemeToBaselines()
+    {
+        var resources = Application.Current.Resources;
+        Color TextOf(string key) => (resources[key] as SolidColorBrush)?.Color ?? Colors.Gray;
+
+        Troubleshoot.Baselines.ApplyAxisTheme(TextOf("TextSecondaryBrush"), TextOf("BorderBrush2"));
+    }
+
+    private void ApplyAxisThemeToBackgroundHealth()
+    {
+        var resources = Application.Current.Resources;
+        Color TextOf(string key) => (resources[key] as SolidColorBrush)?.Color ?? Colors.Gray;
+
+        Troubleshoot.BackgroundHealth.ApplyAxisTheme(TextOf("TextSecondaryBrush"), TextOf("BorderBrush2"));
+    }
+
     private RemoteMetricsSnapshot BuildRemoteMetricsSnapshot() => new()
     {
         MachineName = Environment.MachineName,
@@ -548,6 +726,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Theme.ThemeModeChanged -= ApplyAxisThemeToLogging;
         Theme.ThemeModeChanged -= ApplyAxisThemeToResponsiveness;
         Theme.ThemeModeChanged -= ApplyAxisThemeToGpu;
+        Theme.ThemeModeChanged -= ApplyAxisThemeToBaselines;
+        Theme.ThemeModeChanged -= ApplyAxisThemeToBackgroundHealth;
+        BackgroundHealthCollector.Dispose();
         Processes.Dispose();
         Memory.Dispose();
         Performance.Dispose();
@@ -564,6 +745,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Events.Dispose();
         LeakWatch.Dispose();
         ProcessHistory.Flush();
+        RulesEditor.Dispose();
+        RulesEngine.Dispose();
+        Troubleshoot.Dispose();
         _miniDashboard?.Close();
         RemoteMonitor.Dispose();
         Hotkey.Dispose();

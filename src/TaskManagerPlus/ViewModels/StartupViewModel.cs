@@ -487,10 +487,12 @@ public sealed class StartupViewModel : ObservableObject
         };
 
         RefreshCommand = new RelayCommand(_ => Refresh());
-        ToggleEnabledCommand = new RelayCommand(param => Toggle(param as StartupItem ?? SelectedItem));
+        // #980: read-only mode disables the enable/disable toggle (mutating) but leaves Refresh
+        // and every read-only lookup on this tab working.
+        ToggleEnabledCommand = new RelayCommand(param => Toggle(param as StartupItem ?? SelectedItem), _ => !ReadOnlyModeService.IsReadOnly);
 
         LoadScheduledTasksCommand = new AsyncRelayCommand(LoadScheduledTasksAsync);
-        ToggleScheduledTaskCommand = new AsyncRelayCommand(param => ToggleScheduledTaskAsync(param as ScheduledTaskRow ?? SelectedScheduledTask));
+        ToggleScheduledTaskCommand = new AsyncRelayCommand(param => ToggleScheduledTaskAsync(param as ScheduledTaskRow ?? SelectedScheduledTask), _ => !ReadOnlyModeService.IsReadOnly);
         CheckLogonDelayCommand = new AsyncRelayCommand(CheckLogonDelayAsync, () => SelectedScheduledTask is not null);
         DecodeLastResultCommand = new AsyncRelayCommand(DecodeLastResultAsync, () => SelectedScheduledTask is not null);
 
@@ -1562,7 +1564,8 @@ public sealed class StartupViewModel : ObservableObject
     {
         if (item is null) return;
 
-        bool newState = !item.IsEnabled;
+        bool wasEnabled = item.IsEnabled;
+        bool newState = !wasEnabled;
 
         // #747: a merged scheduled-task row has no StartupApproved flag to flip - it's toggled via
         // schtasks /change instead (ScheduledTaskService.SetEnabledAsync), same as the standalone
@@ -1583,5 +1586,23 @@ public sealed class StartupViewModel : ObservableObject
         {
             StatusMessage = $"Couldn't change {item.Name}: {error}";
         }
+
+        // #972: record every mutation this app performs - see ChangeJournalService's remarks.
+        // No RegistryKeyToBackup/backup here - #971 wires that ahead of the remediation-flow's
+        // own disable-startup-item action specifically, not this plain tab toggle.
+        ChangeJournalService.Append(new ChangeJournalEntry
+        {
+            Kind = ChangeKind.StartupToggle,
+            Target = item.Name,
+            ActionDescription = newState ? "Enabled at startup" : "Disabled at startup",
+            BeforeValue = wasEnabled ? "Enabled" : "Disabled",
+            AfterValue = success ? (newState ? "Enabled" : "Disabled") : (wasEnabled ? "Enabled" : "Disabled"),
+            TriggeredBy = "Startup tab",
+            Success = success,
+            IsUndoable = success,
+            StartupItemName = item.Name,
+            StartupItemCommand = item.Command,
+            StartupItemSource = item.Source.ToString(),
+        });
     }
 }

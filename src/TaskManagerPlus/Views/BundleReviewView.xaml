@@ -1,0 +1,187 @@
+<UserControl x:Class="TaskManagerPlus.Views.BundleReviewView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:TaskManagerPlus.ViewModels"
+             xmlns:models="clr-namespace:TaskManagerPlus.Models"
+             d:DataContext="{d:DesignInstance Type=vm:BundleReviewViewModel}"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d">
+    <UserControl.Resources>
+        <!-- Read-only finding row - severity/confidence/message only, no snooze/ignore/fix
+             actions (this is someone else's bundle, not a live finding on this machine). -->
+        <DataTemplate x:Key="ReadOnlyFindingTemplate" DataType="{x:Type models:HealthIssue}">
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,8" Padding="12,10">
+                <StackPanel>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Border Grid.Column="0" Width="8" Height="8" CornerRadius="4" Margin="0,3,8,0" VerticalAlignment="Top"
+                                Background="{Binding Severity, Converter={StaticResource RuleSeverityToBrushConverter}}" />
+                        <StackPanel Grid.Column="1">
+                            <TextBlock Text="{Binding Message}" FontSize="12.5" TextWrapping="Wrap" />
+                            <TextBlock FontSize="10.5" Foreground="{DynamicResource TextTertiaryBrush}" Margin="0,2,0,0">
+                                <Run Text="{Binding Severity, Mode=OneWay}" /><Run Text=" · " /><Run Text="{Binding ConfidenceWord, Mode=OneWay}" />
+                            </TextBlock>
+                        </StackPanel>
+                    </Grid>
+                </StackPanel>
+            </Border>
+        </DataTemplate>
+
+        <DataTemplate x:Key="ReadOnlyTimelineTemplate" DataType="{x:Type models:TimelineEvent}">
+            <Grid Margin="0,0,0,4">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="140" />
+                    <ColumnDefinition Width="130" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="{Binding Timestamp, StringFormat={}{0:g}}" FontSize="11" />
+                <TextBlock Grid.Column="1" Text="{Binding LaneDisplayName}" FontSize="11">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsFailure}" Value="True">
+                                    <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+                <TextBlock Grid.Column="2" FontSize="11" TextWrapping="Wrap">
+                    <Run Text="{Binding Title, Mode=OneWay}" FontWeight="SemiBold" />
+                    <Run Text=" — " />
+                    <Run Text="{Binding Detail, Mode=OneWay}" />
+                </TextBlock>
+            </Grid>
+        </DataTemplate>
+
+        <DataTemplate x:Key="ReadOnlyBaselineTemplate" DataType="{x:Type models:PerformanceBaseline}">
+            <Grid Margin="0,0,0,4">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="140" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="{Binding CapturedAt, StringFormat={}{0:g}}" FontSize="11" />
+                <TextBlock Grid.Column="1" FontSize="11" TextWrapping="Wrap">
+                    <Run Text="{Binding Label, TargetNullValue='(routine baseline)', Mode=OneWay}" />
+                    <Run Text=" — Fingerprint: " Foreground="{DynamicResource TextTertiaryBrush}" />
+                    <Run Text="{Binding Fingerprint.CpuName, Mode=OneWay}" />
+                </TextBlock>
+            </Grid>
+        </DataTemplate>
+
+        <DataTemplate x:Key="ReadOnlyFileTemplate" DataType="{x:Type models:EvidenceBundleManifestEntry}">
+            <TextBlock FontSize="11" TextWrapping="Wrap" Margin="0,0,0,3">
+                <Run Text="{Binding Title, Mode=OneWay}" FontWeight="SemiBold" />
+                <Run Text=" — " />
+                <Run Text="{Binding FileName, Mode=OneWay}" Foreground="{DynamicResource TextTertiaryBrush}" />
+            </TextBlock>
+        </DataTemplate>
+    </UserControl.Resources>
+    <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16">
+        <StackPanel>
+            <Grid Margin="0,0,0,10">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <!-- HideBundleReviewCommand lives on TroubleshootViewModel - AncestorLevel=2 skips
+                     this UserControl to reach TroubleshootView, same pattern as the other panels. -->
+                <Button Grid.Column="0" Content="&#8592; Back"
+                        Command="{Binding DataContext.HideBundleReviewCommand, RelativeSource={RelativeSource AncestorType=UserControl, AncestorLevel=2}}"
+                        Padding="10,4" Margin="0,0,14,0" VerticalAlignment="Center"
+                        AutomationProperties.Name="Back to Troubleshoot landing page" />
+                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                    <TextBlock Text="Bundle review" FontSize="17" FontWeight="SemiBold" />
+                    <TextBlock Text="Open someone else's exported evidence bundle and review it read-only, without affecting anything on this machine."
+                               Style="{StaticResource SubStat}" TextWrapping="Wrap" />
+                </StackPanel>
+                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button Content="Open bundle..." Padding="10,4" Margin="0,0,8,0" Command="{Binding OpenBundleCommand}"
+                            AutomationProperties.Name="Open an evidence bundle zip file" />
+                    <Button Content="Close" Padding="10,4" Command="{Binding CloseBundleCommand}" />
+                </StackPanel>
+            </Grid>
+
+            <!-- Persistent banner - source machine + capture time, visible throughout while a
+                 bundle is loaded. -->
+            <Border Background="{DynamicResource AccentMutedBrush}" BorderBrush="{DynamicResource AccentBrush}"
+                    BorderThickness="1" CornerRadius="8" Padding="12,8" Margin="0,0,0,14"
+                    Visibility="{Binding IsBundleLoaded, Converter={StaticResource BoolToVisibilityConverter}}">
+                <TextBlock Text="{Binding BannerText}" FontSize="12.5" FontWeight="SemiBold" TextWrapping="Wrap" />
+            </Border>
+
+            <TextBlock Text="{Binding StatusText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,16" />
+
+            <StackPanel Visibility="{Binding IsBundleLoaded, Converter={StaticResource BoolToVisibilityConverter}}">
+                <Border Style="{StaticResource CardStyle}" Margin="0,0,0,14">
+                    <StackPanel>
+                        <TextBlock Text="Findings" Style="{StaticResource CardTitle}" Margin="0,0,0,8" />
+                        <TextBlock Text="No findings recorded in this bundle.">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding Findings.Count}" Value="0">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                        <ItemsControl ItemsSource="{Binding Findings}" ItemTemplate="{StaticResource ReadOnlyFindingTemplate}" />
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource CardStyle}" Margin="0,0,0,14">
+                    <StackPanel>
+                        <TextBlock Text="Timeline" Style="{StaticResource CardTitle}" Margin="0,0,0,8" />
+                        <TextBlock Text="No timeline events recorded in this bundle.">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding TimelineEvents.Count}" Value="0">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                        <ItemsControl ItemsSource="{Binding TimelineEvents}" ItemTemplate="{StaticResource ReadOnlyTimelineTemplate}" />
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource CardStyle}" Margin="0,0,0,14">
+                    <StackPanel>
+                        <TextBlock Text="Baselines" Style="{StaticResource CardTitle}" Margin="0,0,0,8" />
+                        <TextBlock Text="No saved baselines included in this bundle.">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding Baselines.Count}" Value="0">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                        <ItemsControl ItemsSource="{Binding Baselines}" ItemTemplate="{StaticResource ReadOnlyBaselineTemplate}" />
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource CardStyle}">
+                    <StackPanel>
+                        <TextBlock Text="Files in this bundle" Style="{StaticResource CardTitle}" Margin="0,0,0,8" />
+                        <ItemsControl ItemsSource="{Binding Files}" ItemTemplate="{StaticResource ReadOnlyFileTemplate}" />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

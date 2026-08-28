@@ -11,5 +11,10 @@ public sealed class SummarySettings
     /// click the button first. Off by default, like every other opt-in toggle in this app.</summary>
     public bool GenerateReportOnExit { get; set; }
 
+    /// <summary>#989: Dark/Light/Follow system - read by both GenerateHtmlReport (SummaryViewModel)
+    /// and the evidence bundle's index.html generator (EvidenceBundleService), so one setting
+    /// covers every generated HTML report in the app.</summary>
+    public ReportTheme ReportTheme { get; set; } = ReportTheme.Dark;
+
     public static SummarySettings Defaults => new();
 }

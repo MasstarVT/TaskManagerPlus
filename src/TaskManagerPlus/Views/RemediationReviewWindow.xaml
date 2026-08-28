@@ -1,0 +1,314 @@
+<Window x:Class="TaskManagerPlus.Views.RemediationReviewWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="clr-namespace:TaskManagerPlus.ViewModels"
+        xmlns:conv="clr-namespace:TaskManagerPlus.Converters"
+        d:DataContext="{d:DesignInstance Type=vm:RemediationReviewViewModel}"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d"
+        Title="{Binding FindingTitle, StringFormat='Fix: {0}'}"
+        Height="620" Width="620" MinHeight="480" MinWidth="480"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
+    <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="18">
+        <StackPanel>
+            <TextBlock Text="{Binding FindingTitle}" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,0,0,4" />
+            <TextBlock Text="Review exactly what this will run before confirming - nothing runs until you click Run below."
+                       Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,14" />
+
+            <!-- One or more applicable fixes for this finding - pick which one to review. -->
+            <TextBlock Text="Action" Style="{StaticResource CardTitle}" Margin="0,0,0,4" />
+            <ComboBox ItemsSource="{Binding Actions}" SelectedItem="{Binding SelectedAction}"
+                      DisplayMemberPath="Title" Margin="0,0,0,10" />
+
+            <StackPanel Visibility="{Binding SelectedAction, Converter={StaticResource NullToVisibilityConverter}}">
+                <!-- #990: dotted-underline/tooltip highlighting for any recognized glossary term
+                     (WHEA, commit charge, TDR, ...) in this action's plain-English description. -->
+                <TextBlock conv:GlossaryText.Text="{Binding SelectedAction.PlainEnglishDescription}" TextWrapping="Wrap" Margin="0,0,0,12" />
+
+                <!-- Risk / reboot / undo summary. -->
+                <Border Style="{StaticResource CardStyle}" Padding="12,10" Margin="0,0,0,12">
+                    <StackPanel>
+                        <Grid Margin="0,0,0,4">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="Risk level: " Foreground="{DynamicResource TextTertiaryBrush}" />
+                            <TextBlock Grid.Column="1" Text="{Binding RiskLevelText}" FontWeight="SemiBold">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding RiskLevelText}" Value="Medium">
+                                                <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding RiskLevelText}" Value="High">
+                                                <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Grid>
+                        <Grid Margin="0,0,0,4">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="Requires reboot: " Foreground="{DynamicResource TextTertiaryBrush}" />
+                            <TextBlock Grid.Column="1" Text="{Binding RequiresRebootText}" TextWrapping="Wrap" />
+                        </Grid>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="Undoable: " Foreground="{DynamicResource TextTertiaryBrush}" />
+                            <TextBlock Grid.Column="1" Text="{Binding UndoableText}" TextWrapping="Wrap" />
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <!-- #968: the exact resolved command, always visible, always copyable - the review
+                     dialog's whole reason for existing. -->
+                <TextBlock Text="Exact command" Style="{StaticResource CardTitle}" Margin="0,0,0,4" />
+                <TextBox Text="{Binding CommandText, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap"
+                         FontFamily="Consolas" FontSize="12" Margin="0,0,0,14" />
+
+                <!-- #974: precondition block reason - shown inline (and as the Run/Preview
+                     buttons' own ToolTip below) whenever a declared precondition currently fails.
+                     Advisory notes (System Protection looking off) are informational only and
+                     never disable anything. -->
+                <TextBlock Text="{Binding PreconditionBlockReason}" TextWrapping="Wrap" FontSize="12"
+                           Foreground="{DynamicResource DangerBrush}" Margin="0,0,0,8">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Visibility" Value="Visible" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding PreconditionBlockReason}" Value="">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+                <TextBlock Text="{Binding PreconditionAdvisoryText}" TextWrapping="Wrap" FontSize="12"
+                           Foreground="{DynamicResource WarningBrush}" Margin="0,0,0,8">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Visibility" Value="Visible" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding PreconditionAdvisoryText}" Value="">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+
+                <!-- #969: dry run. -->
+                <Grid Margin="0,0,0,4">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="Preview (dry run)" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                    <Button Grid.Column="1" Content="Preview (dry run)" Command="{Binding RunPreviewCommand}" Padding="10,4"
+                            ToolTip="{Binding PreconditionBlockReason}" />
+                </Grid>
+                <TextBlock Text="{Binding PreviewCommandText}" FontFamily="Consolas" FontSize="11"
+                           Foreground="{DynamicResource TextTertiaryBrush}" TextWrapping="Wrap" Margin="0,0,0,4">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Visibility" Value="Visible" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding PreviewCommandText}" Value="">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+                <TextBox Text="{Binding PreviewOutputText, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap"
+                         FontFamily="Consolas" FontSize="11.5" MinHeight="60" MaxHeight="140"
+                         VerticalScrollBarVisibility="Auto" AcceptsReturn="True" Margin="0,0,0,14">
+                    <TextBox.Style>
+                        <Style TargetType="TextBox">
+                            <Setter Property="Visibility" Value="Visible" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding PreviewOutputText}" Value="">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBox.Style>
+                </TextBox>
+
+                <!-- #970: restore-point prompt for Medium/High risk actions. -->
+                <Border Padding="12,10" Margin="0,0,0,14" BorderBrush="{DynamicResource WarningBrush}">
+                    <Border.Style>
+                        <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding NeedsRestorePointPrompt}" Value="True">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <StackPanel>
+                        <TextBlock Text="This is a Medium/High-risk action. Create a restore point first?" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,0,0,8" />
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                            <Button Content="Create restore point" Command="{Binding CreateRestorePointCommand}" Padding="10,4" Margin="0,0,8,0" />
+                            <Button Content="Skip - run without one" Command="{Binding SkipRestorePointCommand}" Padding="10,4" Margin="0,0,8,0" />
+                            <Button Content="Open System Protection settings" Command="{Binding OpenSystemProtectionCommand}" Padding="10,4">
+                                <Button.Style>
+                                    <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding SystemProtectionLikelyDisabled}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Button.Style>
+                            </Button>
+                        </StackPanel>
+                        <TextBlock Text="{Binding RestorePointStatus}" TextWrapping="Wrap" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+                    </StackPanel>
+                </Border>
+
+                <!-- #979: "Queue for next boot" - offered only for an action that genuinely needs
+                     its target volume offline (SupportsDeferredQueue). -->
+                <Border Padding="12,10" Margin="0,0,0,14">
+                    <Border.Style>
+                        <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding SupportsDeferredQueue}" Value="True">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <StackPanel>
+                        <TextBlock Text="This needs the volume offline - queue it instead of running now?" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,0,0,8" />
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                            <Button Content="Queue for next boot" Command="{Binding QueueForNextBootCommand}" Padding="10,4" Margin="0,0,8,0"
+                                    ToolTip="{Binding PreconditionBlockReason}" />
+                            <TextBlock Text="or at:" VerticalAlignment="Center" Margin="0,0,6,0" Style="{StaticResource SubStat}" />
+                            <DatePicker SelectedDate="{Binding DeferredDate}" Width="110" Margin="0,0,4,0" />
+                            <TextBox Text="{Binding DeferredTimeText, UpdateSourceTrigger=PropertyChanged}" Width="52" Margin="0,0,6,0"
+                                     ToolTip="24-hour time, e.g. 14:30" />
+                            <Button Content="Queue for this time" Command="{Binding QueueForSpecificTimeCommand}" Padding="10,4"
+                                    ToolTip="{Binding PreconditionBlockReason}" />
+                        </StackPanel>
+                        <TextBlock Text="{Binding DeferredQueueStatusText}" TextWrapping="Wrap" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+                    </StackPanel>
+                </Border>
+
+                <!-- Run. -->
+                <Grid Margin="0,0,0,6">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="{Binding StatusMessage}" VerticalAlignment="Center" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" />
+                    <!-- #977: kills the running process mid-run - visible only while something is
+                         actually running. -->
+                    <Button Grid.Column="1" Content="Cancel" Command="{Binding CancelRunCommand}" Padding="12,6" Margin="0,0,8,0">
+                        <Button.Style>
+                            <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsBusy}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Button.Style>
+                    </Button>
+                    <Button Grid.Column="2" Content="Run" Command="{Binding RunActionCommand}" Padding="18,6"
+                            Background="{DynamicResource AccentBrush}" Foreground="{DynamicResource AccentForegroundBrush}" FontWeight="SemiBold"
+                            ToolTip="{Binding PreconditionBlockReason}" />
+                </Grid>
+
+                <!-- #977: real progress bar when the running tool's output is percentage-parseable
+                     (DISM/chkdsk); an indeterminate bar otherwise (sfc, or before the first
+                     progress line arrives) while something is actually running. -->
+                <ProgressBar Height="6" Margin="0,0,0,6" Minimum="0" Maximum="100"
+                             Value="{Binding ProgressPercent, Mode=OneWay, TargetNullValue=0}"
+                             IsIndeterminate="{Binding IsProgressIndeterminate}">
+                    <ProgressBar.Style>
+                        <Style TargetType="ProgressBar">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                            <Style.Triggers>
+                                <MultiDataTrigger>
+                                    <MultiDataTrigger.Conditions>
+                                        <Condition Binding="{Binding IsBusy}" Value="True" />
+                                        <Condition Binding="{Binding IsStreamingSupported}" Value="True" />
+                                    </MultiDataTrigger.Conditions>
+                                    <Setter Property="Visibility" Value="Visible" />
+                                </MultiDataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </ProgressBar.Style>
+                </ProgressBar>
+
+                <!-- #977: live streamed console output for sfc/DISM/chkdsk - a scrolling read-only
+                     list rather than the plain textbox below, so each line appears as it arrives. -->
+                <ListBox ItemsSource="{Binding LiveOutputLines}" Height="180" Margin="0,0,0,10"
+                         FontFamily="Consolas" FontSize="11" Background="{DynamicResource BgElevatedBrush}"
+                         ScrollViewer.HorizontalScrollBarVisibility="Auto" ScrollViewer.VerticalScrollBarVisibility="Auto">
+                    <ListBox.Style>
+                        <Style TargetType="ListBox" BasedOn="{StaticResource {x:Type ListBox}}">
+                            <Setter Property="Visibility" Value="Visible" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsStreamingSupported}" Value="False">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </ListBox.Style>
+                </ListBox>
+
+                <TextBox Text="{Binding RunOutputText, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap"
+                         FontFamily="Consolas" FontSize="11.5" MinHeight="80" MaxHeight="220"
+                         VerticalScrollBarVisibility="Auto" AcceptsReturn="True" Margin="0,4,0,0">
+                    <TextBox.Style>
+                        <Style TargetType="TextBox">
+                            <Setter Property="Visibility" Value="Visible" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding RunOutputText}" Value="">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding IsStreamingSupported}" Value="True">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBox.Style>
+                </TextBox>
+
+                <!-- #975: re-runs the originating finding's own rule right after Run finishes. -->
+                <Border Background="{DynamicResource AccentMutedBrush}" CornerRadius="8" Padding="10,8" Margin="0,10,0,0">
+                    <Border.Style>
+                        <Style TargetType="Border">
+                            <Setter Property="Visibility" Value="Visible" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding PostActionVerificationText}" Value="">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <TextBlock Text="{Binding PostActionVerificationText}" FontSize="12.5" FontWeight="SemiBold" TextWrapping="Wrap" />
+                </Border>
+            </StackPanel>
+
+            <Button Content="Close" HorizontalAlignment="Right" Padding="14,5" Margin="0,16,0,0" Click="OnClose" />
+        </StackPanel>
+    </ScrollViewer>
+</Window>

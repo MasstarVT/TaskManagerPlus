@@ -30,6 +30,7 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
         <!-- Header -->
@@ -131,6 +132,18 @@
             <Border Background="{DynamicResource DangerMutedBrush}" BorderBrush="{DynamicResource DangerBrush}" BorderThickness="0,1,0,0" Padding="20,7"
                     Visibility="{Binding SafeMode.IsSafeMode, Converter={StaticResource BoolToVisibilityConverter}}">
                 <TextBlock Text="{Binding SafeMode.BannerText}" Foreground="{DynamicResource DangerBrush}" FontSize="12" FontWeight="SemiBold" TextWrapping="Wrap" />
+            </Border>
+
+            <!-- suggestions.md #997: "N unattended scans since you last looked, M new findings" -
+                 dismissible, collapsed whenever there's nothing new to report. -->
+            <Border Background="{DynamicResource AccentMutedBrush}" BorderBrush="{DynamicResource BorderBrush2}" BorderThickness="0,1,0,0" Padding="20,7"
+                    Visibility="{Binding UnattendedScanBannerText, Converter={StaticResource NullToVisibilityConverter}}">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="{Binding UnattendedScanBannerText}" Foreground="{DynamicResource AccentBrush}" FontSize="12" VerticalAlignment="Center" />
+                    <Button Content="Dismiss" Command="{Binding DismissUnattendedScanBannerCommand}" Cursor="Hand" Margin="12,0,0,0"
+                            Padding="8,3" Background="Transparent" BorderThickness="1" BorderBrush="{DynamicResource AccentBrush}" Foreground="{DynamicResource AccentBrush}" FontSize="11.5"
+                            AutomationProperties.Name="Dismiss unattended scan notification" />
+                </StackPanel>
             </Border>
             </StackPanel>
         </Border>
@@ -435,6 +448,19 @@
                     </TabItem.Tag>
                     <views:DevicesDriversView DataContext="{Binding DevicesDrivers}" />
                 </TabItem>
+
+                <TabItem Header="Troubleshoot">
+                    <TabItem.Tag>
+                        <Viewbox Width="16" Height="16">
+                            <Canvas Width="16" Height="16">
+                                <Ellipse Style="{StaticResource NavIconStroke}" Canvas.Left="1" Canvas.Top="1" Width="14" Height="14" />
+                                <Line Style="{StaticResource NavIconStroke}" StrokeThickness="1.8" X1="8" Y1="4.5" X2="8" Y2="9" />
+                                <Ellipse Style="{StaticResource NavIconFill}" Canvas.Left="7.25" Canvas.Top="10.5" Width="1.5" Height="1.5" />
+                            </Canvas>
+                        </Viewbox>
+                    </TabItem.Tag>
+                    <views:TroubleshootView DataContext="{Binding Troubleshoot}" />
+                </TabItem>
             </TabControl>
 
             <views:SettingsPanel Grid.Column="1" DataContext="{Binding Theme}">
@@ -451,8 +477,41 @@
             </views:SettingsPanel>
         </Grid>
 
+        <!-- #955: persistent "change in progress" banner, visible on every tab (not just the
+             Troubleshoot tab's Baselines section where the change window itself is started/
+             finished) - a small conditional row here was easy given the existing fixed 3-row
+             Grid, so this is the "real, app-wide visibility" option CLAUDE.md's own instructions
+             for this feature preferred over confining it to one tab. -->
+        <Border Grid.Row="2" Background="{DynamicResource AccentMutedBrush}" BorderBrush="{DynamicResource AccentBrush}" BorderThickness="0,0,0,1">
+            <Border.Style>
+                <Style TargetType="Border">
+                    <Setter Property="Visibility" Value="Collapsed" />
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding Troubleshoot.Baselines.IsChangeWindowOpen}" Value="True">
+                            <Setter Property="Visibility" Value="Visible" />
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </Border.Style>
+            <Grid Margin="20,7">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" FontSize="11.5" Foreground="{DynamicResource AccentBrush}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis">
+                    <Run Text="Change in progress: " FontWeight="SemiBold" />
+                    <Run Text="{Binding Troubleshoot.Baselines.ActiveChangeLabel, Mode=OneWay}" />
+                    <Run Text=" (started " />
+                    <Run Text="{Binding Troubleshoot.Baselines.ChangeStartedAt, StringFormat={}{0:t}, Mode=OneWay}" />
+                    <Run Text=")" />
+                </TextBlock>
+                <Button Grid.Column="1" Content="Finish change" Padding="10,4" Cursor="Hand"
+                        Command="{Binding Troubleshoot.Baselines.FinishChangeCommand}" />
+            </Grid>
+        </Border>
+
         <!-- Footer status bar -->
-        <Border Grid.Row="2" Background="{DynamicResource BgPanelBrush}" BorderBrush="{DynamicResource BorderBrush2}" BorderThickness="0,1,0,0">
+        <Border Grid.Row="3" Background="{DynamicResource BgPanelBrush}" BorderBrush="{DynamicResource BorderBrush2}" BorderThickness="0,1,0,0">
             <Grid Margin="20,7">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />

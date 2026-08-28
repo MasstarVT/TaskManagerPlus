@@ -21,6 +21,17 @@ namespace TaskManagerPlus.Services;
 /// itself only exposes that through rstrui.exe's own wizard, not a scriptable WMI method), and a
 /// best-effort "is System Protection even turned on" flag - see
 /// <see cref="ReadSystemProtectionStatus"/>'s own remarks on exactly how tentative that flag is.
+///
+/// #970/#974: a second, async create/check pair for the Troubleshoot tab's remediation-review flow
+/// (<see cref="CreateRestorePointAsync"/>/<see cref="CheckSystemProtectionEnabledAsync"/>), shelling
+/// out to PowerShell's Checkpoint-Computer/Get-ComputerRestorePoint cmdlets instead of the direct
+/// WMI call above - Checkpoint-Computer is what those cmdlets call internally, so this is the
+/// "known tool" version of the same call rather than a second, redundant WMI path, and its own
+/// error text is what RemediationPreconditionService's advisory precheck and the review dialog's
+/// "System Protection looks disabled" messaging depend on. Kept alongside the original sync/WMI
+/// pair above (different method names, no collision) rather than merged into it, since callers on
+/// each side depend on the specific shape/timing (sync WMI call for the Driver Verifier wizard and
+/// Stability tab; async PowerShell call plus a disabled-detection flag for the remediation flow).
 /// </summary>
 public static class RestorePointService
 {
@@ -247,6 +258,93 @@ public static class RestorePointService
         catch
         {
             return null;
+        }
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // #970/#974: async PowerShell-based create/check pair for the Troubleshoot tab's
+    // remediation-review flow - see the class summary above for why this coexists with the
+    // sync/WMI pair above rather than being merged into it.
+    // ---------------------------------------------------------------------------------------
+
+    /// <summary>True when Checkpoint-Computer's own error output matches its well-known "System
+    /// Restore is disabled" phrasing - used to swap in a clearer, actionable message instead of the
+    /// raw PowerShell exception text.</summary>
+    private static bool LooksLikeSystemProtectionDisabled(string output) =>
+        output.Contains("System Restore is disabled", StringComparison.OrdinalIgnoreCase) ||
+        output.Contains("disabled on this drive", StringComparison.OrdinalIgnoreCase) ||
+        output.Contains("0x81045303", StringComparison.OrdinalIgnoreCase);
+
+    public static async Task<(bool Success, string Message, bool SystemProtectionLikelyDisabled)> CreateRestorePointAsync(string description)
+    {
+        try
+        {
+            // Checkpoint-Computer throttles to one checkpoint per 24h by default for
+            // MODIFY_SETTINGS-type points on client SKUs - reported the same way as any other
+            // failure below rather than special-cased, since the message it returns already says
+            // so plainly.
+            string safeDescription = description.Replace("'", "''");
+            string psCommand =
+                $"$ErrorActionPreference='Stop'; try {{ Checkpoint-Computer -Description '{safeDescription}' -RestorePointType MODIFY_SETTINGS; Write-Output 'RESTORE_POINT_OK' }} catch {{ Write-Output $_.Exception.Message }}";
+
+            var (output, exitCode) = await TroubleshootService.RunCapturedAsync(
+                "powershell.exe", $"-NoProfile -NonInteractive -Command \"{psCommand.Replace("\"", "\\\"")}\"", timeoutMs: 60000);
+
+            if (exitCode == 0 && output.Contains("RESTORE_POINT_OK", StringComparison.Ordinal))
+                return (true, "Restore point created.", false);
+
+            bool disabled = LooksLikeSystemProtectionDisabled(output);
+            string message = disabled
+                ? "Couldn't create a restore point - System Protection looks disabled for this drive."
+                : $"Couldn't create a restore point: {(string.IsNullOrWhiteSpace(output) ? "unknown error" : output.Trim())}";
+            return (false, message, disabled);
+        }
+        catch (Exception ex)
+        {
+            return (false, $"Couldn't create a restore point: {ex.Message}", false);
+        }
+    }
+
+    /// <summary>#974: a read-only, non-mutating precheck of whether System Restore looks enabled -
+    /// reused by RemediationPreconditionService's advisory RequiresSystemProtectionOn check so the
+    /// review dialog can show this ahead of time rather than only after a failed
+    /// CreateRestorePointAsync attempt. Deliberately calls Get-ComputerRestorePoint (a query) and
+    /// never Enable-ComputerRestore - a precondition *check* must never have the side effect of
+    /// actually turning System Protection on. Returns null when the check itself couldn't
+    /// determine an answer either way (CLAUDE.md's "degrade to Unknown, never fabricate") -
+    /// callers must not treat null as "enabled".</summary>
+    public static async Task<bool?> CheckSystemProtectionEnabledAsync()
+    {
+        try
+        {
+            const string psCommand =
+                "$ErrorActionPreference='Stop'; try { Get-ComputerRestorePoint | Out-Null; Write-Output 'SR_QUERY_OK' } catch { Write-Output $_.Exception.Message }";
+
+            var (output, exitCode) = await TroubleshootService.RunCapturedAsync(
+                "powershell.exe", $"-NoProfile -NonInteractive -Command \"{psCommand}\"", timeoutMs: 20000);
+
+            if (exitCode is null) return null; // timed out - couldn't determine an answer
+            if (output.Contains("SR_QUERY_OK", StringComparison.Ordinal)) return true;
+            if (LooksLikeSystemProtectionDisabled(output)) return false;
+            return null; // some other failure (PowerShell missing, WMI namespace denied, ...) - unknown, not "off"
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Opens the Windows "System Protection" settings tab directly - the fallback offered
+    /// when CreateRestorePointAsync reports System Protection is disabled.</summary>
+    public static void OpenSystemProtectionSettings()
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo("SystemPropertiesProtection.exe") { UseShellExecute = true });
+        }
+        catch
+        {
+            // Best-effort - if even this can't launch, there's nothing more this app can do here.
         }
     }
 }

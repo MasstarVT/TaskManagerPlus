@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
@@ -43,7 +44,14 @@ public partial class MainWindow : Window
         };
 
         Closing += (_, _) => _viewModel.Summary.GenerateReportOnExitIfEnabled();
-        Closed += (_, _) => { _viewModel.Dispose(); _trayIcon?.Dispose(); _displayChangeHookSource?.RemoveHook(DisplayChangeWndProc); };
+        Closed += (_, _) =>
+        {
+            _viewModel.Search.NavigationRequested -= OnSearchNavigationRequested;
+            _viewModel.Dispose();
+            _trayIcon?.Dispose();
+            _displayChangeHookSource?.RemoveHook(DisplayChangeWndProc);
+            TaskManagerPlus.Services.TrayBalloonService.Icon = null;
+        };
         SourceInitialized += (_, _) => { ApplyNativeWindowChrome(); InitializeTrayIcon(); InitializeGlobalHotkey(); InitializeDisplayChangeHook(); };
         StateChanged += MainWindow_StateChanged;
         PreviewKeyDown += MainWindow_PreviewKeyDown;
@@ -53,6 +61,11 @@ public partial class MainWindow : Window
         // other callers (the `--tab` launch flag, Ctrl+1..9) already use, rather than either
         // ViewModel needing a direct reference to the other.
         _viewModel.DevicesDrivers.OpenSnapshotUiRequested += (_, _) => SelectTabByName("Summary");
+
+        // suggestions.md #1000: the command palette's ViewModel has no tab-switching/drawer-opening
+        // capability of its own (see SearchNavigationRequest's remarks) - this Window performs
+        // whatever a search result's activation asked for.
+        _viewModel.Search.NavigationRequested += OnSearchNavigationRequested;
     }
 
     /// <summary>#107: stops the Events tab's live-tail "Follow" subscription whenever the tab
@@ -99,6 +112,36 @@ public partial class MainWindow : Window
             }
         }
         return IntPtr.Zero;
+    }
+
+    // suggestions.md #1000: one shared instance, reused across Ctrl+K presses rather than a new
+    // Window per open - mirrors MainViewModel's own single-instance MiniDashboardWindow toggle.
+    private Views.CommandPaletteWindow? _commandPalette;
+
+    /// <summary>suggestions.md #1000: Ctrl+K opens the command palette - see
+    /// SearchNavigationRequest's remarks for why the actual navigation is performed here rather
+    /// than inside GlobalSearchViewModel.</summary>
+    private void OpenCommandPalette()
+    {
+        if (_commandPalette is { IsVisible: true }) { _commandPalette.Activate(); return; }
+        _commandPalette = new Views.CommandPaletteWindow(_viewModel.Search) { Owner = this };
+        _commandPalette.Show();
+    }
+
+    private void OnSearchNavigationRequested(TaskManagerPlus.Models.SearchNavigationRequest nav)
+    {
+        if (nav.TabName is { Length: > 0 } tab) SelectTabByName(tab);
+
+        if (nav.TroubleshootPanel == "Glossary") _viewModel.Troubleshoot.ShowGlossaryCommand.Execute(null);
+        else if (nav.TroubleshootPanel == "Timeline") _viewModel.Troubleshoot.ShowTimelineCommand.Execute(null);
+
+        if (nav.SelectRuleId is { Length: > 0 } ruleId)
+        {
+            var row = _viewModel.RulesEditor.Rows.FirstOrDefault(r => r.Id == ruleId);
+            if (row is not null) _viewModel.RulesEditor.SelectedRow = row;
+        }
+
+        if (nav.OpenSettings || nav.SelectRuleId is { Length: > 0 }) _viewModel.IsSettingsOpen = true;
     }
 
     /// <summary>Round 12, #84: selects a tab by header text (case-insensitive) - used by the
@@ -149,6 +192,11 @@ public partial class MainWindow : Window
                 try { _trayIcon?.ShowBalloonTip(8000, title, text, Forms.ToolTipIcon.Warning); }
                 catch { /* best-effort - the in-app tab badge/banner still shows either way */ }
             };
+
+            // #964: lets AlertDeliveryService (Services/, no window reference of its own) show a
+            // genuine tray balloon for the "TrayBalloon" alert channel - see TrayBalloonService's
+            // remarks.
+            TaskManagerPlus.Services.TrayBalloonService.Icon = _trayIcon;
         }
         catch
         {
@@ -212,6 +260,15 @@ public partial class MainWindow : Window
     /// tabs are ever reordered in MainWindow.xaml.</summary>
     private void MainWindow_PreviewKeyDown(object sender, KeyEventArgs e)
     {
+        // suggestions.md #1000: Ctrl+K opens the command palette - checked before the
+        // Ctrl+1..9-only branch below so it isn't shadowed by the `return` there.
+        if (Keyboard.Modifiers == ModifierKeys.Control && e.Key == Key.K)
+        {
+            OpenCommandPalette();
+            e.Handled = true;
+            return;
+        }
+
         if (Keyboard.Modifiers != ModifierKeys.Control) return;
 
         int index = e.Key switch

@@ -14,8 +14,13 @@ namespace TaskManagerPlus.Services;
 public sealed class StartupManagerService
 {
     private const string RunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
-    private const string ApprovedRunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
-    private const string ApprovedFolderKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\StartupFolder";
+
+    // #971: internal (not private) so RemediationActionCatalog's disable-startup-item action can
+    // build the exact same key path for its display Command string and registry backup, without
+    // duplicating these two literals - still not public, so nothing outside this assembly's own
+    // Services/* layer depends on the exact path shape.
+    internal const string ApprovedRunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
+    internal const string ApprovedFolderKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\StartupFolder";
 
     // #742: the rest of the autorun-location sweep - RunOnce/RunOnceEx/RunServices/
     // RunServicesOnce (all four are legacy but still honored by Windows) and the two

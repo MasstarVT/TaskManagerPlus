@@ -23,7 +23,7 @@ namespace TaskManagerPlus.Services;
 /// storage footprint measurement, LocalDumps read/write/backup-and-revert, and the error-reporting
 /// (Disabled/DontShowUI/consent/WerSvc) configuration check - kept alongside the items-38-49 static
 /// API above rather than merged into it, since the two use different model shapes and callers
-/// (EvidenceBundleService's export step, StabilityViewModel's WER-config/footprint/local-dumps
+/// (EventLogEvidenceBundleService's export step, StabilityViewModel's WER-config/footprint/local-dumps
 /// cards) already depend on this instance shape specifically.
 /// </summary>
 public sealed class WerReportService

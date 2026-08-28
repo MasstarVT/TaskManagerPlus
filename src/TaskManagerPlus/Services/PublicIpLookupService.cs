@@ -18,6 +18,10 @@ public static class PublicIpLookupService
 
     public static async Task<PublicIpInfo?> LookupAsync()
     {
+        // #999: Offline mode hard-disables this call - see NetworkActivityCatalogService's remarks
+        // for the exact boundary this app draws (a user-initiated browser link is NOT gated; a
+        // silent outbound HTTP call the app makes on its own, like this one, IS).
+        if (UiPreferencesService.Load().OfflineMode) return null;
         try
         {
             using var response = await Http.GetAsync("https://ipinfo.io/json");

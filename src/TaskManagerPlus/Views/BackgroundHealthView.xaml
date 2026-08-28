@@ -1,0 +1,204 @@
+<UserControl x:Class="TaskManagerPlus.Views.BackgroundHealthView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:TaskManagerPlus.ViewModels"
+             xmlns:models="clr-namespace:TaskManagerPlus.Models"
+             xmlns:lvc="clr-namespace:LiveChartsCore.SkiaSharpView.WPF;assembly=LiveChartsCore.SkiaSharpView.WPF"
+             d:DataContext="{d:DesignInstance Type=vm:BackgroundHealthViewModel}"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d">
+    <UserControl.Resources>
+        <!-- #962: one "worst 10 moments" row. -->
+        <DataTemplate x:Key="WorstMomentTemplate" DataType="{x:Type vm:WorstMomentRow}">
+            <Grid Margin="0,0,0,4">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="150" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="{Binding TimestampLocal, StringFormat={}{0:g}}" FontSize="12" />
+                <TextBlock Grid.Column="1" FontSize="12" FontWeight="SemiBold" Margin="10,0,10,0">
+                    <Run Text="{Binding Value, StringFormat={}{0:0.#}, Mode=OneWay}" />
+                    <Run Text=" " /><Run Text="{Binding MetricLabel, Mode=OneWay}" />
+                </TextBlock>
+                <TextBlock Grid.Column="2" Style="{StaticResource SubStat}" TextWrapping="Wrap">
+                    <Run Text="Top process: " /><Run Text="{Binding TopProcessName, TargetNullValue='(not recorded)', Mode=OneWay}" />
+                </TextBlock>
+            </Grid>
+        </DataTemplate>
+
+        <!-- #963: one recent-alert row. -->
+        <DataTemplate x:Key="AlertHistoryTemplate" DataType="{x:Type models:AlertHistoryEntry}">
+            <Grid Margin="0,0,0,4">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="150" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="{Binding TimestampLocal, StringFormat={}{0:g}}" FontSize="12" />
+                <TextBlock Grid.Column="1" Text="{Binding Title}" FontSize="12" TextWrapping="Wrap" Margin="10,0,10,0" />
+                <TextBlock Grid.Column="2" FontSize="10.5" Foreground="{DynamicResource TextTertiaryBrush}">
+                    <Run Text="{Binding Channel, Mode=OneWay}" />
+                    <Run Text=" (quiet-hours suppressed)">
+                        <Run.Style>
+                            <Style TargetType="Run">
+                                <Setter Property="Text" Value="" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding WasSuppressedByQuietHours}" Value="True">
+                                        <Setter Property="Text" Value=" (quiet-hours suppressed)" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Run.Style>
+                    </Run>
+                    <Run Text=" (escalated)">
+                        <Run.Style>
+                            <Style TargetType="Run">
+                                <Setter Property="Text" Value="" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding WasEscalated}" Value="True">
+                                        <Setter Property="Text" Value=" (escalated)" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Run.Style>
+                    </Run>
+                </TextBlock>
+            </Grid>
+        </DataTemplate>
+
+        <!-- #964: one rule's alert-channel override row. -->
+        <DataTemplate x:Key="RuleChannelTemplate" DataType="{x:Type vm:RuleChannelRow}">
+            <Grid Margin="0,0,0,6">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="130" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="{Binding Title}" FontSize="12" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,10,0" />
+                <ComboBox Grid.Column="1" ItemsSource="{Binding Source={x:Static vm:BackgroundHealthViewModel.AvailableChannels}}"
+                          SelectedItem="{Binding Channel}" FontSize="11" />
+            </Grid>
+        </DataTemplate>
+    </UserControl.Resources>
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16">
+        <StackPanel>
+            <Grid Margin="0,0,0,12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <!-- HideBackgroundHealthCommand lives on TroubleshootViewModel, not this view's own
+                     BackgroundHealthViewModel DataContext - same AncestorLevel=2 reasoning
+                     TimelineView/BaselineView already document. -->
+                <Button Grid.Column="0" Content="&#8592; Back"
+                        Command="{Binding DataContext.HideBackgroundHealthCommand, RelativeSource={RelativeSource AncestorType=UserControl, AncestorLevel=2}}"
+                        Padding="10,4" Margin="0,0,14,0" VerticalAlignment="Center" />
+                <TextBlock Grid.Column="1" Text="Background Health" FontSize="17" FontWeight="SemiBold" VerticalAlignment="Center" />
+                <!-- The chart/worst-moments/alert-digest below are on-demand (initial load + this
+                     button), not a periodic re-parse of health-history.jsonl - see
+                     BackgroundHealthViewModel.OnCollectorTicked's remarks. -->
+                <Button Grid.Column="2" Content="Refresh" Padding="10,4" VerticalAlignment="Center" Command="{Binding RefreshCommand}" />
+            </Grid>
+
+            <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,14"
+                       Text="A low-frequency, always-on collector separate from the Logging tab's user-started CSV log - a handful of key metrics, stored compactly, self-measuring its own cost so monitoring never becomes the slowdown." />
+
+            <!-- #959/#966: collector status, interval, and self-measured cost. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,14">
+                <StackPanel>
+                    <TextBlock Text="Collector" Style="{StaticResource CardTitle}" Margin="0,0,0,8" />
+                    <CheckBox Content="Collect background health data" IsChecked="{Binding IsCollectorEnabled}" Margin="0,0,0,8" />
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                        <TextBlock Text="Interval (seconds)" VerticalAlignment="Center" Margin="0,0,6,0" Style="{StaticResource SubStat}" />
+                        <TextBox Width="60" Text="{Binding IntervalSeconds, UpdateSourceTrigger=LostFocus}" />
+                    </StackPanel>
+                    <TextBlock Text="{Binding CollectorStatusText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,4" />
+                    <TextBlock Text="{Binding CostText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+
+            <!-- #960: disk budget + usage. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,14">
+                <StackPanel>
+                    <TextBlock Text="Storage budget" Style="{StaticResource CardTitle}" Margin="0,0,0,8" />
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                        <TextBlock Text="Budget (MB)" VerticalAlignment="Center" Margin="0,0,6,0" Style="{StaticResource SubStat}" />
+                        <TextBox Width="60" Text="{Binding BudgetMb, UpdateSourceTrigger=LostFocus}" />
+                    </StackPanel>
+                    <TextBlock Text="{Binding UsageText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+
+            <!-- #962: metric/range picker + glow/core history chart. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,14">
+                <StackPanel>
+                    <TextBlock Text="History" Style="{StaticResource CardTitle}" Margin="0,0,0,8" />
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                        <ComboBox Width="180" Margin="0,0,10,0" ItemsSource="{Binding AvailableMetrics}"
+                                  SelectedItem="{Binding SelectedMetric}" DisplayMemberPath="Label" />
+                        <ComboBox Width="150" ItemsSource="{Binding RangeOptions}" SelectedItem="{Binding SelectedRange}" />
+                    </StackPanel>
+                    <lvc:CartesianChart Series="{Binding ChartSeries}" XAxes="{Binding ChartXAxes}" YAxes="{Binding ChartYAxes}"
+                                         Height="220" TooltipPosition="Top" LegendPosition="Hidden" />
+                </StackPanel>
+            </Border>
+
+            <!-- #962: worst 10 moments for the selected metric/range. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,14">
+                <StackPanel>
+                    <TextBlock Text="Worst 10 moments" Style="{StaticResource CardTitle}" Margin="0,0,0,8" />
+                    <TextBlock Text="No history recorded yet for this metric/range." Margin="0,0,0,0">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding WorstMoments.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <ItemsControl ItemsSource="{Binding WorstMoments}" ItemTemplate="{StaticResource WorstMomentTemplate}" />
+                </StackPanel>
+            </Border>
+
+            <!-- #963: alert digest + recent alerts. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,14">
+                <StackPanel>
+                    <TextBlock Text="Alert digest" Style="{StaticResource CardTitle}" Margin="0,0,0,8" />
+                    <TextBlock Text="{Binding AlertDigestText}" TextWrapping="Wrap" FontSize="12.5" Margin="0,0,0,10" />
+                    <ItemsControl ItemsSource="{Binding RecentAlerts}" ItemTemplate="{StaticResource AlertHistoryTemplate}" />
+                </StackPanel>
+            </Border>
+
+            <!-- #964: quiet hours. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,14">
+                <StackPanel>
+                    <TextBlock Text="Quiet hours" Style="{StaticResource CardTitle}" Margin="0,0,0,8" />
+                    <CheckBox Content="Suppress toast/tray-balloon alerts during a daily window (still logged)" IsChecked="{Binding QuietHoursEnabled}" Margin="0,0,0,8" />
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="From" VerticalAlignment="Center" Margin="0,0,6,0" Style="{StaticResource SubStat}" />
+                        <TextBox Width="60" Text="{Binding QuietHoursStartText, UpdateSourceTrigger=LostFocus}" />
+                        <TextBlock Text="to" VerticalAlignment="Center" Margin="10,0,6,0" Style="{StaticResource SubStat}" />
+                        <TextBox Width="60" Text="{Binding QuietHoursEndText, UpdateSourceTrigger=LostFocus}" />
+                        <TextBlock Text="(24h, local time)" VerticalAlignment="Center" Margin="10,0,0,0" Style="{StaticResource SubStat}" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- #964: per-rule alert channel overrides. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,14">
+                <StackPanel>
+                    <TextBlock Text="Per-rule alert channel" Style="{StaticResource CardTitle}" Margin="0,0,0,8" />
+                    <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,8"
+                               Text="Toast pops a popup, Tray balloon uses the system tray icon, Silent log only never notifies (still recorded above) - unless a rule's own escalate-on-repetition setting forces a notification through." />
+                    <ItemsControl ItemsSource="{Binding RuleChannels}" ItemTemplate="{StaticResource RuleChannelTemplate}" />
+                </StackPanel>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

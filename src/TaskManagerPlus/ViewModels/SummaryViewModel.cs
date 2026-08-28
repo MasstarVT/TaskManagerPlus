@@ -12,6 +12,16 @@ using TaskManagerPlus.Services;
 
 namespace TaskManagerPlus.ViewModels;
 
+/// <summary>#933: sort key for the Health Check card's finding list - see
+/// SummaryViewModel.SortIssues for the composite "Impact" score formula.</summary>
+public enum HealthFindingSortMode
+{
+    Impact,
+    Severity,
+    Confidence,
+    Category,
+}
+
 /// <summary>
 /// Backs the Summary dashboard page. Mostly a thin composition over the Performance/Processes
 /// view-models MainViewModel already polls, the same live data just re-presented as a mosaic of
@@ -30,6 +40,7 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
     private readonly ResponsivenessViewModel _responsiveness;
     private readonly StorageViewModel _storage;
     private readonly ProcessHistoryService _processHistory;
+    private readonly RulesEngineService _rulesEngine;
     private readonly DispatcherTimer _healthTimer;
 
     /// <summary>Round 10, #67: exposed publicly (the field above stays for this class's own
@@ -69,6 +80,133 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
 
     private bool _storageHealthHasWatch;
     public bool StorageHealthHasWatch { get => _storageHealthHasWatch; private set => SetProperty(ref _storageHealthHasWatch, value); }
+
+    /// <summary>#934: HealthIssues re-shaped into one row per GroupKey (a standalone finding with
+    /// no GroupKey is its own singleton row) - what the Health Check card's ItemsControl actually
+    /// binds to now. Rebuilt alongside HealthIssues every RefreshHealthIssues pass.</summary>
+    public ObservableCollection<HealthFindingGroup> GroupedHealthIssues { get; } = new();
+
+    /// <summary>#937: enabled rules the engine could not meaningfully evaluate this pass because
+    /// their condition touched a metric BuildMetricBag marked unavailable - rendered as its own
+    /// small grey "couldn't check" list, visibly distinct from both a fired finding and "checked,
+    /// clean".</summary>
+    public ObservableCollection<CouldNotEvaluateInfo> CouldNotCheckFindings { get; } = new();
+
+    /// <summary>#936: rules that were firing in a recent RefreshHealthIssues pass but aren't in
+    /// the current one - seeded from findings-history.jsonl at construction (FindingsHistoryService.
+    /// LoadRecentResolved) so "it cleared up" survives an app restart, then appended to live as
+    /// resolutions are detected this session.</summary>
+    public ObservableCollection<ResolvedFinding> RecentlyResolvedFindings { get; } = new();
+
+    // #924: findings whose rule is currently suppressed (snoozed and not yet expired, or
+    // permanently ignored) - kept in their own collection, revealed via IsSuppressedListExpanded,
+    // rather than just dropped, so a suppression is easy to find and undo later.
+    public ObservableCollection<HealthIssue> SuppressedFindings { get; } = new();
+
+    private bool _isSuppressedListExpanded;
+    public bool IsSuppressedListExpanded { get => _isSuppressedListExpanded; set => SetProperty(ref _isSuppressedListExpanded, value); }
+    public RelayCommand ToggleSuppressedListCommand { get; }
+
+    /// <summary>#924: "Snooze for 7 days" - the duration is fixed rather than user-configurable
+    /// per click, matching the simple "one clear action, not a picker" style of this card's other
+    /// buttons (Markdown/HTML report, Copy summary).</summary>
+    public RelayCommand SnoozeFindingCommand { get; }
+
+    /// <summary>#924: "Ignore on this machine" - permanent (ExpiresUtc = null) until explicitly
+    /// un-suppressed from the SuppressedFindings panel.</summary>
+    public RelayCommand IgnoreFindingCommand { get; }
+
+    public RelayCommand UnsuppressFindingCommand { get; }
+
+    /// <summary>#967: "Fix this" on a finding that declares Rule.ActionIds - resolves them to
+    /// concrete RemediationAction instances (RemediationActionCatalog.Resolve, using this finding's
+    /// own resolved Message plus live ServicesViewModel state for whatever context a parameterized
+    /// action needs) and opens the review dialog. A finding whose ids don't resolve to anything
+    /// this pass (e.g. the drive letter couldn't be parsed) just does nothing - HasFixAction already
+    /// gates the button's visibility on the ids being present, not on them being resolvable, so this
+    /// is a rare, silent no-op rather than a dead button shown as broken.</summary>
+    public RelayCommand FixFindingCommand { get; }
+
+    /// <summary>#992: "Learn more" - opens a finding's Rule.DocsUrl in the default browser via
+    /// ExternalLinkService. A plain no-op for a finding with no DocsUrl (the Hyperlink itself is
+    /// hidden in that case, same "gate visibility on the data being present" convention
+    /// FixFindingCommand's HasFixAction check already uses).</summary>
+    public RelayCommand OpenDocsUrlCommand { get; }
+
+    /// <summary>#993: "Read more (offline)" - opens a finding's bundled local explainer HTML page
+    /// (ExplainerCatalogService, keyed by Rule.ExplainerId) in the default browser - 100% local,
+    /// works with no network. See ExplainerCatalogService's remarks for why this reuses the same
+    /// ExternalLinkService mechanism as #992's online "Learn more" link rather than a bespoke
+    /// in-app HTML viewer.</summary>
+    public RelayCommand OpenExplainerCommand { get; }
+
+    /// <summary>suggestions.md #1000: Ctrl+Shift+C on the Summary tab - copies the Health Check
+    /// card's current visible content as Markdown to the clipboard (SummaryView.xaml's
+    /// UserControl.InputBindings). Best-effort - a clipboard write can legitimately fail (another
+    /// app holding the clipboard open), swallowed the same way every other clipboard write in this
+    /// app already degrades.</summary>
+    public RelayCommand CopyMarkdownCommand { get; }
+
+    private string BuildHealthCheckMarkdown()
+    {
+        var sb = new StringBuilder();
+        void Line(string s = "") => sb.Append(s).Append('\n');
+
+        Line("## Health Check");
+        if (HealthIssues.Count == 0)
+        {
+            Line("No issues detected.");
+        }
+        else
+        {
+            foreach (var issue in HealthIssues)
+            {
+                Line($"- {(issue.IsCritical ? "**Critical**" : "Warning")}: {issue.Message}" +
+                     (string.IsNullOrEmpty(issue.DocsUrl) ? string.Empty : $" ([Learn more]({issue.DocsUrl}))"));
+            }
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>#976: the "Run safe fixes" batch runner - rebuilt every RefreshHealthIssues pass
+    /// (see the call near the end of that method) so it always reflects the currently-fired
+    /// findings.</summary>
+    public SafeFixBatchViewModel SafeFixes { get; }
+
+    public RelayCommand OpenSafeFixBatchCommand { get; }
+
+    // #978: "restart pending — including from N fix(es) you ran" - a derived rollup over the
+    // existing SystemSpecsViewModel.RebootPending flag plus this app's own
+    // PendingRebootActionsService list, recomputed alongside RefreshHealthIssues rather than a
+    // separate timer.
+    private string _rebootBannerText = string.Empty;
+    public string RebootBannerText { get => _rebootBannerText; private set => SetProperty(ref _rebootBannerText, value); }
+
+    // #933: sort order for HealthIssues/GroupedHealthIssues - persisted only in memory for this
+    // session (see RefreshHealthIssues/SortIssues for the composite "Impact" score formula).
+    public static Array FindingSortModes { get; } = Enum.GetValues(typeof(HealthFindingSortMode));
+
+    private HealthFindingSortMode _findingSortMode = HealthFindingSortMode.Impact;
+    public HealthFindingSortMode FindingSortMode
+    {
+        get => _findingSortMode;
+        set { if (SetProperty(ref _findingSortMode, value)) RefreshHealthIssues(); }
+    }
+
+    // #935: "Not a problem" feedback, kept purely local (FeedbackService/feedback.jsonl) - a
+    // status line plus a one-click "suppress this rule?" follow-up, mirroring this card's other
+    // status-text-under-a-button conventions (CopySummaryStatusText, SnapshotStatusText, ...).
+    private string? _lastFeedbackRuleId;
+    private string _feedbackStatusText = string.Empty;
+    public string FeedbackStatusText { get => _feedbackStatusText; private set => SetProperty(ref _feedbackStatusText, value); }
+    public RelayCommand NotAProblemCommand { get; }
+    public RelayCommand SuppressLastFeedbackRuleCommand { get; }
+
+    // #936: previous pass's fired rule ids (RuleId-bearing findings only - the hand-rolled checks
+    // have no stable id to track resolution for) plus their last-known titles, diffed each
+    // RefreshHealthIssues pass to detect first-seen/resolved transitions.
+    private readonly HashSet<string> _previousFiredRuleIds = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _lastKnownRuleTitles = new(StringComparer.OrdinalIgnoreCase);
 
     // Round 11, #69: hideable/reorderable dashboard tiles - see DashboardTileConfig's remarks for
     // why this is up/down reordering within a fixed two-column layout rather than freeform
@@ -154,6 +292,32 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
     // remotely to see the shape of the last minute's CPU/RAM/Disk activity, not just numbers.
     public RelayCommand GenerateHtmlReportCommand { get; }
 
+    // #988: "Print report" - writes the same HTML report to a temp file and hands it to the OS's
+    // own registered print handler (see ReportPrintService's remarks on why Verb=print rather than
+    // a full System.Printing/XPS pipeline).
+    public RelayCommand PrintReportCommand { get; }
+
+    private string _printReportStatusText = string.Empty;
+    public string PrintReportStatusText { get => _printReportStatusText; private set => SetProperty(ref _printReportStatusText, value); }
+
+    // #989: Dark/Light/Follow system - persisted in summary-settings.json (extends the existing
+    // #70 GenerateReportOnExit toggle's file rather than a new one), read by both this report and
+    // EvidenceBundleService's index.html generator (#982) so one setting covers every generated
+    // HTML report in the app.
+    public static Array ReportThemes { get; } = Enum.GetValues(typeof(ReportTheme));
+
+    public ReportTheme ReportTheme
+    {
+        get => _summarySettings.ReportTheme;
+        set
+        {
+            if (_summarySettings.ReportTheme == value) return;
+            _summarySettings.ReportTheme = value;
+            SummarySettingsService.Save(_summarySettings);
+            OnPropertyChanged();
+        }
+    }
+
     // #93/#94: baseline capture + "what changed" comparison - one save/compare pair covers both
     // suggestions, since a saved baseline IS the comparison point for a later diff. See
     // SnapshotService's remarks. AsyncRelayCommand rather than RelayCommand since #486 extended
@@ -235,7 +399,8 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
     public SummaryViewModel(PerformanceViewModel performance, ProcessesViewModel processes,
         ServicesViewModel services, EnergyThermalsViewModel energyThermals,
         SystemSpecsViewModel systemSpecs, NetworkViewModel network, StabilityViewModel stability,
-        ResponsivenessViewModel responsiveness, StorageViewModel storage, ProcessHistoryService processHistory)
+        ResponsivenessViewModel responsiveness, StorageViewModel storage, ProcessHistoryService processHistory,
+        RulesEngineService rulesEngine)
     {
         Performance = performance;
         Processes = processes;
@@ -247,9 +412,51 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         _responsiveness = responsiveness;
         _storage = storage;
         _processHistory = processHistory;
+        _rulesEngine = rulesEngine;
+
+        ToggleSuppressedListCommand = new RelayCommand(_ => IsSuppressedListExpanded = !IsSuppressedListExpanded);
+        SnoozeFindingCommand = new RelayCommand(p => SuppressFinding(p, TimeSpan.FromDays(7), "Snoozed for 7 days"));
+        IgnoreFindingCommand = new RelayCommand(p => SuppressFinding(p, null, "Ignored on this machine"));
+        UnsuppressFindingCommand = new RelayCommand(p =>
+        {
+            if (p is HealthIssue { RuleId: { Length: > 0 } ruleId })
+            {
+                _rulesEngine.ClearSuppression(ruleId);
+                RefreshHealthIssues();
+            }
+        });
+        FixFindingCommand = new RelayCommand(p => OpenFixDialog(p), p => p is HealthIssue { HasFixAction: true });
+        OpenDocsUrlCommand = new RelayCommand(p => { if (p is string url && url.Length > 0) ExternalLinkService.TryOpen(url); });
+        OpenExplainerCommand = new RelayCommand(p =>
+        {
+            if (p is not string id) return;
+            var path = ExplainerCatalogService.GetPath(id);
+            if (path is not null) ExternalLinkService.TryOpen(path);
+        });
+        CopyMarkdownCommand = new RelayCommand(_ =>
+        {
+            try { System.Windows.Clipboard.SetText(BuildHealthCheckMarkdown()); }
+            catch { /* best-effort - see CopySummaryStatusText's own remarks on clipboard writes */ }
+        });
+
+        SafeFixes = new SafeFixBatchViewModel(_services);
+        OpenSafeFixBatchCommand = new RelayCommand(_ => OpenSafeFixBatchDialog(), _ => SafeFixes.Items.Count > 0);
+
+        NotAProblemCommand = new RelayCommand(p => RecordNotAProblemFeedback(p));
+        SuppressLastFeedbackRuleCommand = new RelayCommand(_ => SuppressLastFeedbackRule(), _ => _lastFeedbackRuleId is not null);
+
+        // #936: best-effort load of prior sessions' resolved transitions so "Recently resolved"
+        // isn't empty the moment the app starts.
+        foreach (var r in FindingsHistoryService.LoadRecentResolved(15)) RecentlyResolvedFindings.Add(r);
+
+        // #921: a rule-pack hot reload (or a rule-editor edit/override/suppression elsewhere)
+        // should be reflected on the live Health Check card without waiting for the next 2s tick -
+        // may arrive on a FileSystemWatcher thread, so marshal back to the UI thread.
+        _rulesEngine.Reloaded += OnRulesEngineReloaded;
 
         GenerateReportCommand = new RelayCommand(_ => GenerateReport());
         GenerateHtmlReportCommand = new RelayCommand(_ => GenerateHtmlReport());
+        PrintReportCommand = new RelayCommand(_ => PrintReport());
         SaveSnapshotCommand = new AsyncRelayCommand(SaveSnapshotAsync);
         CompareSnapshotCommand = new AsyncRelayCommand(CompareSnapshotAsync);
         CopySummaryCommand = new RelayCommand(_ => CopySummary());
@@ -285,18 +492,21 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>#72: fires a toast the moment a metric crosses above its configured threshold -
-    /// edge-triggered so a sustained excursion produces one toast, not one every 2s tick.</summary>
+    /// edge-triggered so a sustained excursion produces one toast, not one every 2s tick. #963:
+    /// each firing is also persisted to alerts-history.jsonl (via AlertDeliveryService, the same
+    /// path a rule-engine finding's alert goes through in RecordFindingsHistory below), respecting
+    /// #964's quiet hours.</summary>
     private void CheckThresholdAlerts()
     {
-        CheckOne(CpuAlertEnabled, Performance.CpuCurrentPercent, CpuAlertThreshold, ref _cpuAlerted,
+        CheckOne("builtin.threshold.cpu", CpuAlertEnabled, Performance.CpuCurrentPercent, CpuAlertThreshold, ref _cpuAlerted,
             "CPU usage threshold", v => $"CPU usage is {v:0}% (threshold {CpuAlertThreshold:0}%)");
 
-        CheckOne(MemoryAlertEnabled, Performance.RamPercent, MemoryAlertThreshold, ref _memoryAlerted,
+        CheckOne("builtin.threshold.memory", MemoryAlertEnabled, Performance.RamPercent, MemoryAlertThreshold, ref _memoryAlerted,
             "Memory usage threshold", v => $"Memory usage is {v:0}% (threshold {MemoryAlertThreshold:0}%)");
 
         if (_energyThermals.CpuPackageTempC is { } temp)
         {
-            CheckOne(TempAlertEnabled, temp, TempAlertThreshold, ref _tempAlerted,
+            CheckOne("builtin.threshold.temperature", TempAlertEnabled, temp, TempAlertThreshold, ref _tempAlerted,
                 "CPU temperature threshold", v => $"CPU temperature is {v:0}°C (threshold {TempAlertThreshold:0}°C)");
         }
 
@@ -368,7 +578,7 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         _leakHandleAlertedPids.RemoveWhere(pid => !livePids.Contains(pid));
     }
 
-    private static void CheckOne(bool enabled, double value, double threshold, ref bool alerted, string title, Func<double, string> message)
+    private static void CheckOne(string alertId, bool enabled, double value, double threshold, ref bool alerted, string title, Func<double, string> message)
     {
         if (!enabled) { alerted = false; return; }
 
@@ -377,7 +587,13 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
             if (!alerted)
             {
                 alerted = true;
-                ToastService.Show(title, message(value), isCritical: true);
+                string text = message(value);
+                // #963/#964: these three fixed thresholds have no Rule behind them to carry a
+                // channel/escalation setting - always Toast as the default channel, still subject
+                // to quiet-hours suppression (log line always written) and never escalated (no
+                // EscalateAfterRepeats/EscalateWindowSeconds to escalate against).
+                AlertDeliveryService.Deliver(alertId, title, text, RuleSeverity.High, AlertChannel.Toast,
+                    escalateAfterRepeats: null, escalateWindowSeconds: null);
             }
         }
         else
@@ -442,7 +658,11 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         }
         else
         {
-            foreach (var issue in HealthIssues) Line($"- {(issue.IsCritical ? "**Critical**" : "Warning")}: {issue.Message}");
+            foreach (var issue in HealthIssues)
+            {
+                Line($"- {(issue.IsCritical ? "**Critical**" : "Warning")}: {issue.Message}" +
+                     (string.IsNullOrEmpty(issue.DocsUrl) ? string.Empty : $" ([Learn more]({issue.DocsUrl}))"));
+            }
         }
         Line();
 
@@ -546,7 +766,15 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         var sb = new StringBuilder();
         void Line(string s = "") => sb.Append(s).Append('\n');
 
-        Line(DiagnosticReportFormatting.HtmlDocumentOpen($"Task Manager Plus report - {DateTime.Now:F}"));
+        Line("<!doctype html><html><head><meta charset=\"utf-8\">");
+        Line($"<title>Task Manager Plus report - {Esc(DateTime.Now.ToString("F"))}</title>");
+        // #989: theme (Dark/Light/Follow system) comes from the persisted setting, not a hardcoded
+        // dark palette - shared verbatim with EvidenceBundleService's index.html (#982) via this
+        // static helper. #988: BuildReportCss's output already includes the @media print block.
+        // Supersedes DiagnosticReportFormatting.HtmlDocumentOpen's fixed dark-only opener for this
+        // report specifically - that helper stays as-is for StressTestReportService's own reports.
+        Line("<style>" + BuildReportCss(_summarySettings.ReportTheme) + "</style></head><body>");
+        Line(BuildPrintPageBars(_systemSpecs.ComputerName, DateTime.Now));
 
         Line($"<h1>Task Manager Plus diagnostic report</h1><p class=\"muted\">Generated {Esc(DateTime.Now.ToString("F"))}</p>");
 
@@ -576,7 +804,10 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         {
             Line("<ul>");
             foreach (var issue in HealthIssues)
-                Line($"<li class=\"{(issue.IsCritical ? "crit" : "warn")}\">{(issue.IsCritical ? "Critical" : "Warning")}: {Esc(issue.Message)}</li>");
+            {
+                string docsLink = string.IsNullOrEmpty(issue.DocsUrl) ? string.Empty : $" <a href=\"{Esc(issue.DocsUrl)}\">Learn more</a>";
+                Line($"<li class=\"{(issue.IsCritical ? "crit" : "warn")}\">{(issue.IsCritical ? "Critical" : "Warning")}: {Esc(issue.Message)}{docsLink}</li>");
+            }
             Line("</ul>");
         }
 
@@ -595,6 +826,77 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
 
         Line("</body></html>");
         return sb.ToString();
+    }
+
+    /// <summary>#988: writes the same HTML report to a temp file and hands it to the OS's own
+    /// registered print handler - see ReportPrintService's remarks for why this (rather than a
+    /// full System.Printing/XPS pipeline) is the pragmatic choice here.</summary>
+    private void PrintReport()
+    {
+        try
+        {
+            ReportPrintService.PrintHtml(BuildReportHtml(), "TaskManagerPlus-Report");
+            PrintReportStatusText = "Sent to your default print handler.";
+        }
+        catch (Exception ex)
+        {
+            PrintReportStatusText = $"Couldn't print: {ex.Message}";
+        }
+    }
+
+    /// <summary>#989: the shared &lt;style&gt; body (palette + #988's @media print block) both this
+    /// report and EvidenceBundleService's index.html (#982) use - internal, not private, so it's a
+    /// real shared implementation rather than two copies kept in sync by hand. "Follow system"
+    /// emits the dark palette unconditionally (as the pre-media-query fallback) plus a
+    /// `prefers-color-scheme: light` override, since a generated report is a static file that may
+    /// be opened later in a browser this app has no way to ask about ahead of time.</summary>
+    internal static string BuildReportCss(ReportTheme theme)
+    {
+        const string dark =
+            "body{font-family:Segoe UI,Arial,sans-serif;background:#1c1c1f;color:#e4e4e7;max-width:900px;margin:32px auto;padding:0 16px 64px}" +
+            "h1{font-size:20px}h2{font-size:15px;border-bottom:1px solid #3a3a42;padding-bottom:6px;margin-top:28px}" +
+            "table{border-collapse:collapse;width:100%;font-size:13px}td,th{padding:4px 8px;text-align:left;border-bottom:1px solid #2c2c33}" +
+            ".crit{color:#f26d6d}.warn{color:#e8b23c}.ok{color:#4fd18b}.muted{color:#9a9aa2;font-size:12px}" +
+            "svg{background:#242429;border-radius:6px}a{color:#6cb4ee}details{margin:8px 0}summary{cursor:pointer;font-weight:600}" +
+            ".pagebar{position:fixed;left:0;right:0;font-size:10px;color:#9a9aa2;padding:4px 16px;display:none}#pagebar-top{top:0}#pagebar-bottom{bottom:0}";
+
+        const string light =
+            "body{font-family:Segoe UI,Arial,sans-serif;background:#ffffff;color:#1c1c1f;max-width:900px;margin:32px auto;padding:0 16px 64px}" +
+            "h1{font-size:20px}h2{font-size:15px;border-bottom:1px solid #d8d8dc;padding-bottom:6px;margin-top:28px}" +
+            "table{border-collapse:collapse;width:100%;font-size:13px}td,th{padding:4px 8px;text-align:left;border-bottom:1px solid #e4e4e7}" +
+            ".crit{color:#c02929}.warn{color:#9a6a08}.ok{color:#1f8452}.muted{color:#5a5a62;font-size:12px}" +
+            "svg{background:#f2f2f4;border-radius:6px}a{color:#1d5fa8}details{margin:8px 0}summary{cursor:pointer;font-weight:600}" +
+            ".pagebar{position:fixed;left:0;right:0;font-size:10px;color:#5a5a62;padding:4px 16px;display:none}#pagebar-top{top:0}#pagebar-bottom{bottom:0}";
+
+        // #988: page-break-before on every <h2>, thead repeats across printed pages, the fixed
+        // top/bottom .pagebar becomes visible (a pragmatic stand-in for @page margin boxes, whose
+        // browser support is inconsistent), and print-color-adjust keeps the pagebar/severity
+        // colors from being stripped to grayscale by a browser's own "save ink" default.
+        const string print =
+            "@media print{" +
+            "body{background:#ffffff!important;color:#111!important;max-width:none;margin:0;padding:56px 24px}" +
+            "h2{page-break-before:always}thead{display:table-header-group}" +
+            ".crit{color:#a11!important}.warn{color:#7a5600!important}.ok{color:#0a6b3c!important}" +
+            "svg{background:#f2f2f4!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}" +
+            ".pagebar{display:block!important;-webkit-print-color-adjust:exact;print-color-adjust:exact;background:#ffffff}" +
+            "a{color:#111!important;text-decoration:none}.noprint{display:none!important}" +
+            "}";
+
+        string themed = theme switch
+        {
+            ReportTheme.Light => light,
+            ReportTheme.FollowSystem => dark + $"@media (prefers-color-scheme: light){{{light}}}",
+            _ => dark,
+        };
+        return themed + print;
+    }
+
+    /// <summary>#988: a fixed top/bottom bar (machine name + generation date) that only becomes
+    /// visible under the @media print block above - a running header/footer on every printed page.</summary>
+    internal static string BuildPrintPageBars(string machineName, DateTime generatedAt)
+    {
+        string text = System.Net.WebUtility.HtmlEncode($"{(string.IsNullOrEmpty(machineName) ? "This machine" : machineName)} — generated {generatedAt:yyyy-MM-dd HH:mm}");
+        return $"<div class=\"pagebar\" id=\"pagebar-top\">{text}</div><div class=\"pagebar\" id=\"pagebar-bottom\">{text}</div>";
     }
 
     /// <summary>#407: HTML twin of AppendLeakEvidenceMarkdown above - same underlying recorded
@@ -898,26 +1200,29 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
 
     private void RefreshHealthIssues()
     {
-        var issues = new List<HealthIssue>();
+        // #916-919: the bulk of what used to be a hardcoded if-chain here now lives as JSON rule
+        // definitions evaluated by RulesEngineService against a fresh metric bag (#917) - volume-
+        // full, dirty-bit, drive-health, CPU-hot, dead-fan, page-file-full, thrashing, network-
+        // errors, failed-services, outdated-drivers, multi-AV, and reboot-pending are all now rule
+        // packs (see RulesEngineService.BuiltInPackJson) rather than C# checks. #924's suppressions
+        // are already filtered out of ruleResult.Findings (into ruleResult.Suppressed) by the
+        // engine itself.
+        var bag = RulesEngineService.BuildMetricBag(Performance, _energyThermals, _systemSpecs, _services, Processes, out var unavailableMetrics);
+        var ruleResult = _rulesEngine.Evaluate(bag, unavailableMetrics);
+        var issues = new List<HealthIssue>(ruleResult.Findings);
 
-        // #72 (Round 11): "volume nearly full" was already a Health Check rule from an earlier
-        // round - this is just confirming/documenting it here rather than adding a duplicate.
-        // The System tab's Volumes card itself tints its progress bar red starting at 85%
-        // (PercentToBrushConverter); this rule intentionally stays a little more conservative
-        // (90%/97%) since a Health Check entry is a standing item on the dashboard, not just a
-        // color hint on a progress bar the user has to be looking at.
-        foreach (var volume in _systemSpecs.Volumes)
+        if (!ruleResult.Suppressed.Select(i => i.RuleId).SequenceEqual(SuppressedFindings.Select(i => i.RuleId)))
         {
-            if (volume.PercentUsed >= 90)
-                issues.Add(new HealthIssue { Message = $"{volume.Primary} is {volume.PercentUsed:0}% full", IsCritical = volume.PercentUsed >= 97 });
-            if (volume.IsDirty)
-                issues.Add(new HealthIssue { Message = $"{volume.Primary} needs a chkdsk pass (dirty bit set)", IsCritical = true });
+            SuppressedFindings.Clear();
+            foreach (var s in ruleResult.Suppressed) SuppressedFindings.Add(s);
         }
 
-        foreach (var disk in _systemSpecs.Disks)
+        // #937: rules the engine couldn't meaningfully evaluate this pass - visibly distinct from
+        // both a fired finding and "checked, clean".
+        if (!ruleResult.CouldNotCheck.Select(c => c.RuleId).SequenceEqual(CouldNotCheckFindings.Select(c => c.RuleId)))
         {
-            if (disk.IsHealthWarning)
-                issues.Add(new HealthIssue { Message = $"Drive health warning: {disk.Primary} ({disk.HealthText})", IsCritical = true });
+            CouldNotCheckFindings.Clear();
+            foreach (var c in ruleResult.CouldNotCheck) CouldNotCheckFindings.Add(c);
         }
 
         // Round 13, #314/#317: NVMe critical-warning bits and media-error count, mirrored from the
@@ -1025,6 +1330,13 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         if (_systemSpecs.RebootPending)
             issues.Add(new HealthIssue { Message = "A restart is pending to finish installing updates", IsCritical = false });
 
+        // A few checks stay hand-rolled here rather than becoming rule-pack JSON, because they
+        // don't cleanly fit the metric-bag/condition shape (#916): the reboot-pending correlation
+        // below reads UI/session-only state (SnapshotDiff, only populated after a manual "Compare"
+        // click) that has no business being an ambient metric-bag key, and the Defender/anomaly
+        // checks further down need arbitrary statistical computation a static JSON condition can't
+        // express.
+
         // Round 12, #98: "which of my changes since the baseline are still pending that reboot" -
         // a derived rollup, no new registry reads: just correlates SnapshotDiff (already computed
         // by CompareSnapshot, above) against the same RebootPending flag the rule right above this
@@ -1041,6 +1353,10 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
             {
                 Message = $"{changedCount} change{(changedCount == 1 ? "" : "s")} since your last baseline snapshot may be waiting on the pending restart to fully apply",
                 IsCritical = false,
+                // #928: this is a correlation between two already-independent signals, not a
+                // verified cause - HealthIssue.Confidence defaults to 100 ("likely") when unset,
+                // which would overstate a heuristic like this one.
+                Confidence = 55,
             });
         }
 
@@ -1051,7 +1367,7 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         // API (Windows exposes none), the same tier as the process signature check.
         var defender = Processes.Processes.FirstOrDefault(p => p.Name.Equals("MsMpEng", StringComparison.OrdinalIgnoreCase));
         if (defender is not null && defender.CpuPercent >= 20)
-            issues.Add(new HealthIssue { Message = $"Windows Defender may be actively scanning (MsMpEng at {defender.CpuPercent:0}% CPU)", IsCritical = false });
+            issues.Add(new HealthIssue { Message = $"Windows Defender may be actively scanning (MsMpEng at {defender.CpuPercent:0}% CPU)", IsCritical = false, Confidence = 60 });
 
         // #455: "N unsigned/test-signed drivers found" - reads the Devices & Drivers tab's own
         // session-lifetime cache (DriverSignatureSummaryState) rather than triggering a scan of its
@@ -1106,6 +1422,9 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         CheckAnomaly(issues, "Memory", Performance.RamHistory, Performance.RamPercent);
         CheckAnomaly(issues, "Disk activity", Performance.DiskHistory, Performance.DiskPercent);
 
+        // #933: sort by the selected criterion before anything below renders/diffs the list.
+        issues = SortIssues(issues, FindingSortMode);
+
         // Replace in place only when the content actually changed, so the UI doesn't flicker/
         // lose scroll position on every 2s tick when nothing is different.
         if (!issues.Select(i => i.Message).SequenceEqual(HealthIssues.Select(i => i.Message)))
@@ -1115,6 +1434,169 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         }
 
         RefreshStorageHealthTile();
+
+        // #934: re-shape the same sorted list into grouped rows for the card's ItemsControl.
+        RebuildGroupedHealthIssues(issues);
+
+        // #936: diff this pass's fired rule ids against the previous pass's to detect first-seen/
+        // resolved transitions - edge-triggered only (see FindingsHistoryEntry's remarks on why
+        // "still-firing" is never logged on every 2s tick a chronic finding keeps firing).
+        RecordFindingsHistory(issues);
+
+        // #976: keep the "Run safe fixes" batch in sync with what's currently firing.
+        SafeFixes.Refresh(issues);
+
+        // #978: cross-check this app's own "actions that said they'd need a reboot" list against
+        // the existing RebootPending registry detection - once RebootPending itself goes false
+        // (the user actually restarted, or whatever set it resolved another way), this app's own
+        // list is stale either way, so it's cleared rather than kept around forever.
+        RefreshRebootBanner();
+    }
+
+    /// <summary>#978: builds RebootBannerText - empty when no restart is pending at all; otherwise
+    /// a plain "restart pending" line, extended with "— including from N fix(es) you ran" only
+    /// when this app's own PendingRebootActionsService list is non-empty too, so the two reboot
+    /// signals (Windows' own registry flag, and this app's own remediation history) read as one
+    /// connected fact instead of two separate banners.</summary>
+    private void RefreshRebootBanner()
+    {
+        if (!_systemSpecs.RebootPending)
+        {
+            PendingRebootActionsService.ClearAll();
+            RebootBannerText = string.Empty;
+            return;
+        }
+
+        var mine = PendingRebootActionsService.LoadAll();
+        RebootBannerText = mine.Count switch
+        {
+            0 => "A restart is pending on this system.",
+            1 => $"A restart is pending on this system — including from 1 fix you ran ({mine[0].ActionTitle}).",
+            _ => $"A restart is pending on this system — including from {mine.Count} fixes you ran.",
+        };
+    }
+
+    /// <summary>#933: orders `issues` by the selected sort mode. "Impact" is a composite proxy -
+    /// a true numeric "impact" isn't available for most findings, so this combines the rule
+    /// author's own severity judgment with the rule's confidence, plus a small tie-breaking boost
+    /// for a finding that can honestly back itself with a concrete ImpactText (#932):
+    ///   score = severityWeight(severity) * (confidence / 100.0) * (hasImpactText ? 1.15 : 1.0)
+    ///   severityWeight: Info=1, Low=2, Medium=3, High=4
+    /// "Severity"/"Confidence" sort by that field directly (tie-broken by the other); "Category"
+    /// groups alphabetically by Rule.Category, empty/hand-rolled findings sorting last.</summary>
+    /// <summary>internal (not private) so EvidenceBundleService.CollectAppFindingsAsync (#981) and
+    /// its "top findings sorted by impact" index.html/forum-post rendering (#982/#987) can reuse
+    /// this exact composite-impact ordering rather than a second copy of the same formula.</summary>
+    internal static List<HealthIssue> SortIssues(List<HealthIssue> issues, HealthFindingSortMode mode) => mode switch
+    {
+        HealthFindingSortMode.Severity => issues.OrderByDescending(SeverityWeight).ThenByDescending(i => i.Confidence).ToList(),
+        HealthFindingSortMode.Confidence => issues.OrderByDescending(i => i.Confidence).ThenByDescending(SeverityWeight).ToList(),
+        HealthFindingSortMode.Category => issues
+            .OrderBy(i => string.IsNullOrEmpty(i.Category) ? 1 : 0)
+            .ThenBy(i => i.Category, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(i => i.Title ?? i.Message, StringComparer.OrdinalIgnoreCase)
+            .ToList(),
+        _ => issues.OrderByDescending(ImpactScore).ToList(),
+    };
+
+    private static int SeverityWeight(HealthIssue issue) => issue.Severity switch
+    {
+        RuleSeverity.Info => 1,
+        RuleSeverity.Low => 2,
+        RuleSeverity.Medium => 3,
+        RuleSeverity.High => 4,
+        _ => 1,
+    };
+
+    private static double ImpactScore(HealthIssue issue)
+    {
+        double confidenceFactor = Math.Clamp(issue.Confidence, 0, 100) / 100.0;
+        double impactBoost = string.IsNullOrEmpty(issue.ImpactText) ? 1.0 : 1.15;
+        return SeverityWeight(issue) * confidenceFactor * impactBoost;
+    }
+
+    /// <summary>#934: collapses `sortedIssues` into one row per GroupKey - a standalone finding
+    /// with no GroupKey (or the only finding currently holding one) is its own singleton row, so
+    /// the card's DataTemplate can treat every row uniformly (HealthFindingGroup.IsSingle).
+    /// Preserves `sortedIssues`' own order (a group's position is wherever its first member fell
+    /// in the sort).</summary>
+    private void RebuildGroupedHealthIssues(List<HealthIssue> sortedIssues)
+    {
+        var groups = new List<HealthFindingGroup>();
+        var byKey = new Dictionary<string, HealthFindingGroup>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var issue in sortedIssues)
+        {
+            if (issue.GroupKey is { Length: > 0 } key)
+            {
+                if (byKey.TryGetValue(key, out var existing))
+                {
+                    existing.Findings.Add(issue);
+                    continue;
+                }
+                var group = new HealthFindingGroup { GroupKey = key, Findings = { issue } };
+                byKey[key] = group;
+                groups.Add(group);
+            }
+            else
+            {
+                groups.Add(new HealthFindingGroup { GroupKey = null, Findings = { issue } });
+            }
+        }
+
+        bool changed = groups.Count != GroupedHealthIssues.Count ||
+            groups.Zip(GroupedHealthIssues, (a, b) => a.Findings.Select(f => f.Message).SequenceEqual(b.Findings.Select(f => f.Message))).Any(same => !same);
+        if (changed)
+        {
+            GroupedHealthIssues.Clear();
+            foreach (var g in groups) GroupedHealthIssues.Add(g);
+        }
+    }
+
+    /// <summary>#936: diffs `issues`' RuleId-bearing findings against the previous pass's set,
+    /// appending an edge-triggered "first-seen"/"resolved" line to findings-history.jsonl for
+    /// each transition and updating RecentlyResolvedFindings live for the latter.</summary>
+    private void RecordFindingsHistory(List<HealthIssue> issues)
+    {
+        var currentFiredIds = new HashSet<string>(
+            issues.Where(i => i.RuleId is { Length: > 0 }).Select(i => i.RuleId!),
+            StringComparer.OrdinalIgnoreCase);
+
+        foreach (var id in currentFiredIds)
+        {
+            var issue = issues.First(i => string.Equals(i.RuleId, id, StringComparison.OrdinalIgnoreCase));
+            string title = issue.Title ?? issue.Message;
+            _lastKnownRuleTitles[id] = title;
+            if (!_previousFiredRuleIds.Contains(id))
+            {
+                FindingsHistoryService.Append(new FindingsHistoryEntry { RuleId = id, Title = title, Transition = "first-seen" });
+
+                // #963/#964/#965: a newly-fired rule-engine finding is exactly the same "first-
+                // seen" signal #963 wants persisted as an alert - deliver it through the rule's own
+                // AlertChannel/escalation settings (RulesEngineService.Rules carries the loaded
+                // Rule, including any #923 severity override already applied as EffectiveSeverity).
+                var loaded = _rulesEngine.Rules.FirstOrDefault(r => string.Equals(r.Rule.Id, id, StringComparison.OrdinalIgnoreCase));
+                if (loaded is not null)
+                {
+                    AlertDeliveryService.Deliver(id, title, issue.Message, loaded.EffectiveSeverity, loaded.Rule.AlertChannel,
+                        loaded.Rule.EscalateAfterRepeats, loaded.Rule.EscalateWindowSeconds);
+                }
+            }
+        }
+
+        foreach (var id in _previousFiredRuleIds)
+        {
+            if (currentFiredIds.Contains(id)) continue;
+
+            string title = _lastKnownRuleTitles.TryGetValue(id, out var t) ? t : id;
+            var resolvedAt = DateTime.UtcNow;
+            FindingsHistoryService.Append(new FindingsHistoryEntry { RuleId = id, Title = title, Transition = "resolved" });
+            RecentlyResolvedFindings.Insert(0, new ResolvedFinding { RuleId = id, Title = title, ResolvedAtUtc = resolvedAt });
+            while (RecentlyResolvedFindings.Count > 15) RecentlyResolvedFindings.RemoveAt(RecentlyResolvedFindings.Count - 1);
+        }
+
+        _previousFiredRuleIds.Clear();
+        foreach (var id in currentFiredIds) _previousFiredRuleIds.Add(id);
     }
 
     /// <summary>Round 14, #328: recomputes the compact Summary-tab mirror of the Storage tab's
@@ -1170,9 +1652,117 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
             {
                 Message = $"{label} usage is unusually high vs. the last minute (now {current:0}%, typically {mean:0}%)",
                 IsCritical = false,
+                // #928: a real statistical deviation, but "unusual" isn't "a problem" - kept below
+                // the default 100 ("likely") so it renders honestly as "possible".
+                Confidence = 65,
+                // #932: an honest, already-computed impact figure - how far above the recent
+                // typical this reading is.
+                ImpactText = $"{current - mean:0}pt above typical {label} usage",
             });
         }
     }
 
-    public void Dispose() => _healthTimer.Stop();
+    /// <summary>#924: suppresses the rule behind `parameter` (a HealthIssue from HealthIssues, via
+    /// the Health Check card's Snooze/Ignore buttons) for `duration` (null = permanent), then
+    /// re-evaluates immediately so the card reflects the change without waiting for the next tick.
+    /// A no-op for the hand-rolled findings that carry no RuleId (the Defender/anomaly/reboot-
+    /// correlation checks) - those don't have a rule to suppress by id.</summary>
+    private void SuppressFinding(object? parameter, TimeSpan? duration, string reason)
+    {
+        if (parameter is not HealthIssue { RuleId: { Length: > 0 } ruleId }) return;
+        _rulesEngine.Suppress(ruleId, reason, duration is null ? null : DateTime.UtcNow.Add(duration.Value));
+        RefreshHealthIssues();
+    }
+
+    /// <summary>#967: resolves `parameter`'s ActionIds to concrete actions and opens the review
+    /// dialog - see RemediationActionCatalog.Resolve and RemediationReviewViewModel's remarks.</summary>
+    private void OpenFixDialog(object? parameter)
+    {
+        if (parameter is not HealthIssue issue) return;
+
+        var actions = RemediationActionCatalog.Resolve(issue, _services);
+        if (actions.Count == 0) return; // couldn't resolve a concrete target this pass - see FixFindingCommand's remarks
+
+        var dialogViewModel = new RemediationReviewViewModel(issue, actions, _services, _systemSpecs, ReEvaluateFinding);
+        var window = new Views.RemediationReviewWindow(dialogViewModel)
+        {
+            Owner = System.Windows.Application.Current?.MainWindow,
+        };
+        window.ShowDialog();
+
+        // A remediation run (or a #979 queue) may have changed live state this card cares about
+        // (a service restarted, a startup item disabled, a reboot now pending) - refresh
+        // immediately rather than waiting up to 2s for the next timer tick.
+        RefreshHealthIssues();
+    }
+
+    /// <summary>#976: opens the "Run safe fixes" batch dialog - SafeFixes is already kept current
+    /// by RefreshHealthIssues, so this just shows it.</summary>
+    private void OpenSafeFixBatchDialog()
+    {
+        var window = new Views.SafeFixBatchWindow(SafeFixes)
+        {
+            Owner = System.Windows.Application.Current?.MainWindow,
+        };
+        window.ShowDialog();
+        RefreshHealthIssues();
+    }
+
+    /// <summary>#975: re-runs the rules engine fresh (a real re-check, not an assumption) and
+    /// reports whether `ruleId` is still in the fired set - null when there's no rule to check
+    /// (a hand-rolled finding with no RuleId), true when it's still firing, false when it's
+    /// cleared. Passed into RemediationReviewViewModel as a closure so that ViewModel doesn't need
+    /// its own RulesEngineService/ViewModel references just for this one post-run check.</summary>
+    private bool? ReEvaluateFinding(string? ruleId)
+    {
+        if (string.IsNullOrEmpty(ruleId)) return null;
+
+        var bag = RulesEngineService.BuildMetricBag(Performance, _energyThermals, _systemSpecs, _services, Processes, out var unavailableMetrics);
+        var result = _rulesEngine.Evaluate(bag, unavailableMetrics);
+        return result.Findings.Any(f => string.Equals(f.RuleId, ruleId, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>#935: records a "not a problem" click to feedback.jsonl (purely local - see
+    /// FeedbackService's remarks) and offers a one-click "suppress this rule?" follow-up via
+    /// FeedbackStatusText/SuppressLastFeedbackRuleCommand. A no-op for the hand-rolled findings
+    /// that carry no RuleId, same as SuppressFinding above.</summary>
+    private void RecordNotAProblemFeedback(object? parameter)
+    {
+        if (parameter is not HealthIssue { RuleId: { Length: > 0 } ruleId } issue) return;
+
+        FeedbackService.Append(new FeedbackEntry
+        {
+            RuleId = ruleId,
+            MetricValuesAtTime = issue.Evidence.ToDictionary(e => e.Label, e => e.Value),
+        });
+
+        _lastFeedbackRuleId = ruleId;
+        FeedbackStatusText = $"Feedback recorded for \"{issue.Title ?? issue.Message}\" - stored locally, never sent anywhere.";
+        SuppressLastFeedbackRuleCommand.RaiseCanExecuteChanged();
+    }
+
+    private void SuppressLastFeedbackRule()
+    {
+        if (_lastFeedbackRuleId is not { Length: > 0 } ruleId) return;
+        _rulesEngine.Suppress(ruleId, "Marked \"not a problem\"", DateTime.UtcNow.AddDays(7));
+        _lastFeedbackRuleId = null;
+        FeedbackStatusText = "Rule suppressed for 7 days.";
+        SuppressLastFeedbackRuleCommand.RaiseCanExecuteChanged();
+        RefreshHealthIssues();
+    }
+
+    private void OnRulesEngineReloaded()
+    {
+        // Always post through the dispatcher (see RulesEditorViewModel.OnEngineReloaded's remarks
+        // on why this avoids a reentrant collection update when Reloaded was raised synchronously
+        // from an override/suppression edit).
+        var app = System.Windows.Application.Current;
+        app?.Dispatcher.BeginInvoke(RefreshHealthIssues);
+    }
+
+    public void Dispose()
+    {
+        _healthTimer.Stop();
+        _rulesEngine.Reloaded -= OnRulesEngineReloaded;
+    }
 }

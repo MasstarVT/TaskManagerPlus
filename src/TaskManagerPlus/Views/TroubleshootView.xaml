@@ -1,0 +1,347 @@
+<UserControl x:Class="TaskManagerPlus.Views.TroubleshootView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:TaskManagerPlus.ViewModels"
+             xmlns:models="clr-namespace:TaskManagerPlus.Models"
+             xmlns:views="clr-namespace:TaskManagerPlus.Views"
+             d:DataContext="{d:DesignInstance Type=vm:TroubleshootViewModel}"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d">
+    <UserControl.Resources>
+        <!-- #901: one symptom card on the landing grid - a big plain-English button rather than a
+             plain list row, since the whole point of this tab is picking a symptom without first
+             having to know which subsystem it maps to. -->
+        <DataTemplate x:Key="SymptomCardTemplate" DataType="{x:Type models:SymptomCard}">
+            <Button Command="{Binding DataContext.RunSymptomCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                    CommandParameter="{Binding Id}"
+                    Margin="0,0,14,14" Padding="18,16" MinHeight="108" MinWidth="220"
+                    HorizontalContentAlignment="Stretch" VerticalContentAlignment="Top">
+                <Button.Style>
+                    <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsAvailable}" Value="False">
+                                <Setter Property="IsEnabled" Value="False" />
+                                <Setter Property="Cursor" Value="Arrow" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Button.Style>
+                <StackPanel HorizontalAlignment="Stretch">
+                    <TextBlock Text="{Binding Title}" FontSize="14.5" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,0,0,6" />
+                    <TextBlock Text="{Binding Description}" Style="{StaticResource SubStat}" TextWrapping="Wrap" />
+                </StackPanel>
+            </Button>
+        </DataTemplate>
+
+        <!-- One diagnostic step row in a run's step list - status dot/label, the check's own
+             one-line description, its result once finished, and any supporting evidence lines. -->
+        <DataTemplate x:Key="DiagnosticStepTemplate" DataType="{x:Type models:DiagnosticStep}">
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,10" Padding="14,12">
+                <StackPanel>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <Border Grid.Column="0" Width="9" Height="9" CornerRadius="4.5" Margin="0,3,10,0" VerticalAlignment="Top"
+                                Background="{Binding Status, Converter={StaticResource DiagnosticStepStatusToBrushConverter}}" />
+                        <StackPanel Grid.Column="1">
+                            <TextBlock Text="{Binding Label}" FontSize="13" FontWeight="SemiBold" TextWrapping="Wrap" />
+                            <TextBlock Text="{Binding Description}" TextWrapping="Wrap" Margin="0,2,0,0">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding Description}" Value="">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </StackPanel>
+                        <TextBlock Grid.Column="2" Text="{Binding Status, Converter={StaticResource DiagnosticStepStatusToLabelConverter}}"
+                                   FontSize="11.5" FontWeight="SemiBold" VerticalAlignment="Top"
+                                   Foreground="{Binding Status, Converter={StaticResource DiagnosticStepStatusToBrushConverter}}" />
+                    </Grid>
+
+                    <!-- #909/#911: a manual/opt-in step (the wpr/tracerpt DPC capture, the
+                         full-volume fragmentation analyze pass) stays Pending until the user
+                         triggers it here - the automatic run loop never touches it. -->
+                    <Button Content="Run this check" HorizontalAlignment="Left" Padding="10,4" Margin="19,8,0,0"
+                            Command="{Binding DataContext.RunManualStepCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                            CommandParameter="{Binding}">
+                        <Button.Style>
+                            <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsManualPending}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Button.Style>
+                    </Button>
+
+                    <TextBlock Text="{Binding ResultText}" FontSize="12.5" TextWrapping="Wrap" Margin="19,8,0,0">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding ResultText}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
+                    <ItemsControl ItemsSource="{Binding Evidence}" Margin="19,6,0,0">
+                        <ItemsControl.Style>
+                            <Style TargetType="ItemsControl">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding HasEvidence}" Value="False">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </ItemsControl.Style>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding}" FontSize="11.5" TextWrapping="Wrap"
+                                           Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,2" />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+        </DataTemplate>
+
+        <!-- #915: one saved run in the "Past runs" panel - reopen it read-only or re-run the same
+             symptom fresh. -->
+        <DataTemplate x:Key="PastRunCardTemplate" DataType="{x:Type models:TroubleshootRunRecord}">
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,10" Padding="14,12">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0" Margin="0,0,10,0">
+                        <TextBlock Text="{Binding DisplayName}" FontSize="13.5" FontWeight="SemiBold" TextWrapping="Wrap" />
+                        <TextBlock Style="{StaticResource SubStat}">
+                            <Run Text="Started " /><Run Text="{Binding StartedAt, StringFormat={}{0:g}, Mode=OneWay}" />
+                        </TextBlock>
+                        <TextBlock Text="{Binding VerdictText}" FontSize="12" TextWrapping="Wrap" Margin="0,6,0,0" MaxHeight="54" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                        <Button Content="Open" Padding="10,4" Margin="0,0,8,0"
+                                Command="{Binding DataContext.OpenSavedRunCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                CommandParameter="{Binding}" />
+                        <Button Content="Re-run" Padding="10,4"
+                                Command="{Binding DataContext.RerunSavedCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                CommandParameter="{Binding}" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+        </DataTemplate>
+    </UserControl.Resources>
+
+    <Grid>
+        <!-- Landing grid - symptom cards. Visible only while no run/past-runs panel is showing. -->
+        <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16"
+                      Visibility="{Binding ShowLanding, Converter={StaticResource BoolToVisibilityConverter}}">
+            <StackPanel>
+                <Grid Margin="0,0,0,4">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="What's the problem?" FontSize="18" FontWeight="Light" VerticalAlignment="Center" />
+                    <StackPanel Grid.Column="1" Orientation="Horizontal">
+                        <!-- #938: one shared time axis overlaying every dated event this app can
+                             find - crashes, updates, driver installs, software installs, thermal
+                             events, service failures, perf spikes, and user notes. -->
+                        <Button Content="Timeline" Padding="10,4" Margin="0,0,8,0" VerticalAlignment="Center"
+                                Command="{Binding ShowTimelineCommand}" />
+                        <!-- #950-958: opt-in performance-baseline capture/trend/regression/
+                             before-after-change tracking. -->
+                        <Button Content="Baselines" Padding="10,4" Margin="0,0,8,0" VerticalAlignment="Center"
+                                Command="{Binding ShowBaselinesCommand}" />
+                        <!-- #959-966: the always-on background health collector's history browser,
+                             cost readout, and alerting settings. -->
+                        <Button Content="Background Health" Padding="10,4" Margin="0,0,8,0" VerticalAlignment="Center"
+                                Command="{Binding ShowBackgroundHealthCommand}" />
+                        <!-- #915: reopen a saved run's transcript, or re-run its symptom fresh. -->
+                        <Button Content="Past runs" Padding="10,4" Margin="0,0,8,0" VerticalAlignment="Center"
+                                Command="{Binding ShowPastRunsCommand}" />
+                        <!-- #973: everything this app has changed on the system, with Undo where
+                             reversible. -->
+                        <Button Content="Changes" Padding="10,4" Margin="0,0,8,0" VerticalAlignment="Center"
+                                Command="{Binding ShowChangeJournalCommand}" />
+                        <!-- suggestions.md #981-987: one-click evidence bundle export (msinfo32/
+                             dxdiag/event logs/minidumps/this app's own findings), with an opt-out
+                             checklist, an opt-in PII scrub review, and a manifest. -->
+                        <Button Content="Evidence Bundle" Padding="10,4" Margin="0,0,8,0" VerticalAlignment="Center"
+                                Command="{Binding ShowEvidenceBundleCommand}" />
+                        <!-- suggestions.md #995: open someone else's exported evidence bundle and
+                             review it read-only. -->
+                        <Button Content="Bundle Review" Padding="10,4" Margin="0,0,8,0" VerticalAlignment="Center"
+                                Command="{Binding ShowBundleReviewCommand}"
+                                AutomationProperties.Name="Open bundle review panel" />
+                        <!-- suggestions.md #999: read-only disclosure of every outbound network
+                             call this app can make, plus the Offline mode switch. -->
+                        <Button Content="Network Activity" Padding="10,4" Margin="0,0,8,0" VerticalAlignment="Center"
+                                Command="{Binding ShowNetworkActivityCommand}"
+                                AutomationProperties.Name="Open network activity disclosure panel" />
+                        <!-- suggestions.md #990: searchable plain-English glossary for this app's
+                             own jargon. -->
+                        <Button Content="Glossary" Padding="10,4" VerticalAlignment="Center"
+                                Command="{Binding ShowGlossaryCommand}"
+                                AutomationProperties.Name="Open glossary panel" />
+                    </StackPanel>
+                </Grid>
+                <TextBlock Text="Pick the symptom that best matches what you're seeing - this runs a scripted set of checks instead of making you guess which tab to open."
+                           Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,18" />
+                <ItemsControl ItemsSource="{Binding Symptoms}" ItemTemplate="{StaticResource SymptomCardTemplate}">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <WrapPanel Orientation="Horizontal" />
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                </ItemsControl>
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- #915: "Past runs" panel - visible only when explicitly opened from the landing page. -->
+        <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16"
+                      Visibility="{Binding ShowPastRuns, Converter={StaticResource BoolToVisibilityConverter}}">
+            <StackPanel>
+                <Grid Margin="0,0,0,16">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Button Grid.Column="0" Content="&#8592; Back" Command="{Binding HidePastRunsCommand}"
+                            Padding="10,4" Margin="0,0,14,0" VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="1" Text="Past runs" FontSize="17" FontWeight="SemiBold" VerticalAlignment="Center" />
+                </Grid>
+                <TextBlock Text="No saved runs yet - run a check and it'll show up here." Margin="0,0,0,12">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding PastRuns.Count}" Value="0">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+                <ItemsControl ItemsSource="{Binding PastRuns}" ItemTemplate="{StaticResource PastRunCardTemplate}" />
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- #938-949: the Timeline panel - visible only when explicitly opened from the landing
+             page. TimelineView.xaml already wraps its own content in a ScrollViewer, so this isn't
+             nested in a second one. -->
+        <views:TimelineView DataContext="{Binding Timeline}"
+                             Visibility="{Binding DataContext.ShowTimeline, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource BoolToVisibilityConverter}}" />
+
+        <!-- #950-958: the Baselines panel - visible only when explicitly opened from the landing
+             page. -->
+        <views:BaselineView DataContext="{Binding Baselines}"
+                             Visibility="{Binding DataContext.ShowBaselines, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource BoolToVisibilityConverter}}" />
+
+        <!-- #959-966: the Background Health panel - visible only when explicitly opened from the
+             landing page. -->
+        <views:BackgroundHealthView DataContext="{Binding BackgroundHealth}"
+                             Visibility="{Binding DataContext.ShowBackgroundHealth, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource BoolToVisibilityConverter}}" />
+
+        <!-- #973: the "Changes made by this app" panel - visible only when explicitly opened from
+             the landing page. -->
+        <views:ChangeJournalView DataContext="{Binding ChangeJournal}"
+                             Visibility="{Binding DataContext.ShowChangeJournal, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource BoolToVisibilityConverter}}" />
+
+        <!-- suggestions.md #981-987: the Evidence Bundle panel - visible only when explicitly
+             opened from the landing page. -->
+        <views:EvidenceBundleView DataContext="{Binding EvidenceBundle}"
+                             Visibility="{Binding DataContext.ShowEvidenceBundle, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource BoolToVisibilityConverter}}" />
+
+        <!-- suggestions.md #995: the Bundle Review panel - visible only when explicitly opened
+             from the landing page. -->
+        <views:BundleReviewView DataContext="{Binding BundleReview}"
+                             Visibility="{Binding DataContext.ShowBundleReview, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource BoolToVisibilityConverter}}" />
+
+        <!-- suggestions.md #999: the Network Activity panel - visible only when explicitly opened
+             from the landing page. -->
+        <views:NetworkActivityView DataContext="{Binding NetworkActivity}"
+                             Visibility="{Binding DataContext.ShowNetworkActivity, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource BoolToVisibilityConverter}}" />
+
+        <!-- suggestions.md #990: the Glossary panel - visible only when explicitly opened from the
+             landing page. -->
+        <views:GlossaryView DataContext="{Binding Glossary}"
+                             Visibility="{Binding DataContext.ShowGlossary, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource BoolToVisibilityConverter}}" />
+
+        <!-- Run view - ordered step list plus a verdict card. Visible only once a run exists. -->
+        <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16"
+                      Visibility="{Binding SelectedRun, Converter={StaticResource NullToVisibilityConverter}}">
+            <StackPanel DataContext="{Binding SelectedRun}">
+                <Grid Margin="0,0,0,16">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Button Grid.Column="0" Content="&#8592; Back"
+                            Command="{Binding DataContext.BackToSymptomsCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                            Padding="10,4" Margin="0,0,14,0" VerticalAlignment="Center" />
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding DisplayName}" FontSize="17" FontWeight="SemiBold" />
+                        <TextBlock Style="{StaticResource SubStat}">
+                            <Run Text="Started " /><Run Text="{Binding StartedAt, StringFormat={}{0:g}, Mode=OneWay}" />
+                        </TextBlock>
+                    </StackPanel>
+                </Grid>
+
+                <ItemsControl ItemsSource="{Binding Steps}" ItemTemplate="{StaticResource DiagnosticStepTemplate}" Margin="0,0,0,4" />
+
+                <!-- Most-likely-cause verdict, shown once the run has produced one. Explicitly
+                     worded as a lead where the underlying check itself is a correlation, not a
+                     confirmed diagnosis (see each branch's remarks in TroubleshootViewModel). -->
+                <Border Background="{DynamicResource AccentMutedBrush}" BorderBrush="{DynamicResource AccentBrush}"
+                        BorderThickness="1" CornerRadius="10" Padding="16" Margin="0,6,0,16">
+                    <Border.Style>
+                        <Style TargetType="Border">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding HasVerdict}" Value="True">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <StackPanel>
+                        <TextBlock Text="Most likely cause" FontSize="12.5" FontWeight="SemiBold"
+                                   Foreground="{DynamicResource AccentBrush}" Margin="0,0,0,8" />
+                        <TextBlock Text="{Binding VerdictText}" FontSize="13" TextWrapping="Wrap" />
+                    </StackPanel>
+                </Border>
+
+                <TextBlock Text="Still running…" Margin="0,0,0,16">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsRunning}" Value="True">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</UserControl>

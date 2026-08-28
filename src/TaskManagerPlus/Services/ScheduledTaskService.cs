@@ -17,6 +17,14 @@ namespace TaskManagerPlus.Services;
 /// raw interop" tradeoff ServiceControlService.ReadFailureActionsText and
 /// NetworkDiagnosticsService's `netsh wlan` parsing already take.
 /// </summary>
+/// <summary>suggestions.md #997: how often a scheduled task created via
+/// ScheduledTaskService.CreateRecurringAsync repeats.</summary>
+public enum ScheduledTaskFrequency
+{
+    Daily,
+    Weekly,
+}
+
 public static class ScheduledTaskService
 {
     /// <summary>Enumerates every registered task. Can take a couple of seconds on a system with
@@ -153,6 +161,78 @@ public static class ScheduledTaskService
     }
 
     private static string At(List<string> fields, int index) => index >= 0 && index < fields.Count ? fields[index] : string.Empty;
+
+    /// <summary>#979: creates a one-shot task that runs `command` the next time this machine
+    /// boots, as SYSTEM - used by the remediation review dialog's "Queue for next boot" option for
+    /// an action that needs its target volume offline (chkdsk /f being the catalog's one example
+    /// so far). `/f` overwrites a same-named task left over from a prior queue/cancel cycle rather
+    /// than erroring on it.</summary>
+    public static Task<(bool Success, string? Error)> CreateOnStartAsync(string taskName, string command) =>
+        CreateAsync(taskName, command, "/sc onstart");
+
+    /// <summary>#979: the "pick a specific time" alternative to CreateOnStartAsync - a single
+    /// one-time trigger at `whenLocal`, still as SYSTEM so it doesn't depend on a user session
+    /// being active at that time.</summary>
+    public static Task<(bool Success, string? Error)> CreateOnceAsync(string taskName, string command, DateTime whenLocal) =>
+        CreateAsync(taskName, command, $"/sc once /st {whenLocal:HH:mm} /sd {whenLocal:MM/dd/yyyy}");
+
+    /// <summary>suggestions.md #997: a recurring daily/weekly trigger - used by
+    /// UnattendedScanService to set up a nightly/weekly unattended `--scan` run. `dayOfWeek` is
+    /// ignored for Daily.</summary>
+    public static Task<(bool Success, string? Error)> CreateRecurringAsync(
+        string taskName, string command, ScheduledTaskFrequency frequency, TimeSpan timeOfDay, DayOfWeek dayOfWeek = DayOfWeek.Sunday)
+    {
+        string timeArg = $"{timeOfDay.Hours:00}:{timeOfDay.Minutes:00}";
+        string scheduleArgs = frequency == ScheduledTaskFrequency.Weekly
+            ? $"/sc weekly /d {DayAbbreviation(dayOfWeek)} /st {timeArg}"
+            : $"/sc daily /st {timeArg}";
+        return CreateAsync(taskName, command, scheduleArgs);
+    }
+
+    /// <summary>schtasks' `/d` flag for a weekly trigger expects a three-letter day abbreviation
+    /// (MON..SUN), not .NET's DayOfWeek names.</summary>
+    private static string DayAbbreviation(DayOfWeek day) => day switch
+    {
+        DayOfWeek.Monday => "MON",
+        DayOfWeek.Tuesday => "TUE",
+        DayOfWeek.Wednesday => "WED",
+        DayOfWeek.Thursday => "THU",
+        DayOfWeek.Friday => "FRI",
+        DayOfWeek.Saturday => "SAT",
+        _ => "SUN",
+    };
+
+    private static async Task<(bool Success, string? Error)> CreateAsync(string taskName, string command, string scheduleArgs)
+    {
+        try
+        {
+            // schtasks /tr takes one token - a command with arguments has to be quoted as a whole,
+            // with any embedded quotes doubled the way schtasks itself expects.
+            string quotedCommand = "\"" + command.Replace("\"", "\"\"") + "\"";
+            var (output, exitCode) = await RunCapturedAsync(
+                "schtasks.exe", $"/create /tn \"{taskName}\" {scheduleArgs} /tr {quotedCommand} /ru SYSTEM /rl HIGHEST /f", timeoutMs: 15000);
+            return exitCode == 0 ? (true, null) : (false, string.IsNullOrWhiteSpace(output) ? "schtasks /create failed (unknown error)." : output.Trim());
+        }
+        catch (Exception ex)
+        {
+            return (false, ex.Message);
+        }
+    }
+
+    /// <summary>#979: cancels a previously queued task - used both by the review dialog's own
+    /// "Cancel queued fix" and by the Changes panel's deferred-actions section.</summary>
+    public static async Task<(bool Success, string? Error)> DeleteAsync(string taskName)
+    {
+        try
+        {
+            var (output, exitCode) = await RunCapturedAsync("schtasks.exe", $"/delete /tn \"{taskName}\" /f", timeoutMs: 15000);
+            return exitCode == 0 ? (true, null) : (false, string.IsNullOrWhiteSpace(output) ? "schtasks /delete failed (unknown error)." : output.Trim());
+        }
+        catch (Exception ex)
+        {
+            return (false, ex.Message);
+        }
+    }
 
     public static async Task<(bool Success, string? Error)> SetEnabledAsync(string taskName, bool enabled)
     {

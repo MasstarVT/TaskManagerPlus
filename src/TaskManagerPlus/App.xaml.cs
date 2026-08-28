@@ -1,4 +1,5 @@
 using System.IO;
+using System.Linq;
 using System.Windows;
 using TaskManagerPlus.Services;
 
@@ -44,6 +45,49 @@ public partial class App : Application
             try
             {
                 await CliDumpService.DumpSnapshotAsync(outputPath);
+            }
+            catch (Exception ex)
+            {
+                try { File.WriteAllText(outputPath + ".error.txt", ex.ToString()); }
+                catch { /* best-effort - nothing more useful to do from a CLI path */ }
+            }
+            Shutdown(0);
+            return;
+        }
+
+        // suggestions.md #996: `--scan <path>` and `--collect <path>` extend the `--dump-json`
+        // pattern above verbatim - same no-UI, construct-fresh-services-and-exit shape, plus
+        // `--scrub` (PII-scrub the output, reusing the Evidence Bundle chunk's scrubber) and
+        // `--quiet` (both CLI paths already show no UI/dialogs the way --dump-json does, so this
+        // is mostly a documented no-op kept for CLI-contract symmetry - see CliDumpService's
+        // remarks on each method).
+        bool scrub = e.Args.Any(a => a.Equals("--scrub", StringComparison.OrdinalIgnoreCase));
+        bool quiet = e.Args.Any(a => a.Equals("--quiet", StringComparison.OrdinalIgnoreCase));
+
+        int scanIndex = Array.IndexOf(e.Args, "--scan");
+        if (scanIndex >= 0 && scanIndex + 1 < e.Args.Length)
+        {
+            string outputPath = e.Args[scanIndex + 1];
+            try
+            {
+                await CliDumpService.ScanAsync(outputPath, scrub, quiet);
+            }
+            catch (Exception ex)
+            {
+                try { File.WriteAllText(outputPath + ".error.txt", ex.ToString()); }
+                catch { /* best-effort - nothing more useful to do from a CLI path */ }
+            }
+            Shutdown(0);
+            return;
+        }
+
+        int collectIndex = Array.IndexOf(e.Args, "--collect");
+        if (collectIndex >= 0 && collectIndex + 1 < e.Args.Length)
+        {
+            string outputPath = e.Args[collectIndex + 1];
+            try
+            {
+                await CliDumpService.CollectAsync(outputPath, scrub, quiet);
             }
             catch (Exception ex)
             {
