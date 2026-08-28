@@ -275,6 +275,23 @@
                     <views:EnergyThermalsView DataContext="{Binding EnergyThermals}" />
                 </TabItem>
 
+                <!-- New Responsiveness tab (suggestions.md #201-214) - DPC/ISR latency measurement,
+                     between Energy & Thermals and Processes. A speedometer/gauge glyph (arc + needle)
+                     rather than the Stability tab's existing heartbeat-line glyph just below, so the
+                     two "how healthy is this system" tabs stay visually distinct. -->
+                <TabItem Header="Responsiveness">
+                    <TabItem.Tag>
+                        <Viewbox Width="16" Height="16">
+                            <Canvas Width="16" Height="16">
+                                <Path Style="{StaticResource NavIconStroke}" Data="M 2,12 A 6,6 0 0 1 14,12" />
+                                <Line Style="{StaticResource NavIconStroke}" StrokeThickness="1.6" X1="8" Y1="12" X2="11.5" Y2="7" />
+                                <Ellipse Style="{StaticResource NavIconFill}" Canvas.Left="7" Canvas.Top="10.5" Width="2" Height="2" />
+                            </Canvas>
+                        </Viewbox>
+                    </TabItem.Tag>
+                    <views:ResponsivenessView DataContext="{Binding Responsiveness}" />
+                </TabItem>
+
                 <TabItem Header="Processes">
                     <TabItem.Tag>
                         <Viewbox Width="16" Height="16">

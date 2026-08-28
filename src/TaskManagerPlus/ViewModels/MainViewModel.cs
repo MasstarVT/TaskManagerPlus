@@ -36,6 +36,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     // EnergyThermalsViewModel's remarks.
     public EnergyThermalsViewModel EnergyThermals { get; }
 
+    // New Responsiveness tab (suggestions.md #201-214) - DPC/ISR latency measurement. Owns a
+    // lightweight always-on timer (per-core DPC/interrupt + DPC watchdog headroom) plus its own
+    // Start/Stop-gated measurement session (kernel-trace sampling) - see ResponsivenessViewModel's
+    // remarks for why this doesn't fit PerformanceViewModel's shared-sampler model either.
+    public ResponsivenessViewModel Responsiveness { get; } = new();
+
     public LoggingViewModel Logging { get; }
 
     // #100: cross-tab search - see GlobalSearchViewModel's remarks.
@@ -176,7 +182,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     /// app's first nine tabs (in their normal strip order) when the user hasn't customized
     /// ui-preferences.json's TabShortcuts list.</summary>
     public static readonly string[] DefaultTabShortcutOrder =
-        { "Summary", "CPU", "Memory", "Storage", "Network", "GPU", "Energy & Thermals", "Processes", "Services" };
+        { "Summary", "CPU", "Memory", "Storage", "Network", "GPU", "Energy & Thermals", "Responsiveness", "Processes", "Services" };
 
     public IReadOnlyList<string> TabShortcutOrder =>
         _uiPreferences.TabShortcuts.Count > 0 ? _uiPreferences.TabShortcuts : DefaultTabShortcutOrder;
@@ -234,6 +240,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         ApplyAxisThemeToLogging();
         Theme.ThemeModeChanged += ApplyAxisThemeToLogging;
+
+        ApplyAxisThemeToResponsiveness();
+        Theme.ThemeModeChanged += ApplyAxisThemeToResponsiveness;
     }
 
     private void ApplyThemeToPerformance()
@@ -276,6 +285,14 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Color TextOf(string key) => (resources[key] as SolidColorBrush)?.Color ?? Colors.Gray;
 
         Startup.ApplyAxisTheme(TextOf("TextSecondaryBrush"), TextOf("BorderBrush2"));
+    }
+
+    private void ApplyAxisThemeToResponsiveness()
+    {
+        var resources = Application.Current.Resources;
+        Color TextOf(string key) => (resources[key] as SolidColorBrush)?.Color ?? Colors.Gray;
+
+        Responsiveness.ApplyAxisTheme(TextOf("TextSecondaryBrush"), TextOf("BorderBrush2"));
     }
 
     private void ApplyAxisThemeToLogging()
@@ -358,10 +375,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Theme.ThemeModeChanged -= ApplyAxisThemeToStability;
         Theme.ThemeModeChanged -= ApplyAxisThemeToStartup;
         Theme.ThemeModeChanged -= ApplyAxisThemeToLogging;
+        Theme.ThemeModeChanged -= ApplyAxisThemeToResponsiveness;
         Processes.Dispose();
         Performance.Dispose();
         Services.Dispose();
         EnergyThermals.Dispose();
+        Responsiveness.Dispose();
         Cpu.Dispose();
         Network.Dispose();
         Gpu.Dispose();

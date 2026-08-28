@@ -1,0 +1,212 @@
+<UserControl x:Class="TaskManagerPlus.Views.ResponsivenessView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:TaskManagerPlus.ViewModels"
+             xmlns:views="clr-namespace:TaskManagerPlus.Views"
+             xmlns:lvc="clr-namespace:LiveChartsCore.SkiaSharpView.WPF;assembly=LiveChartsCore.SkiaSharpView.WPF"
+             d:DataContext="{d:DesignInstance Type=vm:ResponsivenessViewModel}"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d">
+    <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16">
+        <StackPanel>
+
+            <!-- #201-203/#207-209/#213-214: hidden with an explanation when logman/tracerpt aren't
+                 present on this system, per CLAUDE.md's "degrade to hidden, never fabricate" rule. -->
+            <Border Background="{DynamicResource DangerMutedBrush}" BorderBrush="{DynamicResource DangerBrush}"
+                    BorderThickness="1" CornerRadius="8" Padding="14,10" Margin="0,0,0,16">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding DpcToolsAvailable}" Value="False">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <TextBlock Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" FontSize="12.5"
+                           Text="DPC/ISR latency capture unavailable — logman.exe/tracerpt.exe weren't found on this system." />
+            </Border>
+
+            <!-- #202/#214: headline meters. -->
+            <UniformGrid Columns="3" Margin="0,0,0,16">
+                <views:VfdMeter Title="Worst DPC" Glow="True" Margin="0,0,8,0"
+                                ValueText="{Binding HighestDpcUs, StringFormat={}{0:0.#}}" Unit="µs"
+                                SubText="{Binding HighestDpcDriver, StringFormat=Driver: {0}, TargetNullValue=No driver measured yet}"
+                                AccentBrush="{Binding HighestDpcUs, Converter={StaticResource DpcTimeToBrushConverter}}" />
+                <views:VfdMeter Title="Avg / P99" Glow="False" Margin="8,0,8,0"
+                                ValueText="{Binding RollingAvgUs, StringFormat={}{0:0.#}}" Unit="µs"
+                                SubText="{Binding RollingP99Us, StringFormat=P99: {0:0.#} µs}"
+                                AccentBrush="{DynamicResource TextSecondaryBrush}" />
+                <views:VfdMeter Title="Audio-glitch events" Glow="True" Margin="8,0,0,0"
+                                ValueText="{Binding AudioGlitchCount}"
+                                SubText="{Binding AudioGlitchThresholdUs, StringFormat=DPCs over {0:0} µs — likely dropouts}"
+                                AccentBrush="{DynamicResource DangerBrush}" />
+            </UniformGrid>
+            <TextBlock Text="Quick flag, not a verdict: high DPC/ISR time points at a driver as the most likely cause of stutter, not a confirmed diagnosis."
+                       Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" FontStyle="Italic" Margin="0,0,0,16" TextWrapping="Wrap" />
+
+            <!-- #204: DPC watchdog headroom. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="DPC watchdog headroom" FontWeight="SemiBold" Margin="0,0,0,6" />
+                    <TextBlock Text="{Binding Watchdog.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8" />
+                    <Border Height="10" CornerRadius="5" Background="{DynamicResource BgSubtleBrush}">
+                        <Border HorizontalAlignment="Left" Height="10" CornerRadius="5" Background="{DynamicResource DangerBrush}"
+                                Width="{Binding WatchdogHeadroomPercent, Converter={StaticResource PercentToWidthConverter}, ConverterParameter=300}" />
+                    </Border>
+                    <TextBlock Text="{Binding WatchdogHeadroomPercent, StringFormat={}{0:0.##}% of the DPC_WATCHDOG_VIOLATION threshold — see the Stability tab for any 0x133 bugchecks.}"
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" Margin="0,6,0,0" />
+                </StackPanel>
+            </Border>
+
+            <!-- #213: measurement session controls. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Measurement session" FontWeight="SemiBold" Margin="0,0,0,6" />
+                    <WrapPanel>
+                        <Button Content="Start" Command="{Binding StartMeasurementCommand}" Style="{StaticResource SuccessButton}" Margin="0,0,8,4" />
+                        <Button Content="Stop" Command="{Binding StopMeasurementCommand}" Style="{StaticResource DangerButton}" Margin="0,0,8,4" />
+                        <Button Content="Copy summary" Command="{Binding CopySummaryCommand}" Margin="0,0,8,4" />
+                        <TextBlock Text="{Binding MeasurementStatusText}" VerticalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" Margin="0,0,0,4" />
+                    </WrapPanel>
+                    <TextBox Text="{Binding SessionSummaryText, Mode=OneWay}" IsReadOnly="True" TextWrapping="NoWrap"
+                             FontFamily="Consolas" FontSize="11" MaxHeight="160" VerticalScrollBarVisibility="Auto"
+                             HorizontalScrollBarVisibility="Auto" Margin="0,8,0,0" Background="Transparent" BorderThickness="0">
+                        <TextBox.Style>
+                            <Style TargetType="TextBox">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding SessionSummaryText, Converter={StaticResource StringNotEmptyConverter}}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBox.Style>
+                    </TextBox>
+                </StackPanel>
+            </Border>
+
+            <!-- #207/#214: rolling max-DPC-latency chart with the audio-glitch threshold marker. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="DPC/ISR latency history" FontWeight="SemiBold" Margin="0,0,0,6" />
+                    <lvc:CartesianChart Series="{Binding LatencySeries}" XAxes="{Binding HiddenXAxes}" YAxes="{Binding LatencyYAxes}"
+                                         Height="160" TooltipPosition="Hidden" LegendPosition="Hidden" Background="Transparent" />
+                </StackPanel>
+            </Border>
+
+            <!-- #201/#208/#211/#212: DPC-by-driver grid. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="DPC time by driver" FontWeight="SemiBold" Margin="0,0,0,6" />
+                    <DataGrid ItemsSource="{Binding DriverDpcRows}" MaxHeight="260">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Driver" Binding="{Binding IdentityText}" Width="2.2*" />
+                            <DataGridTextColumn Header="Events" Binding="{Binding EventCount}" Width="70" />
+                            <DataGridTextColumn Header="Total (µs)" Binding="{Binding TotalTimeUs, StringFormat={}{0:0}}" Width="90" />
+                            <DataGridTextColumn Header="Avg (µs)" Binding="{Binding AvgTimeUs, StringFormat={}{0:0.#}}" Width="90" />
+                            <DataGridTextColumn Header="Max (µs)" Binding="{Binding MaxTimeUs, StringFormat={}{0:0.#}}" Width="90" />
+                            <DataGridTextColumn Header="Timer / Device" Binding="{Binding TimerVsDeviceText}" Width="1.1*" />
+                            <DataGridTextColumn Header="Outdated?" Binding="{Binding IsOutdated}" Width="80" />
+                            <DataGridTextColumn Header="Hint" Binding="{Binding KnownOffenderHint}" Width="2.4*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- #203: ISR-by-driver grid, kept separate from DPC deliberately. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="ISR time by driver" FontWeight="SemiBold" Margin="0,0,0,6" />
+                    <DataGrid ItemsSource="{Binding DriverIsrRows}" MaxHeight="200">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Driver" Binding="{Binding DriverName}" Width="2.2*" />
+                            <DataGridTextColumn Header="Count" Binding="{Binding Count}" Width="70" />
+                            <DataGridTextColumn Header="Total (µs)" Binding="{Binding TotalTimeUs, StringFormat={}{0:0}}" Width="90" />
+                            <DataGridTextColumn Header="Avg (µs)" Binding="{Binding AvgTimeUs, StringFormat={}{0:0.#}}" Width="90" />
+                            <DataGridTextColumn Header="Max (µs)" Binding="{Binding MaxTimeUs, StringFormat={}{0:0.#}}" Width="90" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- #209: recent spikes with foreground-app context. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Recent spikes" FontWeight="SemiBold" Margin="0,0,0,6" />
+                    <DataGrid ItemsSource="{Binding RecentSpikes}" MaxHeight="200">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Time" Binding="{Binding Timestamp, StringFormat={}{0:T}}" Width="90" />
+                            <DataGridTextColumn Header="Driver" Binding="{Binding DriverName}" Width="1.6*" />
+                            <DataGridTextColumn Header="Kind" Binding="{Binding Kind}" Width="60" />
+                            <DataGridTextColumn Header="Duration (µs)" Binding="{Binding DurationUs, StringFormat={}{0:0.#}}" Width="100" />
+                            <DataGridTextColumn Header="Context (foreground app)" Binding="{Binding ForegroundContext}" Width="2*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- #205/#206: per-core DPC/interrupt time and queue depth/rate. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                        <TextBlock Text="Per-core DPC / interrupt time" FontWeight="SemiBold" Margin="0,0,0,6" />
+                        <DataGrid ItemsSource="{Binding CoreDpcRows}" MaxHeight="220">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Core" Binding="{Binding CoreIndex}" Width="50" />
+                                <DataGridTextColumn Header="DPC %" Binding="{Binding DpcPercent, StringFormat={}{0:0.##}}" Width="*" />
+                                <DataGridTextColumn Header="Interrupt %" Binding="{Binding InterruptPercent, StringFormat={}{0:0.##}}" Width="*" />
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Margin="8,0,0,0">
+                        <TextBlock Text="DPC queue depth / rate" FontWeight="SemiBold" Margin="0,0,0,6" />
+                        <DataGrid ItemsSource="{Binding CoreDpcQueueRows}" MaxHeight="220">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Core" Binding="{Binding CoreLabel}" Width="1.4*" />
+                                <DataGridTextColumn Header="Queued/sec" Binding="{Binding DpcsQueuedPerSec, StringFormat={}{0:0.#}}" Width="*" />
+                                <DataGridTextColumn Header="DPC rate" Binding="{Binding DpcRate, StringFormat={}{0:0.#}}" Width="*" />
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <!-- #210: offline wpr.exe capture, for a user who'd rather not run a live session. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Offline capture (wpr.exe)" FontWeight="SemiBold" Margin="0,0,0,6" />
+                    <TextBlock Text="Records a 30-second general-purpose WPR trace and converts it to a browsable HTML report — reproduce the stutter while it runs."
+                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8" />
+                    <Border Background="{DynamicResource DangerMutedBrush}" BorderBrush="{DynamicResource DangerBrush}"
+                            BorderThickness="1" CornerRadius="8" Padding="10,6" Margin="0,0,0,8">
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding WprToolsAvailable}" Value="False">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                        <TextBlock Text="wpr.exe/tracerpt.exe weren't found on this system." Foreground="{DynamicResource DangerBrush}" FontSize="12" />
+                    </Border>
+                    <WrapPanel>
+                        <Button Content="Start 30s capture" Command="{Binding CaptureWprCommand}" Margin="0,0,8,4" />
+                        <Button Content="Open trace (.etl)" Command="{Binding OpenCaptureCommand}" Margin="0,0,8,4" />
+                        <Button Content="Open report" Command="{Binding OpenReportCommand}" Margin="0,0,8,4" />
+                        <TextBlock Text="{Binding WprStatusText}" VerticalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" Margin="0,0,0,4" />
+                    </WrapPanel>
+                </StackPanel>
+            </Border>
+
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>
