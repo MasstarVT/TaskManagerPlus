@@ -1,6 +1,7 @@
 using System.Management;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.RegularExpressions;
 using Microsoft.Win32;
 using TaskManagerPlus.Models;
 
@@ -155,6 +156,70 @@ public static class PnpDeviceTreeService
         }
     }
 
+    private static readonly Regex PciLocationRegex = new(
+        @"PCI bus (\d+), device (\d+), function (\d+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    /// <summary>#489: maps a PCI device's (bus, device, function) location to its friendly name -
+    /// used by the Stability tab's WHEA PCI Express AER decode (EventLogService.ReadWheaHardwareErrors)
+    /// to turn a hardware-reported BDF back into a name a person recognizes. SPDRP_LOCATION_INFORMATION
+    /// is the same "Location" text Device Manager's own device Properties dialog shows (typically
+    /// "PCI bus N, device N, function N" for a PCI/PCI Express device) - read via the same
+    /// SetupDiGetDeviceRegistryProperty infrastructure ListNonPresent above already uses, just for a
+    /// different property and only for currently-present devices (DIGCF_PRESENT), since a BDF only
+    /// ever refers to a device that's actually enumerated on the bus right now. Best-effort: a device
+    /// whose location string doesn't match the expected shape (some buses report it differently, or
+    /// don't report it at all) is simply absent from the returned lookup, never guessed.</summary>
+    public static Dictionary<(int Bus, int Device, int Function), string> BuildPciLocationLookup()
+    {
+        var result = new Dictionary<(int, int, int), string>();
+        IntPtr deviceInfoSet = IntPtr.Zero;
+        try
+        {
+            deviceInfoSet = SetupDiGetClassDevs(IntPtr.Zero, null, IntPtr.Zero, DIGCF_ALLCLASSES | DIGCF_PRESENT);
+            if (deviceInfoSet == IntPtr.Zero || deviceInfoSet == InvalidHandleValue) return result;
+
+            var devInfoData = new SP_DEVINFO_DATA { cbSize = (uint)Marshal.SizeOf<SP_DEVINFO_DATA>() };
+            uint index = 0;
+            while (SetupDiEnumDeviceInfo(deviceInfoSet, index, ref devInfoData))
+            {
+                index++;
+                try
+                {
+                    string? location = GetDeviceRegistryPropertyString(deviceInfoSet, ref devInfoData, SPDRP_LOCATION_INFORMATION);
+                    if (location is null) continue;
+                    var m = PciLocationRegex.Match(location);
+                    if (!m.Success) continue;
+                    if (!int.TryParse(m.Groups[1].Value, out int bus)) continue;
+                    if (!int.TryParse(m.Groups[2].Value, out int device)) continue;
+                    if (!int.TryParse(m.Groups[3].Value, out int function)) continue;
+
+                    string name = GetDeviceRegistryPropertyString(deviceInfoSet, ref devInfoData, SPDRP_FRIENDLYNAME)
+                        ?? GetDeviceRegistryPropertyString(deviceInfoSet, ref devInfoData, SPDRP_DEVICEDESC)
+                        ?? "Unknown device";
+                    result[(bus, device, function)] = name;
+                }
+                catch
+                {
+                    // One malformed/inaccessible device entry shouldn't stop the rest of the enumeration.
+                }
+            }
+        }
+        catch
+        {
+            // SetupDiGetClassDevs/enumeration unavailable - degrade to an empty lookup (callers
+            // already treat "no match found" as the normal case for a device this app doesn't
+            // recognize).
+        }
+        finally
+        {
+            if (deviceInfoSet != IntPtr.Zero && deviceInfoSet != InvalidHandleValue)
+            {
+                try { SetupDiDestroyDeviceInfoList(deviceInfoSet); } catch { /* best-effort */ }
+            }
+        }
+        return result;
+    }
+
     private static List<PnpDeviceNode> SortedByClassThenName(List<PnpDeviceNode> nodes) =>
         nodes.OrderBy(n => n.ClassName, StringComparer.OrdinalIgnoreCase)
              .ThenBy(n => n.Name, StringComparer.OrdinalIgnoreCase)
@@ -164,12 +229,15 @@ public static class PnpDeviceTreeService
 
     private static readonly IntPtr InvalidHandleValue = new(-1);
 
+    private const uint DIGCF_PRESENT = 0x2;
     private const uint DIGCF_ALLCLASSES = 0x4;
     private const uint SPDRP_DEVICEDESC = 0x0;
     private const uint SPDRP_HARDWAREID = 0x1;
     private const uint SPDRP_CLASS = 0x7;
     private const uint SPDRP_MFG = 0xB;
     private const uint SPDRP_FRIENDLYNAME = 0xC;
+    // #489: Device Manager's own "Location" text (e.g. "PCI bus 2, device 0, function 0").
+    private const uint SPDRP_LOCATION_INFORMATION = 0xD;
     private const int CR_SUCCESS = 0;
 
     [StructLayout(LayoutKind.Sequential)]

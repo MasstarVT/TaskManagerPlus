@@ -47,6 +47,14 @@ public sealed class StabilityViewModel : ObservableObject
     // tab had no distinct pre-existing "boot section" to fold this into, so it's its own small card.
     public ObservableCollection<BootDriverLoadFailure> BootDriverLoadFailures { get; } = new();
 
+    // #487: every Microsoft-Windows-WHEA-Logger record found (any event ID) - the broad "hardware
+    // errors" view; #447's CorrectedMemoryErrors above stays as its own narrower event-47 slice.
+    public ObservableCollection<WheaHardwareErrorEvent> WheaHardwareErrors { get; } = new();
+
+    // #492: crash/TDR/unexpected-shutdown events preceded by a WHEA hardware error within the
+    // correlation window - see EventLogService.BuildHardwareErrorCorrelations.
+    public ObservableCollection<HardwareErrorCorrelation> HardwareErrorCorrelations { get; } = new();
+
     private int _correctedMemoryErrorCount;
     public int CorrectedMemoryErrorCount { get => _correctedMemoryErrorCount; private set => SetProperty(ref _correctedMemoryErrorCount, value); }
 
@@ -101,6 +109,14 @@ public sealed class StabilityViewModel : ObservableObject
     public Axis[] DailyEventXAxes { get; }
     public Axis[] DailyEventYAxes { get; }
 
+    // #488: corrected WHEA errors per day over the same lookback window - the exact same
+    // ColumnSeries/Axis setup as DailyEventSeries above, just fed from a different daily bucket.
+    public ObservableCollection<double> DailyWheaCorrectedCounts { get; } = new();
+    private readonly ColumnSeries<double> _dailyWheaCorrectedColumns;
+    public ISeries[] DailyWheaCorrectedSeries { get; }
+    public Axis[] DailyWheaCorrectedXAxes { get; }
+    public Axis[] DailyWheaCorrectedYAxes { get; }
+
     private static readonly SKColor AxisTextColor = new(0x9A, 0x9A, 0xA2);
     private static readonly SKColor AxisSeparatorColor = new(0x33, 0x33, 0x3A, 160);
 
@@ -140,6 +156,39 @@ public sealed class StabilityViewModel : ObservableObject
             },
         };
 
+        // #488: same ColumnSeries setup as DailyEventColumns above.
+        _dailyWheaCorrectedColumns = new ColumnSeries<double>
+        {
+            Values = DailyWheaCorrectedCounts,
+            Fill = new SolidColorPaint(SKColors.OrangeRed.WithAlpha(200)),
+            Stroke = null,
+            MaxBarWidth = 12,
+        };
+        DailyWheaCorrectedSeries = new ISeries[] { _dailyWheaCorrectedColumns };
+        DailyWheaCorrectedXAxes = new[]
+        {
+            new Axis
+            {
+                Labels = Array.Empty<string>(),
+                LabelsRotation = 0,
+                MinStep = 1,
+                ForceStepToMin = true,
+                LabelsPaint = new SolidColorPaint(AxisTextColor),
+                SeparatorsPaint = null,
+            },
+        };
+        DailyWheaCorrectedYAxes = new[]
+        {
+            new Axis
+            {
+                MinLimit = 0,
+                MinStep = 1,
+                Labeler = v => $"{v:0}",
+                LabelsPaint = new SolidColorPaint(AxisTextColor),
+                SeparatorsPaint = new SolidColorPaint(AxisSeparatorColor) { StrokeThickness = 1 },
+            },
+        };
+
         _ = RefreshAsync();
     }
 
@@ -152,6 +201,10 @@ public sealed class StabilityViewModel : ObservableObject
         DailyEventXAxes[0].LabelsPaint = new SolidColorPaint(textSk);
         DailyEventYAxes[0].LabelsPaint = new SolidColorPaint(textSk);
         DailyEventYAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
+
+        DailyWheaCorrectedXAxes[0].LabelsPaint = new SolidColorPaint(textSk);
+        DailyWheaCorrectedYAxes[0].LabelsPaint = new SolidColorPaint(textSk);
+        DailyWheaCorrectedYAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
     }
 
     private async Task RefreshAsync()
@@ -233,6 +286,21 @@ public sealed class StabilityViewModel : ObservableObject
         // #464
         BootDriverLoadFailures.Clear();
         foreach (var f in snapshot.BootDriverLoadFailures) BootDriverLoadFailures.Add(f);
+
+        // #487
+        WheaHardwareErrors.Clear();
+        foreach (var e in snapshot.WheaHardwareErrors) WheaHardwareErrors.Add(e);
+
+        // #488
+        DailyWheaCorrectedCounts.Clear();
+        foreach (var d in snapshot.DailyWheaCorrectedCounts) DailyWheaCorrectedCounts.Add(d.Count);
+        DailyWheaCorrectedXAxes[0].Labels = snapshot.DailyWheaCorrectedCounts
+            .Select((d, i) => i % 5 == 0 ? d.Date.ToString("M/d") : string.Empty)
+            .ToArray();
+
+        // #492
+        HardwareErrorCorrelations.Clear();
+        foreach (var c in snapshot.HardwareErrorCorrelations) HardwareErrorCorrelations.Add(c);
 
         StabilityIndex = ComputeStabilityIndex(snapshot);
     }

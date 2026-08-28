@@ -144,6 +144,11 @@ public sealed class DevicesDriversViewModel : ObservableObject
     public ObservableCollection<BootDriverLoadFailure> BootDriverLoadFailures { get; } = new();
     public ObservableCollection<DriverVersionConsistencyGroup> VersionConsistencyIssues { get; } = new();
 
+    // --- #491: WHEA hardware-error-reporting policy - a plain registry read, cheap enough to fold
+    // into this tab's existing on-demand Refresh (same reasoning as the reads above). ---
+    private WheaPolicyInfo? _wheaPolicy;
+    public WheaPolicyInfo? WheaPolicy { get => _wheaPolicy; private set => SetProperty(ref _wheaPolicy, value); }
+
     // --- #462/#463 (setupapi half): driver install timeline + failures, parsed from
     // setupapi.dev.log - gated behind its own Load button since that file can be tens of MB. ---
     public ObservableCollection<DriverInstallEvent> InstallTimeline { get; } = new();
@@ -472,6 +477,9 @@ public sealed class DevicesDriversViewModel : ObservableObject
             var versionIssues = await DriverVersionConsistencyService.ScanAsync();
             VersionConsistencyIssues.Clear();
             foreach (var g in versionIssues) VersionConsistencyIssues.Add(g);
+
+            // #491: WHEA hardware-error-reporting policy - a plain registry read.
+            WheaPolicy = await WheaPolicyService.ReadAsync();
 
             _lastRefreshedUtc = DateTime.UtcNow;
             OnPropertyChanged(nameof(LastRefreshedText));

@@ -107,6 +107,23 @@ public sealed class StabilitySnapshot
     /// read independently by the Devices &amp; Drivers tab, the same dual-read pattern
     /// CorrectedMemoryErrors above already uses.</summary>
     public List<BootDriverLoadFailure> BootDriverLoadFailures { get; init; } = new();
+
+    /// <summary>#487: every Microsoft-Windows-WHEA-Logger record found (any event ID) within the
+    /// lookback window, decoded via CperDecoder where possible - see
+    /// EventLogService.ReadWheaHardwareErrors. CorrectedMemoryErrors above stays as its own
+    /// narrower, message-text-based read of just event 47; this broad list includes event 47's
+    /// records too (now cross-checked against their own binary payload).</summary>
+    public List<WheaHardwareErrorEvent> WheaHardwareErrors { get; init; } = new();
+
+    /// <summary>#488: corrected-severity WHEA records per day across the lookback window, oldest
+    /// first - the same zero-filled daily-bucket shape as DailyCounts above, just filtered to
+    /// WheaHardwareErrors entries whose decoded Severity is Corrected.</summary>
+    public List<DailyEventCount> DailyWheaCorrectedCounts { get; init; } = new();
+
+    /// <summary>#492: crash/TDR/unexpected-shutdown events with at least one WHEA hardware-error
+    /// record in the preceding correlation window - see
+    /// EventLogService.BuildHardwareErrorCorrelations. A correlation, not a claimed cause.</summary>
+    public List<HardwareErrorCorrelation> HardwareErrorCorrelations { get; init; } = new();
 }
 
 /// <summary>#439: one process from event 2004's ranked "consumed the most virtual memory" list.</summary>

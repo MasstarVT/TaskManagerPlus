@@ -56,6 +56,14 @@ public sealed class EventLogService
         var (lowMemCount, lowMemLast) = ReadLowMemoryEvents();
         var correctedMemoryErrors = ReadCorrectedMemoryErrors();
 
+        // #487/#488/#489/#490/#492: the broad WHEA-Logger read, plus the crash-like event list
+        // (unexpected shutdown, BSOD report, and - unlike crashLikeIds above - also TDR) that #492
+        // correlates it against.
+        var wheaEvents = ReadWheaHardwareErrors();
+        var crashTimelineIds = new HashSet<int> { KernelPowerEventId, LegacyUncleanShutdownEventId, BlueScreenEventId, TdrEventId };
+        var crashTimelineEvents = events.Where(e => crashTimelineIds.Contains(e.EventId))
+            .OrderByDescending(e => e.TimeCreated).ToList();
+
         return new StabilitySnapshot
         {
             RecentEvents = events.Take(MaxEventsPerLog).ToList(),
@@ -82,6 +90,12 @@ public sealed class EventLogService
             // #464: boot-start/system-start driver load failures - also read independently by the
             // Devices & Drivers tab (ReadBootDriverLoadFailures is public for that reason).
             BootDriverLoadFailures = ReadBootDriverLoadFailures(),
+            // #487/#488/#489/#490/#492: the broad WHEA-Logger read (every event ID, not just #447's
+            // event 47), its daily corrected-error trend, and its correlation against the crash-like
+            // events already gathered above.
+            WheaHardwareErrors = wheaEvents,
+            DailyWheaCorrectedCounts = BuildDailyWheaCorrectedCounts(wheaEvents),
+            HardwareErrorCorrelations = BuildHardwareErrorCorrelations(crashTimelineEvents, wheaEvents),
         };
     }
 
@@ -796,4 +810,308 @@ public sealed class EventLogService
         };
         return match.Success ? match.Groups[1].Value.Trim() : null;
     }
+
+    // ------------------------------------------------------------------------------------------
+    // #487/#488/#489/#490/#492: the broad Microsoft-Windows-WHEA-Logger read - every event ID from
+    // the provider (not just #447's ReadCorrectedMemoryErrors, which stays as its own narrower,
+    // message-text-based event-47 slice), decoded via CperDecoder's CPER binary parse of the
+    // event's own "RawData" field where possible. #447's event 47 records show up in this broad
+    // list too (as WheaErrorSourceType.PlatformMemory, Severity.Corrected) - cross-checked against
+    // the existing message-text reading rather than conflicting with it.
+    // ------------------------------------------------------------------------------------------
+
+    private const int MaxWheaEventsReturned = 300;
+
+    /// <summary>#492: how far back before a crash/TDR/unexpected-shutdown event a WHEA hardware
+    /// error record still counts as "shortly before it" - five minutes is generous enough to catch
+    /// the common case (a hardware fault triggering an immediate bugcheck/reset) without stretching
+    /// so wide that unrelated errors from earlier in the session get pulled in. Stated explicitly in
+    /// the UI text this backs, since the exact width is a judgment call, not a documented constant.</summary>
+    private static readonly TimeSpan HardwareErrorCorrelationWindow = TimeSpan.FromMinutes(5);
+
+    private static readonly Regex WheaRawDataHexRegex = new(
+        @"<Data Name=""RawData"">([0-9A-Fa-f]+)</Data>", RegexOptions.Compiled);
+
+    /// <summary>#489: bus/device/function -&gt; friendly name, built once per Query() call from
+    /// currently-present PCI devices (PnpDeviceTreeService.BuildPciLocationLookup) rather than once
+    /// per WHEA event - a single native enumeration pass is plenty cheap enough to repeat per
+    /// refresh, and this keeps the lookup fresh against whatever's plugged in right now.</summary>
+    public List<WheaHardwareErrorEvent> ReadWheaHardwareErrors()
+    {
+        var results = new List<WheaHardwareErrorEvent>();
+        Dictionary<(int, int, int), string>? pciLocations = null;
+
+        try
+        {
+            long maxAgeMs = LookbackDays * 24L * 60 * 60 * 1000;
+            var query = new EventLogQuery("System", PathType.LogName,
+                $"*[System[Provider[@Name='{WheaLoggerProvider}'] and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]")
+            {
+                ReverseDirection = true,
+            };
+
+            using var reader = new EventLogReader(query);
+            int count = 0;
+            while (count < MaxWheaEventsReturned && reader.ReadEvent() is { } record)
+            {
+                using (record)
+                {
+                    count++;
+                    if (record.TimeCreated is null) continue;
+
+                    string message;
+                    try { message = record.FormatDescription() ?? $"WHEA-Logger event {record.Id}"; }
+                    catch { message = $"WHEA-Logger event {record.Id}"; }
+
+                    byte[]? raw = ExtractWheaRawData(record);
+                    var decoded = raw is not null ? CperDecoder.Decode(raw) : null;
+
+                    if (decoded is not null)
+                    {
+                        pciLocations ??= SafeBuildPciLocationLookup();
+                        results.Add(BuildWheaEventFromDecoded(record.TimeCreated.Value, record.Id, decoded, message, pciLocations));
+                    }
+                    else
+                    {
+                        results.Add(BuildWheaEventFallback(record, message));
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // Provider/log unavailable, or no WHEA-capable hardware on this system - degrade to
+            // "none found", same as every other targeted query in this service.
+        }
+        return results;
+    }
+
+    private static Dictionary<(int, int, int), string> SafeBuildPciLocationLookup()
+    {
+        try { return PnpDeviceTreeService.BuildPciLocationLookup(); }
+        catch { return new Dictionary<(int, int, int), string>(); }
+    }
+
+    /// <summary>Retrieves the event's raw CPER binary payload - first from a byte[]-typed property
+    /// (how a manifest-based provider's binary EventData field normally surfaces through
+    /// EventRecord.Properties), falling back to a regex pull of the "RawData" element out of the
+    /// event's own rendered XML when that doesn't turn up anything. Either gap (no byte[] property,
+    /// no matching XML element) just means this specific event falls back to BuildWheaEventFallback
+    /// below - never a thrown exception out of this method.</summary>
+    private static byte[]? ExtractWheaRawData(EventRecord record)
+    {
+        try
+        {
+            foreach (var prop in record.Properties)
+            {
+                if (prop.Value is byte[] { Length: > 16 } bytes) return bytes;
+            }
+
+            string xml = record.ToXml();
+            var match = WheaRawDataHexRegex.Match(xml);
+            if (match.Success && match.Groups[1].Value.Length % 2 == 0)
+                return Convert.FromHexString(match.Groups[1].Value);
+        }
+        catch
+        {
+            // Malformed/unreadable event data - degrade to null; the caller's message-text fallback
+            // still covers this event.
+        }
+        return null;
+    }
+
+    private static WheaHardwareErrorEvent BuildWheaEventFromDecoded(
+        DateTime time, int eventId, CperRecord rec, string message, Dictionary<(int, int, int), string> pciLocations)
+    {
+        var pcieSection = rec.Sections.FirstOrDefault(s => s.Pcie is not null);
+        var procIaSection = rec.Sections.FirstOrDefault(s => s.ProcessorIa is not null);
+
+        return new WheaHardwareErrorEvent
+        {
+            TimeCreated = time,
+            EventId = eventId,
+            SourceType = rec.SourceType,
+            Severity = rec.Severity,
+            Component = DescribeWheaComponent(rec.SourceType),
+            RawMessage = Truncate(message, 400),
+            StructuredDecodeSucceeded = true,
+            Pcie = pcieSection?.Pcie is { } p ? BuildPcieDetail(p, pciLocations) : null,
+            MachineCheck = procIaSection?.ProcessorIa is { } ia ? BuildMachineCheckDetail(ia) : null,
+        };
+    }
+
+    /// <summary>The record's binary payload couldn't be retrieved or didn't parse - falls back to a
+    /// Level-derived severity estimate (Windows' own Critical/Error/Warning/Informational levels
+    /// map reasonably onto Fatal/Recoverable/Corrected/Informational, WHEA-Logger's own severities)
+    /// rather than leaving the row entirely blank; StructuredDecodeSucceeded=false marks this as an
+    /// estimate, not a value read off the record itself.</summary>
+    private static WheaHardwareErrorEvent BuildWheaEventFallback(EventRecord record, string message)
+    {
+        var severity = record.Level switch
+        {
+            1 => WheaErrorSeverity.Fatal,
+            2 => WheaErrorSeverity.Recoverable,
+            3 => WheaErrorSeverity.Corrected,
+            4 => WheaErrorSeverity.Informational,
+            _ => WheaErrorSeverity.Unknown,
+        };
+        return new WheaHardwareErrorEvent
+        {
+            TimeCreated = record.TimeCreated ?? DateTime.MinValue,
+            EventId = record.Id,
+            SourceType = WheaErrorSourceType.Unknown,
+            Severity = severity,
+            Component = "Unknown (binary error record unavailable)",
+            RawMessage = Truncate(message, 400),
+            StructuredDecodeSucceeded = false,
+        };
+    }
+
+    private static string DescribeWheaComponent(WheaErrorSourceType type) => type switch
+    {
+        WheaErrorSourceType.MachineCheck => "Processor (machine check)",
+        WheaErrorSourceType.PciExpress => "PCI Express",
+        WheaErrorSourceType.PlatformMemory => "Memory",
+        WheaErrorSourceType.Nmi => "Non-maskable interrupt (NMI)",
+        WheaErrorSourceType.Other => "Other hardware error source",
+        _ => "Unknown",
+    };
+
+    // #489: PCI Express AER Correctable/Uncorrectable Error Status register bit assignments - the
+    // PCI Express Base Specification's own documented, stable bit numbers (Advanced Error Reporting
+    // Extended Capability), not a Windows- or vendor-specific convention.
+    private static void AppendUncorrectableAerFlags(uint status, List<string> flags)
+    {
+        if ((status & (1u << 4)) != 0) flags.Add("Data Link Protocol Error");
+        if ((status & (1u << 5)) != 0) flags.Add("Surprise Down Error");
+        if ((status & (1u << 12)) != 0) flags.Add("Poisoned TLP Received");
+        if ((status & (1u << 13)) != 0) flags.Add("Flow Control Protocol Error");
+        if ((status & (1u << 14)) != 0) flags.Add("Completion Timeout");
+        if ((status & (1u << 15)) != 0) flags.Add("Completer Abort");
+        if ((status & (1u << 16)) != 0) flags.Add("Unexpected Completion");
+        if ((status & (1u << 17)) != 0) flags.Add("Receiver Overflow");
+        if ((status & (1u << 18)) != 0) flags.Add("Malformed TLP");
+        if ((status & (1u << 19)) != 0) flags.Add("ECRC Error");
+        if ((status & (1u << 20)) != 0) flags.Add("Unsupported Request Error");
+    }
+
+    private static void AppendCorrectableAerFlags(uint status, List<string> flags)
+    {
+        if ((status & (1u << 0)) != 0) flags.Add("Receiver Error");
+        if ((status & (1u << 6)) != 0) flags.Add("Bad TLP");
+        if ((status & (1u << 7)) != 0) flags.Add("Bad DLLP");
+        if ((status & (1u << 8)) != 0) flags.Add("REPLAY_NUM Rollover");
+        if ((status & (1u << 12)) != 0) flags.Add("Replay Timer Timeout");
+        if ((status & (1u << 13)) != 0) flags.Add("Advisory Non-Fatal Error");
+        if ((status & (1u << 14)) != 0) flags.Add("Corrected Internal Error");
+        if ((status & (1u << 15)) != 0) flags.Add("Header Log Overflow");
+    }
+
+    private static PcieAerDetail BuildPcieDetail(CperPcie p, Dictionary<(int, int, int), string> pciLocations)
+    {
+        var flags = new List<string>();
+        bool isUncorrectable = false;
+        if (p.UncorrectableStatus is { } u && u != 0)
+        {
+            isUncorrectable = true;
+            AppendUncorrectableAerFlags(u, flags);
+        }
+        if (p.CorrectableStatus is { } c && c != 0)
+            AppendCorrectableAerFlags(c, flags);
+
+        pciLocations.TryGetValue((p.Bus, p.Device, p.Function), out var friendlyName);
+
+        return new PcieAerDetail
+        {
+            Segment = p.Segment,
+            Bus = p.Bus,
+            Device = p.Device,
+            Function = p.Function,
+            VendorId = p.VendorId,
+            DeviceId = p.DeviceId,
+            IsUncorrectable = isUncorrectable,
+            StatusFlags = flags,
+            FriendlyDeviceName = friendlyName,
+        };
+    }
+
+    /// <summary>Picks the most notable decoded bank (an uncorrected one if any, else the first) as
+    /// this event's single machine-check detail - a WHEA-Logger record conventionally carries one
+    /// bank per event in the overwhelming majority of real-world cases, and this keeps the display
+    /// to one coherent "what the hardware reported" panel rather than a nested sub-list.</summary>
+    private static MachineCheckDetail BuildMachineCheckDetail(CperProcessorIa ia)
+    {
+        var bank = ia.Banks.FirstOrDefault(b => b.Uncorrected == true) ?? ia.Banks.FirstOrDefault();
+        return new MachineCheckDetail
+        {
+            Bank = bank?.BankNumber,
+            RawMciStatus = bank?.RawMciStatus,
+            ApicId = ia.LocalApicId,
+            Uncorrected = bank?.Uncorrected,
+            ProcessorContextCorrupt = bank?.ProcessorContextCorrupt,
+            Overflow = bank?.Overflow,
+        };
+    }
+
+    /// <summary>#488: corrected-severity WHEA records per day across the lookback window, oldest
+    /// first - the same zero-filled daily-bucket shape as BuildDailyCounts above, just over
+    /// WheaHardwareErrors' own Severity field instead of System/Application Critical/Error entries.</summary>
+    private static List<DailyEventCount> BuildDailyWheaCorrectedCounts(List<WheaHardwareErrorEvent> wheaEvents)
+    {
+        var counts = wheaEvents
+            .Where(e => e.Severity == WheaErrorSeverity.Corrected)
+            .GroupBy(e => e.TimeCreated.Date)
+            .ToDictionary(g => g.Key, g => g.Count());
+
+        var result = new List<DailyEventCount>();
+        var today = DateTime.Now.Date;
+        for (int i = LookbackDays - 1; i >= 0; i--)
+        {
+            var day = today.AddDays(-i);
+            result.Add(new DailyEventCount { Date = day, Count = counts.TryGetValue(day, out var c) ? c : 0 });
+        }
+        return result;
+    }
+
+    /// <summary>#492: for each crash/TDR/unexpected-shutdown event, finds the nearest WHEA hardware-
+    /// error record within HardwareErrorCorrelationWindow beforehand, if any - a pure re-correlation
+    /// of two lists this method's caller already read, no new query. Framed throughout as a
+    /// correlation, never a claimed cause - see HardwareErrorCorrelation's remarks.</summary>
+    private static List<HardwareErrorCorrelation> BuildHardwareErrorCorrelations(
+        List<StabilityEvent> crashLikeEvents, List<WheaHardwareErrorEvent> wheaEvents)
+    {
+        var results = new List<HardwareErrorCorrelation>();
+        if (crashLikeEvents.Count == 0 || wheaEvents.Count == 0) return results;
+
+        var orderedWhea = wheaEvents.OrderBy(w => w.TimeCreated).ToList();
+        foreach (var crash in crashLikeEvents)
+        {
+            var windowStart = crash.TimeCreated - HardwareErrorCorrelationWindow;
+            var inWindow = orderedWhea
+                .Where(w => w.TimeCreated <= crash.TimeCreated && w.TimeCreated >= windowStart)
+                .ToList();
+            if (inWindow.Count == 0) continue;
+
+            var nearest = inWindow.OrderByDescending(w => w.TimeCreated).First();
+            results.Add(new HardwareErrorCorrelation
+            {
+                CrashTime = crash.TimeCreated,
+                CrashDescription = DescribeCrashLikeEvent(crash),
+                HardwareErrorTime = nearest.TimeCreated,
+                HardwareErrorDescription = $"{DescribeWheaComponent(nearest.SourceType)} - {nearest.Severity}",
+                Gap = crash.TimeCreated - nearest.TimeCreated,
+                HardwareErrorsInWindow = inWindow.Count,
+            });
+        }
+        return results.OrderByDescending(c => c.CrashTime).ToList();
+    }
+
+    private static string DescribeCrashLikeEvent(StabilityEvent e) => e.EventId switch
+    {
+        KernelPowerEventId => "Unexpected shutdown (Kernel-Power 41)",
+        LegacyUncleanShutdownEventId => "Unexpected shutdown (EventLog 6008)",
+        BlueScreenEventId => "Blue screen report (Windows Error Reporting 1001)",
+        TdrEventId => "GPU driver timeout/reset (TDR, event 4101)",
+        _ => $"Event {e.EventId}",
+    };
 }
