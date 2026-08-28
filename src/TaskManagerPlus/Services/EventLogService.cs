@@ -1606,6 +1606,7 @@ public sealed class EventLogService
         return result;
     }
 
+
     // ---------------------------------------------------------------------------------------
     // Round 16, item 47: Application-log event 1000 (Application Error) - joined to a WER report
     // by app/module name (see WerReportService.JoinApplicationErrorEvents). A caller-supplied
@@ -2081,5 +2082,161 @@ public sealed class EventLogService
             // never been run on this machine).
         }
         return result;
+    }
+
+    // #223: USB/PnP re-enumeration churn - repeated device arrive/remove cycling from one device is
+    // the classic "the whole PC hitches every few seconds" symptom (each re-enumeration briefly
+    // spikes DPC/interrupt activity while the bus re-negotiates). Kernel-PnP 410/411/430 in the
+    // System log cover the kernel-level device-node start/stop/removal transitions; the
+    // DriverFrameworks-UserMode provider's own Operational channel covers UMDF driver instances
+    // (many USB peripherals) that the kernel-level events alone don't capture.
+    private static readonly Regex DeviceInstanceIdRegex = new(
+        @"(?:USB|PCI|HID|ACPI|SWD|ROOT|STORAGE)\\[A-Za-z0-9_&.\\-]+", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly int[] KernelPnpChurnEventIds = { 410, 411, 430 };
+
+    public List<UsbChurnRow> ReadUsbChurnEvents(TimeSpan window)
+    {
+        var byDevice = new Dictionary<string, (int Count, DateTime Last, string Description)>(StringComparer.OrdinalIgnoreCase);
+        long maxAgeMs = (long)window.TotalMilliseconds;
+
+        void ScanLog(string logName, string providerName, int[]? eventIds)
+        {
+            try
+            {
+                string idFilter = eventIds is null || eventIds.Length == 0
+                    ? string.Empty
+                    : $" and ({string.Join(" or ", eventIds.Select(id => $"EventID={id}"))})";
+                var query = new EventLogQuery(logName, PathType.LogName,
+                    $"*[System[Provider[@Name='{providerName}']{idFilter} and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]");
+
+                using var reader = new EventLogReader(query);
+                int count = 0;
+                const int maxEvents = 2000; // generous - PnP churn is exactly the scenario that can legitimately produce thousands of entries
+                while (count < maxEvents && reader.ReadEvent() is { } record)
+                {
+                    using (record)
+                    {
+                        count++;
+                        string message;
+                        try { message = record.FormatDescription() ?? string.Empty; }
+                        catch { message = string.Empty; } // provider's message file isn't registered - a known, common gap
+
+                        var match = DeviceInstanceIdRegex.Match(message);
+                        // A message that doesn't parse still counts toward total churn volume, just
+                        // bucketed as unresolved rather than fabricating a device identity for it.
+                        string key = match.Success ? match.Value : $"(unresolved — {providerName} event {record.Id})";
+                        string desc = match.Success ? Truncate(message, 120) : string.Empty;
+                        var time = record.TimeCreated ?? DateTime.MinValue;
+
+                        if (byDevice.TryGetValue(key, out var existing))
+                        {
+                            byDevice[key] = (
+                                existing.Count + 1,
+                                time > existing.Last ? time : existing.Last,
+                                existing.Description.Length > 0 ? existing.Description : desc);
+                        }
+                        else
+                        {
+                            byDevice[key] = (1, time, desc);
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                // Log/provider unavailable/access denied - contributes nothing from this source.
+            }
+        }
+
+        ScanLog("System", "Microsoft-Windows-Kernel-PnP", KernelPnpChurnEventIds);
+        ScanLog("Microsoft-Windows-DriverFrameworks-UserMode/Operational", "Microsoft-Windows-DriverFrameworks-UserMode", null);
+
+        return byDevice
+            .Select(kv => new UsbChurnRow
+            {
+                DeviceInstanceId = kv.Key,
+                DeviceDescription = kv.Value.Description,
+                EventCount = kv.Value.Count,
+                LastEvent = kv.Value.Last,
+            })
+            .Where(r => r.EventCount > 1) // a single arrive/remove pair is normal (plug/unplug); only repeated churn is the symptom
+            .OrderByDescending(r => r.EventCount)
+            .ToList();
+    }
+
+    // #240: "Application Hang" (event ID 1002) - the Application-log counterpart to the crash scan
+    // above (#1/#8's "Application Error"/event 1000), same generic provider-name convention Windows
+    // uses for both. The event's own formatted message layout ("The program X version Y stopped
+    // interacting with Windows...") is a stable, user-facing sentence rather than a documented,
+    // versioned insertion-string contract, so this regexes the formatted text the same way
+    // ExtractFaultingModule already does for crash entries, rather than indexing record.Properties
+    // by position (which does vary by Windows version for this event).
+    private static readonly Regex AppHangNameRegex = new(
+        @"The program\s+(.+?)\s+version\s+(.+?)\s+stopped interacting", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex HangTypeRegex = new(@"Hang [Tt]ype:\s*([^\r\n]+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private const string ApplicationHangProvider = "Application Hang";
+    private const int ApplicationHangEventId = 1002;
+
+    /// <summary>#240: ranks "top hanging apps in the last 30 days" with a best-effort hang type -
+    /// complements #239's richer per-report Report.wer detail, which Windows prunes from
+    /// ReportQueue/ReportArchive sooner than the event log itself keeps this event around.</summary>
+    public List<AppHangEventSummary> ReadApplicationHangEvents(TimeSpan lookback)
+    {
+        var byApp = new Dictionary<string, (int Count, DateTime Last, string HangType)>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            long maxAgeMs = (long)lookback.TotalMilliseconds;
+            var query = new EventLogQuery("Application", PathType.LogName,
+                $"*[System[Provider[@Name='{ApplicationHangProvider}'] and (EventID={ApplicationHangEventId}) and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]")
+            {
+                ReverseDirection = true,
+            };
+
+            using var reader = new EventLogReader(query);
+            int count = 0;
+            const int maxEvents = 2000;
+            while (count < maxEvents && reader.ReadEvent() is { } record)
+            {
+                using (record)
+                {
+                    count++;
+                    string message;
+                    try { message = record.FormatDescription() ?? string.Empty; }
+                    catch { message = string.Empty; } // provider's message file isn't registered - a known, common gap
+
+                    var nameMatch = AppHangNameRegex.Match(message);
+                    string appName = nameMatch.Success ? nameMatch.Groups[1].Value.Trim() : "(unknown)";
+                    string hangType = HangTypeRegex.Match(message) is { Success: true } htm ? htm.Groups[1].Value.Trim() : string.Empty;
+                    var time = record.TimeCreated ?? DateTime.MinValue;
+
+                    if (byApp.TryGetValue(appName, out var existing))
+                    {
+                        byApp[appName] = (
+                            existing.Count + 1,
+                            time > existing.Last ? time : existing.Last,
+                            existing.HangType.Length > 0 ? existing.HangType : hangType);
+                    }
+                    else
+                    {
+                        byApp[appName] = (1, time, hangType);
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // Log/provider unavailable/access denied - degrade to "no hang events found".
+        }
+
+        return byApp
+            .Select(kv => new AppHangEventSummary
+            {
+                AppName = kv.Key,
+                Count = kv.Value.Count,
+                LastSeen = kv.Value.Last,
+                HangType = string.IsNullOrEmpty(kv.Value.HangType) ? "Unknown" : kv.Value.HangType,
+            })
+            .OrderByDescending(r => r.Count)
+            .ToList();
     }
 }

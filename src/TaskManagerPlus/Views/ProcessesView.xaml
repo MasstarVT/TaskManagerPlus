@@ -24,6 +24,7 @@
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
@@ -70,13 +71,19 @@
                       IsChecked="{Binding MeasureResponseTime}"
                       ToolTip="SendMessageTimeout probe (bounded, ~250ms) against every windowed process each tick - turns 'Not responding' into an actual millisecond figure, catching apps that are sluggish but not yet flagged hung." />
 
-            <TextBlock Grid.Column="4" VerticalAlignment="Center" Margin="16,0,0,0"
+            <!-- #266: EcoQoS filter - "this app is slow because Windows classified it as
+                 background" is otherwise undiagnosable in a long process list. -->
+            <CheckBox Grid.Column="4" Content="Power-throttled only" VerticalAlignment="Center" Margin="16,0,0,0"
+                      IsChecked="{Binding OnlyPowerThrottled}"
+                      ToolTip="Show only processes Windows has classified as background via EcoQoS power throttling" />
+
+            <TextBlock Grid.Column="5" VerticalAlignment="Center" Margin="16,0,0,0"
                        Foreground="{DynamicResource TextSecondaryBrush}">
                 <Run Text="{Binding ProcessCount, Mode=OneWay}" /><Run Text=" processes" />
             </TextBlock>
 
-            <Button Grid.Column="5" Content="End process tree" Margin="0,0,8,0" Command="{Binding EndProcessTreeCommand}" />
-            <Button Grid.Column="6" Content="End task" Command="{Binding EndTaskCommand}" Style="{StaticResource DangerButton}" />
+            <Button Grid.Column="6" Content="End process tree" Margin="0,0,8,0" Command="{Binding EndProcessTreeCommand}" />
+            <Button Grid.Column="7" Content="End task" Command="{Binding EndTaskCommand}" Style="{StaticResource DangerButton}" />
         </Grid>
 
         <!-- Toolbar row 2: on-demand inspectors + process-control actions for the selected process. -->
@@ -167,6 +174,10 @@
                         <DataTrigger Binding="{Binding IsDuplicateInstanceOutlier}" Value="True">
                             <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
                         </DataTrigger>
+                        <!-- #270: a process stuck in background I/O priority mode. -->
+                        <DataTrigger Binding="{Binding IsBackgroundIoPriority}" Value="True">
+                            <Setter Property="Opacity" Value="0.7" />
+                        </DataTrigger>
                     </Style.Triggers>
                 </Style>
             </DataGrid.RowStyle>
@@ -179,6 +190,26 @@
                             <TextBlock Text="{Binding CpuPercent, StringFormat={}{0:0.0}%}"
                                        Foreground="{Binding CpuPercent, Converter={StaticResource PercentToBrushConverter}}"
                                        VerticalAlignment="Center" />
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <!-- #294: composite 0-100 responsiveness score - a colour dot (same visual idiom
+                     as ServiceStatusToBrushConverter's status dot) plus the number, sortable so a
+                     user can find "which app is actually making this PC feel bad" instead of just
+                     sorting by CPU%. Deliberately a composite heuristic - the header and per-row
+                     tooltip both say so plainly. -->
+                <DataGridTemplateColumn Width="110" SortMemberPath="ResponsivenessScore">
+                    <DataGridTemplateColumn.Header>
+                        <TextBlock Text="Resp. score"
+                                   ToolTip="Composite 0-100 heuristic (not a verdict): message-pump latency, hung-window time, thread scheduling pressure, page-fault rate, and GC pause time (managed processes only). Higher is better - lower means more signal that this process is contributing to system lag." />
+                    </DataGridTemplateColumn.Header>
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center" ToolTip="{Binding ResponsivenessScoreTooltip}">
+                                <Ellipse Width="9" Height="9" Margin="0,0,6,0" VerticalAlignment="Center"
+                                         Fill="{Binding ResponsivenessScore, Converter={StaticResource ResponsivenessScoreToBrushConverter}}" />
+                                <TextBlock Text="{Binding ResponsivenessScoreText}" FontSize="11.5" />
+                            </StackPanel>
                         </DataTemplate>
                     </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>
@@ -208,6 +239,17 @@
                         </DataTemplate>
                     </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>
+                <!-- #283: working-set trim detector - a large, sudden working-set drop (>30% and
+                     >50MB in one tick) typically precedes a burst of hard faults as the process
+                     pages everything back in on its next touch. Blank until a trim is observed. -->
+                <DataGridTextColumn Header="Last trim" Binding="{Binding LastTrimmedText}" Width="170">
+                    <DataGridTextColumn.ElementStyle>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                            <Setter Property="ToolTip" Value="A large, sudden working-set drop (more than 30% and more than 50MB in one tick) - typically a working-set trim, which precedes a burst of hard faults as the process pages everything back in on its next touch. See the Responsiveness tab's hard-fault rate monitor for the system-wide signal this feeds into." />
+                        </Style>
+                    </DataGridTextColumn.ElementStyle>
+                </DataGridTextColumn>
                 <!-- #36: per-process GPU engine utilization, via the "GPU Engine" perf-counter
                      category (the same source Task Manager's own GPU column reads). -->
                 <DataGridTemplateColumn Header="GPU" Width="80" SortMemberPath="GpuPercent">
@@ -252,6 +294,26 @@
                         </DataTemplate>
                     </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>
+                <!-- #266: EcoQoS power-throttling status - "this app is slow because Windows
+                     classified it as background" is otherwise undiagnosable. -->
+                <DataGridTemplateColumn Header="Power" Width="110" SortMemberPath="PowerThrottleText">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding PowerThrottleText}" VerticalAlignment="Center" FontSize="11.5">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsPowerThrottled}" Value="True">
+                                                <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
                 <DataGridTemplateColumn Header="Protection" Width="110" SortMemberPath="ProtectionLevel">
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate>
@@ -270,7 +332,87 @@
                         </DataTemplate>
                     </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>
+                <!-- #270: I/O and memory priority - a process stuck in Very Low/Low I/O priority
+                     ("background mode") otherwise presents only as unexplainably slow disk access. -->
+                <DataGridTemplateColumn Header="I/O priority" Width="100" SortMemberPath="IoPriorityText">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding IoPriorityText}" VerticalAlignment="Center" FontSize="11.5">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsBackgroundIoPriority}" Value="True">
+                                                <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
                 <DataGridCheckBoxColumn Header="AppContainer" Binding="{Binding IsAppContainer, Mode=OneWay}" Width="90" IsReadOnly="True" />
+                <DataGridTextColumn Header="Memory priority" Binding="{Binding MemoryPriorityText}" Width="110" />
+                <!-- #274: .NET lock contention, managed processes only - blank for a native
+                     process (a null DotNetContentionRatePerSec/DotNetQueueLength renders as an
+                     empty cell, no converter needed). -->
+                <DataGridTextColumn Header="Lock contention/sec" Binding="{Binding DotNetContentionRatePerSec, StringFormat={}{0:0.0}}" Width="130" />
+                <DataGridTextColumn Header="Lock queue" Binding="{Binding DotNetQueueLength}" Width="90" />
+                <!-- #276: GC mode via environment variables - a heuristic, not a certainty; see the
+                     tooltip and ProcessRow.GcModeText's own remarks. -->
+                <DataGridTextColumn Header="GC mode" Binding="{Binding GcModeText}" Width="150">
+                    <DataGridTextColumn.ElementStyle>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="ToolTip" Value="Read from the process's environment variables (DOTNET_gcServer/COMPlus_gcServer) via a PEB memory walk - a process configured through its runtimeconfig.json instead may not show correctly here." />
+                        </Style>
+                    </DataGridTextColumn.ElementStyle>
+                </DataGridTextColumn>
+                <!-- #277: thread-pool-starvation hint - a rising logical-thread count alongside an
+                     elevated queue/contention signal over several ticks. Explicitly a hint. -->
+                <DataGridTemplateColumn Header="TP hint" Width="90" SortMemberPath="IsThreadPoolStarvationSuspect">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="Starving?" Foreground="{DynamicResource WarningBrush}" FontSize="11" VerticalAlignment="Center"
+                                       ToolTip="Thread-pool-starvation hint: the .NET CLR logical-thread count has climbed steadily over the last several samples while the queue/contention signal stayed elevated - the outward signature of blocking calls starving the thread pool. A sampled hint, not a diagnosis.">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsThreadPoolStarvationSuspect}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <!-- #272: "looks stuck" flag from the shared scheduler sweep, with a one-click
+                     shortcut into #271's real wait-chain analysis to actually confirm it. -->
+                <DataGridTemplateColumn Header="Stuck?" Width="150" SortMemberPath="IsStuckThreadSuspect">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <StackPanel Orientation="Horizontal" ToolTip="{Binding StuckThreadHintText}">
+                                <StackPanel.Style>
+                                    <Style TargetType="StackPanel">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsStuckThreadSuspect}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </StackPanel.Style>
+                                <TextBlock Text="Possibly stuck" Foreground="{DynamicResource DangerBrush}" FontSize="11" VerticalAlignment="Center" Margin="0,0,6,0" />
+                                <Button Content="Analyze" FontSize="10" Padding="6,1"
+                                        Command="{Binding DataContext.AnalyzeWaitChainDetailedCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                        CommandParameter="{Binding}" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
                 <!-- Round 7 #2/#11: spawn-group size and duplicate-instance count badges. -->
                 <DataGridTemplateColumn Header="Group" Width="70" SortMemberPath="SpawnGroupSize">
                     <DataGridTemplateColumn.CellTemplate>
@@ -490,6 +632,11 @@
                     <!-- Item 65 -->
                     <MenuItem Header="Create mini dump…" Command="{Binding CreateMiniDumpCommand}" />
                     <MenuItem Header="Create full dump…" Command="{Binding CreateFullDumpCommand}" />
+                    <!-- #271: Wait Chain Traversal - the same in-box API Resource Monitor's own
+                         "Analyze Wait Chain" action uses, against this process's main thread. A
+                         second, independently-built wait-chain view (richer node/status detail via
+                         AnalyzeWaitChainDetailedCommand) alongside item 64's simpler one above. -->
+                    <MenuItem Header="Analyze wait chain (detailed)..." Command="{Binding AnalyzeWaitChainDetailedCommand}" />
                 </ContextMenu>
             </DataGrid.ContextMenu>
         </DataGrid>
@@ -938,7 +1085,7 @@
 
             <!-- Item 64: wait chain result - an indented list, matching Resource Monitor's own
                  "Analyze Wait Chain" display. Collapsed when nothing's been analysed yet. -->
-            <Border Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
+            <Border Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Margin="0,0,0,6">
                 <Border.Style>
                     <Style TargetType="Border">
                         <Setter Property="Visibility" Value="Visible" />
@@ -960,6 +1107,82 @@
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
                     </ScrollViewer>
+                </StackPanel>
+            </Border>
+
+            <!-- #271: Wait Chain Traversal result - populated on demand via
+                 AnalyzeWaitChainDetailedCommand (context menu, or #272's inline "Analyze" link on a
+                 flagged row). A second, independently-built wait-chain view alongside item 64's
+                 simpler one above. -->
+            <Border Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Margin="0,0,0,6">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Visibility" Value="Visible" />
+                        <Style.Triggers>
+                            <MultiDataTrigger>
+                                <MultiDataTrigger.Conditions>
+                                    <Condition Binding="{Binding WaitChainNodes.Count}" Value="0" />
+                                    <Condition Binding="{Binding WaitChainStatusText, Converter={StaticResource StringNotEmptyConverter}}" Value="False" />
+                                </MultiDataTrigger.Conditions>
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </MultiDataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Wait chain analysis (detailed)" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                    <TextBlock Text="{Binding WaitChainStatusText}" FontSize="11.5" TextWrapping="Wrap" Margin="0,0,0,4">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <ItemsControl ItemsSource="{Binding WaitChainNodes}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock FontSize="11.5" FontFamily="Consolas" TextWrapping="Wrap" Margin="0,0,0,2">
+                                    <Run Text="{Binding IndentLevel, Mode=OneWay, StringFormat=\{0\}: }" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                    <Run Text="{Binding Description, Mode=OneWay}" />
+                                </TextBlock>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- #261: thread state/wait-reason breakdown for the selected process - auto-populates
+                 on selection (like the CPU-affinity editor below) and refreshes each tick from
+                 ResponsivenessViewModel's shared scheduler sweep, no button needed. -->
+            <Border Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Visibility" Value="Visible" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding SelectedProcessWaitBreakdown.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="Thread state / wait-reason breakdown" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                    <ItemsControl ItemsSource="{Binding SelectedProcessWaitBreakdown}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock FontSize="11.5" Margin="0,0,16,2">
+                                    <Run Text="{Binding BucketName, Mode=OneWay}" />
+                                    <Run Text=": " />
+                                    <Run Text="{Binding ThreadCount, Mode=OneWay}" FontWeight="SemiBold" />
+                                </TextBlock>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
                 </StackPanel>
             </Border>
         </StackPanel>

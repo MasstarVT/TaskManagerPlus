@@ -29,6 +29,24 @@
                            Text="No GPU adapter or GPU perf-counter data could be found on this system." />
             </Border>
 
+            <!-- #253 (nice-to-have): a short refresh-rate summary line - the full display-mode
+                 audit (current vs. max refresh, mixed-refresh flag) lives on the Responsiveness
+                 tab's "Display mode, GPU scheduling & Game DVR audit" card; this is just a pointer
+                 so it's visible without switching tabs. Hidden when nothing could be read. -->
+            <TextBlock Text="{Binding RefreshRateSummaryText}" Foreground="{DynamicResource TextSecondaryBrush}"
+                       FontSize="12" TextWrapping="Wrap" Margin="0,0,0,16">
+                <TextBlock.Style>
+                    <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+                        <Setter Property="Visibility" Value="Visible" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding RefreshRateSummaryText, Converter={StaticResource StringNotEmptyConverter}}" Value="False">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </TextBlock.Style>
+            </TextBlock>
+
             <!-- #55/#56: installed adapters - driver version/date, best-effort WDDM version, and
                  whether it looks integrated vs. discrete. Always shows every adapter Windows knows
                  about, independent of whether live utilization data below could be paired with it. -->

@@ -40,6 +40,17 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     // EnergyThermalsViewModel's remarks.
     public EnergyThermalsViewModel EnergyThermals { get; }
 
+    // New Responsiveness tab (suggestions.md #201-214) - DPC/ISR latency measurement. Owns a
+    // lightweight always-on timer (per-core DPC/interrupt + DPC watchdog headroom) plus its own
+    // Start/Stop-gated measurement session (kernel-trace sampling) - see ResponsivenessViewModel's
+    // remarks for why this doesn't fit PerformanceViewModel's shared-sampler model either.
+    // #245 (items 235-246): takes Processes so it can sum ProcessRow.GdiHandleCount/UserHandleCount
+    // for the desktop-heap card without a second per-process syscall pass - built in the
+    // constructor body (below), not a field initializer, since it needs Processes (itself a field
+    // initializer declared above, so already a real instance by the time the body runs) rather than
+    // the parameterless constructor every other field-initialized ViewModel above uses.
+    public ResponsivenessViewModel Responsiveness { get; }
+
     public LoggingViewModel Logging { get; }
 
     // #100: cross-tab search - see GlobalSearchViewModel's remarks.
@@ -180,7 +191,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     /// app's first nine tabs (in their normal strip order) when the user hasn't customized
     /// ui-preferences.json's TabShortcuts list.</summary>
     public static readonly string[] DefaultTabShortcutOrder =
-        { "Summary", "CPU", "Memory", "Storage", "Network", "GPU", "Energy & Thermals", "Processes", "Services" };
+        { "Summary", "CPU", "Memory", "Storage", "Network", "GPU", "Energy & Thermals", "Responsiveness", "Processes", "Services" };
 
     public IReadOnlyList<string> TabShortcutOrder =>
         _uiPreferences.TabShortcuts.Count > 0 ? _uiPreferences.TabShortcuts : DefaultTabShortcutOrder;
@@ -197,14 +208,34 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         // EnergyThermals now needs to be constructed before Cpu/Storage (both take a reference
         // to it - Cpu for its thermal-throttle flag, Storage for its per-drive temperature list -
         // see each view-model's remarks) and before Summary as before (#64's Health Check card).
+        // #233: Cpu also takes Responsiveness (for its deep-idle-exit-latency flag). Responsiveness
+        // itself is built here first (needing Processes, itself a field initializer already
+        // constructed above) rather than as a field initializer, so it's a real instance by the
+        // time Cpu/Network construct - the same "reach a sibling ViewModel via constructor
+        // reference" pattern #221's Network/Responsiveness wiring already established.
+        // #260: Responsiveness now also takes Performance (a field initializer above, so already a
+        // real instance here) for the run-queue-pressure card's Processor Queue Length reading.
+        Responsiveness = new ResponsivenessViewModel(Processes, Performance);
+        // #261: gives the Processes tab read access to Responsiveness's shared scheduler sweep for
+        // the per-process wait-reason breakdown - see ProcessesViewModel.Responsiveness's remarks
+        // for why this is a settable property rather than a constructor parameter (Processes is
+        // itself a field initializer, constructed before Responsiveness exists).
+        Processes.Responsiveness = Responsiveness;
         EnergyThermals = new EnergyThermalsViewModel(Performance);
-        Cpu = new CpuViewModel(Performance, EnergyThermals, Processes);
+        Cpu = new CpuViewModel(Performance, EnergyThermals, Processes, Responsiveness);
         Memory = new MemoryViewModel(Performance, Processes);
         Storage = new StorageViewModel(Performance, EnergyThermals);
-        Network = new NetworkViewModel(Performance);
+        // #221: Responsiveness is a field initializer (declared/constructed before this
+        // constructor body runs - see its own declaration above), so it's already a real instance
+        // here, letting Network take the same "reach a sibling ViewModel via constructor reference"
+        // pattern Cpu/Storage already take for EnergyThermals.
+        Network = new NetworkViewModel(Performance, Responsiveness);
         Gpu = new GpuViewModel(Processes);
         Logging = new LoggingViewModel(Performance, EnergyThermals);
-        Summary = new SummaryViewModel(Performance, Processes, Services, EnergyThermals, SystemSpecs, Network, Stability);
+        // #295: Responsiveness is a field initializer (constructed above), so it's already a real
+        // instance here - Summary reads Responsiveness.SystemScore directly rather than
+        // duplicating the composite-score math.
+        Summary = new SummaryViewModel(Performance, Processes, Services, EnergyThermals, SystemSpecs, Network, Stability, Responsiveness);
         Search = new GlobalSearchViewModel(Processes, Services, Startup, SystemSpecs);
 
         RemoteMonitor = new RemoteMonitorService(BuildRemoteMetricsSnapshot) { RequiredToken = _remoteMonitorSettings.Token };
@@ -238,6 +269,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         ApplyAxisThemeToLogging();
         Theme.ThemeModeChanged += ApplyAxisThemeToLogging;
+
+        ApplyAxisThemeToResponsiveness();
+        Theme.ThemeModeChanged += ApplyAxisThemeToResponsiveness;
     }
 
     private void ApplyThemeToPerformance()
@@ -280,6 +314,16 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Color TextOf(string key) => (resources[key] as SolidColorBrush)?.Color ?? Colors.Gray;
 
         Startup.ApplyAxisTheme(TextOf("TextSecondaryBrush"), TextOf("BorderBrush2"));
+    }
+
+    private void ApplyAxisThemeToResponsiveness()
+    {
+        var resources = Application.Current.Resources;
+        Color TextOf(string key) => (resources[key] as SolidColorBrush)?.Color ?? Colors.Gray;
+
+        Responsiveness.ApplyAxisTheme(TextOf("TextSecondaryBrush"), TextOf("BorderBrush2"));
+        // #300: incident-replay chart axes - same theming call shape, separate axis pair.
+        Responsiveness.ApplyIncidentReplayAxisTheme(TextOf("TextSecondaryBrush"), TextOf("BorderBrush2"));
     }
 
     private void ApplyAxisThemeToLogging()
@@ -362,10 +406,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Theme.ThemeModeChanged -= ApplyAxisThemeToStability;
         Theme.ThemeModeChanged -= ApplyAxisThemeToStartup;
         Theme.ThemeModeChanged -= ApplyAxisThemeToLogging;
+        Theme.ThemeModeChanged -= ApplyAxisThemeToResponsiveness;
         Processes.Dispose();
         Performance.Dispose();
         Services.Dispose();
         EnergyThermals.Dispose();
+        Responsiveness.Dispose();
         Cpu.Dispose();
         Network.Dispose();
         Gpu.Dispose();

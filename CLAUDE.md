@@ -5,14 +5,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 Task Manager Plus — a Windows Task Manager replacement written in C# / WPF
-(.NET 8). Thirteen top-level tabs (Summary, CPU, Memory, Storage, Network,
-GPU, Energy & Thermals, Processes, Services, Startup, System Specs,
-Stability, Security), live color-theming (six palette families + saturation
-+ high-contrast + color-blind-safe alerts), a CSV/HTML/Markdown logging &
-reporting system, a system tray icon with a global hotkey, and an optional
-LAN-visible remote monitor endpoint. Navigation is a TMOG-style top
-horizontal tab strip (`TabStripPlacement="Top"`), matching the visual/IA
-style of [tmog.org](https://tmog.org), not a left sidebar rail.
+(.NET 8). Fourteen top-level tabs (Summary, CPU, Memory, Storage, Network,
+GPU, Energy & Thermals, Responsiveness, Processes, Services, Startup,
+System Specs, Stability, Security), live color-theming (six palette
+families + saturation + high-contrast + color-blind-safe alerts), a
+CSV/HTML/Markdown logging & reporting system, a system tray icon with a
+global hotkey, and an optional LAN-visible remote monitor endpoint.
+Navigation is a TMOG-style top horizontal tab strip
+(`TabStripPlacement="Top"`), matching the visual/IA style of
+[tmog.org](https://tmog.org), not a left sidebar rail.
 
 The project has gone through many incremental rounds of feature additions
 (see `suggestions.md` for the backlog and git history for the detailed
@@ -101,6 +102,14 @@ container — everything is `new`'d directly). Layers:
   verdict" in both code comments and UI copy — see the house rule below.
   `LoggingViewModel` owns a timer but samples nothing itself — it just reads
   already-polled state off `PerformanceViewModel`/`EnergyThermalsViewModel`.
+  `ResponsivenessViewModel` (the Responsiveness tab, lag/stutter/freeze
+  diagnostics) is the one ViewModel that deliberately mixes both cadences at
+  once rather than picking one: a cheap always-on `_lightTimer` (2s) for
+  syscall/registry/perf-counter reads that are fine on a tick, plus several
+  independent on-demand Start/Stop sessions (DPC/ISR capture, present
+  monitor, VBlank jitter, input-latency probe, flight recorder) for anything
+  ETW-backed or otherwise too heavy to run unconditionally — see its own
+  file-header remarks for the full list of sub-services it composes.
   `MainViewModel` composes all of them plus settings-drawer state, tray/
   hotkey wiring, and elevation status (checked once via `WindowsPrincipal`).
 - **Views/** — XAML + minimal code-behind per tab, hosted in `MainWindow.xaml`'s
@@ -257,6 +266,19 @@ per file:
   registry/perf-counter read (event-log scans, recursive file-system
   walks, registry-tree sweeps, network calls) is gated behind an explicit
   button, never added to a per-tick timer.
+- **ETW without a tracing library**: several Responsiveness-tab services
+  (`DpcLatencyService`, `PresentMonitorService`, `HardFaultEtwService`,
+  `WprCaptureService`'s circular-capture mode) need real-time kernel/ETW
+  data but deliberately avoid the `Microsoft.Diagnostics.Tracing.TraceEvent`
+  NuGet package, per the "prefer a known tool" rule taken one step further —
+  they shell out to `logman`/`wpr` to capture a short `.etl`, convert it with
+  `tracerpt -of XML`, and parse the result *leniently* (event/field names
+  matched by substring, not an exact schema, since the classic MOF-based
+  event layout tracerpt renders isn't a stable public contract). A build
+  that doesn't match any expected field just parses zero events — an empty
+  grid with an explanatory message, never a crash or fabricated numbers.
+  Start/Stop-gated (never a timer), and every one of these checks tool
+  presence (`ToolsAvailable`/`IsAvailable`) before attempting a capture.
 
 ## Notable implementation details
 

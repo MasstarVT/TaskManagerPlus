@@ -30,6 +30,14 @@ public sealed class GlobalHotkeyService : IDisposable
     private const int WM_HOTKEY = 0x0312;
     private const int HotkeyId = 0x3A17; // arbitrary 16-bit id, scoped to this process/window only
 
+    // #297: a second hotkey ID registered through this same HwndSource message hook - Ctrl+Alt+F
+    // ("Flight recorder") for a manual flight-recorder trigger, the smallest extension of the
+    // existing plumbing per the item's own framing ("registering a second hotkey ID via the same
+    // HwndSource message hook it already has"). Checked against HotkeyId above (Ctrl+Alt+T) before
+    // picking F - nothing else in this app currently claims Ctrl+Alt+anything.
+    private const int SecondaryHotkeyId = 0x3A18;
+    private const uint VK_F = 0x46;
+
     private const uint MOD_ALT = 0x0001;
     private const uint MOD_CONTROL = 0x0002;
     private const uint VK_T = 0x54;
@@ -41,7 +49,18 @@ public sealed class GlobalHotkeyService : IDisposable
     /// (silently - see the class remarks) when another running app already owns it.</summary>
     public bool IsRegistered { get; private set; }
 
+    /// <summary>#297: true only if Ctrl+Alt+F was actually granted - independent of
+    /// <see cref="IsRegistered"/> above (one combination can be taken while the other is free).
+    /// The Responsiveness tab's "Trigger now" button works either way - this only gates whether
+    /// the *hotkey* shortcut is also live, per the item's own "a button is an acceptable
+    /// simplification if the hotkey doesn't pan out" allowance.</summary>
+    public bool IsSecondaryRegistered { get; private set; }
+
     public event Action? Pressed;
+
+    /// <summary>#297: fired on Ctrl+Alt+F - wired to ResponsivenessViewModel's shared
+    /// "handle a trigger" method, the same one the in-app "Trigger now" button calls.</summary>
+    public event Action? SecondaryPressed;
 
     /// <summary>Call once the window's handle exists (e.g. from SourceInitialized).</summary>
     public void Register(Window window)
@@ -60,6 +79,15 @@ public sealed class GlobalHotkeyService : IDisposable
         {
             IsRegistered = false;
         }
+
+        try
+        {
+            IsSecondaryRegistered = RegisterHotKey(_hwnd, SecondaryHotkeyId, MOD_CONTROL | MOD_ALT, VK_F);
+        }
+        catch
+        {
+            IsSecondaryRegistered = false;
+        }
     }
 
     private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
@@ -69,6 +97,11 @@ public sealed class GlobalHotkeyService : IDisposable
             Pressed?.Invoke();
             handled = true;
         }
+        else if (msg == WM_HOTKEY && wParam.ToInt32() == SecondaryHotkeyId)
+        {
+            SecondaryPressed?.Invoke();
+            handled = true;
+        }
         return IntPtr.Zero;
     }
 
@@ -76,7 +109,11 @@ public sealed class GlobalHotkeyService : IDisposable
     {
         try
         {
-            if (_hwnd != IntPtr.Zero) UnregisterHotKey(_hwnd, HotkeyId);
+            if (_hwnd != IntPtr.Zero)
+            {
+                UnregisterHotKey(_hwnd, HotkeyId);
+                UnregisterHotKey(_hwnd, SecondaryHotkeyId);
+            }
             _source?.RemoveHook(WndProc);
         }
         catch { /* best-effort */ }

@@ -148,6 +148,16 @@ public sealed class ProcessMonitorService : IDisposable
                 int gdiHandles = 0, userHandles = 0;
                 try { (gdiHandles, userHandles) = ProcessControlService.ReadGuiResourceCounts(proc.Handle); } catch { /* ignore */ }
 
+                // #266/#270: EcoQoS power-throttling status and I/O/memory priority - reuse this
+                // same already-open process handle (see ReadGuiResourceCounts above) rather than
+                // opening a second one; each independently degrades to "Unknown" on failure.
+                string powerThrottleText = "Unknown";
+                string ioPriorityText = "Unknown";
+                bool isBackgroundIo = false;
+                string memoryPriorityText = "Unknown";
+                try { powerThrottleText = ProcessPowerThrottleService.ReadStatus(proc.Handle); } catch { /* ignore */ }
+                try { (ioPriorityText, isBackgroundIo, memoryPriorityText) = ProcessPriorityService.Read(proc.Handle); } catch { /* ignore */ }
+
                 bool isSuspended = false;
                 try { isSuspended = ProcessControlService.IsSuspended(proc); } catch { /* ignore */ }
 
@@ -250,6 +260,10 @@ public sealed class ProcessMonitorService : IDisposable
                     IsAppContainer = isAppContainer,
                     ProtectionLevel = protectionLevel,
                     ResponseTimeMs = responseTimeMs,
+                    PowerThrottleText = powerThrottleText,
+                    IoPriorityText = ioPriorityText,
+                    IsBackgroundIoPriority = isBackgroundIo,
+                    MemoryPriorityText = memoryPriorityText,
                 });
             }
             catch (Exception)

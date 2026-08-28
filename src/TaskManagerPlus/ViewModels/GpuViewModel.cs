@@ -33,6 +33,14 @@ public sealed class GpuViewModel : ObservableObject, IDisposable
     /// MemoryViewModel.TopMemoryProcesses already established.</summary>
     public ICollectionView TopGpuProcesses { get; }
 
+    // #253 (nice-to-have): a short refresh-rate summary line, reusing the same
+    // DisplayModeService.ReadAudit the Responsiveness tab's own display-mode card is built from -
+    // the Responsiveness tab card is the primary home for this item; this is just a pointer so a
+    // user looking at GPU output doesn't have to switch tabs to see it. Loaded once at start-up
+    // (a fast EnumDisplayDevices/EnumDisplaySettingsEx read, not worth a per-tick timer).
+    private string _refreshRateSummaryText = string.Empty;
+    public string RefreshRateSummaryText { get => _refreshRateSummaryText; private set => SetProperty(ref _refreshRateSummaryText, value); }
+
     public GpuViewModel(ProcessesViewModel processes)
     {
         foreach (var a in _service.Adapters) InstalledAdapters.Add(a);
@@ -50,6 +58,24 @@ public sealed class GpuViewModel : ObservableObject, IDisposable
         _timer.Tick += async (_, _) => await RefreshAsync();
         _timer.Start();
         _ = RefreshAsync();
+        _ = LoadRefreshRateSummaryAsync();
+    }
+
+    /// <summary>#253 (nice-to-have) - see the field's own remarks.</summary>
+    private async Task LoadRefreshRateSummaryAsync()
+    {
+        try
+        {
+            var audit = await Task.Run(DisplayModeService.ReadAudit);
+            RefreshRateSummaryText = audit.Monitors.Count == 0
+                ? string.Empty
+                : string.Join("  •  ", audit.Monitors.Select(m => $"{m.MonitorName}: {m.CurrentRefreshHz} Hz (max {m.MaxRefreshHz} Hz)"))
+                  + (audit.MixedRefreshRates ? " — mixed refresh rates across monitors." : string.Empty);
+        }
+        catch
+        {
+            // best-effort - the summary line just stays blank
+        }
     }
 
     private async Task RefreshAsync()

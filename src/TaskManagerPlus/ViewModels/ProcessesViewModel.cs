@@ -17,6 +17,22 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
     private readonly DispatcherTimer _timer;
     private bool _isRefreshing;
 
+    // #274/#275/#276/#277: shared .NET CLR perf-counter resolver, ridden on this tab's own poll
+    // tick - see DotNetPerfCounterService's remarks. Sampled once per tick and merged into each
+    // ProcessRow (#274/#276/#277 below); ResponsivenessViewModel reads LastDotNetCounters directly
+    // for #275's GC-pause-monitor card rather than re-sampling.
+    private readonly DotNetPerfCounterService _dotNetCounters = new();
+    public Dictionary<int, DotNetProcessCounters> LastDotNetCounters { get; private set; } = new();
+
+    /// <summary>#261: set once by MainViewModel right after ResponsivenessViewModel is constructed
+    /// (this ViewModel itself is built first, via a parameterless constructor, so there's no
+    /// circular-constructor-dependency way to pass it in up front). Gives this tab read access to
+    /// SchedulerService's shared system-wide thread sweep (owned/refreshed by
+    /// ResponsivenessViewModel on its own slower cadence - see that class's remarks) for the
+    /// per-process wait-reason breakdown below, without a second syscall sweep on this tab's own
+    /// faster poll interval.</summary>
+    public ResponsivenessViewModel? Responsiveness { get; set; }
+
     public ObservableCollection<ProcessRow> Processes { get; } = new();
     public ICollectionView ProcessesView { get; }
 
@@ -41,6 +57,11 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
     /// short-lived helper processes) doesn't grow this list forever.</summary>
     public ObservableCollection<RecentlyExitedProcessInfo> RecentlyExited { get; } = new();
     private const int MaxRecentlyExited = 25;
+
+    /// <summary>#261: thread-state/wait-reason breakdown for SelectedProcess, refreshed whenever the
+    /// selection changes and on every tick thereafter (a cheap in-memory filter over the already-
+    /// shared sweep, not a new syscall) - see RefreshSelectedWaitBreakdown.</summary>
+    public ObservableCollection<ThreadWaitBreakdownRow> SelectedProcessWaitBreakdown { get; } = new();
 
     /// <summary>Round 7 #1: process tree/hierarchy view, toggleable alongside the flat grid above -
     /// rebuilt from the same already-sampled Processes collection each tick (BuildProcessTree), no
@@ -81,7 +102,10 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
                 SelectedProcessPrivileges.Clear();
                 DecodedCommandLineText = null;
                 WaitChainResults.Clear();
+                WaitChainNodes.Clear();
+                WaitChainStatusText = string.Empty;
                 LoadAffinityForSelection();
+                RefreshSelectedWaitBreakdown();
             }
         }
     }
@@ -145,6 +169,26 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
     /// <summary>Round 7 #9: processes found holding FileLockPath open, via Restart Manager - see
     /// FileLockLookupService.</summary>
     public ObservableCollection<string> FileLockResults { get; } = new();
+
+    /// <summary>#271: Wait Chain Traversal result for SelectedProcess (or whatever ProcessRow was
+    /// passed as the command parameter - see AnalyzeWaitChainCommand's remarks), rendered as a
+    /// flat indented list. Cleared at the start of each new analysis, same "stale on-demand results
+    /// would be misleading" reasoning as SelectedProcess's other on-demand panels.</summary>
+    public ObservableCollection<WaitChainNodeRow> WaitChainNodes { get; } = new();
+
+    private string _waitChainStatusText = string.Empty;
+    public string WaitChainStatusText { get => _waitChainStatusText; private set => SetProperty(ref _waitChainStatusText, value); }
+
+    private bool _isAnalyzingWaitChain;
+    public bool IsAnalyzingWaitChain { get => _isAnalyzingWaitChain; private set => SetProperty(ref _isAnalyzingWaitChain, value); }
+
+    /// <summary>#271: reachable both from the grid's context menu (no CommandParameter - falls
+    /// back to SelectedProcess) and from #272's inline "Analyze" link on a flagged row
+    /// (CommandParameter={Binding}, so it targets that row directly without disturbing the current
+    /// selection). Named distinctly from item 64's simpler AnalyzeWaitChainCommand below (a
+    /// separate, independently-built Wait Chain Traversal view over WaitChainNodes/
+    /// WaitChainStatusText rather than WaitChainResults) since both exist side by side.</summary>
+    public AsyncRelayCommand AnalyzeWaitChainDetailedCommand { get; }
 
     private string _fileLockPath = string.Empty;
     public string FileLockPath { get => _fileLockPath; set => SetProperty(ref _fileLockPath, value); }
@@ -210,6 +254,20 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
         }
     }
 
+    /// <summary>#266: filter checkbox, same pattern as RecentlyStartedOnly above - "this app is
+    /// slow because Windows classified it as background" is otherwise undiagnosable in a long
+    /// process list.</summary>
+    private bool _onlyPowerThrottled;
+    public bool OnlyPowerThrottled
+    {
+        get => _onlyPowerThrottled;
+        set
+        {
+            if (SetProperty(ref _onlyPowerThrottled, value))
+                ProcessesView.Refresh();
+        }
+    }
+
     private int _processCount;
     public int ProcessCount { get => _processCount; private set => SetProperty(ref _processCount, value); }
 
@@ -262,6 +320,9 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
         ResumeCommand = new RelayCommand(_ => SetSuspended(false), _ => SelectedProcess is not null);
         ApplyAffinityCommand = new RelayCommand(_ => ApplyAffinity(), _ => SelectedProcess is not null && AffinityCores.Count > 0);
         SetPriorityCommand = new RelayCommand(_ => SetPriority(), _ => SelectedProcess is not null);
+        // #271: param is the flagged-row ProcessRow when invoked from #272's inline link, or null
+        // (falls back to SelectedProcess) from the context menu.
+        AnalyzeWaitChainDetailedCommand = new AsyncRelayCommand(param => AnalyzeWaitChainAsync(param as ProcessRow ?? SelectedProcess));
 
         // Item 64: gated to a currently-not-responding process, matching this item's own "on any
         // not-responding process" wording - a healthy process' wait chain isn't the point of this
@@ -317,6 +378,9 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
             (row.StartTime is null || DateTime.Now - row.StartTime.Value > RecentlyStartedWindow))
             return false;
 
+        if (OnlyPowerThrottled && !row.IsPowerThrottled)
+            return false;
+
         if (string.IsNullOrWhiteSpace(FilterText)) return true;
         return row.Name.Contains(FilterText, StringComparison.OrdinalIgnoreCase) ||
                row.Pid.ToString().Contains(FilterText, StringComparison.OrdinalIgnoreCase) ||
@@ -330,7 +394,12 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
         try
         {
             var latest = await Task.Run(() => _monitor.Sample(MeasureResponseTime));
+            // #274/#275/#276/#277: shared .NET CLR perf-counter sample, on this same tick - see
+            // DotNetPerfCounterService's remarks for why this is one dictionary build per tick
+            // rather than a per-process query.
+            LastDotNetCounters = await Task.Run(() => _dotNetCounters.Sample());
             MergeInto(latest);
+            ApplyDotNetCounters();
             ProcessCount = Processes.Count;
 
             // MergeInto() only implicitly re-filters on add/remove - re-evaluate explicitly so a
@@ -341,6 +410,12 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
 
             if (ShowTree)
                 BuildProcessTree();
+
+            // #261: the shared sweep (owned by ResponsivenessViewModel) refreshes on its own
+            // slower cadence, independent of this tab's tick - re-pull whatever's current for the
+            // still-selected pid rather than only refreshing on selection change, so the panel
+            // catches up once a new sweep lands.
+            RefreshSelectedWaitBreakdown();
         }
         catch
         {
@@ -349,6 +424,90 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
         finally
         {
             _isRefreshing = false;
+        }
+    }
+
+    /// <summary>#261: cheap in-memory filter over ResponsivenessViewModel's already-shared sweep -
+    /// see Responsiveness's remarks above for why this doesn't run its own syscall.</summary>
+    private void RefreshSelectedWaitBreakdown()
+    {
+        SelectedProcessWaitBreakdown.Clear();
+        if (SelectedProcess is not { } target || Responsiveness is null) return;
+        foreach (var row in Responsiveness.GetThreadWaitBreakdown(target.Pid))
+            SelectedProcessWaitBreakdown.Add(row);
+    }
+
+    /// <summary>#274/#276/#277: merges this tick's shared .NET CLR perf-counter sample into every
+    /// row (blank/false for a pid with no resolved entry - not managed, or the categories aren't
+    /// published - never a fabricated value), and #272's stuck-thread flag from
+    /// ResponsivenessViewModel's shared scheduler sweep (the same cross-viewmodel read
+    /// RefreshSelectedWaitBreakdown already does for #261, just applied to every row instead of
+    /// only the selected one).</summary>
+    private void ApplyDotNetCounters()
+    {
+        foreach (var row in Processes)
+        {
+            if (LastDotNetCounters.TryGetValue(row.Pid, out var c))
+            {
+                row.DotNetContentionRatePerSec = c.ContentionRatePerSec;
+                row.DotNetTotalContentions = c.TotalContentions;
+                row.DotNetQueueLength = c.CurrentQueueLength;
+                row.GcModeText = c.GcModeText;
+                row.GcConcurrentText = c.GcConcurrentText;
+                row.IsThreadPoolStarvationSuspect = c.IsThreadPoolStarvationSuspect;
+            }
+            else
+            {
+                row.DotNetContentionRatePerSec = null;
+                row.DotNetTotalContentions = null;
+                row.DotNetQueueLength = null;
+                row.GcModeText = string.Empty;
+                row.GcConcurrentText = string.Empty;
+                row.IsThreadPoolStarvationSuspect = false;
+            }
+
+            var (isStuck, hint) = Responsiveness?.GetStuckThreadFlag(row.Pid) ?? (false, null);
+            row.IsStuckThreadSuspect = isStuck;
+            row.StuckThreadHintText = hint;
+
+            // #294: composite responsiveness score - see ResponsivenessViewModel.
+            // GetProcessResponsivenessScore's remarks for how each factor is gathered.
+            var score = Responsiveness?.GetProcessResponsivenessScore(row.Pid);
+            row.ResponsivenessScore = score?.Score;
+            row.ResponsivenessScoreTooltip = score?.TooltipText
+                ?? "Not enough data yet to compute a responsiveness score for this process.";
+        }
+    }
+
+    /// <summary>#271: analyzes <paramref name="target"/>'s (best-effort) main thread's wait chain -
+    /// see WaitChainTraversalService.Analyze's remarks on why this always runs via Task.Run.</summary>
+    private async Task AnalyzeWaitChainAsync(ProcessRow? target)
+    {
+        if (target is null) return;
+
+        IsAnalyzingWaitChain = true;
+        WaitChainStatusText = "Analyzing wait chain...";
+        WaitChainNodes.Clear();
+        try
+        {
+            int threadId = 0;
+            try
+            {
+                using var proc = Process.GetProcessById(target.Pid);
+                threadId = proc.Threads.Count > 0 ? proc.Threads[0].Id : 0;
+            }
+            catch
+            {
+                // leave threadId 0 - WaitChainTraversalService.Analyze reports a clean failure below.
+            }
+
+            var result = await Task.Run(() => WaitChainTraversalService.Analyze(target.Pid, threadId));
+            WaitChainStatusText = result.StatusText;
+            foreach (var n in result.Nodes) WaitChainNodes.Add(n);
+        }
+        finally
+        {
+            IsAnalyzingWaitChain = false;
         }
     }
 
@@ -364,6 +523,9 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
             {
                 existing.CpuPercent = fresh.CpuPercent;
                 existing.CpuPercent10sAvg = fresh.CpuPercent10sAvg;
+                // #283: detect a working-set trim before overwriting MemoryBytes with this tick's
+                // fresh value - needs the about-to-be-replaced old value as the "before" side.
+                DetectWorkingSetTrim(existing, fresh.MemoryBytes);
                 existing.MemoryBytes = fresh.MemoryBytes;
                 existing.PrivateBytes = fresh.PrivateBytes;
                 existing.VirtualBytes = fresh.VirtualBytes;
@@ -400,6 +562,11 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
                 existing.DuplicateInstanceCount = fresh.DuplicateInstanceCount;
                 existing.IsDuplicateInstanceOutlier = fresh.IsDuplicateInstanceOutlier;
                 existing.SecurityFlagReason = fresh.SecurityFlagReason;
+                // #266/#270
+                existing.PowerThrottleText = fresh.PowerThrottleText;
+                existing.IoPriorityText = fresh.IoPriorityText;
+                existing.IsBackgroundIoPriority = fresh.IsBackgroundIoPriority;
+                existing.MemoryPriorityText = fresh.MemoryPriorityText;
                 // CommandLine/FilePath/StartTime/User/ParentPid/ParentName don't change for the
                 // lifetime of a pid - no need to reassign them every tick like the values above
                 // that actually vary.
@@ -525,6 +692,25 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
         return code >= 0x80000000
             ? NtStatusLookup.Describe($"0x{code:X8}")
             : code.ToString();
+    }
+
+    // #283: tuned thresholds, not a documented Windows event - Windows fires no public
+    // notification this app can subscribe to for "a process's working set just got trimmed", so
+    // this is inferred purely from the magnitude of the drop between two consecutive samples.
+    private const double TrimDropPercentThreshold = 0.30;
+    private const long TrimDropBytesThreshold = 50L * 1024 * 1024;
+
+    /// <summary>#283: flags a large, sudden working-set drop (more than 30% and more than 50MB in
+    /// one tick) as a probable working-set trim - it typically precedes a burst of hard faults as
+    /// the process pages everything back in on its next touch. Overwrites LastTrimmedText (rather
+    /// than appending a history) so the row always shows its most recent trim, matching the
+    /// "simplest correct shape" the item calls for over a full timeline visualization.</summary>
+    private static void DetectWorkingSetTrim(ProcessRow row, long freshMemoryBytes)
+    {
+        long previous = row.MemoryBytes;
+        long drop = previous - freshMemoryBytes;
+        if (previous > 0 && drop >= TrimDropBytesThreshold && drop >= previous * TrimDropPercentThreshold)
+            row.LastTrimmedText = $"Trimmed at {DateTime.Now:HH:mm:ss} ({Formatting.FormatBytes(drop)} freed)";
     }
 
     /// <summary>Round 7 #1: rebuilds the tree from the already-sampled flat Processes collection -
@@ -1053,5 +1239,6 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
             try { proc.Dispose(); } catch { /* best-effort */ }
         }
         _trackedProcesses.Clear();
+        _dotNetCounters.Dispose();
     }
 }

@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
+using Microsoft.Win32;
 using TaskManagerPlus.Models;
 
 namespace TaskManagerPlus.Services;
@@ -21,6 +22,29 @@ public static class ScheduledTaskService
     /// hundreds of tasks - callers should treat this as an explicit, on-demand action (a "Load
     /// scheduled tasks" button), not something to run on a tick.</summary>
     public static async Task<List<ScheduledTaskRow>> ListAsync()
+    {
+        var rows = await QueryAsync();
+        return rows.OrderBy(r => r.Name, StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    /// <summary>
+    /// #292: extends this Startup-tab inventory with a live "what's running right now" view -
+    /// the same `/query /fo csv /v` call, just filtered to Status=Running - so the Responsiveness
+    /// tab's background-activity ribbon/card can answer "what task fired at the exact second things
+    /// hitched" (feeding a future flight-recorder timeline, items #296-300, not built here). A
+    /// fresh shell-out rather than reusing a cached ListAsync result, since the two call sites
+    /// (Startup tab's full inventory vs. this tab's live-running view) refresh independently.
+    /// </summary>
+    public static async Task<List<ScheduledTaskRow>> ListRunningAsync()
+    {
+        var rows = await QueryAsync();
+        return rows
+            .Where(r => r.Status.Equals("Running", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(r => r.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static async Task<List<ScheduledTaskRow>> QueryAsync()
     {
         var rows = new List<ScheduledTaskRow>();
         try
@@ -66,7 +90,65 @@ public static class ScheduledTaskService
             // schtasks unavailable/failed - empty list, same as every other optional data source
             // in this app degrades on failure.
         }
-        return rows.OrderBy(r => r.Name, StringComparer.OrdinalIgnoreCase).ToList();
+        return rows;
+    }
+
+    // #292: HKLM\...\Schedule\Maintenance's exact value names aren't a documented, versioned
+    // contract (much like BootTimeBreakdown's own boot-time component names) - this reads whatever
+    // DWORD/string values are actually present under the key and reports them as a plain
+    // label/value list rather than asserting fixed named properties this app can't guarantee.
+    private const string MaintenancePath = @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\Maintenance";
+
+    public static AutomaticMaintenanceInfo ReadAutomaticMaintenance()
+    {
+        try
+        {
+            using var key = Registry.LocalMachine.OpenSubKey(MaintenancePath);
+            if (key is null)
+            {
+                return new AutomaticMaintenanceInfo
+                {
+                    KeyPresent = false,
+                    StatusText = "No Automatic Maintenance configuration key found on this system.",
+                };
+            }
+
+            var settings = new List<PlatformLatencySettingRow>();
+            foreach (var name in key.GetValueNames())
+            {
+                if (name.Length == 0) continue;
+                object? raw = key.GetValue(name);
+                settings.Add(new PlatformLatencySettingRow
+                {
+                    SettingName = name,
+                    ValueText = raw?.ToString() ?? "Unknown",
+                });
+            }
+
+            bool? disabled = settings.FirstOrDefault(s => s.SettingName.Equals("MaintenanceDisabled", StringComparison.OrdinalIgnoreCase)) is { } d && int.TryParse(d.ValueText, out int dv)
+                ? dv != 0
+                : null;
+
+            return new AutomaticMaintenanceInfo
+            {
+                KeyPresent = true,
+                StatusText = disabled switch
+                {
+                    true => "Automatic Maintenance is disabled by policy/configuration.",
+                    false => "Automatic Maintenance is enabled. See the raw configuration below - live \"running right now\" state isn't exposed by this key; check the Scheduled Tasks Running list above for what's actually executing.",
+                    null => $"{settings.Count} raw configuration value(s) found under this key.",
+                },
+                Settings = settings.OrderBy(s => s.SettingName, StringComparer.OrdinalIgnoreCase).ToList(),
+            };
+        }
+        catch (Exception ex)
+        {
+            return new AutomaticMaintenanceInfo
+            {
+                KeyPresent = false,
+                StatusText = $"Couldn't read Automatic Maintenance configuration: {ex.Message}",
+            };
+        }
     }
 
     private static string At(List<string> fields, int index) => index >= 0 && index < fields.Count ? fields[index] : string.Empty;

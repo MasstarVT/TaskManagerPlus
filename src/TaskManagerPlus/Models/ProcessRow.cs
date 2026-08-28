@@ -225,4 +225,103 @@ public sealed class ProcessRow : ObservableObject
     /// ProcessControlService.MeasureUiResponseTimeMs.</summary>
     private int? _responseTimeMs;
     public int? ResponseTimeMs { get => _responseTimeMs; set => SetProperty(ref _responseTimeMs, value); }
+
+    /// <summary>#266: EcoQoS / power-throttling status ("Throttled (EcoQoS)", "Not throttled", or
+    /// "Unknown") - see ProcessPowerThrottleService.ReadStatus. "This app is slow because Windows
+    /// classified it as background" is otherwise undiagnosable.</summary>
+    private string _powerThrottleText = "Unknown";
+    public string PowerThrottleText
+    {
+        get => _powerThrottleText;
+        set { if (SetProperty(ref _powerThrottleText, value)) OnPropertyChanged(nameof(IsPowerThrottled)); }
+    }
+
+    public bool IsPowerThrottled => PowerThrottleText.StartsWith("Throttled", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>#270: I/O priority ("Very Low"/"Low"/"Normal"/"High"/"Critical"/"Unknown") - see
+    /// ProcessPriorityService.Read. IsBackgroundIoPriority flags the classic "stuck in background
+    /// I/O mode" case (Very Low/Low) that otherwise presents only as "this app's disk access is
+    /// oddly slow" with no visible cause.</summary>
+    private string _ioPriorityText = "Unknown";
+    public string IoPriorityText { get => _ioPriorityText; set => SetProperty(ref _ioPriorityText, value); }
+
+    private bool _isBackgroundIoPriority;
+    public bool IsBackgroundIoPriority { get => _isBackgroundIoPriority; set => SetProperty(ref _isBackgroundIoPriority, value); }
+
+    /// <summary>#270: memory priority ("Lowest" through "Normal", or "Unknown") - see
+    /// ProcessPriorityService.Read.</summary>
+    private string _memoryPriorityText = "Unknown";
+    public string MemoryPriorityText { get => _memoryPriorityText; set => SetProperty(ref _memoryPriorityText, value); }
+
+    /// <summary>#272: "looks stuck" flag from SchedulerService.DetectStuckProcesses - every thread
+    /// in a Wr* wait for several consecutive scheduler sweeps with no context-switch activity.
+    /// Explicitly a sampled inference ("quick flag, not a verdict"); StuckThreadHintText carries the
+    /// exact wording for a tooltip. Null/false when not flagged, never a guess either way.</summary>
+    private bool _isStuckThreadSuspect;
+    public bool IsStuckThreadSuspect { get => _isStuckThreadSuspect; set => SetProperty(ref _isStuckThreadSuspect, value); }
+
+    private string? _stuckThreadHintText;
+    public string? StuckThreadHintText { get => _stuckThreadHintText; set => SetProperty(ref _stuckThreadHintText, value); }
+
+    /// <summary>#274: .NET lock-contention counters from the ".NET CLR LocksAndThreads(&lt;instance&gt;)"
+    /// performance-counter category - see DotNetPerfCounterService. Null for a process that isn't
+    /// managed, or when the category isn't published on this machine - never a fabricated zero.</summary>
+    private double? _dotNetContentionRatePerSec;
+    public double? DotNetContentionRatePerSec { get => _dotNetContentionRatePerSec; set => SetProperty(ref _dotNetContentionRatePerSec, value); }
+
+    private long? _dotNetTotalContentions;
+    public long? DotNetTotalContentions { get => _dotNetTotalContentions; set => SetProperty(ref _dotNetTotalContentions, value); }
+
+    private int? _dotNetQueueLength;
+    public int? DotNetQueueLength { get => _dotNetQueueLength; set => SetProperty(ref _dotNetQueueLength, value); }
+
+    /// <summary>#276: GC mode/concurrency, read from the process's environment variables
+    /// (DOTNET_gcServer/COMPlus_gcServer, DOTNET_gcConcurrent/COMPlus_gcConcurrent) via
+    /// ProcessEnvironmentService - see DotNetPerfCounterService's remarks. Empty string for a
+    /// non-managed process (blank in the grid, never a fabricated value); "Unknown" for a managed
+    /// process whose environment didn't carry the variable - this is a heuristic, not a certainty,
+    /// since a process can also set its GC mode via its own runtimeconfig.json, which this app has
+    /// no clean way to locate/parse.</summary>
+    private string _gcModeText = string.Empty;
+    public string GcModeText { get => _gcModeText; set => SetProperty(ref _gcModeText, value); }
+
+    private string _gcConcurrentText = string.Empty;
+    public string GcConcurrentText { get => _gcConcurrentText; set => SetProperty(ref _gcConcurrentText, value); }
+
+    /// <summary>#277: thread-pool-starvation sampled hint - rising ".NET CLR LocksAndThreads"
+    /// logical-thread count over several consecutive Processes-tab ticks alongside an elevated
+    /// queue-length/contention signal, the outward signature of blocking calls starving the thread
+    /// pool. Explicitly a hint, not a diagnosis - see DotNetPerfCounterService.</summary>
+    private bool _isThreadPoolStarvationSuspect;
+    public bool IsThreadPoolStarvationSuspect { get => _isThreadPoolStarvationSuspect; set => SetProperty(ref _isThreadPoolStarvationSuspect, value); }
+
+    /// <summary>#283: a large, sudden working-set drop between two consecutive ticks - typically a
+    /// working-set trim (Windows reclaiming a process's resident pages under memory pressure, or an
+    /// explicit "Empty working set" trim from this app's own TrimWorkingSetCommand) that precedes a
+    /// burst of hard faults as the process pages everything back in on its next touch. Detected in
+    /// ProcessesViewModel.MergeInto - the app already polls working set every tick, so this is pure
+    /// detection logic over data already sampled, no new counter/syscall. Null until first observed
+    /// for this pid this session, never a fabricated timestamp; overwritten (not accumulated) on
+    /// each new trim, so the grid always shows the most recent one.</summary>
+    private string? _lastTrimmedText;
+    public string? LastTrimmedText { get => _lastTrimmedText; set => SetProperty(ref _lastTrimmedText, value); }
+
+    /// <summary>#294: composite 0-100 responsiveness score, combining message-pump round-trip time
+    /// and hung-window time share (HungWindowService), thread wait/ready ratio (SchedulerService),
+    /// hard-fault rate (PageFaultService) and GC pause time (DotNetPerfCounterService, managed
+    /// processes only) - see ResponsivenessScoreService.ComputeProcessScore for the math and
+    /// ResponsivenessViewModel.GetProcessResponsivenessScore for how the inputs are gathered. Null
+    /// when literally none of those five signals have any data for this pid (never a fabricated
+    /// 100) - the grid shows "—" in that case. Explicitly a composite heuristic, not a verdict -
+    /// see ResponsivenessScoreTooltip for the per-factor breakdown.</summary>
+    private double? _responsivenessScore;
+    public double? ResponsivenessScore
+    {
+        get => _responsivenessScore;
+        set { if (SetProperty(ref _responsivenessScore, value)) OnPropertyChanged(nameof(ResponsivenessScoreText)); }
+    }
+    public string ResponsivenessScoreText => ResponsivenessScore.HasValue ? $"{ResponsivenessScore.Value:0}" : "—";
+
+    private string _responsivenessScoreTooltip = "Not enough data yet to compute a responsiveness score for this process.";
+    public string ResponsivenessScoreTooltip { get => _responsivenessScoreTooltip; set => SetProperty(ref _responsivenessScoreTooltip, value); }
 }

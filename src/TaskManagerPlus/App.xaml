@@ -31,6 +31,10 @@
             <conv:ActivePlanSuffixConverter x:Key="ActivePlanSuffixConverter" />
             <conv:BugcheckSourceToTextConverter x:Key="BugcheckSourceToTextConverter" />
             <conv:ShutdownCauseToTextConverter x:Key="ShutdownCauseToTextConverter" />
+            <conv:DpcTimeToBrushConverter x:Key="DpcTimeToBrushConverter" />
+            <conv:StringNotEmptyConverter x:Key="StringNotEmptyConverter" />
+            <conv:BackgroundActivityStateToBrushConverter x:Key="BackgroundActivityStateToBrushConverter" />
+            <conv:ResponsivenessScoreToBrushConverter x:Key="ResponsivenessScoreToBrushConverter" />
         </ResourceDictionary>
     </Application.Resources>
 </Application>

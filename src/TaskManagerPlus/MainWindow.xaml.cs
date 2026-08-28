@@ -138,6 +138,10 @@ public partial class MainWindow : Window
         if (!_viewModel.GlobalHotkeyEnabled) return;
 
         _viewModel.Hotkey.Pressed += () => Dispatcher.Invoke(RestoreFromTray);
+        // #297: Ctrl+Alt+F - a manual flight-recorder trigger, registered through the same
+        // HwndSource hook as Ctrl+Alt+T above. Calls the exact same HandleTriggerAsync method the
+        // Responsiveness tab's "Trigger now" button and #297's automatic rules use.
+        _viewModel.Hotkey.SecondaryPressed += () => Dispatcher.Invoke(() => _ = _viewModel.Responsiveness.HandleTriggerAsync("Manual trigger (Ctrl+Alt+F)"));
         _viewModel.Hotkey.Register(this);
     }
 

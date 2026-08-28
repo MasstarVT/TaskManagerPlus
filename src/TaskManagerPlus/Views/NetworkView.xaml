@@ -465,6 +465,78 @@
                 </StackPanel>
             </Border>
 
+            <!-- #221: NIC interrupt-moderation/RSS audit - registry-driven, loaded once at start-up
+                 plus a manual refresh. Cross-linked to the Responsiveness tab's DPC table with a
+                 plain-text note (see NetworkViewModel.NdisDpcCrossLinkText's remarks) when
+                 ndis.sys/this adapter's own driver is also a top DPC offender there. -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <Grid Margin="0,0,0,6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="NIC interrupt moderation / RSS" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Refresh" Command="{Binding LoadNicInterruptSettingsCommand}" Padding="10,4" />
+                    </Grid>
+                    <TextBlock Text="{Binding NicAuditStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" />
+                    <ItemsControl ItemsSource="{Binding NicInterruptSettings}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Margin="0,0,0,8" Padding="8" CornerRadius="6" BorderThickness="1" Background="Transparent">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Setter Property="BorderBrush" Value="Transparent" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding FlagInterruptModerationOff}" Value="True">
+                                                    <Setter Property="BorderBrush" Value="{DynamicResource WarningBrush}" />
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding FlagRssOffOnMultiCore}" Value="True">
+                                                    <Setter Property="BorderBrush" Value="{DynamicResource WarningBrush}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
+                                    <StackPanel>
+                                        <TextBlock Text="{Binding AdapterName}" FontWeight="SemiBold" FontSize="12.5" TextWrapping="Wrap" />
+                                        <TextBlock FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,0" TextWrapping="Wrap">
+                                            <Run Text="Interrupt moderation: " /><Run Text="{Binding InterruptModerationEnabled, TargetNullValue=Unknown, Mode=OneWay}" />
+                                            <Run Text="  •  RSS: " /><Run Text="{Binding RssEnabled, TargetNullValue=Unknown, Mode=OneWay}" />
+                                            <Run Text=" (" /><Run Text="{Binding RssQueueCount, TargetNullValue=unknown, Mode=OneWay}" /><Run Text=" queues)" />
+                                            <Run Text="  •  Flow control: " /><Run Text="{Binding FlowControlEnabled, TargetNullValue=Unknown, Mode=OneWay}" />
+                                        </TextBlock>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="No adapters exposed these registry settings on this system.">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding NicInterruptSettings.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <TextBlock Text="{Binding NdisDpcCrossLinkText}" Foreground="{DynamicResource WarningBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding NdisDpcCrossLinkText}" Value="{x:Null}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
             <!-- Adapter errors: cumulative CRC/discard counters, not rates - see
                  HardwareMonitorService.ReadNetworkErrorCounters. Any nonzero value turns the
                  whole card the warning color; a healthy adapter shows all zeros. -->
