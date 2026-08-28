@@ -1,4 +1,4 @@
-<UserControl x:Class="TaskManagerPlus.Views.NetworkView"
+﻿<UserControl x:Class="TaskManagerPlus.Views.NetworkView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="clr-namespace:TaskManagerPlus.ViewModels"
@@ -216,9 +216,9 @@
                                         </Grid.ColumnDefinitions>
                                         <TextBlock Grid.Column="0" Text="{Binding BucketStartLocal, StringFormat='{}{0:MM/dd HH:mm}'}" FontSize="12" Margin="0,0,10,0" />
                                         <TextBlock Grid.Column="1" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}">
-                                            <Run Text="avg " /><Run Text="{Binding AvgMs, StringFormat={}{0:0.#} ms}" />
-                                            <Run Text="  ·  max " /><Run Text="{Binding MaxMs, StringFormat={}{0:0.#} ms}" />
-                                            <Run Text="  ·  loss " /><Run Text="{Binding LossPercent, StringFormat={}{0:0.#}%}" />
+                                            <Run Text="avg " /><Run Text="{Binding AvgMs, StringFormat={}{0:0.#} ms, Mode=OneWay}" />
+                                            <Run Text="  ·  max " /><Run Text="{Binding MaxMs, StringFormat={}{0:0.#} ms, Mode=OneWay}" />
+                                            <Run Text="  ·  loss " /><Run Text="{Binding LossPercent, StringFormat={}{0:0.#}%, Mode=OneWay}" />
                                         </TextBlock>
                                     </Grid>
                                 </DataTemplate>
@@ -284,7 +284,7 @@
                                         AccentBrush="{Binding LinkUtilization.UtilizationPercent, Converter={StaticResource PercentToBrushConverter}}" />
                         <TextBlock Style="{StaticResource SubStat}" Margin="14,4,0,0" TextWrapping="Wrap" VerticalAlignment="Center">
                             <Run Text="Negotiated link speed: " />
-                            <Run Text="{Binding LinkUtilization.SpeedMbps, StringFormat={}{0:0} Mbps}" FontWeight="SemiBold" />
+                            <Run Text="{Binding LinkUtilization.SpeedMbps, StringFormat={}{0:0} Mbps, Mode=OneWay}" FontWeight="SemiBold" />
                         </TextBlock>
                     </StackPanel>
                     <TextBlock Text="No active adapter with a usable negotiated link speed was found." Margin="0,10,0,0">
@@ -413,9 +413,9 @@
                         </Border>
                         <StackPanel Grid.Column="1" VerticalAlignment="Center">
                             <TextBlock FontSize="12.5">
-                                <Run Text="Idle " /><Run Text="{Binding BufferbloatResult.IdleLatencyMs, StringFormat={}{0:0.#} ms}" />
-                                <Run Text="  →  Loaded " /><Run Text="{Binding BufferbloatResult.LoadedLatencyMs, StringFormat={}{0:0.#} ms}" />
-                                <Run Text="  (+" /><Run Text="{Binding BufferbloatResult.DeltaMs, StringFormat={}{0:0.#} ms}" /><Run Text=")" />
+                                <Run Text="Idle " /><Run Text="{Binding BufferbloatResult.IdleLatencyMs, StringFormat={}{0:0.#} ms, Mode=OneWay}" />
+                                <Run Text="  →  Loaded " /><Run Text="{Binding BufferbloatResult.LoadedLatencyMs, StringFormat={}{0:0.#} ms, Mode=OneWay}" />
+                                <Run Text="  (+" /><Run Text="{Binding BufferbloatResult.DeltaMs, StringFormat={}{0:0.#} ms, Mode=OneWay}" /><Run Text=")" />
                             </TextBlock>
                         </StackPanel>
                     </Grid>
@@ -459,9 +459,9 @@
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Grid.Column="0" Text="{Binding TimestampUtc, StringFormat='{}{0:MM/dd HH:mm}'}" FontSize="11.5" Margin="0,0,10,0" Foreground="{DynamicResource TextSecondaryBrush}" />
                                     <TextBlock Grid.Column="1" FontSize="12" TextWrapping="Wrap">
-                                        <Run Text="{Binding TestKind}" FontWeight="SemiBold" />
+                                        <Run Text="{Binding TestKind, Mode=OneWay}" FontWeight="SemiBold" />
                                         <Run Text=" — " />
-                                        <Run Text="{Binding Summary}" />
+                                        <Run Text="{Binding Summary, Mode=OneWay}" />
                                     </TextBlock>
                                 </Grid>
                             </DataTemplate>
@@ -627,9 +627,9 @@
                                         <StackPanel>
                                             <TextBlock FontSize="12.5" FontWeight="SemiBold" Text="{Binding Description}" TextWrapping="Wrap" />
                                             <TextBlock FontSize="12" Margin="0,2,0,0" TextWrapping="Wrap">
-                                                <Run Text="DHCP: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding DhcpEnabledText}" />
+                                                <Run Text="DHCP: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding DhcpEnabledText, Mode=OneWay}" />
                                                 <Run Text="   DNS servers: " Foreground="{DynamicResource TextSecondaryBrush}" />
-                                                <Run Text="{Binding ConfiguredServers, Converter={StaticResource StringListJoinConverter}}" />
+                                                <Run Text="{Binding ConfiguredServers, Converter={StaticResource StringListJoinConverter}, Mode=OneWay}" />
                                             </TextBlock>
                                             <TextBlock FontSize="11.5" Margin="0,4,0,0" TextWrapping="Wrap" Foreground="{DynamicResource WarningBrush}"
                                                        Visibility="{Binding StaticDnsOnDhcpAdapter, Converter={StaticResource BoolToVisibilityConverter}}"
@@ -642,13 +642,13 @@
 
                         <TextBlock Margin="0,4,0,0" TextWrapping="Wrap">
                             <Run Text="DNS-over-HTTPS: " Foreground="{DynamicResource TextSecondaryBrush}" />
-                            <Run Text="{Binding DnsPosture.DohAvailabilityText}" />
+                            <Run Text="{Binding DnsPosture.DohAvailabilityText, Mode=OneWay}" />
                         </TextBlock>
                         <ItemsControl ItemsSource="{Binding DnsPosture.DohServers}" Margin="0,2,0,0">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
                                     <TextBlock FontSize="11.5" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}">
-                                        <Run Text="{Binding ServerAddress}" /><Run Text=" - template: " /><Run Text="{Binding DohTemplate}" /><Run Text=" - auto-upgrade: " /><Run Text="{Binding AutoUpgradeText}" />
+                                        <Run Text="{Binding ServerAddress, Mode=OneWay}" /><Run Text=" - template: " /><Run Text="{Binding DohTemplate, Mode=OneWay}" /><Run Text=" - auto-upgrade: " /><Run Text="{Binding AutoUpgradeText, Mode=OneWay}" />
                                     </TextBlock>
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
@@ -656,8 +656,8 @@
 
                         <TextBlock Margin="0,8,0,0" TextWrapping="Wrap">
                             <Run Text="NRPT policy rules: " Foreground="{DynamicResource TextSecondaryBrush}" />
-                            <Run Text="{Binding DnsPosture.NrptAvailabilityText}" />
-                            <Run Text=" (" /><Run Text="{Binding DnsPosture.NrptRules.Count}" /><Run Text=" found - informational, most machines have none)" />
+                            <Run Text="{Binding DnsPosture.NrptAvailabilityText, Mode=OneWay}" />
+                            <Run Text=" (" /><Run Text="{Binding DnsPosture.NrptRules.Count, Mode=OneWay}" /><Run Text=" found - informational, most machines have none)" />
                         </TextBlock>
                     </StackPanel>
                     </StackPanel>
@@ -733,7 +733,7 @@
                     </ItemsControl>
                     <TextBlock TextWrapping="Wrap" FontSize="11.5" Foreground="{DynamicResource WarningBrush}" Margin="0,0,0,2"
                                Visibility="{Binding Ipv6DisabledComponents.UnrecognizedBitsHex, Converter={StaticResource NullToVisibilityConverter}}">
-                        <Run Text="Also has unrecognized bit(s) set: " /><Run Text="{Binding Ipv6DisabledComponents.UnrecognizedBitsHex}" FontFamily="Consolas" />
+                        <Run Text="Also has unrecognized bit(s) set: " /><Run Text="{Binding Ipv6DisabledComponents.UnrecognizedBitsHex, Mode=OneWay}" FontFamily="Consolas" />
                     </TextBlock>
 
                     <!-- #591: prefix-policy table. -->
@@ -808,19 +808,19 @@
                             <StackPanel Margin="0,0,8,0">
                                 <TextBlock Text="IPv4 (A)" Style="{StaticResource SpecLabel}" Margin="0" />
                                 <TextBlock Style="{StaticResource SubStat}" Margin="0,4,0,0" TextWrapping="Wrap">
-                                    <Run Text="{Binding DualStackResult.V4.Address, TargetNullValue='No A record'}" FontFamily="Consolas" />
+                                    <Run Text="{Binding DualStackResult.V4.Address, TargetNullValue='No A record', Mode=OneWay}" FontFamily="Consolas" />
                                     <Run Text=" — " />
-                                    <Run Text="{Binding DualStackResult.V4.ConnectedText}" />
-                                    <Run Text=" (" /><Run Text="{Binding DualStackResult.V4.ConnectMs, StringFormat={}{0:0} ms}" /><Run Text=")" />
+                                    <Run Text="{Binding DualStackResult.V4.ConnectedText, Mode=OneWay}" />
+                                    <Run Text=" (" /><Run Text="{Binding DualStackResult.V4.ConnectMs, StringFormat={}{0:0} ms, Mode=OneWay}" /><Run Text=")" />
                                 </TextBlock>
                             </StackPanel>
                             <StackPanel Margin="8,0,0,0">
                                 <TextBlock Text="IPv6 (AAAA)" Style="{StaticResource SpecLabel}" Margin="0" />
                                 <TextBlock Style="{StaticResource SubStat}" Margin="0,4,0,0" TextWrapping="Wrap">
-                                    <Run Text="{Binding DualStackResult.V6.Address, TargetNullValue='No AAAA record'}" FontFamily="Consolas" />
+                                    <Run Text="{Binding DualStackResult.V6.Address, TargetNullValue='No AAAA record', Mode=OneWay}" FontFamily="Consolas" />
                                     <Run Text=" — " />
-                                    <Run Text="{Binding DualStackResult.V6.ConnectedText}" />
-                                    <Run Text=" (" /><Run Text="{Binding DualStackResult.V6.ConnectMs, StringFormat={}{0:0} ms}" /><Run Text=")" />
+                                    <Run Text="{Binding DualStackResult.V6.ConnectedText, Mode=OneWay}" />
+                                    <Run Text=" (" /><Run Text="{Binding DualStackResult.V6.ConnectMs, StringFormat={}{0:0} ms, Mode=OneWay}" /><Run Text=")" />
                                 </TextBlock>
                             </StackPanel>
                         </UniformGrid>
@@ -849,8 +849,8 @@
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Grid.Column="0" FontSize="12.5" TextTrimming="CharacterEllipsis">
-                                        <Run Text="{Binding AdapterName}" FontWeight="SemiBold" />
-                                        <Run Text=" — " /><Run Text="{Binding ResolverIp}" FontFamily="Consolas" />
+                                        <Run Text="{Binding AdapterName, Mode=OneWay}" FontWeight="SemiBold" />
+                                        <Run Text=" — " /><Run Text="{Binding ResolverIp, Mode=OneWay}" FontFamily="Consolas" />
                                     </TextBlock>
                                     <TextBlock Grid.Column="1" Text="answered first" FontSize="11" FontWeight="SemiBold" Margin="8,0,0,0"
                                                Foreground="{DynamicResource SuccessBrush}"
@@ -951,8 +951,8 @@
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
                                         <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,6" TextWrapping="Wrap">
-                                            <Run Text="{Binding Namespaces, Converter={StaticResource StringListJoinConverter}}" FontWeight="SemiBold" />
-                                            <Run Text=" → " /><Run Text="{Binding DnsServers}" />
+                                            <Run Text="{Binding Namespaces, Converter={StaticResource StringListJoinConverter}, Mode=OneWay}" FontWeight="SemiBold" />
+                                            <Run Text=" → " /><Run Text="{Binding DnsServers, Mode=OneWay}" />
                                         </TextBlock>
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
@@ -967,7 +967,7 @@
                         </Expander.Header>
                         <StackPanel Margin="0,10,0,0">
                             <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,6">
-                                <Run Text="Primary suffix: " /><Run Text="{Binding PrimaryDnsSuffixText}" FontWeight="SemiBold" />
+                                <Run Text="Primary suffix: " /><Run Text="{Binding PrimaryDnsSuffixText, Mode=OneWay}" FontWeight="SemiBold" />
                             </TextBlock>
                             <TextBlock Text="Search list" Style="{StaticResource SpecLabel}" Margin="0,4,0,4" />
                             <ItemsControl ItemsSource="{Binding DnsSearchList}">
@@ -994,7 +994,7 @@
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
                                         <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,3">
-                                            <Run Text="{Binding AdapterName}" FontWeight="SemiBold" /><Run Text=": " /><Run Text="{Binding Suffix}" FontFamily="Consolas" />
+                                            <Run Text="{Binding AdapterName, Mode=OneWay}" FontWeight="SemiBold" /><Run Text=": " /><Run Text="{Binding Suffix, Mode=OneWay}" FontFamily="Consolas" />
                                         </TextBlock>
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
@@ -1104,8 +1104,8 @@
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
                                         <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,3" TextWrapping="Wrap">
-                                            <Run Text="{Binding Key}" FontWeight="SemiBold" /><Run Text=": " /><Run Text="{Binding Count}" />
-                                            <Run Text=" (last " /><Run Text="{Binding LastSeenUtc, StringFormat={}{0:g}}" /><Run Text=")" />
+                                            <Run Text="{Binding Key, Mode=OneWay}" FontWeight="SemiBold" /><Run Text=": " /><Run Text="{Binding Count, Mode=OneWay}" />
+                                            <Run Text=" (last " /><Run Text="{Binding LastSeenUtc, StringFormat={}{0:g}, Mode=OneWay}" /><Run Text=")" />
                                         </TextBlock>
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
@@ -1117,8 +1117,8 @@
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
                                         <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,3" TextWrapping="Wrap">
-                                            <Run Text="{Binding Key}" FontWeight="SemiBold" /><Run Text=": " /><Run Text="{Binding Count}" />
-                                            <Run Text=" (last " /><Run Text="{Binding LastSeenUtc, StringFormat={}{0:g}}" /><Run Text=")" />
+                                            <Run Text="{Binding Key, Mode=OneWay}" FontWeight="SemiBold" /><Run Text=": " /><Run Text="{Binding Count, Mode=OneWay}" />
+                                            <Run Text=" (last " /><Run Text="{Binding LastSeenUtc, StringFormat={}{0:g}, Mode=OneWay}" /><Run Text=")" />
                                         </TextBlock>
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
@@ -1179,7 +1179,7 @@
                                          all (most Wi-Fi adapters). -->
                                     <TextBlock Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,2,0,0" FontSize="11.5"
                                                Visibility="{Binding ConfiguredSpeedDuplex, Converter={StaticResource NullToVisibilityConverter}}">
-                                        <Run Text="Configured: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding ConfiguredSpeedDuplex}" FontWeight="SemiBold">
+                                        <Run Text="Configured: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding ConfiguredSpeedDuplex, Mode=OneWay}" FontWeight="SemiBold">
                                             <Run.Style>
                                                 <Style TargetType="Run">
                                                     <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
@@ -1303,19 +1303,19 @@
                             <DataTemplate>
                                 <StackPanel Margin="0,0,0,8">
                                     <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap">
-                                        <Run Text="{Binding DeviceName}" FontWeight="SemiBold" />
-                                        <Run Text=" — driver " /><Run Text="{Binding DriverVersion}" />
-                                        <Run Text=" (" /><Run Text="{Binding DriverDate, StringFormat={}{0:d}, TargetNullValue=unknown date}" /><Run Text=")" />
+                                        <Run Text="{Binding DeviceName, Mode=OneWay}" FontWeight="SemiBold" />
+                                        <Run Text=" — driver " /><Run Text="{Binding DriverVersion, Mode=OneWay}" />
+                                        <Run Text=" (" /><Run Text="{Binding DriverDate, StringFormat={}{0:d}, TargetNullValue=unknown date, Mode=OneWay}" /><Run Text=")" />
                                     </TextBlock>
                                     <ItemsControl ItemsSource="{Binding StagedPackages}" Margin="12,2,0,0">
                                         <ItemsControl.ItemTemplate>
                                             <DataTemplate>
                                                 <TextBlock FontSize="11.5" Margin="0,1,0,0" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}">
-                                                    <Run Text="•" /> <Run Text="{Binding PublishedName}" FontFamily="Consolas" />
-                                                    <Run Text=" (" /><Run Text="{Binding OriginalName}" /><Run Text=") — " />
-                                                    <Run Text="{Binding ProviderName}" /><Run Text=", " />
-                                                    <Run Text="{Binding DriverVersion}" />
-                                                    <Run Text=" (" /><Run Text="{Binding DriverDate, StringFormat={}{0:d}, TargetNullValue=unknown date}" /><Run Text=")" />
+                                                    <Run Text="•" /> <Run Text="{Binding PublishedName, Mode=OneWay}" FontFamily="Consolas" />
+                                                    <Run Text=" (" /><Run Text="{Binding OriginalName, Mode=OneWay}" /><Run Text=") — " />
+                                                    <Run Text="{Binding ProviderName, Mode=OneWay}" /><Run Text=", " />
+                                                    <Run Text="{Binding DriverVersion, Mode=OneWay}" />
+                                                    <Run Text=" (" /><Run Text="{Binding DriverDate, StringFormat={}{0:d}, TargetNullValue=unknown date, Mode=OneWay}" /><Run Text=")" />
                                                     <Run FontWeight="SemiBold" Foreground="{DynamicResource SuccessBrush}">
                                                         <Run.Style>
                                                             <Style TargetType="Run">
@@ -1361,9 +1361,9 @@
                             <DataTemplate>
                                 <StackPanel Margin="0,0,0,6">
                                     <TextBlock Style="{StaticResource SubStat}">
-                                        <Run Text="{Binding ProfileName}" FontWeight="SemiBold" />
-                                        <Run Text=" — " /><Run Text="{Binding CostText}" />
-                                        <Run Text="   Category: " /><Run Text="{Binding CategoryText}" FontWeight="SemiBold" />
+                                        <Run Text="{Binding ProfileName, Mode=OneWay}" FontWeight="SemiBold" />
+                                        <Run Text=" — " /><Run Text="{Binding CostText, Mode=OneWay}" />
+                                        <Run Text="   Category: " /><Run Text="{Binding CategoryText, Mode=OneWay}" FontWeight="SemiBold" />
                                     </TextBlock>
                                     <TextBlock Text="Public network - discovery, printer sharing and inbound SMB are blocked while this is set. If this is actually a home or office network, you can change it in Settings &gt; Network &amp; Internet."
                                                FontSize="11" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" Margin="0,2,0,0">
@@ -1402,9 +1402,9 @@
                     <!-- #552: machine-wide TCP/IP offload settings, from `netsh int tcp show global`. -->
                     <TextBlock Text="TCP/IP offload (machine-wide)" Style="{StaticResource SpecLabel}" Margin="0,0,0,4" />
                     <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap">
-                        <Run Text="Receive-Side Scaling: " /><Run Text="{Binding TcpGlobalSettings.ReceiveSideScalingState}" FontWeight="SemiBold" />
-                        <Run Text="   Chimney Offload: " /><Run Text="{Binding TcpGlobalSettings.ChimneyOffloadState}" FontWeight="SemiBold" />
-                        <Run Text="   Receive Segment Coalescing: " /><Run Text="{Binding TcpGlobalSettings.ReceiveSegmentCoalescingState}" FontWeight="SemiBold" />
+                        <Run Text="Receive-Side Scaling: " /><Run Text="{Binding TcpGlobalSettings.ReceiveSideScalingState, Mode=OneWay}" FontWeight="SemiBold" />
+                        <Run Text="   Chimney Offload: " /><Run Text="{Binding TcpGlobalSettings.ChimneyOffloadState, Mode=OneWay}" FontWeight="SemiBold" />
+                        <Run Text="   Receive Segment Coalescing: " /><Run Text="{Binding TcpGlobalSettings.ReceiveSegmentCoalescingState, Mode=OneWay}" FontWeight="SemiBold" />
                     </TextBlock>
                     <TextBlock Text="Read-only - this app never changes these. A buggy driver with LSO or RSC enabled can produce stalled-but-not-dead connections that look like a server problem rather than a local offload bug."
                                Style="{StaticResource SubStat}" Margin="0,4,0,16" TextWrapping="Wrap" Opacity="0.7" />
@@ -1516,10 +1516,10 @@
                                                     </Style.Triggers>
                                                 </Style>
                                             </TextBlock.Style>
-                                            <Run Text="In: " /><Run Text="{Binding RxErrorsDelta}" /><Run Text=" errors, " />
-                                            <Run Text="{Binding RxDiscardsDelta}" /><Run Text=" discarded  •  Out: " />
-                                            <Run Text="{Binding TxErrorsDelta}" /><Run Text=" errors, " />
-                                            <Run Text="{Binding TxDiscardsDelta}" /><Run Text=" discarded" />
+                                            <Run Text="In: " /><Run Text="{Binding RxErrorsDelta, Mode=OneWay}" /><Run Text=" errors, " />
+                                            <Run Text="{Binding RxDiscardsDelta, Mode=OneWay}" /><Run Text=" discarded  •  Out: " />
+                                            <Run Text="{Binding TxErrorsDelta, Mode=OneWay}" /><Run Text=" errors, " />
+                                            <Run Text="{Binding TxDiscardsDelta, Mode=OneWay}" /><Run Text=" discarded" />
                                         </TextBlock>
                                         <TextBlock Text="Non-zero receive errors on Ethernet almost always mean a bad cable or port."
                                                    Style="{StaticResource SubStat}" Margin="0,2,0,12" TextWrapping="Wrap" Opacity="0.7" />
@@ -1539,8 +1539,8 @@
                                             </TextBlock.Style>
                                         </TextBlock>
                                         <TextBlock Style="{StaticResource SubStat}" Margin="0,2,0,2">
-                                            <Run Text="ARP offload: " /><Run Text="{Binding ArpOffloadText}" FontWeight="SemiBold" />
-                                            <Run Text="   Wake on Magic Packet: " /><Run Text="{Binding WakeOnMagicPacketText}" FontWeight="SemiBold" />
+                                            <Run Text="ARP offload: " /><Run Text="{Binding ArpOffloadText, Mode=OneWay}" FontWeight="SemiBold" />
+                                            <Run Text="   Wake on Magic Packet: " /><Run Text="{Binding WakeOnMagicPacketText, Mode=OneWay}" FontWeight="SemiBold" />
                                         </TextBlock>
                                         <Grid Margin="0,2,0,12">
                                             <Grid.ColumnDefinitions>
@@ -1570,7 +1570,7 @@
                                                 <ItemsControl.ItemTemplate>
                                                     <DataTemplate>
                                                         <TextBlock TextWrapping="Wrap" Margin="0,0,0,4" FontSize="11.5" Foreground="{DynamicResource WarningBrush}">
-                                                            <Run Text="{Binding Title}" FontWeight="SemiBold" /><Run Text=" — " /><Run Text="{Binding Detail}" />
+                                                            <Run Text="{Binding Title, Mode=OneWay}" FontWeight="SemiBold" /><Run Text=" — " /><Run Text="{Binding Detail, Mode=OneWay}" />
                                                         </TextBlock>
                                                     </DataTemplate>
                                                 </ItemsControl.ItemTemplate>
@@ -1725,8 +1725,8 @@
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
                                         <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,3">
-                                            <Run Text="{Binding ProcessName}" /><Run Text=": " />
-                                            <Run Text="{Binding ConnectionCountTotal}">
+                                            <Run Text="{Binding ProcessName, Mode=OneWay}" /><Run Text=": " />
+                                            <Run Text="{Binding ConnectionCountTotal, Mode=OneWay}">
                                                 <Run.Style>
                                                     <Style TargetType="Run">
                                                         <Style.Triggers>
@@ -1760,8 +1760,8 @@
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
                                         <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,3">
-                                            <Run Text="{Binding ProcessName}" /><Run Text=": " />
-                                            <Run Text="{Binding ConnectionCountTotal}">
+                                            <Run Text="{Binding ProcessName, Mode=OneWay}" /><Run Text=": " />
+                                            <Run Text="{Binding ConnectionCountTotal, Mode=OneWay}">
                                                 <Run.Style>
                                                     <Style TargetType="Run">
                                                         <Style.Triggers>
@@ -2105,9 +2105,9 @@
                                     </Border.Style>
                                     <StackPanel>
                                         <TextBlock FontSize="13">
-                                            <Run Text="{Binding AdapterName}" FontWeight="SemiBold" />
-                                            <Run Text=" — " /><Run Text="{Binding IpAddress}" FontFamily="Consolas" />
-                                            <Run Text="/" /><Run Text="{Binding SubnetMask}" FontFamily="Consolas" />
+                                            <Run Text="{Binding AdapterName, Mode=OneWay}" FontWeight="SemiBold" />
+                                            <Run Text=" — " /><Run Text="{Binding IpAddress, Mode=OneWay}" FontFamily="Consolas" />
+                                            <Run Text="/" /><Run Text="{Binding SubnetMask, Mode=OneWay}" FontFamily="Consolas" />
                                         </TextBlock>
 
                                         <!-- #528: APIPA banner - "DHCP failed, no address was offered", with a Renew shortcut
@@ -2134,11 +2134,11 @@
                                         </TextBlock>
                                         <TextBlock Style="{StaticResource SubStat}" Margin="0,2,0,0" TextWrapping="Wrap"
                                                    Visibility="{Binding DhcpServer, Converter={StaticResource NullToVisibilityConverter}}">
-                                            <Run Text="DHCP server: " /><Run Text="{Binding DhcpServer}" FontFamily="Consolas" />
+                                            <Run Text="DHCP server: " /><Run Text="{Binding DhcpServer, Mode=OneWay}" FontFamily="Consolas" />
                                         </TextBlock>
                                         <TextBlock Style="{StaticResource SubStat}" Margin="0,2,0,0" TextWrapping="Wrap"
                                                    Visibility="{Binding DefaultGateway, Converter={StaticResource NullToVisibilityConverter}}">
-                                            <Run Text="Gateway: " /><Run Text="{Binding DefaultGateway}" FontFamily="Consolas" />
+                                            <Run Text="Gateway: " /><Run Text="{Binding DefaultGateway, Mode=OneWay}" FontFamily="Consolas" />
                                         </TextBlock>
 
                                         <!-- #527: rogue-DHCP-server flag. -->
@@ -2213,9 +2213,9 @@
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
                                 <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,4" TextWrapping="Wrap" FontSize="11.5">
-                                    <Run Text="{Binding TimeUtc, StringFormat={}{0:g}}" FontFamily="Consolas" />
-                                    <Run Text=" [" /><Run Text="{Binding Channel}" /><Run Text="/" /><Run Text="{Binding Category}" FontWeight="SemiBold" /><Run Text="] " />
-                                    <Run Text="{Binding Message}" />
+                                    <Run Text="{Binding TimeUtc, StringFormat={}{0:g}, Mode=OneWay}" FontFamily="Consolas" />
+                                    <Run Text=" [" /><Run Text="{Binding Channel, Mode=OneWay}" /><Run Text="/" /><Run Text="{Binding Category, Mode=OneWay}" FontWeight="SemiBold" /><Run Text="] " />
+                                    <Run Text="{Binding Message, Mode=OneWay}" />
                                 </TextBlock>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
@@ -2250,9 +2250,9 @@
                                             </Style.Triggers>
                                         </Style>
                                     </TextBlock.Style>
-                                    <Run Text="{Binding TimeUtc, StringFormat={}{0:g}}" FontFamily="Consolas" />
-                                    <Run Text=" — IP " /><Run Text="{Binding ConflictingIp, TargetNullValue=unknown}" FontFamily="Consolas" />
-                                    <Run Text=", MAC " /><Run Text="{Binding ConflictingMac, TargetNullValue='not in event data'}" FontFamily="Consolas" />
+                                    <Run Text="{Binding TimeUtc, StringFormat={}{0:g}, Mode=OneWay}" FontFamily="Consolas" />
+                                    <Run Text=" — IP " /><Run Text="{Binding ConflictingIp, TargetNullValue=unknown, Mode=OneWay}" FontFamily="Consolas" />
+                                    <Run Text=", MAC " /><Run Text="{Binding ConflictingMac, TargetNullValue='not in event data', Mode=OneWay}" FontFamily="Consolas" />
                                 </TextBlock>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
@@ -2439,8 +2439,8 @@
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
                                         <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,3">
-                                            <Run Text="Ch. " /><Run Text="{Binding Channel}" FontFamily="Consolas" FontWeight="SemiBold" />
-                                            <Run Text=" — " /><Run Text="{Binding ApCount}" /><Run Text=" network(s), summed signal " /><Run Text="{Binding SummedSignalPercent}" /><Run Text="%" />
+                                            <Run Text="Ch. " /><Run Text="{Binding Channel, Mode=OneWay}" FontFamily="Consolas" FontWeight="SemiBold" />
+                                            <Run Text=" — " /><Run Text="{Binding ApCount, Mode=OneWay}" /><Run Text=" network(s), summed signal " /><Run Text="{Binding SummedSignalPercent, Mode=OneWay}" /><Run Text="%" />
                                         </TextBlock>
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
@@ -2463,8 +2463,8 @@
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
                                             <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,3">
-                                                <Run Text="Ch. " /><Run Text="{Binding Channel}" FontFamily="Consolas" FontWeight="SemiBold" />
-                                                <Run Text=" — " /><Run Text="{Binding ApCount}" /><Run Text=" network(s), summed signal " /><Run Text="{Binding SummedSignalPercent}" /><Run Text="%" />
+                                                <Run Text="Ch. " /><Run Text="{Binding Channel, Mode=OneWay}" FontFamily="Consolas" FontWeight="SemiBold" />
+                                                <Run Text=" — " /><Run Text="{Binding ApCount, Mode=OneWay}" /><Run Text=" network(s), summed signal " /><Run Text="{Binding SummedSignalPercent, Mode=OneWay}" /><Run Text="%" />
                                             </TextBlock>
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
@@ -2488,8 +2488,8 @@
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
                                             <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,3">
-                                                <Run Text="Ch. " /><Run Text="{Binding Channel}" FontFamily="Consolas" FontWeight="SemiBold" />
-                                                <Run Text=" — " /><Run Text="{Binding ApCount}" /><Run Text=" network(s), summed signal " /><Run Text="{Binding SummedSignalPercent}" /><Run Text="%" />
+                                                <Run Text="Ch. " /><Run Text="{Binding Channel, Mode=OneWay}" FontFamily="Consolas" FontWeight="SemiBold" />
+                                                <Run Text=" — " /><Run Text="{Binding ApCount, Mode=OneWay}" /><Run Text=" network(s), summed signal " /><Run Text="{Binding SummedSignalPercent, Mode=OneWay}" /><Run Text="%" />
                                             </TextBlock>
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
@@ -2513,9 +2513,9 @@
                                                                  hidden Run. -->
                                                             <StackPanel Orientation="Horizontal" Margin="0,0,0,2">
                                                                 <TextBlock Style="{StaticResource SubStat}" FontFamily="Consolas">
-                                                                    <Run Text="{Binding Bssid}" />
-                                                                    <Run Text=" — " /><Run Text="{Binding Band}" /><Run Text=" ch." /><Run Text="{Binding Channel, TargetNullValue=?}" />
-                                                                    <Run Text=", " /><Run Text="{Binding SignalPercent, TargetNullValue=Unknown}" /><Run Text="%" />
+                                                                    <Run Text="{Binding Bssid, Mode=OneWay}" />
+                                                                    <Run Text=" — " /><Run Text="{Binding Band, Mode=OneWay}" /><Run Text=" ch." /><Run Text="{Binding Channel, TargetNullValue=?, Mode=OneWay}" />
+                                                                    <Run Text=", " /><Run Text="{Binding SignalPercent, TargetNullValue=Unknown, Mode=OneWay}" /><Run Text="%" />
                                                                 </TextBlock>
                                                                 <TextBlock Text=" (connected)" Style="{StaticResource SubStat}" FontWeight="SemiBold"
                                                                            Visibility="{Binding IsCurrentBssid, Converter={StaticResource BoolToVisibilityConverter}}" />
@@ -2722,13 +2722,13 @@
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Grid.Column="0" FontSize="12.5">
-                                        <Run Text="{Binding ProcessName}" FontWeight="SemiBold" />
-                                        <Run Text=" (PID " /><Run Text="{Binding Pid}" /><Run Text=")" />
+                                        <Run Text="{Binding ProcessName, Mode=OneWay}" FontWeight="SemiBold" />
+                                        <Run Text=" (PID " /><Run Text="{Binding Pid, Mode=OneWay}" /><Run Text=")" />
                                     </TextBlock>
                                     <TextBlock Grid.Column="1" FontSize="12.5" Foreground="{DynamicResource TextSecondaryBrush}">
-                                        <Run Text="{Binding BytesSent, Converter={StaticResource BytesToReadableConverter}, StringFormat='↑ {0}'}" />
+                                        <Run Text="{Binding BytesSent, Converter={StaticResource BytesToReadableConverter}, StringFormat='↑ {0}', Mode=OneWay}" />
                                         <Run Text="   " />
-                                        <Run Text="{Binding BytesReceived, Converter={StaticResource BytesToReadableConverter}, StringFormat='↓ {0}'}" />
+                                        <Run Text="{Binding BytesReceived, Converter={StaticResource BytesToReadableConverter}, StringFormat='↓ {0}', Mode=OneWay}" />
                                     </TextBlock>
                                 </Grid>
                             </DataTemplate>
@@ -2768,12 +2768,12 @@
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Grid.Column="0" FontSize="12.5">
-                                        <Run Text="{Binding ProcessName}" FontWeight="SemiBold" />
-                                        <Run Text=" (PID " /><Run Text="{Binding Pid}" /><Run Text=")" />
+                                        <Run Text="{Binding ProcessName, Mode=OneWay}" FontWeight="SemiBold" />
+                                        <Run Text=" (PID " /><Run Text="{Binding Pid, Mode=OneWay}" /><Run Text=")" />
                                     </TextBlock>
                                     <TextBlock Grid.Column="1" FontSize="12.5" Foreground="{DynamicResource TextSecondaryBrush}">
-                                        <Run Text="{Binding ConnectionCount}" /><Run Text=" connections (" />
-                                        <Run Text="{Binding EstablishedCount}" /><Run Text=" established)" />
+                                        <Run Text="{Binding ConnectionCount, Mode=OneWay}" /><Run Text=" connections (" />
+                                        <Run Text="{Binding EstablishedCount, Mode=OneWay}" /><Run Text=" established)" />
                                     </TextBlock>
                                 </Grid>
                             </DataTemplate>
@@ -2845,12 +2845,12 @@
                                                 </Style.Triggers>
                                             </Style>
                                         </TextBlock.Style>
-                                        <Run Text="Retransmitted " /><Run Text="{Binding SegmentsRetransmittedPerSec, StringFormat={}{0:0.0}/s}" />
-                                        <Run Text="   Sent " /><Run Text="{Binding SegmentsSentPerSec, StringFormat={}{0:0.0}/s}" />
-                                        <Run Text="   Rate " /><Run Text="{Binding RetransmitRatePercent, StringFormat={}{0:0.00}%}" FontWeight="SemiBold" />
+                                        <Run Text="Retransmitted " /><Run Text="{Binding SegmentsRetransmittedPerSec, StringFormat={}{0:0.0}/s, Mode=OneWay}" />
+                                        <Run Text="   Sent " /><Run Text="{Binding SegmentsSentPerSec, StringFormat={}{0:0.0}/s, Mode=OneWay}" />
+                                        <Run Text="   Rate " /><Run Text="{Binding RetransmitRatePercent, StringFormat={}{0:0.00}%, Mode=OneWay}" FontWeight="SemiBold" />
                                         <LineBreak />
-                                        <Run Text="Connection failures " /><Run Text="{Binding ConnectionFailuresDelta}" /><Run Text=" since last refresh (" /><Run Text="{Binding ConnectionFailuresTotal}" /><Run Text=" this session)" />
-                                        <Run Text="   Resets " /><Run Text="{Binding ConnectionsResetDelta}" /><Run Text=" since last refresh (" /><Run Text="{Binding ConnectionsResetTotal}" /><Run Text=" this session)" />
+                                        <Run Text="Connection failures " /><Run Text="{Binding ConnectionFailuresDelta, Mode=OneWay}" /><Run Text=" since last refresh (" /><Run Text="{Binding ConnectionFailuresTotal, Mode=OneWay}" /><Run Text=" this session)" />
+                                        <Run Text="   Resets " /><Run Text="{Binding ConnectionsResetDelta, Mode=OneWay}" /><Run Text=" since last refresh (" /><Run Text="{Binding ConnectionsResetTotal, Mode=OneWay}" /><Run Text=" this session)" />
                                     </TextBlock>
                                 </Grid>
                             </DataTemplate>
@@ -2864,15 +2864,15 @@
                     <TextBlock Text="Read-only - this app never changes these." Style="{StaticResource SubStat}" Margin="0,0,0,8" Opacity="0.7" />
 
                     <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,6">
-                        <Run Text="Receive-Side Scaling: " FontWeight="SemiBold" /><Run Text="{Binding TcpGlobalSettings.ReceiveSideScalingState}" />
+                        <Run Text="Receive-Side Scaling: " FontWeight="SemiBold" /><Run Text="{Binding TcpGlobalSettings.ReceiveSideScalingState, Mode=OneWay}" />
                         <LineBreak /><Run Text="Spreads incoming packet processing across multiple CPU cores instead of just one - normally left enabled." Foreground="{DynamicResource TextSecondaryBrush}" />
                     </TextBlock>
                     <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,6">
-                        <Run Text="Chimney Offload: " FontWeight="SemiBold" /><Run Text="{Binding TcpGlobalSettings.ChimneyOffloadState}" />
+                        <Run Text="Chimney Offload: " FontWeight="SemiBold" /><Run Text="{Binding TcpGlobalSettings.ChimneyOffloadState, Mode=OneWay}" />
                         <LineBreak /><Run Text="Offloads TCP processing onto the NIC itself - dropped from netsh's own output on newer Windows builds, so 'Unknown' here often just means this Windows version no longer reports it." Foreground="{DynamicResource TextSecondaryBrush}" />
                     </TextBlock>
                     <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,6">
-                        <Run Text="Receive Segment Coalescing: " FontWeight="SemiBold" /><Run Text="{Binding TcpGlobalSettings.ReceiveSegmentCoalescingState}" />
+                        <Run Text="Receive Segment Coalescing: " FontWeight="SemiBold" /><Run Text="{Binding TcpGlobalSettings.ReceiveSegmentCoalescingState, Mode=OneWay}" />
                         <LineBreak /><Run Text="Merges multiple incoming TCP segments into one before handing them to the app - saves CPU, but a buggy driver with this on can produce a stalled-but-not-dead connection that looks like a server problem." Foreground="{DynamicResource TextSecondaryBrush}" />
                     </TextBlock>
                     <TextBlock TextWrapping="Wrap" Margin="0,0,0,6">
@@ -2885,19 +2885,19 @@
                                 </Style.Triggers>
                             </Style>
                         </TextBlock.Style>
-                        <Run Text="Receive Window Auto-Tuning: " FontWeight="SemiBold" /><Run Text="{Binding TcpGlobalSettings.ReceiveWindowAutoTuningLevel}" />
+                        <Run Text="Receive Window Auto-Tuning: " FontWeight="SemiBold" /><Run Text="{Binding TcpGlobalSettings.ReceiveWindowAutoTuningLevel, Mode=OneWay}" />
                         <LineBreak /><Run Text="How aggressively the receive window grows to fill available bandwidth on longer/higher-latency links. 'disabled' or 'restricted' caps throughput regardless of available bandwidth - a very common bad 'optimization guide' edit." Foreground="{DynamicResource TextSecondaryBrush}" />
                     </TextBlock>
                     <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,6">
-                        <Run Text="Congestion provider: " FontWeight="SemiBold" /><Run Text="{Binding TcpGlobalSettings.CongestionProvider}" />
+                        <Run Text="Congestion provider: " FontWeight="SemiBold" /><Run Text="{Binding TcpGlobalSettings.CongestionProvider, Mode=OneWay}" />
                         <LineBreak /><Run Text="Which congestion-control algorithm governs how fast this machine ramps up (and backs off) its own sending rate." Foreground="{DynamicResource TextSecondaryBrush}" />
                     </TextBlock>
                     <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,6">
-                        <Run Text="ECN capability: " FontWeight="SemiBold" /><Run Text="{Binding TcpGlobalSettings.EcnCapability}" />
+                        <Run Text="ECN capability: " FontWeight="SemiBold" /><Run Text="{Binding TcpGlobalSettings.EcnCapability, Mode=OneWay}" />
                         <LineBreak /><Run Text="Explicit Congestion Notification - lets a supporting router signal congestion without dropping a packet. Off by default; safe either way on most home/office networks." Foreground="{DynamicResource TextSecondaryBrush}" />
                     </TextBlock>
                     <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap">
-                        <Run Text="RFC 1323 timestamps: " FontWeight="SemiBold" /><Run Text="{Binding TcpGlobalSettings.TimestampsState}" />
+                        <Run Text="RFC 1323 timestamps: " FontWeight="SemiBold" /><Run Text="{Binding TcpGlobalSettings.TimestampsState, Mode=OneWay}" />
                         <LineBreak /><Run Text="Per-packet timestamps used for more accurate round-trip-time estimation and to guard against wrapped sequence numbers on very fast links." Foreground="{DynamicResource TextSecondaryBrush}" />
                     </TextBlock>
                     <TextBlock Text="Auto-tuning is disabled/restricted - throughput on longer or higher-latency links is capped regardless of available bandwidth. If nothing intentionally set this, it's worth reverting."
@@ -2958,7 +2958,7 @@
                                         </Style>
                                     </Border.Style>
                                     <TextBlock ToolTip="{Binding FlagReason}" FontSize="12">
-                                        <Run Text="{Binding State}" FontWeight="SemiBold" /><Run Text=": " /><Run Text="{Binding Count}" />
+                                        <Run Text="{Binding State, Mode=OneWay}" FontWeight="SemiBold" /><Run Text=": " /><Run Text="{Binding Count, Mode=OneWay}" />
                                     </TextBlock>
                                 </Border>
                             </DataTemplate>
@@ -3159,10 +3159,10 @@
                     <TextBlock Text="Dynamic (ephemeral) port range (netsh int ipv4 show dynamicport tcp)" Style="{StaticResource SpecLabel}" Margin="0,14,0,4" />
                     <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,10"
                                Visibility="{Binding PortReservation.DynamicRange, Converter={StaticResource NullToVisibilityConverter}}">
-                        <Run Text="{Binding PortReservation.DynamicRange.StartPort}" />
+                        <Run Text="{Binding PortReservation.DynamicRange.StartPort, Mode=OneWay}" />
                         <Run Text=" – " />
-                        <Run Text="{Binding PortReservation.DynamicRange.EndPort}" />
-                        <Run Text=" (" /><Run Text="{Binding PortReservation.DynamicRange.PortCount}" /><Run Text=" ports) - the pool Windows assigns a local port from for any outbound connection that doesn't bind an explicit one." />
+                        <Run Text="{Binding PortReservation.DynamicRange.EndPort, Mode=OneWay}" />
+                        <Run Text=" (" /><Run Text="{Binding PortReservation.DynamicRange.PortCount, Mode=OneWay}" /><Run Text=" ports) - the pool Windows assigns a local port from for any outbound connection that doesn't bind an explicit one." />
                     </TextBlock>
                     <TextBlock Text="Unknown - refresh above to read it from netsh.">
                         <TextBlock.Style>
@@ -3187,9 +3187,9 @@
 
                     <StackPanel Visibility="{Binding PortExhaustion, Converter={StaticResource NullToVisibilityConverter}}">
                         <TextBlock Margin="0,0,0,4">
-                            <Run Text="{Binding PortExhaustion.ConnectionsInRange}" FontWeight="SemiBold" /><Run Text=" of " />
-                            <Run Text="{Binding PortExhaustion.RangeSize}" /><Run Text=" ports in use  •  " />
-                            <Run Text="{Binding PortExhaustion.UtilizationPercent, StringFormat={}{0:0.#}%}" FontWeight="SemiBold" />
+                            <Run Text="{Binding PortExhaustion.ConnectionsInRange, Mode=OneWay}" FontWeight="SemiBold" /><Run Text=" of " />
+                            <Run Text="{Binding PortExhaustion.RangeSize, Mode=OneWay}" /><Run Text=" ports in use  •  " />
+                            <Run Text="{Binding PortExhaustion.UtilizationPercent, StringFormat={}{0:0.#}%, Mode=OneWay}" FontWeight="SemiBold" />
                         </TextBlock>
                         <TextBlock Text="Above ~80% used - worth checking which process(es) below are holding the most ports." Style="{StaticResource SubStat}"
                                    Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" Margin="0,0,0,6"
@@ -3198,7 +3198,7 @@
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
                                     <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,2">
-                                        <Run Text="{Binding ProcessName}" /><Run Text="  —  " /><Run Text="{Binding Count}" /><Run Text=" port(s)" />
+                                        <Run Text="{Binding ProcessName, Mode=OneWay}" /><Run Text="  —  " /><Run Text="{Binding Count, Mode=OneWay}" /><Run Text=" port(s)" />
                                     </TextBlock>
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
@@ -3517,8 +3517,8 @@
                                             </Border>
                                         </Grid>
                                         <TextBlock Style="{StaticResource SubStat}" Margin="0,4,0,0" TextWrapping="Wrap">
-                                            <Run Text="In: " /><Run Text="{Binding InboundPolicy}" FontWeight="SemiBold" />
-                                            <Run Text="  Out: " /><Run Text="{Binding OutboundPolicy}" FontWeight="SemiBold" />
+                                            <Run Text="In: " /><Run Text="{Binding InboundPolicy, Mode=OneWay}" FontWeight="SemiBold" />
+                                            <Run Text="  Out: " /><Run Text="{Binding OutboundPolicy, Mode=OneWay}" FontWeight="SemiBold" />
                                         </TextBlock>
                                         <TextBlock Text="{Binding FlagReason}" Style="{StaticResource SubStat}" Foreground="{DynamicResource WarningBrush}"
                                                    TextWrapping="Wrap" Margin="0,4,0,0" FontSize="11"
@@ -3741,8 +3741,8 @@
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
                                         <TextBlock FontSize="11.5" Margin="0,0,0,2" TextWrapping="Wrap">
-                                            <Run Text="{Binding Name}" FontWeight="SemiBold" />
-                                            <Run Text=" — " /><Run Text="{Binding Description}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                            <Run Text="{Binding Name, Mode=OneWay}" FontWeight="SemiBold" />
+                                            <Run Text=" — " /><Run Text="{Binding Description, Mode=OneWay}" Foreground="{DynamicResource TextSecondaryBrush}" />
                                         </TextBlock>
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
@@ -3753,8 +3753,8 @@
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
                                         <TextBlock FontSize="11.5" Margin="0,0,0,2" TextWrapping="Wrap">
-                                            <Run Text="{Binding Name}" FontWeight="SemiBold" />
-                                            <Run Text=" — " /><Run Text="{Binding Description}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                            <Run Text="{Binding Name, Mode=OneWay}" FontWeight="SemiBold" />
+                                            <Run Text=" — " /><Run Text="{Binding Description, Mode=OneWay}" Foreground="{DynamicResource TextSecondaryBrush}" />
                                         </TextBlock>
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
@@ -3798,9 +3798,9 @@
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
                                             <TextBlock FontSize="11.5" Margin="0,0,0,2" TextWrapping="Wrap">
-                                                <Run Text="{Binding Name}" FontWeight="SemiBold" />
-                                                <Run Text=" — " /><Run Text="{Binding Direction}" /><Run Text="/" /><Run Text="{Binding Action}" />
-                                                <Run Text=", " /><Run Text="{Binding Protocol}" />
+                                                <Run Text="{Binding Name, Mode=OneWay}" FontWeight="SemiBold" />
+                                                <Run Text=" — " /><Run Text="{Binding Direction, Mode=OneWay}" /><Run Text="/" /><Run Text="{Binding Action, Mode=OneWay}" />
+                                                <Run Text=", " /><Run Text="{Binding Protocol, Mode=OneWay}" />
                                             </TextBlock>
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
@@ -3823,9 +3823,9 @@
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
                                             <TextBlock FontSize="11.5" Margin="0,0,0,2" TextWrapping="Wrap" Foreground="{DynamicResource WarningBrush}">
-                                                <Run Text="{Binding TimeUtc, StringFormat={}{0:g}}" />
-                                                <Run Text=" — " /><Run Text="{Binding DestAddress}" /><Run Text=":" /><Run Text="{Binding DestPort}" />
-                                                <Run Text=" (" /><Run Text="{Binding MatchedRuleName, TargetNullValue='unresolved rule'}" /><Run Text=")" />
+                                                <Run Text="{Binding TimeUtc, StringFormat={}{0:g}, Mode=OneWay}" />
+                                                <Run Text=" — " /><Run Text="{Binding DestAddress, Mode=OneWay}" /><Run Text=":" /><Run Text="{Binding DestPort, Mode=OneWay}" />
+                                                <Run Text=" (" /><Run Text="{Binding MatchedRuleName, TargetNullValue='unresolved rule', Mode=OneWay}" /><Run Text=")" />
                                             </TextBlock>
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
@@ -3854,9 +3854,9 @@
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
                                             <TextBlock FontSize="11.5" Margin="0,0,0,2" TextWrapping="Wrap">
-                                                <Run Text="{Binding ProcessName}" FontWeight="SemiBold" />
-                                                <Run Text=" — " /><Run Text="{Binding RemoteAddress}" /><Run Text=":" /><Run Text="{Binding RemotePort}" />
-                                                <Run Text=" (" /><Run Text="{Binding State}" /><Run Text=")" />
+                                                <Run Text="{Binding ProcessName, Mode=OneWay}" FontWeight="SemiBold" />
+                                                <Run Text=" — " /><Run Text="{Binding RemoteAddress, Mode=OneWay}" /><Run Text=":" /><Run Text="{Binding RemotePort, Mode=OneWay}" />
+                                                <Run Text=" (" /><Run Text="{Binding State, Mode=OneWay}" /><Run Text=")" />
                                             </TextBlock>
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
@@ -4074,11 +4074,11 @@
                                                Visibility="{Binding IsSmb1, Converter={StaticResource BoolToVisibilityConverter}}" />
                                     <StackPanel Grid.Column="1">
                                         <TextBlock FontSize="12.5">
-                                            <Run Text="{Binding ServerName}" FontWeight="SemiBold" />
-                                            <Run Text=" \ " /><Run Text="{Binding ShareName}" />
-                                            <Run Text="   dialect " /><Run Text="{Binding Dialect}" FontWeight="SemiBold" />
-                                            <Run Text="   signed: " /><Run Text="{Binding Signed}" />
-                                            <Run Text="   encrypted: " /><Run Text="{Binding Encrypted}" />
+                                            <Run Text="{Binding ServerName, Mode=OneWay}" FontWeight="SemiBold" />
+                                            <Run Text=" \ " /><Run Text="{Binding ShareName, Mode=OneWay}" />
+                                            <Run Text="   dialect " /><Run Text="{Binding Dialect, Mode=OneWay}" FontWeight="SemiBold" />
+                                            <Run Text="   signed: " /><Run Text="{Binding Signed, Mode=OneWay}" />
+                                            <Run Text="   encrypted: " /><Run Text="{Binding Encrypted, Mode=OneWay}" />
                                         </TextBlock>
                                         <TextBlock Text="{Binding SigningCaveat}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Opacity="0.8" Margin="0,2,0,0"
                                                    Visibility="{Binding SigningCaveat, Converter={StaticResource NullToVisibilityConverter}}" />
@@ -4130,9 +4130,9 @@
                                             </Grid.ColumnDefinitions>
                                             <TextBlock Grid.Column="0" Text="{Binding TimeUtc, StringFormat='{}{0:MM/dd HH:mm:ss}'}" FontSize="11" Margin="0,0,10,0" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Top" />
                                             <TextBlock Grid.Column="1" FontSize="12" TextWrapping="Wrap">
-                                                <Run Text="{Binding Category}" FontWeight="SemiBold" />
-                                                <Run Text=" (ID " /><Run Text="{Binding EventId}" /><Run Text=")  " />
-                                                <Run Text="{Binding Message}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                                <Run Text="{Binding Category, Mode=OneWay}" FontWeight="SemiBold" />
+                                                <Run Text=" (ID " /><Run Text="{Binding EventId, Mode=OneWay}" /><Run Text=")  " />
+                                                <Run Text="{Binding Message, Mode=OneWay}" Foreground="{DynamicResource TextSecondaryBrush}" />
                                             </TextBlock>
                                         </Grid>
                                     </DataTemplate>
@@ -4166,7 +4166,7 @@
                                     </Style>
                                 </Run.Style>
                             </Run>
-                            <Run Text="   Policy: " FontWeight="SemiBold" /><Run Text="{Binding OfflineFiles.FeatureEnabled}" />
+                            <Run Text="   Policy: " FontWeight="SemiBold" /><Run Text="{Binding OfflineFiles.FeatureEnabled, Mode=OneWay}" />
                         </TextBlock>
                         <ItemsControl ItemsSource="{Binding OfflineFiles.CacheEntries}">
                             <ItemsControl.ItemTemplate>
@@ -4245,15 +4245,15 @@
                             <StackPanel>
                                 <TextBlock Text="Possible post-sleep networking issue" FontWeight="Bold" FontSize="12.5" Foreground="{DynamicResource WarningBrush}" />
                                 <TextBlock TextWrapping="Wrap" FontSize="11.5" Margin="0,4,0,6" Foreground="{DynamicResource TextPrimaryBrush}">
-                                    <Run Text="{Binding SleepResumeFindings.Count}" FontWeight="SemiBold" />
+                                    <Run Text="{Binding SleepResumeFindings.Count, Mode=OneWay}" FontWeight="SemiBold" />
                                     <Run Text=" resume(s) from sleep were followed within a few minutes by something that looks like a network problem. The most common cause this app can actually detect is the NIC's own &quot;allow the computer to turn off this device&quot; power-management setting - check the Power management section of the Adapter health card above first. This is a timing correlation, not a diagnosis." />
                                 </TextBlock>
                                 <ItemsControl ItemsSource="{Binding SleepResumeFindings}">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
                                             <TextBlock FontSize="11" Margin="0,0,0,2" TextWrapping="Wrap">
-                                                <Run Text="{Binding ResumeTimeUtc, StringFormat={}{0:g}}" FontFamily="Consolas" />
-                                                <Run Text=" — " /><Run Text="{Binding IssueSummary}" />
+                                                <Run Text="{Binding ResumeTimeUtc, StringFormat={}{0:g}, Mode=OneWay}" FontFamily="Consolas" />
+                                                <Run Text=" — " /><Run Text="{Binding IssueSummary, Mode=OneWay}" />
                                             </TextBlock>
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
@@ -4342,10 +4342,10 @@
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
                                 <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,4" TextWrapping="Wrap">
-                                    <Run Text="{Binding TriggeredAtUtc, StringFormat={}{0:g}}" FontFamily="Consolas" FontWeight="SemiBold" />
-                                    <Run Text=" — " /><Run Text="{Binding TriggerReason}" />
-                                    <Run Text=" (" /><Run Text="{Binding SampleCount}" /><Run Text=" sample(s)) — " />
-                                    <Run Text="{Binding FilePath}" FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                    <Run Text="{Binding TriggeredAtUtc, StringFormat={}{0:g}, Mode=OneWay}" FontFamily="Consolas" FontWeight="SemiBold" />
+                                    <Run Text=" — " /><Run Text="{Binding TriggerReason, Mode=OneWay}" />
+                                    <Run Text=" (" /><Run Text="{Binding SampleCount, Mode=OneWay}" /><Run Text=" sample(s)) — " />
+                                    <Run Text="{Binding FilePath, Mode=OneWay}" FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" />
                                 </TextBlock>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>

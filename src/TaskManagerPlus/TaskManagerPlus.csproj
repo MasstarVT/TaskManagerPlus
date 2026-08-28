@@ -1,8 +1,17 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <!-- Must carry an explicit Windows API version, not the bare `net8.0-windows` (which expands
+         to net8.0-windows7.0). SkiaSharp.Views.WPF - pulled in by LiveCharts - ships its assets
+         under net462 / net6.0-windows10.0.19041 / net8.0-windows10.0.19041 only. net8.0-windows7.0
+         satisfies none of the windows10.0.19041 groups, so NuGet fell all the way back to the
+         .NETFramework4.6.2 group and this .NET 8 app silently compiled against the net462
+         SkiaSharp.Views.WPF, a net452 GLWpfControl and a .NET 2.0 OpenTK (the source of the 11
+         NU1701 warnings). Naming 10.0.19041 selects the real net8.0 assets instead. -->
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <!-- Windows 10 2004 (build 19041) is the floor the TFM above implies. -->
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <!-- #452: MemoryPatternTestService uses NativeMemory.Alloc + pointer-based Span<byte> access
@@ -16,6 +25,16 @@
          built-in escape hatch" tradeoff this project already takes for PerformanceCounter/WMI. -->
     <UseWindowsForms>true</UseWindowsForms>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- WFAC010 is a WinForms analyzer telling us to move app.manifest's dpiAware/dpiAwareness
+         settings to the ApplicationHighDpiMode property + Application.SetHighDpiMode(). That advice
+         is for a WinForms-bootstrapped app; this is WPF-first (App.xaml is the entry point and the
+         WinForms bootstrap never runs), UseWindowsForms is set only to get NotifyIcon for the tray
+         icon, and WPF reads its own per-monitor DPI awareness from exactly these manifest entries.
+         Removing them would cost PerMonitorV2 awareness - blurry UI when a window moves between
+         monitors at different scale factors - so the manifest stays and the analyzer is silenced.
+         Only surfaced once the TFM above named an explicit Windows version, which is what enables
+         these WinForms analyzers. -->
+    <NoWarn>$(NoWarn);WFAC010</NoWarn>
     <AssemblyName>TaskManagerPlus</AssemblyName>
     <RootNamespace>TaskManagerPlus</RootNamespace>
   </PropertyGroup>

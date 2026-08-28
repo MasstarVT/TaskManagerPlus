@@ -1,4 +1,4 @@
-<UserControl x:Class="TaskManagerPlus.Views.SecurityView"
+﻿<UserControl x:Class="TaskManagerPlus.Views.SecurityView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="clr-namespace:TaskManagerPlus.ViewModels"
@@ -1114,7 +1114,7 @@
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
                                 <TextBlock FontSize="11.5" Margin="0,0,12,2" Foreground="{DynamicResource TextSecondaryBrush}">
-                                    <Run Text="{Binding InterfaceAlias}" /><Run Text=" → " /><Run Text="{Binding ProfileName}" FontWeight="SemiBold" />
+                                    <Run Text="{Binding InterfaceAlias, Mode=OneWay}" /><Run Text=" → " /><Run Text="{Binding ProfileName, Mode=OneWay}" FontWeight="SemiBold" />
                                 </TextBlock>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
@@ -1464,7 +1464,7 @@
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
                                     <TextBlock FontSize="11.5" TextWrapping="Wrap" Foreground="{DynamicResource WarningBrush}">
-                                        <Run Text="{Binding Hostname}" /><Run Text=" → " /><Run Text="{Binding Address}" /><Run Text=" - " /><Run Text="{Binding Reason}" />
+                                        <Run Text="{Binding Hostname, Mode=OneWay}" /><Run Text=" → " /><Run Text="{Binding Address, Mode=OneWay}" /><Run Text=" - " /><Run Text="{Binding Reason, Mode=OneWay}" />
                                     </TextBlock>
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
@@ -1474,7 +1474,7 @@
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
                                         <TextBlock FontSize="11.5" TextWrapping="Wrap">
-                                            <Run Text="{Binding Hostname}" /><Run Text=" → " /><Run Text="{Binding Address}" />
+                                            <Run Text="{Binding Hostname, Mode=OneWay}" /><Run Text=" → " /><Run Text="{Binding Address, Mode=OneWay}" />
                                         </TextBlock>
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
@@ -1534,11 +1534,11 @@
                     <Border Padding="10,8" Margin="0,0,0,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6"
                             Visibility="{Binding ProxyConfig, Converter={StaticResource NullToVisibilityConverter}}">
                         <StackPanel>
-                            <TextBlock TextWrapping="Wrap"><Run Text="Per-user proxy: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding ProxyConfig.Enabled}" /><Run Text="   Server: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding ProxyConfig.ProxyServer}" /></TextBlock>
-                            <TextBlock Margin="0,2,0,0" TextWrapping="Wrap"><Run Text="Bypass list: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding ProxyConfig.ProxyOverride}" /></TextBlock>
-                            <TextBlock Margin="0,2,0,0" TextWrapping="Wrap" FontFamily="Consolas" FontSize="11.5"><Run Text="Auto-config URL: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding ProxyConfig.AutoConfigUrl}" /></TextBlock>
-                            <TextBlock Margin="0,6,0,0" TextWrapping="Wrap"><Run Text="Machine WinHTTP proxy: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding MachineProxyConfig.DirectAccess, StringFormat={}{0}}" /><Run Text="   Server: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding MachineProxyConfig.ProxyServer}" /></TextBlock>
-                            <TextBlock Margin="0,2,0,0" TextWrapping="Wrap"><Run Text="Bypass list: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding MachineProxyConfig.BypassList}" /></TextBlock>
+                            <TextBlock TextWrapping="Wrap"><Run Text="Per-user proxy: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding ProxyConfig.Enabled, Mode=OneWay}" /><Run Text="   Server: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding ProxyConfig.ProxyServer, Mode=OneWay}" /></TextBlock>
+                            <TextBlock Margin="0,2,0,0" TextWrapping="Wrap"><Run Text="Bypass list: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding ProxyConfig.ProxyOverride, Mode=OneWay}" /></TextBlock>
+                            <TextBlock Margin="0,2,0,0" TextWrapping="Wrap" FontFamily="Consolas" FontSize="11.5"><Run Text="Auto-config URL: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding ProxyConfig.AutoConfigUrl, Mode=OneWay}" /></TextBlock>
+                            <TextBlock Margin="0,6,0,0" TextWrapping="Wrap"><Run Text="Machine WinHTTP proxy: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding MachineProxyConfig.DirectAccess, StringFormat={}{0}, Mode=OneWay}" /><Run Text="   Server: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding MachineProxyConfig.ProxyServer, Mode=OneWay}" /></TextBlock>
+                            <TextBlock Margin="0,2,0,0" TextWrapping="Wrap"><Run Text="Bypass list: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding MachineProxyConfig.BypassList, Mode=OneWay}" /></TextBlock>
                         </StackPanel>
                     </Border>
                     <Button Content="Reset proxy and Winsock..." Style="{StaticResource DangerButton}" HorizontalAlignment="Left" Command="{Binding ResetProxyAndWinsockCommand}"
@@ -1572,7 +1572,7 @@
                     </Grid>
                     <TextBlock Text="{Binding CertificateScanStatus}" TextWrapping="Wrap" Margin="0,4,0,4" Foreground="{DynamicResource TextSecondaryBrush}" />
                     <TextBlock Margin="0,0,0,8" TextWrapping="Wrap" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}">
-                        <Run Text="Disallowed store entries (already flagged by Windows, reported as a count only): " /><Run Text="{Binding DisallowedCertificateCount}" />
+                        <Run Text="Disallowed store entries (already flagged by Windows, reported as a count only): " /><Run Text="{Binding DisallowedCertificateCount, Mode=OneWay}" />
                         <Run Text="   &quot;Installed recently&quot; isn't determinable via X509Certificate2 - not implemented, see class remarks." />
                     </TextBlock>
                     <DataGrid IsReadOnly="True" MaxHeight="220" ItemsSource="{Binding CertificateAnomalies}" AutoGenerateColumns="False">
@@ -1732,8 +1732,8 @@
                     <Border Padding="10,8" Margin="0,0,0,4" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6"
                             Visibility="{Binding RdpExposure, Converter={StaticResource NullToVisibilityConverter}}">
                         <StackPanel>
-                            <TextBlock TextWrapping="Wrap"><Run Text="Shadow (remote control) setting: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding RdpExposure.ShadowDescription}" /></TextBlock>
-                            <TextBlock Margin="0,2,0,0" TextWrapping="Wrap"><Run Text="Restricted Admin mode disabled: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding RdpExposure.RestrictedAdminDisabled}" /></TextBlock>
+                            <TextBlock TextWrapping="Wrap"><Run Text="Shadow (remote control) setting: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding RdpExposure.ShadowDescription, Mode=OneWay}" /></TextBlock>
+                            <TextBlock Margin="0,2,0,0" TextWrapping="Wrap"><Run Text="Restricted Admin mode disabled: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding RdpExposure.RestrictedAdminDisabled, Mode=OneWay}" /></TextBlock>
                             <TextBlock Margin="0,6,0,0" Text="{Binding RdpExposure.RemoteDesktopUsersMembers.Count, StringFormat=Remote Desktop Users members ({0}):}" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" />
                             <ItemsControl ItemsSource="{Binding RdpExposure.RemoteDesktopUsersMembers}">
                                 <ItemsControl.ItemTemplate>

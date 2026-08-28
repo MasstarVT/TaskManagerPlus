@@ -1,4 +1,4 @@
-<UserControl x:Class="TaskManagerPlus.Views.StabilityView"
+﻿<UserControl x:Class="TaskManagerPlus.Views.StabilityView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="clr-namespace:TaskManagerPlus.ViewModels"
@@ -261,7 +261,7 @@
                                                                 <StackPanel Grid.Column="1">
                                                                     <TextBlock FontSize="12" TextWrapping="Wrap">
                                                                         <Run Text="{Binding Timestamp, StringFormat={}{0:g}, Mode=OneWay}" FontWeight="SemiBold" />
-                                                                        <Run Text=" — " /><Run Text="{Binding Description}" />
+                                                                        <Run Text=" — " /><Run Text="{Binding Description, Mode=OneWay}" />
                                                                     </TextBlock>
                                                                     <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Text="{Binding Detail}"
                                                                                Visibility="{Binding Detail, Converter={StaticResource NullToVisibilityConverter}}" />
@@ -591,7 +591,7 @@
                                             </TextBlock>
                                             <TextBlock Text="{Binding Meaning}" FontSize="11.5" TextWrapping="Wrap" Margin="0,2,0,2" />
                                             <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap">
-                                                <Run Text="Next step: " FontWeight="SemiBold" /><Run Text="{Binding NextStep}" />
+                                                <Run Text="Next step: " FontWeight="SemiBold" /><Run Text="{Binding NextStep, Mode=OneWay}" />
                                             </TextBlock>
                                         </StackPanel>
                                         <StackPanel Grid.Column="1" HorizontalAlignment="Right" Margin="10,0,0,0">
@@ -648,8 +648,8 @@
                                                        FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
                                         </Grid>
                                         <TextBlock FontSize="11.5" TextWrapping="Wrap" Margin="0,4,0,0">
-                                            <Run Text="Preceded by: " /><Run Text="{Binding HardwareErrorDescription}" />
-                                            <Run Text=" - " /><Run Text="{Binding GapText}" />
+                                            <Run Text="Preceded by: " /><Run Text="{Binding HardwareErrorDescription, Mode=OneWay}" />
+                                            <Run Text=" - " /><Run Text="{Binding GapText, Mode=OneWay}" />
                                         </TextBlock>
                                         <TextBlock FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,2,0,0">
                                             <Run Text="{Binding HardwareErrorsInWindow, Mode=OneWay}" /><Run Text=" hardware error(s) found in the correlation window." />
@@ -683,7 +683,7 @@
                     <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,10" TextWrapping="Wrap"
                                 Visibility="{Binding IsReliabilityMonitorAvailable, Converter={StaticResource BoolToVisibilityConverter}}">
                         <Run Text="Windows index (last 7 days, avg): " />
-                        <Run Text="{Binding WindowsStabilityIndexRecent, StringFormat={}{0:0.0}/10, TargetNullValue='no data yet'}" FontWeight="SemiBold" />
+                        <Run Text="{Binding WindowsStabilityIndexRecent, StringFormat={}{0:0.0}/10, TargetNullValue='no data yet', Mode=OneWay}" FontWeight="SemiBold" />
                     </TextBlock>
                     <lvc:CartesianChart Series="{Binding DailyEventSeries}" XAxes="{Binding DailyEventXAxes}" YAxes="{Binding DailyEventYAxes}"
                                          Height="160" TooltipPosition="Top" LegendPosition="Bottom" Background="Transparent" />
@@ -786,8 +786,8 @@
                             <DataTemplate>
                                 <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,4">
                                     <Run Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}" />
-                                    <Run Text=" — driver: " /><Run Text="{Binding Driver, TargetNullValue='Unknown'}" />
-                                    <Run Text=" · app: " /><Run Text="{Binding Application, TargetNullValue='Unknown'}" />
+                                    <Run Text=" — driver: " /><Run Text="{Binding Driver, TargetNullValue='Unknown', Mode=OneWay}" />
+                                    <Run Text=" · app: " /><Run Text="{Binding Application, TargetNullValue='Unknown', Mode=OneWay}" />
                                 </TextBlock>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
@@ -1187,7 +1187,7 @@
                                                 <ColumnDefinition Width="Auto" />
                                             </Grid.ColumnDefinitions>
                                             <TextBlock Grid.Column="0" FontSize="12.5" FontWeight="SemiBold" TextTrimming="CharacterEllipsis">
-                                                <Run Text="{Binding Component}" /><Run Text=" · event " /><Run Text="{Binding EventId, Mode=OneWay}" />
+                                                <Run Text="{Binding Component, Mode=OneWay}" /><Run Text=" · event " /><Run Text="{Binding EventId, Mode=OneWay}" />
                                             </TextBlock>
                                             <Border Grid.Column="1" CornerRadius="10" Padding="8,2" Margin="0,0,10,0" VerticalAlignment="Center">
                                                 <Border.Style>
@@ -1240,14 +1240,14 @@
                                         <StackPanel Margin="0,0,0,6" Visibility="{Binding Pcie, Converter={StaticResource NullToVisibilityConverter}}">
                                             <TextBlock FontSize="11" FontWeight="SemiBold" Text="PCI Express (AER)" Margin="0,0,0,2" />
                                             <TextBlock FontSize="11" TextWrapping="Wrap">
-                                                <Run Text="{Binding Pcie.BdfText}" FontFamily="Consolas" />
+                                                <Run Text="{Binding Pcie.BdfText, Mode=OneWay}" FontFamily="Consolas" />
                                                 <Run Text=" · " />
-                                                <Run Text="{Binding Pcie.FriendlyDeviceName, TargetNullValue=device not matched to a currently-present device}" />
+                                                <Run Text="{Binding Pcie.FriendlyDeviceName, TargetNullValue=device not matched to a currently-present device, Mode=OneWay}" />
                                             </TextBlock>
                                             <TextBlock FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,2,0,0">
-                                                <Run Text="Vendor " /><Run Text="{Binding Pcie.VendorIdText}" />
-                                                <Run Text=" · Device " /><Run Text="{Binding Pcie.DeviceIdText}" />
-                                                <Run Text=" · " /><Run Text="{Binding Pcie.SeverityClassText}" />
+                                                <Run Text="Vendor " /><Run Text="{Binding Pcie.VendorIdText, Mode=OneWay}" />
+                                                <Run Text=" · Device " /><Run Text="{Binding Pcie.DeviceIdText, Mode=OneWay}" />
+                                                <Run Text=" · " /><Run Text="{Binding Pcie.SeverityClassText, Mode=OneWay}" />
                                             </TextBlock>
                                             <TextBlock FontSize="10.5" TextWrapping="Wrap" Margin="0,2,0,0" Foreground="{DynamicResource DangerBrush}"
                                                        Text="{Binding Pcie.StatusFlags, Converter={StaticResource StringListJoinConverter}}" />
@@ -1257,16 +1257,16 @@
                                         <StackPanel Visibility="{Binding MachineCheck, Converter={StaticResource NullToVisibilityConverter}}">
                                             <TextBlock FontSize="11" FontWeight="SemiBold" Text="Machine check" Margin="0,0,0,2" />
                                             <TextBlock FontSize="11" TextWrapping="Wrap">
-                                                <Run Text="Bank " /><Run Text="{Binding MachineCheck.BankText}" />
-                                                <Run Text=" · APIC ID " /><Run Text="{Binding MachineCheck.ApicIdText}" />
+                                                <Run Text="Bank " /><Run Text="{Binding MachineCheck.BankText, Mode=OneWay}" />
+                                                <Run Text=" · APIC ID " /><Run Text="{Binding MachineCheck.ApicIdText, Mode=OneWay}" />
                                             </TextBlock>
                                             <TextBlock FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,2,0,0">
-                                                <Run Text="MCi_STATUS: " /><Run Text="{Binding MachineCheck.RawMciStatusText}" />
+                                                <Run Text="MCi_STATUS: " /><Run Text="{Binding MachineCheck.RawMciStatusText, Mode=OneWay}" />
                                             </TextBlock>
                                             <TextBlock FontSize="10.5" TextWrapping="Wrap" Margin="0,2,0,0">
-                                                <Run Text="Uncorrected: " /><Run Text="{Binding MachineCheck.UncorrectedText}" />
-                                                <Run Text=" · Context corrupt: " /><Run Text="{Binding MachineCheck.ProcessorContextCorruptText}" />
-                                                <Run Text=" · Overflow: " /><Run Text="{Binding MachineCheck.OverflowText}" />
+                                                <Run Text="Uncorrected: " /><Run Text="{Binding MachineCheck.UncorrectedText, Mode=OneWay}" />
+                                                <Run Text=" · Context corrupt: " /><Run Text="{Binding MachineCheck.ProcessorContextCorruptText, Mode=OneWay}" />
+                                                <Run Text=" · Overflow: " /><Run Text="{Binding MachineCheck.OverflowText, Mode=OneWay}" />
                                             </TextBlock>
                                             <TextBlock Text="These flags are what the processor itself reported, read from the error record - not this app's interpretation of a symptom." FontSize="10" FontStyle="Italic"
                                                        Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,0" TextWrapping="Wrap" />
@@ -1326,8 +1326,8 @@
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Grid.Column="0" FontSize="11.5">
-                                        <Run Text="{Binding DimmHint, TargetNullValue=Unknown module}" />
-                                        <Run Text=" · " /><Run Text="{Binding PhysicalAddressHint, TargetNullValue=address not reported}" />
+                                        <Run Text="{Binding DimmHint, TargetNullValue=Unknown module, Mode=OneWay}" />
+                                        <Run Text=" · " /><Run Text="{Binding PhysicalAddressHint, TargetNullValue=address not reported, Mode=OneWay}" />
                                     </TextBlock>
                                     <TextBlock Grid.Column="1" Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}"
                                                FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
@@ -1365,9 +1365,9 @@
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Grid.Column="0" FontSize="11.5" TextTrimming="CharacterEllipsis">
-                                        <Run Text="{Binding DriverName, TargetNullValue=Unknown}" FontWeight="SemiBold" />
+                                        <Run Text="{Binding DriverName, TargetNullValue=Unknown, Mode=OneWay}" FontWeight="SemiBold" />
                                         <Run Text=" · event " /><Run Text="{Binding EventId, Mode=OneWay}" />
-                                        <Run Text=" · " /><Run Text="{Binding ProviderName}" />
+                                        <Run Text=" · " /><Run Text="{Binding ProviderName, Mode=OneWay}" />
                                     </TextBlock>
                                     <TextBlock Grid.Column="1" Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}"
                                                FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
@@ -1482,7 +1482,7 @@
                                         <!-- Round 15, item 36: 0x124's joined WHEA-Logger record. -->
                                         <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,4,0,0"
                                                    Visibility="{Binding WheaJoinText, Converter={StaticResource NullToVisibilityConverter}}">
-                                            <Run Text="Matching hardware error (WHEA): " /><Run Text="{Binding WheaJoinText}" />
+                                            <Run Text="Matching hardware error (WHEA): " /><Run Text="{Binding WheaJoinText, Mode=OneWay}" />
                                         </TextBlock>
 
                                         <!-- Round 15, item 35: pool-tag decode for 0xC2/0xC5. -->
@@ -1515,7 +1515,7 @@
                                              non-authoritative, per CLAUDE.md's "quick flag, not a verdict". -->
                                         <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,6,0,0"
                                                    Visibility="{Binding Decoded.Guidance, Converter={StaticResource NullToVisibilityConverter}}">
-                                            <Run Text="What usually causes this (not a diagnosis): " FontWeight="SemiBold" /><Run Text="{Binding Decoded.Guidance}" />
+                                            <Run Text="What usually causes this (not a diagnosis): " FontWeight="SemiBold" /><Run Text="{Binding Decoded.Guidance, Mode=OneWay}" />
                                         </TextBlock>
 
                                         <!-- Item 2: WER "full crash record" - the joined ReportArchive folder. -->
@@ -1641,19 +1641,19 @@
                                     </Expander.Header>
                                     <StackPanel Margin="0,6,0,0">
                                         <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap">
-                                            <Run Text="Format: " /><Run Text="{Binding Parsed.Format}" />
-                                            <Run Text=" · Type: " /><Run Text="{Binding Parsed.DumpTypeText}" />
-                                            <Run Text=" · Size: " /><Run Text="{Binding Parsed.SizeBytes, Converter={StaticResource BytesToReadableConverter}}" />
+                                            <Run Text="Format: " /><Run Text="{Binding Parsed.Format, Mode=OneWay}" />
+                                            <Run Text=" · Type: " /><Run Text="{Binding Parsed.DumpTypeText, Mode=OneWay}" />
+                                            <Run Text=" · Size: " /><Run Text="{Binding Parsed.SizeBytes, Converter={StaticResource BytesToReadableConverter}, Mode=OneWay}" />
                                         </TextBlock>
                                         <TextBlock Style="{StaticResource SubStat}" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" Margin="0,2,0,0">
-                                            <Run Text="{Binding IssueText}" />
+                                            <Run Text="{Binding IssueText, Mode=OneWay}" />
                                         </TextBlock>
                                         <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,2,0,0">
-                                            <Run Text="OS: " /><Run Text="{Binding Parsed.OsVersion, TargetNullValue='Unknown'}" />
-                                            <Run Text=" · Machine: " /><Run Text="{Binding Parsed.MachineType, TargetNullValue='Unknown'}" />
+                                            <Run Text="OS: " /><Run Text="{Binding Parsed.OsVersion, TargetNullValue='Unknown', Mode=OneWay}" />
+                                            <Run Text=" · Machine: " /><Run Text="{Binding Parsed.MachineType, TargetNullValue='Unknown', Mode=OneWay}" />
                                         </TextBlock>
                                         <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,2,0,0">
-                                            <Run Text="Bugcheck (from binary parse): " /><Run Text="{Binding Parsed.BugcheckCode, Converter={StaticResource BugcheckCodeToDescriptionConverter}, TargetNullValue='not found'}" />
+                                            <Run Text="Bugcheck (from binary parse): " /><Run Text="{Binding Parsed.BugcheckCode, Converter={StaticResource BugcheckCodeToDescriptionConverter}, TargetNullValue='not found', Mode=OneWay}" />
                                         </TextBlock>
 
                                         <!-- Round 15, item 29: per-code labelled parameters (item 30's NTSTATUS
@@ -1707,12 +1707,12 @@
                                              non-authoritative, per CLAUDE.md's "quick flag, not a verdict". -->
                                         <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,4,0,0"
                                                    Visibility="{Binding Decoded.Guidance, Converter={StaticResource NullToVisibilityConverter}}">
-                                            <Run Text="What usually causes this (not a diagnosis): " FontWeight="SemiBold" /><Run Text="{Binding Decoded.Guidance}" />
+                                            <Run Text="What usually causes this (not a diagnosis): " FontWeight="SemiBold" /><Run Text="{Binding Decoded.Guidance, Mode=OneWay}" />
                                         </TextBlock>
 
                                         <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,2,0,0">
-                                            <Run Text="Contents: " /><Run Text="{Binding ContentsText}" />
-                                            <Run Text=" (" /><Run Text="{Binding ModuleCountText}" /><Run Text=")" />
+                                            <Run Text="Contents: " /><Run Text="{Binding ContentsText, Mode=OneWay}" />
+                                            <Run Text=" (" /><Run Text="{Binding ModuleCountText, Mode=OneWay}" /><Run Text=")" />
                                         </TextBlock>
 
                                         <!-- Item 17/18: blame + dossier. -->
@@ -1723,18 +1723,18 @@
                                                 </Style>
                                             </StackPanel.Style>
                                             <TextBlock FontSize="12.5" FontWeight="SemiBold">
-                                                <Run Text="Probably blamed: " /><Run Text="{Binding Parsed.BlamedModule}" />
+                                                <Run Text="Probably blamed: " /><Run Text="{Binding Parsed.BlamedModule, Mode=OneWay}" />
                                             </TextBlock>
                                             <TextBlock Text="Quick flag, not a verdict — this is address-range matching, not a symbolised stack."
                                                        Style="{StaticResource SubStat}" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" Margin="0,2,0,4" />
                                             <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap">
-                                                <Run Text="Company: " /><Run Text="{Binding Parsed.BlamedModuleDossier.CompanyName, TargetNullValue='Unknown'}" />
-                                                <Run Text=" · Product: " /><Run Text="{Binding Parsed.BlamedModuleDossier.ProductName, TargetNullValue='Unknown'}" />
+                                                <Run Text="Company: " /><Run Text="{Binding Parsed.BlamedModuleDossier.CompanyName, TargetNullValue='Unknown', Mode=OneWay}" />
+                                                <Run Text=" · Product: " /><Run Text="{Binding Parsed.BlamedModuleDossier.ProductName, TargetNullValue='Unknown', Mode=OneWay}" />
                                             </TextBlock>
                                             <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap">
-                                                <Run Text="Version: " /><Run Text="{Binding Parsed.BlamedModuleDossier.FileVersion, TargetNullValue='Unknown'}" />
-                                                <Run Text=" · Date: " /><Run Text="{Binding Parsed.BlamedModuleDossier.FileDate, StringFormat={}{0:d}, TargetNullValue='Unknown'}" />
-                                                <Run Text=" · Signature: " /><Run Text="{Binding Parsed.BlamedModuleDossier.SignatureStatus}" />
+                                                <Run Text="Version: " /><Run Text="{Binding Parsed.BlamedModuleDossier.FileVersion, TargetNullValue='Unknown', Mode=OneWay}" />
+                                                <Run Text=" · Date: " /><Run Text="{Binding Parsed.BlamedModuleDossier.FileDate, StringFormat={}{0:d}, TargetNullValue='Unknown', Mode=OneWay}" />
+                                                <Run Text=" · Signature: " /><Run Text="{Binding Parsed.BlamedModuleDossier.SignatureStatus, Mode=OneWay}" />
                                             </TextBlock>
                                         </StackPanel>
 
@@ -1774,16 +1774,16 @@
                                                     </Style>
                                                 </StackPanel.Style>
                                                 <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap">
-                                                    <Run Text="MODULE_NAME: " /><Run Text="{Binding Analysis.ModuleName, TargetNullValue='(not found)'}" />
+                                                    <Run Text="MODULE_NAME: " /><Run Text="{Binding Analysis.ModuleName, TargetNullValue='(not found)', Mode=OneWay}" />
                                                 </TextBlock>
                                                 <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap">
-                                                    <Run Text="IMAGE_NAME: " /><Run Text="{Binding Analysis.ImageName, TargetNullValue='(not found)'}" />
+                                                    <Run Text="IMAGE_NAME: " /><Run Text="{Binding Analysis.ImageName, TargetNullValue='(not found)', Mode=OneWay}" />
                                                 </TextBlock>
                                                 <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap">
-                                                    <Run Text="FAILURE_BUCKET_ID: " /><Run Text="{Binding Analysis.FailureBucketId, TargetNullValue='(not found)'}" />
+                                                    <Run Text="FAILURE_BUCKET_ID: " /><Run Text="{Binding Analysis.FailureBucketId, TargetNullValue='(not found)', Mode=OneWay}" />
                                                 </TextBlock>
                                                 <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap">
-                                                    <Run Text="PROCESS_NAME: " /><Run Text="{Binding Analysis.ProcessName, TargetNullValue='(not found)'}" />
+                                                    <Run Text="PROCESS_NAME: " /><Run Text="{Binding Analysis.ProcessName, TargetNullValue='(not found)', Mode=OneWay}" />
                                                 </TextBlock>
                                                 <Expander Header="STACK_TEXT" IsExpanded="False" Margin="0,4,0,0">
                                                     <TextBlock Text="{Binding Analysis.StackText}" FontFamily="Consolas" FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0" />
@@ -1836,7 +1836,7 @@
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Grid.Column="0" Text="{Binding Name}" FontSize="12.5" FontWeight="SemiBold" />
                                     <TextBlock Grid.Column="1" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}">
-                                        <Run Text="in " /><Run Text="{Binding DumpCount}" /><Run Text=" dump(s)" />
+                                        <Run Text="in " /><Run Text="{Binding DumpCount, Mode=OneWay}" /><Run Text=" dump(s)" />
                                     </TextBlock>
                                 </Grid>
                             </DataTemplate>
@@ -1861,12 +1861,12 @@
                             </Style>
                         </StackPanel.Style>
                         <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,4,0,0">
-                            <Run Text="{Binding MemoryDump.FilePath}" />
+                            <Run Text="{Binding MemoryDump.FilePath, Mode=OneWay}" />
                         </TextBlock>
                         <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,2,0,8">
                             <Run Text="{Binding MemoryDump.SizeBytes, Converter={StaticResource BytesToReadableConverter}, Mode=OneWay}" />
                             <Run Text=" · " /><Run Text="{Binding MemoryDump.Timestamp, StringFormat={}{0:g}, Mode=OneWay}" />
-                            <Run Text=" · Bugcheck: " /><Run Text="{Binding MemoryDump.Parsed.BugcheckCode, Converter={StaticResource BugcheckCodeToDescriptionConverter}, TargetNullValue='not found'}" />
+                            <Run Text=" · Bugcheck: " /><Run Text="{Binding MemoryDump.Parsed.BugcheckCode, Converter={StaticResource BugcheckCodeToDescriptionConverter}, TargetNullValue='not found', Mode=OneWay}" />
                         </TextBlock>
                         <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
                             <Button Content="Open folder" Command="{Binding OpenMemoryDumpFolderCommand}" Padding="10,4" Margin="0,0,8,0" />
@@ -1991,7 +1991,7 @@
                                 </Style>
                             </Button.Style>
                             <TextBlock>
-                                <Run Text="Application hangs (" /><Run Text="{Binding WerHangReports.Count}" /><Run Text=")" />
+                                <Run Text="Application hangs (" /><Run Text="{Binding WerHangReports.Count, Mode=OneWay}" /><Run Text=")" />
                             </TextBlock>
                         </Button>
                     </StackPanel>
@@ -2021,11 +2021,11 @@
                                                 </Grid.ColumnDefinitions>
                                                 <StackPanel Grid.Column="0">
                                                     <TextBlock FontSize="12.5" FontWeight="SemiBold" TextTrimming="CharacterEllipsis">
-                                                        <Run Text="{Binding AppName}" /><Run Text=" — " /><Run Text="{Binding ModName}" />
+                                                        <Run Text="{Binding AppName, Mode=OneWay}" /><Run Text=" — " /><Run Text="{Binding ModName, Mode=OneWay}" />
                                                     </TextBlock>
                                                     <TextBlock Style="{StaticResource SubStat}">
                                                         <Run Text="Last seen " /><Run Text="{Binding LastSeen, StringFormat={}{0:g}, Mode=OneWay}" />
-                                                        <Run Text=" · " /><Run Text="{Binding BucketKindText}" />
+                                                        <Run Text=" · " /><Run Text="{Binding BucketKindText, Mode=OneWay}" />
                                                     </TextBlock>
                                                 </StackPanel>
                                                 <Border Grid.Column="1" Background="{DynamicResource DangerMutedBrush}" CornerRadius="10" Padding="8,2" VerticalAlignment="Center">
@@ -2051,14 +2051,14 @@
                                                                 <!-- Item 40: Source column. -->
                                                                 <TextBlock FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}">
                                                                     <Run Text="{Binding Report.ReportTimestamp, StringFormat={}{0:g}, Mode=OneWay}" />
-                                                                    <Run Text=" · " /><Run Text="{Binding Report.SourceText}" />
-                                                                    <Run Text=" · " /><Run Text="{Binding Report.ExceptionCode, TargetNullValue='Unknown'}" />
-                                                                    <Run Text=" @ " /><Run Text="{Binding Report.Offset, TargetNullValue='?'}" />
+                                                                    <Run Text=" · " /><Run Text="{Binding Report.SourceText, Mode=OneWay}" />
+                                                                    <Run Text=" · " /><Run Text="{Binding Report.ExceptionCode, TargetNullValue='Unknown', Mode=OneWay}" />
+                                                                    <Run Text=" @ " /><Run Text="{Binding Report.Offset, TargetNullValue='?', Mode=OneWay}" />
                                                                 </TextBlock>
                                                                 <!-- Item 47: joined Application-log event message - the default row shape. -->
                                                                 <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,2,0,0"
                                                                            Visibility="{Binding Report.JoinedEventMessage, Converter={StaticResource NullToVisibilityConverter}}">
-                                                                    <Run Text="Application-log event: " /><Run Text="{Binding Report.JoinedEventMessage}" />
+                                                                    <Run Text="Application-log event: " /><Run Text="{Binding Report.JoinedEventMessage, Mode=OneWay}" />
                                                                 </TextBlock>
                                                                 <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,2,0,0">
                                                                     <Run Text="Attached: " /><Run Text="{Binding Report.AttachedFiles, Converter={StaticResource StringListJoinConverter}, Mode=OneWay}" />
@@ -2118,12 +2118,12 @@
                                                       ToolTip="Select for a future support-bundle export" />
                                             <StackPanel Grid.Column="1">
                                                 <TextBlock FontSize="12.5" FontWeight="SemiBold" TextTrimming="CharacterEllipsis">
-                                                    <Run Text="{Binding Report.AppName, TargetNullValue='Unknown'}" />
+                                                    <Run Text="{Binding Report.AppName, TargetNullValue='Unknown', Mode=OneWay}" />
                                                 </TextBlock>
                                                 <TextBlock FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}">
                                                     <Run Text="{Binding Report.ReportTimestamp, StringFormat={}{0:g}, Mode=OneWay}" />
-                                                    <Run Text=" · " /><Run Text="{Binding Report.SourceText}" />
-                                                    <Run Text=" · " /><Run Text="{Binding Report.EventType, TargetNullValue='Unknown'}" />
+                                                    <Run Text=" · " /><Run Text="{Binding Report.SourceText, Mode=OneWay}" />
+                                                    <Run Text=" · " /><Run Text="{Binding Report.EventType, TargetNullValue='Unknown', Mode=OneWay}" />
                                                 </TextBlock>
                                                 <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
                                                     <Button Content="Copy crash signature" Command="{Binding CopySignatureCommand}" Padding="8,3" Margin="0,0,6,0" FontSize="11" />
@@ -2370,9 +2370,9 @@
 
                             <!-- Item 75: red/amber/green free-space line. -->
                             <TextBlock TextWrapping="Wrap" FontSize="12.5" Margin="0,0,0,8">
-                                <Run Text="Dump target: " /><Run Text="{Binding CrashDumpConfig.DumpTargetPath, TargetNullValue='Unknown'}" FontFamily="Consolas" />
+                                <Run Text="Dump target: " /><Run Text="{Binding CrashDumpConfig.DumpTargetPath, TargetNullValue='Unknown', Mode=OneWay}" FontFamily="Consolas" />
                                 <LineBreak />
-                                <Run Text="{Binding CrashDumpConfig.DumpTargetHealthText}" FontWeight="SemiBold">
+                                <Run Text="{Binding CrashDumpConfig.DumpTargetHealthText, Mode=OneWay}" FontWeight="SemiBold">
                                     <Run.Style>
                                         <Style TargetType="Run">
                                             <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
@@ -2924,7 +2924,7 @@
                                     </Grid.ColumnDefinitions>
                                     <StackPanel Grid.Column="0">
                                         <TextBlock FontSize="12.5" FontWeight="SemiBold">
-                                            <Run Text="{Binding Severity}" /><Run Text=" — " /><Run Text="{Binding Source}" />
+                                            <Run Text="{Binding Severity, Mode=OneWay}" /><Run Text=" — " /><Run Text="{Binding Source, Mode=OneWay}" />
                                         </TextBlock>
                                         <TextBlock Style="{StaticResource SubStat}">
                                             <Run Text="Last seen " /><Run Text="{Binding LastSeen, StringFormat={}{0:g}, Mode=OneWay}" />
@@ -4293,7 +4293,7 @@
                                                 <ColumnDefinition Width="Auto" />
                                             </Grid.ColumnDefinitions>
                                             <TextBlock Grid.Column="0" FontSize="12.5" FontWeight="SemiBold" TextTrimming="CharacterEllipsis">
-                                                <Run Text="{Binding Component}" /><Run Text=" · event " /><Run Text="{Binding EventId, Mode=OneWay}" />
+                                                <Run Text="{Binding Component, Mode=OneWay}" /><Run Text=" · event " /><Run Text="{Binding EventId, Mode=OneWay}" />
                                             </TextBlock>
                                             <Border Grid.Column="1" CornerRadius="10" Padding="8,2" Margin="0,0,10,0" VerticalAlignment="Center">
                                                 <Border.Style>
@@ -4346,14 +4346,14 @@
                                         <StackPanel Margin="0,0,0,6" Visibility="{Binding Pcie, Converter={StaticResource NullToVisibilityConverter}}">
                                             <TextBlock FontSize="11" FontWeight="SemiBold" Text="PCI Express (AER)" Margin="0,0,0,2" />
                                             <TextBlock FontSize="11" TextWrapping="Wrap">
-                                                <Run Text="{Binding Pcie.BdfText}" FontFamily="Consolas" />
+                                                <Run Text="{Binding Pcie.BdfText, Mode=OneWay}" FontFamily="Consolas" />
                                                 <Run Text=" · " />
-                                                <Run Text="{Binding Pcie.FriendlyDeviceName, TargetNullValue=device not matched to a currently-present device}" />
+                                                <Run Text="{Binding Pcie.FriendlyDeviceName, TargetNullValue=device not matched to a currently-present device, Mode=OneWay}" />
                                             </TextBlock>
                                             <TextBlock FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,2,0,0">
-                                                <Run Text="Vendor " /><Run Text="{Binding Pcie.VendorIdText}" />
-                                                <Run Text=" · Device " /><Run Text="{Binding Pcie.DeviceIdText}" />
-                                                <Run Text=" · " /><Run Text="{Binding Pcie.SeverityClassText}" />
+                                                <Run Text="Vendor " /><Run Text="{Binding Pcie.VendorIdText, Mode=OneWay}" />
+                                                <Run Text=" · Device " /><Run Text="{Binding Pcie.DeviceIdText, Mode=OneWay}" />
+                                                <Run Text=" · " /><Run Text="{Binding Pcie.SeverityClassText, Mode=OneWay}" />
                                             </TextBlock>
                                             <TextBlock FontSize="10.5" TextWrapping="Wrap" Margin="0,2,0,0" Foreground="{DynamicResource DangerBrush}"
                                                        Text="{Binding Pcie.StatusFlags, Converter={StaticResource StringListJoinConverter}}" />
@@ -4363,16 +4363,16 @@
                                         <StackPanel Visibility="{Binding MachineCheck, Converter={StaticResource NullToVisibilityConverter}}">
                                             <TextBlock FontSize="11" FontWeight="SemiBold" Text="Machine check" Margin="0,0,0,2" />
                                             <TextBlock FontSize="11" TextWrapping="Wrap">
-                                                <Run Text="Bank " /><Run Text="{Binding MachineCheck.BankText}" />
-                                                <Run Text=" · APIC ID " /><Run Text="{Binding MachineCheck.ApicIdText}" />
+                                                <Run Text="Bank " /><Run Text="{Binding MachineCheck.BankText, Mode=OneWay}" />
+                                                <Run Text=" · APIC ID " /><Run Text="{Binding MachineCheck.ApicIdText, Mode=OneWay}" />
                                             </TextBlock>
                                             <TextBlock FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,2,0,0">
-                                                <Run Text="MCi_STATUS: " /><Run Text="{Binding MachineCheck.RawMciStatusText}" />
+                                                <Run Text="MCi_STATUS: " /><Run Text="{Binding MachineCheck.RawMciStatusText, Mode=OneWay}" />
                                             </TextBlock>
                                             <TextBlock FontSize="10.5" TextWrapping="Wrap" Margin="0,2,0,0">
-                                                <Run Text="Uncorrected: " /><Run Text="{Binding MachineCheck.UncorrectedText}" />
-                                                <Run Text=" · Context corrupt: " /><Run Text="{Binding MachineCheck.ProcessorContextCorruptText}" />
-                                                <Run Text=" · Overflow: " /><Run Text="{Binding MachineCheck.OverflowText}" />
+                                                <Run Text="Uncorrected: " /><Run Text="{Binding MachineCheck.UncorrectedText, Mode=OneWay}" />
+                                                <Run Text=" · Context corrupt: " /><Run Text="{Binding MachineCheck.ProcessorContextCorruptText, Mode=OneWay}" />
+                                                <Run Text=" · Overflow: " /><Run Text="{Binding MachineCheck.OverflowText, Mode=OneWay}" />
                                             </TextBlock>
                                             <TextBlock Text="These flags are what the processor itself reported, read from the error record - not this app's interpretation of a symptom." FontSize="10" FontStyle="Italic"
                                                        Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,0" TextWrapping="Wrap" />
@@ -4432,8 +4432,8 @@
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Grid.Column="0" FontSize="11.5">
-                                        <Run Text="{Binding DimmHint, TargetNullValue=Unknown module}" />
-                                        <Run Text=" · " /><Run Text="{Binding PhysicalAddressHint, TargetNullValue=address not reported}" />
+                                        <Run Text="{Binding DimmHint, TargetNullValue=Unknown module, Mode=OneWay}" />
+                                        <Run Text=" · " /><Run Text="{Binding PhysicalAddressHint, TargetNullValue=address not reported, Mode=OneWay}" />
                                     </TextBlock>
                                     <TextBlock Grid.Column="1" Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}"
                                                FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
@@ -4471,9 +4471,9 @@
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Grid.Column="0" FontSize="11.5" TextTrimming="CharacterEllipsis">
-                                        <Run Text="{Binding DriverName, TargetNullValue=Unknown}" FontWeight="SemiBold" />
+                                        <Run Text="{Binding DriverName, TargetNullValue=Unknown, Mode=OneWay}" FontWeight="SemiBold" />
                                         <Run Text=" · event " /><Run Text="{Binding EventId, Mode=OneWay}" />
-                                        <Run Text=" · " /><Run Text="{Binding ProviderName}" />
+                                        <Run Text=" · " /><Run Text="{Binding ProviderName, Mode=OneWay}" />
                                     </TextBlock>
                                     <TextBlock Grid.Column="1" Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}"
                                                FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
@@ -4594,7 +4594,7 @@
                                                 <ColumnDefinition Width="Auto" />
                                             </Grid.ColumnDefinitions>
                                             <TextBlock Grid.Column="0" FontSize="12.5" FontWeight="SemiBold" Foreground="{DynamicResource DangerBrush}">
-                                                <Run Text="{Binding ProviderName}" /><Run Text=" · event " /><Run Text="{Binding EventId, Mode=OneWay}" />
+                                                <Run Text="{Binding ProviderName, Mode=OneWay}" /><Run Text=" · event " /><Run Text="{Binding EventId, Mode=OneWay}" />
                                             </TextBlock>
                                             <TextBlock Grid.Column="1" Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}"
                                                        FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
@@ -4652,7 +4652,7 @@
                                                             <ColumnDefinition Width="Auto" />
                                                         </Grid.ColumnDefinitions>
                                                         <TextBlock Grid.Column="0" FontSize="11.5">
-                                                            <Run Text="{Binding ProcessName}" /><Run Text=" · PID " /><Run Text="{Binding Pid, Mode=OneWay}" />
+                                                            <Run Text="{Binding ProcessName, Mode=OneWay}" /><Run Text=" · PID " /><Run Text="{Binding Pid, Mode=OneWay}" />
                                                         </TextBlock>
                                                         <TextBlock Grid.Column="1" Text="{Binding Bytes, Converter={StaticResource BytesToReadableConverter}}"
                                                                    FontSize="11.5" FontWeight="SemiBold" />
@@ -4752,7 +4752,7 @@
                                     <StackPanel Grid.Column="1">
                                         <TextBlock FontSize="12">
                                             <Run Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}" />
-                                            <Run Text=" — " /><Run Text="{Binding ErrorSourceText}" />
+                                            <Run Text=" — " /><Run Text="{Binding ErrorSourceText, Mode=OneWay}" />
                                         </TextBlock>
                                         <!-- #636: raw bank number - machine-check events (1/17) only, null/hidden for
                                              platform/PCIe/memory events. -->
@@ -4771,7 +4771,7 @@
                                                     </Style.Triggers>
                                                 </Style>
                                             </TextBlock.Style>
-                                            <Run Text="Device: " /><Run Text="{Binding ResolvedDeviceName}" />
+                                            <Run Text="Device: " /><Run Text="{Binding ResolvedDeviceName, Mode=OneWay}" />
                                         </TextBlock>
                                         <!-- #640: plain-English machine-check bank/status hint - quick interpretation, not a verdict. -->
                                         <TextBlock Style="{StaticResource SubStat}" FontStyle="Italic" TextWrapping="Wrap"
@@ -4972,8 +4972,8 @@
                                     <StackPanel>
                                         <TextBlock FontSize="12.5" FontWeight="SemiBold" Text="{Binding ForVolume}" />
                                         <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap">
-                                            <Run Text="Used " /><Run Text="{Binding UsedSpace}" /><Run Text=" of " /><Run Text="{Binding MaximumSpace}" />
-                                            <Run Text=" max (allocated " /><Run Text="{Binding AllocatedSpace}" /><Run Text=")" />
+                                            <Run Text="Used " /><Run Text="{Binding UsedSpace, Mode=OneWay}" /><Run Text=" of " /><Run Text="{Binding MaximumSpace, Mode=OneWay}" />
+                                            <Run Text=" max (allocated " /><Run Text="{Binding AllocatedSpace, Mode=OneWay}" /><Run Text=")" />
                                         </TextBlock>
                                     </StackPanel>
                                 </Border>

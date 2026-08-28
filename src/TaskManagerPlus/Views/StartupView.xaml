@@ -1,4 +1,4 @@
-<UserControl x:Class="TaskManagerPlus.Views.StartupView"
+﻿<UserControl x:Class="TaskManagerPlus.Views.StartupView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="clr-namespace:TaskManagerPlus.ViewModels"
@@ -84,9 +84,9 @@
                             <DataTemplate>
                                 <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,6" Margin="0,0,8,8">
                                     <TextBlock FontSize="11.5">
-                                        <Run Text="{Binding Name}" FontWeight="SemiBold" />
-                                        <Run Text=" — " /><Run Text="{Binding Category}" Foreground="{DynamicResource TextSecondaryBrush}" />
-                                        <Run Text=": " /><Run Text="{Binding ImpactMs, Converter={StaticResource BootMsToSecondsConverter}}" />
+                                        <Run Text="{Binding Name, Mode=OneWay}" FontWeight="SemiBold" />
+                                        <Run Text=" — " /><Run Text="{Binding Category, Mode=OneWay}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        <Run Text=": " /><Run Text="{Binding ImpactMs, Converter={StaticResource BootMsToSecondsConverter}, Mode=OneWay}" />
                                     </TextBlock>
                                 </Border>
                             </DataTemplate>
@@ -387,8 +387,8 @@
                             <Rectangle Width="2" Fill="{DynamicResource DangerBrush}" HorizontalAlignment="Left" Margin="225,0,0,0" ToolTip="~10s more healthy-boot target for post-boot (30s cumulative)" />
                         </Grid>
                         <TextBlock Style="{StaticResource SubStat}" Margin="0,4,0,0" TextWrapping="Wrap">
-                            <Run Text="Main path " /><Run Text="{Binding BootBreakdown.MainPathBootMs, Converter={StaticResource BootMsToSecondsConverter}}" FontWeight="SemiBold" />
-                            <Run Text=" · Post-boot " /><Run Text="{Binding BootBreakdown.PostBootMs, Converter={StaticResource BootMsToSecondsConverter}}" FontWeight="SemiBold" />
+                            <Run Text="Main path " /><Run Text="{Binding BootBreakdown.MainPathBootMs, Converter={StaticResource BootMsToSecondsConverter}, Mode=OneWay}" FontWeight="SemiBold" />
+                            <Run Text=" · Post-boot " /><Run Text="{Binding BootBreakdown.PostBootMs, Converter={StaticResource BootMsToSecondsConverter}, Mode=OneWay}" FontWeight="SemiBold" />
                             <Run Text=" · red lines mark Microsoft's healthy-boot reference" />
                         </TextBlock>
                     </StackPanel>
@@ -401,9 +401,9 @@
                             <DataTemplate>
                                 <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,6" Margin="0,0,8,8">
                                     <TextBlock FontSize="11.5">
-                                        <Run Text="{Binding Label}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        <Run Text="{Binding Label, Mode=OneWay}" Foreground="{DynamicResource TextSecondaryBrush}" />
                                         <Run Text=": " />
-                                        <Run Text="{Binding Milliseconds, Converter={StaticResource BootMsToSecondsConverter}}" FontWeight="SemiBold" />
+                                        <Run Text="{Binding Milliseconds, Converter={StaticResource BootMsToSecondsConverter}, Mode=OneWay}" FontWeight="SemiBold" />
                                     </TextBlock>
                                 </Border>
                             </DataTemplate>
@@ -435,8 +435,8 @@
                                         <StackPanel>
                                             <TextBlock FontSize="11.5" FontWeight="SemiBold" Text="{Binding Name}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Name}" />
                                             <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}">
-                                                <Run Text="{Binding Category}" />
-                                                <Run Text=" · " /><Run Text="{Binding ImpactMs, Converter={StaticResource BootMsToSecondsConverter}}" />
+                                                <Run Text="{Binding Category, Mode=OneWay}" />
+                                                <Run Text=" · " /><Run Text="{Binding ImpactMs, Converter={StaticResource BootMsToSecondsConverter}, Mode=OneWay}" />
                                             </TextBlock>
                                         </StackPanel>
                                     </Border>
@@ -511,8 +511,8 @@
                                 <DataTemplate>
                                     <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,6" Margin="0,0,8,8">
                                         <TextBlock FontSize="11.5">
-                                            <Run Text="{Binding SubscriberName}" FontWeight="SemiBold" />
-                                            <Run Text=": " /><Run Text="{Binding DurationMs, Converter={StaticResource BootMsToSecondsConverter}}" />
+                                            <Run Text="{Binding SubscriberName, Mode=OneWay}" FontWeight="SemiBold" />
+                                            <Run Text=": " /><Run Text="{Binding DurationMs, Converter={StaticResource BootMsToSecondsConverter}, Mode=OneWay}" />
                                         </TextBlock>
                                     </Border>
                                 </DataTemplate>
@@ -660,8 +660,8 @@
                                 <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,8" Margin="0,0,0,6">
                                     <StackPanel>
                                         <TextBlock FontSize="12.5" FontWeight="SemiBold">
-                                            <Run Text="{Binding Category}" /><Run Text="  " />
-                                            <Run Text="{Binding StatusText}">
+                                            <Run Text="{Binding Category, Mode=OneWay}" /><Run Text="  " />
+                                            <Run Text="{Binding StatusText, Mode=OneWay}">
                                                 <Run.Style>
                                                     <Style TargetType="Run">
                                                         <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
@@ -676,8 +676,8 @@
                                             </Run>
                                         </TextBlock>
                                         <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap">
-                                            <Run Text="{Binding Path}" />
-                                            <Run Text=" · " /><Run Text="{Binding LastModifiedUtc, StringFormat={}{0:g}, TargetNullValue=Unknown}" />
+                                            <Run Text="{Binding Path, Mode=OneWay}" />
+                                            <Run Text=" · " /><Run Text="{Binding LastModifiedUtc, StringFormat={}{0:g}, TargetNullValue=Unknown, Mode=OneWay}" />
                                         </TextBlock>
                                     </StackPanel>
                                 </Border>
@@ -727,7 +727,7 @@
                                     <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,6" Margin="0,0,8,8">
                                         <TextBlock FontSize="11.5">
                                             <Run Text="{Binding LoadStart, StringFormat={}{0:g}, Mode=OneWay}" Foreground="{DynamicResource TextSecondaryBrush}" />
-                                            <Run Text=": " /><Run Text="{Binding DurationMs, Converter={StaticResource BootMsToSecondsConverter}}" FontWeight="SemiBold" />
+                                            <Run Text=": " /><Run Text="{Binding DurationMs, Converter={StaticResource BootMsToSecondsConverter}, Mode=OneWay}" FontWeight="SemiBold" />
                                         </TextBlock>
                                     </Border>
                                 </DataTemplate>
@@ -759,8 +759,8 @@
                                                 <ColumnDefinition Width="Auto" />
                                             </Grid.ColumnDefinitions>
                                             <TextBlock Grid.Column="0" FontSize="12" TextTrimming="CharacterEllipsis">
-                                                <Run Text="{Binding ProfileImagePath, TargetNullValue=(unknown path)}" FontWeight="SemiBold" />
-                                                <Run Text=" — " /><Run Text="{Binding Sid}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                                <Run Text="{Binding ProfileImagePath, TargetNullValue=(unknown path), Mode=OneWay}" FontWeight="SemiBold" />
+                                                <Run Text=" — " /><Run Text="{Binding Sid, Mode=OneWay}" Foreground="{DynamicResource TextSecondaryBrush}" />
                                             </TextBlock>
                                             <Button Grid.Column="1" Padding="8,2" FontSize="11" Margin="8,0,0,0"
                                                     Command="{Binding DataContext.MeasureProfileSizeCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
@@ -790,7 +790,7 @@
                                                     </Style.Triggers>
                                                 </Style>
                                             </TextBlock.Style>
-                                            <Run Text="{Binding FlagSummary}" />
+                                            <Run Text="{Binding FlagSummary, Mode=OneWay}" />
                                         </TextBlock>
                                         <TextBlock FontSize="11" TextWrapping="Wrap" Margin="0,2,0,0" Foreground="{DynamicResource TextSecondaryBrush}">
                                             <TextBlock.Style>
@@ -803,7 +803,7 @@
                                                     </Style.Triggers>
                                                 </Style>
                                             </TextBlock.Style>
-                                            <Run Text="{Binding SizeInfo.SummaryText}" />
+                                            <Run Text="{Binding SizeInfo.SummaryText, Mode=OneWay}" />
                                         </TextBlock>
                                     </StackPanel>
                                 </Border>
@@ -829,8 +829,8 @@
                                 <DataTemplate>
                                     <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,6" Margin="0,0,0,6">
                                         <TextBlock FontSize="11.5" TextWrapping="Wrap">
-                                            <Run Text="{Binding Sid}" FontWeight="SemiBold" />
-                                            <Run Text=" → " /><Run Text="{Binding CentralProfile}" />
+                                            <Run Text="{Binding Sid, Mode=OneWay}" FontWeight="SemiBold" />
+                                            <Run Text=" → " /><Run Text="{Binding CentralProfile, Mode=OneWay}" />
                                         </TextBlock>
                                     </Border>
                                 </DataTemplate>
@@ -859,7 +859,7 @@
                                     <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,8" Margin="0,0,0,6">
                                         <StackPanel>
                                             <TextBlock FontSize="12" FontWeight="SemiBold">
-                                                <Run Text="{Binding CategoryText}" /><Run Text=" (" /><Run Text="{Binding EventId}" /><Run Text=")" />
+                                                <Run Text="{Binding CategoryText, Mode=OneWay}" /><Run Text=" (" /><Run Text="{Binding EventId, Mode=OneWay}" /><Run Text=")" />
                                                 <Run Text="  " /><Run Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}" Foreground="{DynamicResource TextSecondaryBrush}" FontWeight="Normal" />
                                             </TextBlock>
                                             <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Text="{Binding Message}" />
@@ -941,11 +941,11 @@
                                 <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,8" Margin="0,0,0,6">
                                     <StackPanel>
                                         <TextBlock FontSize="12.5" FontWeight="SemiBold">
-                                            <Run Text="{Binding Name}" /><Run Text="  " /><Run Text="{Binding CategoryText}" Foreground="{DynamicResource DangerBrush}" FontWeight="Normal" />
+                                            <Run Text="{Binding Name, Mode=OneWay}" /><Run Text="  " /><Run Text="{Binding CategoryText, Mode=OneWay}" Foreground="{DynamicResource DangerBrush}" FontWeight="Normal" />
                                         </TextBlock>
                                         <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap">
                                             <Run Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}" />
-                                            <Run Text=" · " /><Run Text="{Binding Detail}" />
+                                            <Run Text=" · " /><Run Text="{Binding Detail, Mode=OneWay}" />
                                         </TextBlock>
                                     </StackPanel>
                                 </Border>
@@ -971,7 +971,7 @@
                 <StackPanel>
                     <TextBlock Text="Boot-time tasks (BootExecute)" Style="{StaticResource CardTitle}" Margin="0,0,0,4" />
                     <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap">
-                        <Run Text="Raw value: " /><Run Text="{Binding BootExecuteInfo.RawValueText}" FontFamily="Consolas" />
+                        <Run Text="Raw value: " /><Run Text="{Binding BootExecuteInfo.RawValueText, Mode=OneWay}" FontFamily="Consolas" />
                     </TextBlock>
                     <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" FontSize="12">
                         <TextBlock.Style>
@@ -984,7 +984,7 @@
                                 </Style.Triggers>
                             </Style>
                         </TextBlock.Style>
-                        <Run Text="{Binding BootExecuteInfo.Explanation}" />
+                        <Run Text="{Binding BootExecuteInfo.Explanation, Mode=OneWay}" />
                     </TextBlock>
                 </StackPanel>
             </Border>
@@ -1072,8 +1072,8 @@
                                 <DataTemplate>
                                     <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,6" Margin="0,0,8,8" MaxWidth="320">
                                         <TextBlock FontSize="11.5" TextWrapping="Wrap">
-                                            <Run Text="{Binding Order}" Foreground="{DynamicResource TextSecondaryBrush}" />
-                                            <Run Text=". " /><Run Text="{Binding DriverPath}" />
+                                            <Run Text="{Binding Order, Mode=OneWay}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                            <Run Text=". " /><Run Text="{Binding DriverPath, Mode=OneWay}" />
                                         </TextBlock>
                                     </Border>
                                 </DataTemplate>
@@ -1128,7 +1128,7 @@
                                 </Style.Triggers>
                             </Style>
                         </TextBlock.Style>
-                        <Run Text="Last collected trace: " /><Run Text="{Binding LastEtlPath}" />
+                        <Run Text="Last collected trace: " /><Run Text="{Binding LastEtlPath, Mode=OneWay}" />
                     </TextBlock>
                 </StackPanel>
             </Border>
@@ -1162,7 +1162,7 @@
                                         </Grid.ColumnDefinitions>
                                         <StackPanel Grid.Column="0">
                                             <TextBlock FontSize="12.5" FontWeight="SemiBold" TextTrimming="CharacterEllipsis">
-                                                <Run Text="{Binding Name}" /><Run Text="  " /><Run Text="{Binding Category}" Foreground="{DynamicResource TextSecondaryBrush}" FontWeight="Normal" />
+                                                <Run Text="{Binding Name, Mode=OneWay}" /><Run Text="  " /><Run Text="{Binding Category, Mode=OneWay}" Foreground="{DynamicResource TextSecondaryBrush}" FontWeight="Normal" />
                                             </TextBlock>
                                             <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Text="{Binding AppearedText}" />
                                         </StackPanel>
@@ -1198,7 +1198,7 @@
                                 </Style.Triggers>
                             </Style>
                         </TextBlock.Style>
-                        <Run Text="Boot configuration data isn't available: " /><Run Text="{Binding BcdUnavailableReason}" />
+                        <Run Text="Boot configuration data isn't available: " /><Run Text="{Binding BcdUnavailableReason, Mode=OneWay}" />
                     </TextBlock>
 
                     <StackPanel>
@@ -1236,8 +1236,8 @@
                                         <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,8" Margin="0,0,0,6">
                                             <StackPanel>
                                                 <TextBlock FontSize="12.5" FontWeight="SemiBold">
-                                                    <Run Text="{Binding OptionName}" /><Run Text="  " />
-                                                    <Run Text="{Binding RawValue}" Foreground="{DynamicResource TextSecondaryBrush}" FontWeight="Normal" />
+                                                    <Run Text="{Binding OptionName, Mode=OneWay}" /><Run Text="  " />
+                                                    <Run Text="{Binding RawValue, Mode=OneWay}" Foreground="{DynamicResource TextSecondaryBrush}" FontWeight="Normal" />
                                                 </TextBlock>
                                                 <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap"
                                                            Text="{Binding ObservedEffect}" Margin="0,2,0,0" />
@@ -1273,8 +1273,8 @@
                                 </Border.Style>
                                 <StackPanel>
                                     <TextBlock FontSize="11.5" TextWrapping="Wrap">
-                                        <Run Text="bootstatuspolicy: " FontWeight="SemiBold" /><Run Text="{Binding BootStatusPolicy.PolicyText}" />
-                                        <Run Text="   ·   recoveryenabled: " FontWeight="SemiBold" /><Run Text="{Binding BootStatusPolicy.RecoveryText}" />
+                                        <Run Text="bootstatuspolicy: " FontWeight="SemiBold" /><Run Text="{Binding BootStatusPolicy.PolicyText, Mode=OneWay}" />
+                                        <Run Text="   ·   recoveryenabled: " FontWeight="SemiBold" /><Run Text="{Binding BootStatusPolicy.RecoveryText, Mode=OneWay}" />
                                     </TextBlock>
                                     <TextBlock FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0">
                                         <TextBlock.Style>
@@ -1287,7 +1287,7 @@
                                                 </Style.Triggers>
                                             </Style>
                                         </TextBlock.Style>
-                                        <Run Text="{Binding BootStatusPolicy.SummaryText}" />
+                                        <Run Text="{Binding BootStatusPolicy.SummaryText, Mode=OneWay}" />
                                     </TextBlock>
                                     <Button Content="Restore to Windows defaults" HorizontalAlignment="Left" Margin="0,8,0,0"
                                             Command="{Binding RestoreBootStatusPolicyCommand}">
@@ -1319,9 +1319,9 @@
                             </StackPanel.Style>
                             <TextBlock Text="Boot menu" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
                             <TextBlock FontSize="11.5" TextWrapping="Wrap" Margin="0,0,0,8">
-                                <Run Text="Show boot menu: " FontWeight="SemiBold" /><Run Text="{Binding BootMenuInfo.DisplayBootMenuText}" />
-                                <Run Text="   ·   Timeout: " FontWeight="SemiBold" /><Run Text="{Binding BootMenuInfo.TimeoutText}" />
-                                <Run Text="   ·   Default: " FontWeight="SemiBold" /><Run Text="{Binding BootMenuInfo.DefaultDescription}" />
+                                <Run Text="Show boot menu: " FontWeight="SemiBold" /><Run Text="{Binding BootMenuInfo.DisplayBootMenuText, Mode=OneWay}" />
+                                <Run Text="   ·   Timeout: " FontWeight="SemiBold" /><Run Text="{Binding BootMenuInfo.TimeoutText, Mode=OneWay}" />
+                                <Run Text="   ·   Default: " FontWeight="SemiBold" /><Run Text="{Binding BootMenuInfo.DefaultDescription, Mode=OneWay}" />
                             </TextBlock>
                             <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
                                 <TextBox Width="70" Text="{Binding BootTimeoutInput, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,8,0" ToolTip="Boot menu timeout, in seconds" />
@@ -1420,8 +1420,8 @@
                                                         </Style.Triggers>
                                                     </Style>
                                                 </TextBlock.Style>
-                                                <Run Text="{Binding Description}" FontWeight="SemiBold" />
-                                                <Run Text=" — " /><Run Text="{Binding Identifier}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                                <Run Text="{Binding Description, Mode=OneWay}" FontWeight="SemiBold" />
+                                                <Run Text=" — " /><Run Text="{Binding Identifier, Mode=OneWay}" Foreground="{DynamicResource TextSecondaryBrush}" />
                                             </TextBlock>
                                         </Border>
                                     </DataTemplate>
@@ -1462,8 +1462,8 @@
                                         <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,8" Margin="0,0,0,8">
                                             <StackPanel>
                                                 <TextBlock FontSize="12.5" FontWeight="SemiBold">
-                                                    <Run Text="{Binding Header}" /><Run Text="  " />
-                                                    <Run Text="{Binding Identifier}" Foreground="{DynamicResource TextSecondaryBrush}" FontWeight="Normal" />
+                                                    <Run Text="{Binding Header, Mode=OneWay}" /><Run Text="  " />
+                                                    <Run Text="{Binding Identifier, Mode=OneWay}" Foreground="{DynamicResource TextSecondaryBrush}" FontWeight="Normal" />
                                                 </TextBlock>
                                                 <ItemsControl ItemsSource="{Binding DisplayLines}" Margin="0,6,0,0">
                                                     <ItemsControl.ItemsPanel>
@@ -1510,7 +1510,7 @@
                         </Border.Style>
                         <StackPanel>
                             <TextBlock Foreground="{DynamicResource WarningBrush}" FontSize="12.5" FontWeight="SemiBold" TextWrapping="Wrap">
-                                <Run Text="You haven't fully restarted in " /><Run Text="{Binding FastStartupInfo.DaysSinceFullRestart}" /><Run Text=" days." />
+                                <Run Text="You haven't fully restarted in " /><Run Text="{Binding FastStartupInfo.DaysSinceFullRestart, Mode=OneWay}" /><Run Text=" days." />
                             </TextBlock>
                             <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0"
                                        Text="Under Fast Startup, the regular Shut Down/Restart path doesn't do a full boot - drivers, firmware updates, and a queued chkdsk can all silently not apply. A full restart clears that." />
@@ -1525,12 +1525,12 @@
                     <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="8" Padding="12,10" Margin="0,0,0,14">
                         <StackPanel>
                             <TextBlock FontSize="11.5" TextWrapping="Wrap">
-                                <Run Text="Fast Startup: " FontWeight="SemiBold" /><Run Text="{Binding FastStartupInfo.HiberbootEnabledText}" />
-                                <Run Text="   ·   Last full restart: " FontWeight="SemiBold" /><Run Text="{Binding FastStartupInfo.LastFullBootText}" />
+                                <Run Text="Fast Startup: " FontWeight="SemiBold" /><Run Text="{Binding FastStartupInfo.HiberbootEnabledText, Mode=OneWay}" />
+                                <Run Text="   ·   Last full restart: " FontWeight="SemiBold" /><Run Text="{Binding FastStartupInfo.LastFullBootText, Mode=OneWay}" />
                             </TextBlock>
                             <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,4,0,0">
-                                <Run Text="Tick-count uptime (this session): " /><Run Text="{Binding Performance.Uptime}" />
-                                <Run Text="   ·   WMI LastBootUpTime: " /><Run Text="{Binding FastStartupInfo.LastBootUpTimeWmiText}" />
+                                <Run Text="Tick-count uptime (this session): " /><Run Text="{Binding Performance.Uptime, Mode=OneWay}" />
+                                <Run Text="   ·   WMI LastBootUpTime: " /><Run Text="{Binding FastStartupInfo.LastBootUpTimeWmiText, Mode=OneWay}" />
                             </TextBlock>
                         </StackPanel>
                     </Border>
@@ -1636,7 +1636,7 @@
                 <StackPanel>
                     <TextBlock Text="System partitions" Style="{StaticResource CardTitle}" Margin="0,0,0,4" />
                     <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,10">
-                        <Run Text="The system disk's boot-relevant partitions" /><Run Text=" ("/><Run Text="{Binding PartitionLayout.DiskFriendlyName}" /><Run Text=")." />
+                        <Run Text="The system disk's boot-relevant partitions" /><Run Text=" ("/><Run Text="{Binding PartitionLayout.DiskFriendlyName, Mode=OneWay}" /><Run Text=")." />
                     </TextBlock>
 
                     <TextBlock TextWrapping="Wrap" Margin="0,0,0,10">
@@ -1651,7 +1651,7 @@
                                 </Style.Triggers>
                             </Style>
                         </TextBlock.Style>
-                        <Run Text="System partition data isn't available: " /><Run Text="{Binding PartitionLayout.Error}" />
+                        <Run Text="System partition data isn't available: " /><Run Text="{Binding PartitionLayout.Error, Mode=OneWay}" />
                     </TextBlock>
 
                     <StackPanel>
@@ -1678,8 +1678,8 @@
                                             <StackPanel Grid.Column="0">
                                                 <TextBlock FontSize="12" FontWeight="SemiBold" Text="{Binding RoleLabel}" />
                                                 <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}">
-                                                    <Run Text="Partition " /><Run Text="{Binding PartitionNumber}" />
-                                                    <Run Text="   ·   " /><Run Text="{Binding GptType}" />
+                                                    <Run Text="Partition " /><Run Text="{Binding PartitionNumber, Mode=OneWay}" />
+                                                    <Run Text="   ·   " /><Run Text="{Binding GptType, Mode=OneWay}" />
                                                 </TextBlock>
                                             </StackPanel>
                                             <TextBlock Grid.Column="1" FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center" Text="{Binding SizeText}" />
@@ -1709,8 +1709,8 @@
                                 <Button Grid.Column="1" Content="Measure free space" Padding="8,4" FontSize="11" Command="{Binding MeasureEspFreeSpaceCommand}" />
                             </Grid>
                             <TextBlock FontSize="11.5" TextWrapping="Wrap" Margin="0,0,0,6">
-                                <Run Text="Size: " FontWeight="SemiBold" /><Run Text="{Binding EspHealth.Partition.SizeText}" />
-                                <Run Text="   ·   Free: " FontWeight="SemiBold" /><Run Text="{Binding EspHealth.FreeText}" />
+                                <Run Text="Size: " FontWeight="SemiBold" /><Run Text="{Binding EspHealth.Partition.SizeText, Mode=OneWay}" />
+                                <Run Text="   ·   Free: " FontWeight="SemiBold" /><Run Text="{Binding EspHealth.FreeText, Mode=OneWay}" />
                             </TextBlock>
                             <Border Background="{DynamicResource DangerMutedBrush}" BorderBrush="{DynamicResource DangerBrush}"
                                     BorderThickness="1" CornerRadius="8" Padding="10,8">
@@ -1748,19 +1748,19 @@
                                 <Button Grid.Column="1" Content="Enable WinRE" Padding="8,4" FontSize="11" Command="{Binding EnableWinReCommand}" />
                             </Grid>
                             <TextBlock FontSize="11.5" TextWrapping="Wrap" Margin="0,0,0,4">
-                                <Run Text="Status: " FontWeight="SemiBold" /><Run Text="{Binding WinReStatus.StatusText}" />
+                                <Run Text="Status: " FontWeight="SemiBold" /><Run Text="{Binding WinReStatus.StatusText, Mode=OneWay}" />
                             </TextBlock>
                             <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap">
-                                <Run Text="Location: " /><Run Text="{Binding WinReStatus.Location}" />
+                                <Run Text="Location: " /><Run Text="{Binding WinReStatus.Location, Mode=OneWay}" />
                             </TextBlock>
                             <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap">
-                                <Run Text="BCD identifier: " /><Run Text="{Binding WinReStatus.BcdIdentifier}" />
+                                <Run Text="BCD identifier: " /><Run Text="{Binding WinReStatus.BcdIdentifier, Mode=OneWay}" />
                             </TextBlock>
                             <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap">
-                                <Run Text="Recovery image: " /><Run Text="{Binding WinReStatus.RecoveryImageLocation}" />
+                                <Run Text="Recovery image: " /><Run Text="{Binding WinReStatus.RecoveryImageLocation, Mode=OneWay}" />
                             </TextBlock>
                             <TextBlock FontSize="11" Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" Margin="0,4,0,0">
-                                <Run Text="{Binding WinReStatus.Error}" />
+                                <Run Text="{Binding WinReStatus.Error, Mode=OneWay}" />
                             </TextBlock>
                         </StackPanel>
 
@@ -1806,7 +1806,7 @@
                                             </Style.Triggers>
                                         </Style>
                                     </TextBlock.Style>
-                                    <Run Text="{Binding RecoveryPartitionFlag.Message}" />
+                                    <Run Text="{Binding RecoveryPartitionFlag.Message, Mode=OneWay}" />
                                 </TextBlock>
                             </Border>
                         </StackPanel>
@@ -2201,14 +2201,14 @@
                                     </Border.Style>
                                     <StackPanel>
                                         <TextBlock FontSize="12" FontWeight="SemiBold" TextWrapping="Wrap">
-                                            <Run Text="{Binding ValueName}" /><Run Text=" — " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding Scope}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                            <Run Text="{Binding ValueName, Mode=OneWay}" /><Run Text=" — " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding Scope, Mode=OneWay}" Foreground="{DynamicResource TextSecondaryBrush}" />
                                         </TextBlock>
                                         <TextBlock FontSize="11" Margin="0,3,0,0" TextWrapping="Wrap">
-                                            <Run Text="Expected: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding ExpectedText}" FontFamily="Consolas" />
+                                            <Run Text="Expected: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding ExpectedText, Mode=OneWay}" FontFamily="Consolas" />
                                         </TextBlock>
                                         <TextBlock FontSize="11" Margin="0,1,0,0" TextWrapping="Wrap">
                                             <Run Text="Actual: " Foreground="{DynamicResource TextSecondaryBrush}" />
-                                            <Run Text="{Binding ActualText}" FontFamily="Consolas">
+                                            <Run Text="{Binding ActualText, Mode=OneWay}" FontFamily="Consolas">
                                                 <Run.Style>
                                                     <Style TargetType="Run">
                                                         <Style.Triggers>
@@ -2313,9 +2313,9 @@
                                Text="AppInit_DLLs, AppCertDlls, LSA security/authentication packages, and KnownDLLs anomalies - the locations that load a DLL into many/every process rather than one specific app." />
                     <TextBlock Margin="0,4,0,0" FontSize="11.5" TextWrapping="Wrap">
                         <Run Text="AppInit_DLLs (64-bit): " Foreground="{DynamicResource TextSecondaryBrush}" />
-                        <Run Text="{Binding DllInjectionAudit.AppInitEnabled64Text}" />
+                        <Run Text="{Binding DllInjectionAudit.AppInitEnabled64Text, Mode=OneWay}" />
                         <Run Text="   ·   AppInit_DLLs (32-bit): " Foreground="{DynamicResource TextSecondaryBrush}" />
-                        <Run Text="{Binding DllInjectionAudit.AppInitEnabled32Text}" />
+                        <Run Text="{Binding DllInjectionAudit.AppInitEnabled32Text, Mode=OneWay}" />
                     </TextBlock>
                     <DataGrid Height="220" Margin="0,8,0,0" ItemsSource="{Binding DllInjectionAudit.Entries}" IsReadOnly="True">
                         <DataGrid.RowStyle>

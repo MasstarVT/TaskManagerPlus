@@ -1,4 +1,4 @@
-<UserControl x:Class="TaskManagerPlus.Views.EnergyThermalsView"
+﻿<UserControl x:Class="TaskManagerPlus.Views.EnergyThermalsView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="clr-namespace:TaskManagerPlus.ViewModels"
@@ -301,8 +301,8 @@
                                     <StackPanel Grid.Column="0">
                                         <TextBlock Text="{Binding ZoneName}" FontSize="12" TextTrimming="CharacterEllipsis" />
                                         <TextBlock Style="{StaticResource SubStat}">
-                                            <Run Text="{Binding TemperatureC, StringFormat={}{0:0.#}°C, TargetNullValue=Temperature: Unknown}" />
-                                            <Run Text=" · Passive limit " /><Run Text="{Binding PassiveLimitPercent, StringFormat={}{0:0}%, TargetNullValue=Unknown}" />
+                                            <Run Text="{Binding TemperatureC, StringFormat={}{0:0.#}°C, TargetNullValue=Temperature: Unknown, Mode=OneWay}" />
+                                            <Run Text=" · Passive limit " /><Run Text="{Binding PassiveLimitPercent, StringFormat={}{0:0}%, TargetNullValue=Unknown, Mode=OneWay}" />
                                         </TextBlock>
                                     </StackPanel>
                                     <Border Grid.Column="1" CornerRadius="10" Padding="8,3" VerticalAlignment="Center"
@@ -846,7 +846,7 @@
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
                                 <TextBlock FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4" TextWrapping="Wrap">
-                                    <Run Text="{Binding Timestamp, StringFormat={}{0:g}}" />
+                                    <Run Text="{Binding Timestamp, StringFormat={}{0:g}, Mode=OneWay}" />
                                     <Run Text=" — plan changed from " />
                                     <Run Text="{Binding FromPlanName, Mode=OneWay}" />
                                     <Run Text=" to " />
@@ -1298,7 +1298,7 @@
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
                                 <TextBlock FontSize="11.5" TextWrapping="Wrap" Margin="0,0,0,6">
-                                    <Run Text="{Binding TimeCreated, StringFormat={}{0:g}}" FontWeight="SemiBold" />
+                                    <Run Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}" FontWeight="SemiBold" />
                                     <Run Text=" — " />
                                     <Run Text="{Binding Message, Mode=OneWay}" Foreground="{DynamicResource TextSecondaryBrush}" />
                                 </TextBlock>
@@ -1551,12 +1551,12 @@
                                     </Grid.ColumnDefinitions>
                                     <StackPanel Grid.Column="0">
                                         <TextBlock FontSize="12">
-                                            <Run Text="{Binding Name}" />
-                                            <Run Text=" — " /><Run Text="{Binding CurrentRpm, StringFormat={}{0:0} RPM}" />
+                                            <Run Text="{Binding Name, Mode=OneWay}" />
+                                            <Run Text=" — " /><Run Text="{Binding CurrentRpm, StringFormat={}{0:0} RPM, Mode=OneWay}" />
                                         </TextBlock>
                                         <TextBlock Style="{StaticResource SubStat}">
-                                            <Run Text="{Binding MeanRpm, StringFormat={}Mean {0:0} RPM}" />
-                                            <Run Text=" · " /><Run Text="{Binding CoefficientOfVariation, StringFormat={}{0:0.0%} variation}" />
+                                            <Run Text="{Binding MeanRpm, StringFormat={}Mean {0:0} RPM, Mode=OneWay}" />
+                                            <Run Text=" · " /><Run Text="{Binding CoefficientOfVariation, StringFormat={}{0:0.0%} variation, Mode=OneWay}" />
                                         </TextBlock>
                                     </StackPanel>
                                     <Border Grid.Column="1" CornerRadius="10" Padding="8,3" VerticalAlignment="Center"
