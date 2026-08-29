@@ -12,7 +12,7 @@
          test panel. Grouped by subsystem, with the always-on readouts on the first page. -->
     <TabControl Style="{StaticResource SectionTabControl}" SelectedIndex="0">
         <TabItem Header="Overview">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- "Sensors unavailable" banner - shown when the LibreHardwareMonitorLib driver
                          couldn't open at all (Smart App Control, driver-signing policy, unsupported
@@ -230,7 +230,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Temperatures">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- #25: historical CPU temperature chart, with a timestamped log of exactly when
                          the CPU was detected running hot and below its rated base clock under load -
@@ -561,7 +561,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Throttling">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- #602: firmware-limited-processor event attribution (Kernel-Processor-Power 37/38) -
                          the one authoritative, non-heuristic statement Windows itself makes about
@@ -697,7 +697,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Power">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- #621/#622: "Power delivery" section - rail-sag-under-load correlation and Vcore
                          droop/load-line behavior, both rolling scatter clouds with a live fitted line. -->
@@ -866,7 +866,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Cooling">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- #34: fan curve (RPM vs. temp) - a fan that isn't ramping with load shows up as a
                          flat/scattered cloud instead of a rising trend. Collapsed until at least one
@@ -1036,7 +1036,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Power plans">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- Round 12, #90/#91/#92: power scheme + sleep-state support + USB selective-suspend -
                          all on-demand (shelling out to powercfg/WMI, not something to poll every tick). -->
@@ -1412,7 +1412,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="USB">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- #92: per-device USB selective-suspend status - on-demand, and honestly reports
                          "Unknown" for most devices on most systems (see UsbPowerService's remarks). -->
@@ -1635,7 +1635,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Battery">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- Battery: empty (and the whole section collapsed) on any desktop - see
                          EnergyThermalsViewModel.Battery's remarks. "Degradation Level" is the closest
@@ -1956,7 +1956,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Sleep &amp; wake">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- #649-#659: Sleep, Modern Standby and wake diagnostics panel. Every on-demand read
                          here is a real subprocess/event-log call, gated behind its own button - never the
@@ -2235,7 +2235,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Stress test">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- #695-#700: Stress test panel - its own ViewModel/UserControl (StressTestViewModel/
                          StressTestPanel), composed at the MainViewModel level since it needs Gpu (TDR

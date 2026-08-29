@@ -13,7 +13,7 @@
          out. -->
     <TabControl Style="{StaticResource SectionTabControl}" SelectedIndex="0">
         <TabItem Header="Overview">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
                         <StackPanel>
@@ -438,7 +438,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Speed &amp; path">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- suggestions.md #579-581: on-demand speed test (internet, single-stream HTTP),
                          bufferbloat/latency-under-load grade, and a separate LAN-only throughput test - so
@@ -768,7 +768,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Adapters">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- Adapters: negotiated link speed per active adapter (#31, flags a "Gigabit"
                          adapter that negotiated down - a classic bad-cable/bad-port symptom) and VPN
@@ -1754,7 +1754,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Addressing &amp; DNS">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- suggestions.md #527/#528/#529/#530/#531/#534: "Addressing" card - DHCP lease detail
                          with expiry/rogue-server flags (#527), an APIPA banner with a one-click Renew
@@ -2665,7 +2665,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Connections">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- #21: active TCP connections with owning process - see NetworkConnectionsService.
                          Extended by #558 (state histogram), #559 (stalled-SYN age column + status line),
@@ -3327,7 +3327,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Security">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- suggestions.md #566-571: Firewall - profile status (#566), a full rule browser with
                          a filter/executable-only mode (#567), the blocked-connection log (pfirewall.log)
@@ -4205,7 +4205,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Events">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- suggestions.md #596/#597/#598: unified network event timeline - merges Tcpip,
                          DHCP, DNS, WLAN, NlaSvc, NetworkProfile, SMBClient and NIC miniport link-state

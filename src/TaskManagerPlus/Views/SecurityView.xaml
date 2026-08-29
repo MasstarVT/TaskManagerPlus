@@ -11,7 +11,7 @@
          away rather than several screens down. -->
     <TabControl Style="{StaticResource SectionTabControl}" SelectedIndex="0">
         <TabItem Header="Findings">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- #801/#804: header - plain statement that everything on this tab is a quick flag
                          for a human to judge, never a claim of certainty about malware. -->
@@ -362,7 +362,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Protection">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- Round 17, #859-870: "Protection status" - Windows Defender / third-party AV /
                          Attack Surface Reduction posture. See DefenderService for the read logic. Cheap
@@ -929,7 +929,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Processes">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- Round 16, #857/#858: "Process activity" - two short, on-demand, "eyeball this list"
                          scans that are process-focused rather than persistence-focused, so they get their
@@ -1056,7 +1056,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Network &amp; accounts">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- Round 19, #881-890: "Network exposure" - firewall profile posture + rule audit,
                          an exposed-listener map, SMB/legacy-protocol posture, a share audit, remote-
@@ -1805,7 +1805,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Software">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- Round 20, #895-896: "Bloatware". -->
                     <Border Margin="0,20,0,0" BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,1,0,0" Padding="0,16,0,0">
@@ -1982,7 +1982,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Cleanup">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- Round 20, #899: owner-initiated cleanup workflow - restore-point opt-in +
                          persistent action journal. The Persistence section's "Quarantine this file" button

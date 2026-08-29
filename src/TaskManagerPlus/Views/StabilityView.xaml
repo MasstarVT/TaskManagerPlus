@@ -16,7 +16,7 @@
          ScrollViewer of its own. -->
     <TabControl Style="{StaticResource SectionTabControl}" SelectedIndex="0">
         <TabItem Header="Overview">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- Round 18, item 80: "will this PC capture the next BSOD" - a single pass/fail/
                          uncertain verdict summarising items 71-79's crash dump configuration card below,
@@ -551,7 +551,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Crashes">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- #122: "Known-bad IDs present on this PC" - which KB-flagged serious event IDs
                          (#117) actually showed up in the lookback window, with count/last-seen/next-step,
@@ -1229,7 +1229,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Dumps &amp; capture">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- #3: minidump files, timestamp + best-effort bugcheck code correlated from a
                          nearby Kernel-Power 41 event - see EventLogService.ReadMinidumps. -->
@@ -2499,7 +2499,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Hangs &amp; errors">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- #239: Windows Error Reporting AppHang reports (Report.wer under ReportArchive/
                          ReportQueue) - richer per-report detail than #240 below, but pruned sooner. -->
@@ -3088,7 +3088,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Hardware">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- #492: crash/TDR/unexpected-shutdown events preceded by a WHEA hardware error
                          within a short window (5 minutes) - see EventLogService.
@@ -3963,7 +3963,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Power &amp; boot">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- #713: "Power & boot timeline" - correlates EventLog 6005/6006/6008/6013,
                          Kernel-Power 41/109, and User32 1074 into one chronological strip - see
@@ -4366,7 +4366,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="History">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- #1/#169: Reliability History - daily Critical/Error counts over the lookback window
                          (this app's own bar series, left axis), the same "crash/failure events over time"
@@ -4701,7 +4701,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Recovery">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- ============================================================================
                          Round 21, items 96-100: "Recovery, escalation and safe operation" - the final

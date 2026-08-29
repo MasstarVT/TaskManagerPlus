@@ -20,11 +20,13 @@ public partial class WindowsHealthView : UserControl
         window.SelectTabByName("Services");
     }
 
-    /// <summary>#779: cross-link from the update cache reclaim card over to the Storage tab.</summary>
+    /// <summary>#779: cross-link from the update cache reclaim card over to the Storage tab.
+    /// suggestions.md #1003: addresses the Capacity section, home of the reclaimable-space
+    /// inventory (#356-360) this card is pointing at.</summary>
     private void ViewCacheInStorage_Click(object sender, RoutedEventArgs e)
     {
         if (Window.GetWindow(this) is MainWindow window)
-            window.SelectTabByName("Storage");
+            window.SelectTabByName("Storage", section: "Capacity");
     }
 
     /// <summary>#792: cross-link from a WMI-Activity query-failure group's client process over to

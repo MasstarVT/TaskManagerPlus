@@ -12,7 +12,7 @@
          end are merged into one System state page rather than becoming four one-item chips. -->
     <TabControl Style="{StaticResource SectionTabControl}" SelectedIndex="0">
         <TabItem Header="Overview">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <Grid Margin="0,0,0,16">
                         <Grid.ColumnDefinitions>
@@ -317,7 +317,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Updates">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- #769/#771/#772: Update history - Windows Update Client install/download/failure
                          events (Microsoft-Windows-WindowsUpdateClient/Operational), correlated against the
@@ -916,7 +916,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Integrity">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- #782/#783: component store analysis + cleanup runner. Analysis and cleanup live in
                          one card since the analysis card's own numbers are exactly what a cleanup decision is
@@ -1575,7 +1575,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="System state">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- #789/#790: restore point inventory, per-volume System Protection inference,
                          shadow-storage allocation and the automatic-frequency policy readout, plus the two

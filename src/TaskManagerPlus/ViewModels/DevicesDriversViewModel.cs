@@ -124,15 +124,21 @@ public sealed class DevicesDriversViewModel : ObservableObject
     // the driver-inventory grid above - toggled by two buttons rather than a WPF TabControl, kept
     // simple since it's just one bool driving two panels' visibility. ---
     private bool _isDeviceTreeViewActive;
-    public bool IsDeviceTreeViewActive { get => _isDeviceTreeViewActive; set => SetProperty(ref _isDeviceTreeViewActive, value); }
+    public bool IsDeviceTreeViewActive { get => _isDeviceTreeViewActive; set { if (SetProperty(ref _isDeviceTreeViewActive, value)) OnPropertyChanged(nameof(IsDriverInventoryViewActive)); } }
     public RelayCommand ShowDriverInventoryViewCommand { get; }
     public RelayCommand ShowDeviceTreeViewCommand { get; }
+
+    /// <summary>suggestions.md #1012: the "no other view is active" default view, as a real
+    /// property so the Driver inventory chip's active state can bind to it directly. Previously the
+    /// chip triggered on IsDeviceTreeViewActive=False alone, which also lit it up whenever the
+    /// driver store or filter-drivers view was the active one.</summary>
+    public bool IsDriverInventoryViewActive => !IsDeviceTreeViewActive && !IsDriverStoreViewActive && !IsFilterDriversViewActive;
 
     /// <summary>#479: this tab's THIRD top-level view - the driver store. Same two-bool-toggle
     /// shape as IsDeviceTreeViewActive above rather than a real WPF TabControl, just extended by
     /// one more flag.</summary>
     private bool _isDriverStoreViewActive;
-    public bool IsDriverStoreViewActive { get => _isDriverStoreViewActive; set => SetProperty(ref _isDriverStoreViewActive, value); }
+    public bool IsDriverStoreViewActive { get => _isDriverStoreViewActive; set { if (SetProperty(ref _isDriverStoreViewActive, value)) OnPropertyChanged(nameof(IsDriverInventoryViewActive)); } }
     public RelayCommand ShowDriverStoreViewCommand { get; }
 
     // --- #463 (event-log half)/#464/#466: cheap targeted event-log queries and a bounded WMI+
@@ -215,7 +221,7 @@ public sealed class DevicesDriversViewModel : ObservableObject
     // ------------------------------------------------------------------------------------------
 
     private bool _isFilterDriversViewActive;
-    public bool IsFilterDriversViewActive { get => _isFilterDriversViewActive; set => SetProperty(ref _isFilterDriversViewActive, value); }
+    public bool IsFilterDriversViewActive { get => _isFilterDriversViewActive; set { if (SetProperty(ref _isFilterDriversViewActive, value)) OnPropertyChanged(nameof(IsDriverInventoryViewActive)); } }
     public RelayCommand ShowFilterDriversViewCommand { get; }
 
     private bool _hasLoadedFilterDriversViewOnce;

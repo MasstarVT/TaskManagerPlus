@@ -13,7 +13,7 @@
          pages. -->
     <TabControl Style="{StaticResource SectionTabControl}" SelectedIndex="0">
         <TabItem Header="Overview">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
                         <StackPanel>
@@ -207,7 +207,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Breakdown">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <TextBlock Text="Diagnostics" Style="{StaticResource SubStat}" Margin="0,0,0,10" />
                     <UniformGrid Columns="5" Margin="0,0,0,16">
@@ -566,7 +566,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Consumers">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- Top memory consumers: re-presents the already-polling Processes tab's collection,
                          live-sorted by memory instead of CPU - see MemoryViewModel. #412: the checkbox
@@ -734,7 +734,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Leaks">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- #403: "Leak watch" - processes whose handle count has grown steadily while
                          private bytes stayed flat (the classic kernel-object-leak signature), re-using
@@ -1026,7 +1026,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Kernel">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- #416/#417/#418: "Kernel pool by tag" grid - poolmon-equivalent data via
                          NtQuerySystemInformation(SystemPoolTagInformation), joined with a cached #417
@@ -1259,7 +1259,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Tools">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- #435: RAMMap-style memory list purge actions - each confirms via a warning dialog
                          first (see MemoryViewModel.RunMemoryPurgeAsync) since every one of these trades a

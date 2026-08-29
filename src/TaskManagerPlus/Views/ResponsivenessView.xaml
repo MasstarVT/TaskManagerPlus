@@ -13,7 +13,7 @@
          themselves, so the separators and duplicate title lines are gone. -->
     <TabControl Style="{StaticResource SectionTabControl}" SelectedIndex="0">
         <TabItem Header="Overview">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- #201-203/#207-209/#213-214: hidden with an explanation when logman/tracerpt aren't
                          present on this system, per CLAUDE.md's "degrade to hidden, never fabricate" rule. -->
@@ -66,7 +66,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="DPC &amp; ISR">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- #213: measurement session controls. -->
                     <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
@@ -367,7 +367,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Devices &amp; power">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- #229: full powercfg /energy Errors/Warnings report - the slow (~60s) diagnostic,
                          always an explicit button per CLAUDE.md's on-demand rule. -->
@@ -512,7 +512,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Hangs &amp; stalls">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- #235/#236/#242/#243/#244: live hung-window detector - per-window (not per-process),
                          with a graded message-pump round-trip time (#236). Right-click a row to write a
@@ -776,7 +776,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Scheduling">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- #260/#265: run-queue pressure meter, with context-switch-storm attribution ranked
                          underneath per the item's own framing. -->
@@ -1010,7 +1010,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Display &amp; frames">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- #247/#248: DWM composition timing readout + dropped/missed-frames chart - an
                          in-box, no-ETW view of whether the compositor is keeping up. Rides the cheap
@@ -1290,7 +1290,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Memory hitching">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- #278/#279: hard-fault rate plus per-process/per-file attribution. -->
                     <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
@@ -1519,7 +1519,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Background activity">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <TextBlock Text="Known background workloads that commonly cause stutter/hitching - Defender scans, indexing, servicing, cloud sync, and more - summarised as one strip. Green = active, gray = idle, dim = unknown/unavailable."
                                Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,10" />
@@ -1947,7 +1947,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Capture &amp; replay">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- ============================================================================
                          #294-300: Responsiveness scoring capstone - the composite score cards live on

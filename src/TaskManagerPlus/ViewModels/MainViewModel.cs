@@ -360,14 +360,14 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     // WinForms-interop details out of the code-behind file.
     public GlobalHotkeyService Hotkey { get; } = new();
 
-    /// <summary>#80: the tab header each of Ctrl+1..Ctrl+9 jumps to, in order - falls back to this
-    /// app's first nine tabs (in their normal strip order) when the user hasn't customized
-    /// ui-preferences.json's TabShortcuts list. Only indices 0-8 are ever read (MainWindow.xaml.cs's
-    /// PreviewKeyDown handler only maps Ctrl+1..Ctrl+9), so "Windows Health" appended here past
-    /// Startup/System/Stability (already unreachable past index 8, same as this new tab) is inert
-    /// for the default order - kept anyway per this app's existing convention of listing every tab
-    /// header here, and so a customized ui-preferences.json that reorders past nine still has the
-    /// full tab-name list to choose from.</summary>
+    /// <summary>#80: the tab header each of Ctrl+1..Ctrl+9 jumps to, in order - used when the user
+    /// hasn't customized ui-preferences.json's TabShortcuts list. This is a flat list of leaf-tab
+    /// names, not strip positions: since the strip became six groups (#1001-range UI overhaul),
+    /// these names live one level down inside their groups and the list's order is unrelated to
+    /// anything visual - it's simply "the nine (plus spares) most useful jumps". Only indices 0-8
+    /// are ever read (MainWindow.xaml.cs's PreviewKeyDown handler only maps Ctrl+1..Ctrl+9); the
+    /// names past index 8 are inert for the default order but kept so a customized
+    /// ui-preferences.json still has the fuller name list to choose from.</summary>
     public static readonly string[] DefaultTabShortcutOrder =
         {
             "Summary", "CPU", "Memory", "Storage", "Network", "GPU", "Energy & Thermals", "Responsiveness", "Processes", "Services",

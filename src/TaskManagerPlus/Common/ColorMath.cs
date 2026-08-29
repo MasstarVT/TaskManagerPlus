@@ -17,8 +17,26 @@ public static class ColorMath
     }
 
     /// <summary>Perceived (relative) luminance in the 0..1 range.</summary>
+    /// <remarks>A cheap gamma-encoded weighted average - fine for "is this accent light or dark
+    /// enough to need flipped text", but NOT the WCAG definition: it skips the sRGB linearization,
+    /// so its 0.5 midpoint does not correspond to WCAG's contrast midpoint. Anything tuned against
+    /// WCAG contrast ratios (the color-blind-safe palette pairing) must use
+    /// <see cref="WcagRelativeLuminance"/> instead.</remarks>
     public static double RelativeLuminance(Color c)
         => (0.2126 * c.R + 0.7152 * c.G + 0.0722 * c.B) / 255.0;
+
+    /// <summary>WCAG 2.x relative luminance (sRGB-linearized), 0..1 - the L in the contrast-ratio
+    /// formula (L1 + 0.05) / (L2 + 0.05). 0.179 is the luminance at which white and black text
+    /// reach equal contrast, i.e. the natural "is this a light or a dark surface" threshold.</summary>
+    public static double WcagRelativeLuminance(Color c)
+    {
+        static double Lin(byte channel)
+        {
+            double v = channel / 255.0;
+            return v <= 0.04045 ? v / 12.92 : Math.Pow((v + 0.055) / 1.055, 2.4);
+        }
+        return 0.2126 * Lin(c.R) + 0.7152 * Lin(c.G) + 0.0722 * Lin(c.B);
+    }
 
     /// <summary>
     /// Scales a color's saturation by <paramref name="factor"/> (1.0 = unchanged,

@@ -13,6 +13,12 @@ public sealed record SearchNavigationRequest
     /// already do) - e.g. "Summary", "CPU", "Troubleshoot".</summary>
     public string? TabName { get; init; }
 
+    /// <summary>suggestions.md #1003/#1006: a section-chip header inside that tab to land on
+    /// (e.g. TabName "Stability", Section "Crashes") - the second half of the `tab › section`
+    /// navigation address. Null means "just the tab" (its section bar opens wherever it was).
+    /// Only meaningful alongside TabName.</summary>
+    public string? Section { get; init; }
+
     public bool OpenSettings { get; init; }
 
     /// <summary>One of "Glossary" or "Timeline" - opens that Troubleshoot sub-page (TabName should
@@ -22,6 +28,16 @@ public sealed record SearchNavigationRequest
     /// <summary>Selects this rule id in the Settings drawer's Rules engine editor (OpenSettings
     /// should also be set alongside this).</summary>
     public string? SelectRuleId { get; init; }
+}
+
+/// <summary>suggestions.md #1006: one navigable destination in the tab tree - a group tab, a leaf
+/// tab (Section null), or a `tab › section` pair. Enumerated from MainWindow's real TabControl
+/// tree at startup (see MainWindow.EnumerateTabDestinations) and handed to GlobalSearchViewModel,
+/// replacing the hand-maintained tab-name list that had drifted out of date twice.</summary>
+public sealed record TabDestination(string TabName, string? Section)
+{
+    /// <summary>What the palette shows - "Stability" for a tab, "Stability › Crashes" for a section.</summary>
+    public string DisplayName => Section is null ? TabName : $"{TabName} › {Section}";
 }
 
 /// <summary>One hit from the cross-tab search (#100) / Ctrl+K command palette (#1000) - "find

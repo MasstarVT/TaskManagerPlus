@@ -12,7 +12,7 @@
          audits were one 27-card scroll; each is now its own page. -->
     <TabControl Style="{StaticResource SectionTabControl}" SelectedIndex="0">
         <TabItem Header="Startup apps">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- #725: boot-mode/driver-signature-integrity flag banner - a quick flag, not a
                          verdict (see BootModeFlag's remarks: testsigning/debug/safeboot flags are all
@@ -278,7 +278,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Boot performance">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- #712: boot-data availability explainer - shown in place of the boot performance
                          card below whenever BootPerformanceService.ReadLatest() came back null, so the
@@ -683,7 +683,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Boot configuration">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- #724-731: Boot configuration (BCD inspector) - one shared BcdInspectorService
                          snapshot behind every one of these; see StartupViewModel's #724-731 region and
@@ -1540,7 +1540,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Sign-in">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- #719: logon/startup/logoff/shutdown script inventory, plus the legacy
                          UserInitMprLogonScript value - each script's existence/last-modified time, with an
@@ -1819,7 +1819,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Other auto-starts">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- #79/#80: Scheduled Tasks - a huge, often-overlooked source of background
                          slowdowns and unwanted auto-launches the registry-Run/Startup-folder scan above

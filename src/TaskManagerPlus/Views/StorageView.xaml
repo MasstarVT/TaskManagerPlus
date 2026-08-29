@@ -12,7 +12,7 @@
          scan interleaved. Grouped so drive health, filesystem and capacity are each one page. -->
     <TabControl Style="{StaticResource SectionTabControl}" SelectedIndex="0">
         <TabItem Header="Overview">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
                         <StackPanel>
@@ -283,7 +283,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Drive health">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- Round 9, #38: on-demand full SMART attribute table - a disk picker plus a button,
                          since walking every reliability-counter field per disk is only useful when
@@ -1087,7 +1087,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Filesystem">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- Round 15, #337/#338/#339/#343/#345: per-volume filesystem facts - the anchor for
                          this round's NTFS/chkdsk features. One row per fixed, lettered volume; NTFS-only
@@ -1642,7 +1642,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Capacity">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- Round 17, #352/#355: free-space history + days-until-full projection, sampled per
                          fixed volume on the Storage tab's shared sampler tick. -->
@@ -1970,7 +1970,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Protection">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- Round 20, #389-#393: BitLocker card. -->
                     <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
@@ -2547,7 +2547,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Performance">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- Round 9, #41: on-demand simple sequential throughput test - clearly labeled as
                          approximate, not a real benchmark (single-threaded sequential I/O only). -->
@@ -2703,7 +2703,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Events">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- Round 18, #370-#374: unified storage event timeline across disk/Ntfs/volmgr/
                          partmgr/storahci/stornvme/iaStorAC/Kernel-PnP, folding the Disk-diagnosis (above)

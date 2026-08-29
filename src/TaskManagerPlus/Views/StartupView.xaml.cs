@@ -25,11 +25,12 @@ public partial class StartupView : UserControl
     }
 
     /// <summary>#713: cross-link from the boot performance card over to the Stability tab's
-    /// "Power & boot timeline" strip.</summary>
+    /// "Power & boot timeline" strip. suggestions.md #1003: addresses the Power &amp; boot section
+    /// that timeline lives in, rather than dropping the user on Stability's Overview.</summary>
     private void ViewPowerTimeline_Click(object sender, RoutedEventArgs e)
     {
         if (Window.GetWindow(this) is MainWindow window)
-            window.SelectTabByName("Stability");
+            window.SelectTabByName("Stability", section: "Power & boot");
     }
 
     /// <summary>#723: cross-link from a registry-handle-leak entry's offending process name over

@@ -12,7 +12,7 @@
          Sections, matching the other Hardware tabs. -->
     <TabControl Style="{StaticResource SectionTabControl}" SelectedIndex="0">
         <TabItem Header="Overview">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- #9: best-effort thermal-throttle flag - hot package temp AND meaningfully below
                          rated base clock under load. See CpuViewModel.IsThrottling's remarks for why this
@@ -341,7 +341,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Frequency &amp; power">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- Round 8 #27: turbo-boost time-at-frequency histogram, accumulated across this
                          session - bucketed by percent above/below base clock (see PerformanceViewModel's
@@ -523,7 +523,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Details">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- Round 8 #24: best-effort core-affinity heatmap - which cores the current top-CPU
                          processes' threads prefer (GetThreadIdealProcessorEx), not a live trace of actual

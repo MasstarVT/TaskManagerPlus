@@ -14,62 +14,27 @@
 
         <!-- #468: sub-tab strip - this tab's second top-level view (the device tree) is distinct
              from the driver-inventory grid below, so a simple two-button strip switches between
-             them rather than restructuring either view. -->
+             them rather than restructuring either view.
+
+             suggestions.md #1012: the active-chip visual comes from SectionChipButton itself now -
+             each button just binds Tag to its section's Is*ViewActive bool and the style's own
+             trigger paints the accent chip (which also survives hover, per the style's #1002
+             remarks), instead of every button pasting the same three-setter accent cluster. -->
         <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="16,12,16,4">
-            <Button Content="Driver inventory" Command="{Binding ShowDriverInventoryViewCommand}">
-                <Button.Style>
-                    <Style TargetType="Button" BasedOn="{StaticResource SectionChipButton}">
-                        <Style.Triggers>
-                            <DataTrigger Binding="{Binding IsDeviceTreeViewActive}" Value="False">
-                                <Setter Property="Background" Value="{DynamicResource AccentBrush}" />
-                                <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
-                                <Setter Property="Foreground" Value="{DynamicResource AccentForegroundBrush}" />
-                            </DataTrigger>
-                        </Style.Triggers>
-                    </Style>
-                </Button.Style>
-            </Button>
-            <Button Content="Device tree" Margin="8,0,0,0" Command="{Binding ShowDeviceTreeViewCommand}">
-                <Button.Style>
-                    <Style TargetType="Button" BasedOn="{StaticResource SectionChipButton}">
-                        <Style.Triggers>
-                            <DataTrigger Binding="{Binding IsDeviceTreeViewActive}" Value="True">
-                                <Setter Property="Background" Value="{DynamicResource AccentBrush}" />
-                                <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
-                                <Setter Property="Foreground" Value="{DynamicResource AccentForegroundBrush}" />
-                            </DataTrigger>
-                        </Style.Triggers>
-                    </Style>
-                </Button.Style>
-            </Button>
+            <Button Content="Driver inventory" Style="{StaticResource SectionChipButton}"
+                    Command="{Binding ShowDriverInventoryViewCommand}"
+                    Tag="{Binding IsDriverInventoryViewActive}" />
+            <Button Content="Device tree" Margin="8,0,0,0" Style="{StaticResource SectionChipButton}"
+                    Command="{Binding ShowDeviceTreeViewCommand}"
+                    Tag="{Binding IsDeviceTreeViewActive}" />
             <!-- #479: this tab's third top-level view. -->
-            <Button Content="Driver store" Margin="8,0,0,0" Command="{Binding ShowDriverStoreViewCommand}">
-                <Button.Style>
-                    <Style TargetType="Button" BasedOn="{StaticResource SectionChipButton}">
-                        <Style.Triggers>
-                            <DataTrigger Binding="{Binding IsDriverStoreViewActive}" Value="True">
-                                <Setter Property="Background" Value="{DynamicResource AccentBrush}" />
-                                <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
-                                <Setter Property="Foreground" Value="{DynamicResource AccentForegroundBrush}" />
-                            </DataTrigger>
-                        </Style.Triggers>
-                    </Style>
-                </Button.Style>
-            </Button>
+            <Button Content="Driver store" Margin="8,0,0,0" Style="{StaticResource SectionChipButton}"
+                    Command="{Binding ShowDriverStoreViewCommand}"
+                    Tag="{Binding IsDriverStoreViewActive}" />
             <!-- #493-496: this tab's FOURTH top-level view. -->
-            <Button Content="Filter drivers" Margin="8,0,0,0" Command="{Binding ShowFilterDriversViewCommand}">
-                <Button.Style>
-                    <Style TargetType="Button" BasedOn="{StaticResource SectionChipButton}">
-                        <Style.Triggers>
-                            <DataTrigger Binding="{Binding IsFilterDriversViewActive}" Value="True">
-                                <Setter Property="Background" Value="{DynamicResource AccentBrush}" />
-                                <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
-                                <Setter Property="Foreground" Value="{DynamicResource AccentForegroundBrush}" />
-                            </DataTrigger>
-                        </Style.Triggers>
-                    </Style>
-                </Button.Style>
-            </Button>
+            <Button Content="Filter drivers" Margin="8,0,0,0" Style="{StaticResource SectionChipButton}"
+                    Command="{Binding ShowFilterDriversViewCommand}"
+                    Tag="{Binding IsFilterDriversViewActive}" />
             <!-- #486: jumps to the Summary tab's existing snapshot/diff UI, which now also covers
                  driver inventory + driver store contents - see SnapshotService. -->
             <Button Content="System snapshot &amp; driver diff..." Padding="10,4" Margin="16,0,0,0"

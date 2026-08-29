@@ -207,7 +207,13 @@
                      A group with one leaf (Summary, Security) hosts its view directly rather
                      than rendering a second-level row with a single item in it, and takes that leaf's own
                      name so the name stays addressable - calling this group "Overview" silently broke
-                     the tab flag Summary and the Devices tab's jump to the snapshot UI. -->
+                     the tab flag Summary and the Devices tab's jump to the snapshot UI.
+
+                     Only these level-1 group tabs carry a TabItem.Tag icon: the level-1 template is
+                     the only one that presents Tag, and GroupTabItem (level 2) is deliberately
+                     icon-free - suggestions.md #1007 deleted the ~200 lines of leaf glyphs that
+                     were being parsed and allocated per window without ever rendering. Don't add a
+                     Tag block to a nested leaf; nothing will show it. -->
                 <TabItem Header="Summary">
                     <TabItem.Tag>
                         <Viewbox Width="16" Height="16">
@@ -240,89 +246,22 @@
                     </TabItem.Tag>
                     <TabControl Style="{StaticResource GroupTabControl}" SelectedIndex="0">
                         <TabItem Header="CPU">
-                            <TabItem.Tag>
-                                <Viewbox Width="16" Height="16">
-                                    <Canvas Width="16" Height="16">
-                                        <Rectangle Style="{StaticResource NavIconStroke}" Canvas.Left="3" Canvas.Top="3" Width="10" Height="10" RadiusX="1.5" RadiusY="1.5" />
-                                        <Line Style="{StaticResource NavIconStroke}" StrokeThickness="1.4" X1="5.5" Y1="0.5" X2="5.5" Y2="3" />
-                                        <Line Style="{StaticResource NavIconStroke}" StrokeThickness="1.4" X1="10.5" Y1="0.5" X2="10.5" Y2="3" />
-                                        <Line Style="{StaticResource NavIconStroke}" StrokeThickness="1.4" X1="5.5" Y1="13" X2="5.5" Y2="15.5" />
-                                        <Line Style="{StaticResource NavIconStroke}" StrokeThickness="1.4" X1="10.5" Y1="13" X2="10.5" Y2="15.5" />
-                                        <Line Style="{StaticResource NavIconStroke}" StrokeThickness="1.4" X1="0.5" Y1="5.5" X2="3" Y2="5.5" />
-                                        <Line Style="{StaticResource NavIconStroke}" StrokeThickness="1.4" X1="0.5" Y1="10.5" X2="3" Y2="10.5" />
-                                        <Line Style="{StaticResource NavIconStroke}" StrokeThickness="1.4" X1="13" Y1="5.5" X2="15.5" Y2="5.5" />
-                                        <Line Style="{StaticResource NavIconStroke}" StrokeThickness="1.4" X1="13" Y1="10.5" X2="15.5" Y2="10.5" />
-                                    </Canvas>
-                                </Viewbox>
-                            </TabItem.Tag>
                             <views:CpuView DataContext="{Binding Cpu}" />
                         </TabItem>
                         <TabItem Header="Memory">
-                            <TabItem.Tag>
-                                <Viewbox Width="16" Height="16">
-                                    <Canvas Width="16" Height="16">
-                                        <Rectangle Style="{StaticResource NavIconStroke}" Canvas.Left="1.5" Canvas.Top="4" Width="13" Height="8" RadiusX="1.5" RadiusY="1.5" />
-                                        <Line Style="{StaticResource NavIconStroke}" StrokeThickness="1.4" X1="5" Y1="4" X2="5" Y2="7" />
-                                        <Line Style="{StaticResource NavIconStroke}" StrokeThickness="1.4" X1="8" Y1="4" X2="8" Y2="7" />
-                                        <Line Style="{StaticResource NavIconStroke}" StrokeThickness="1.4" X1="11" Y1="4" X2="11" Y2="7" />
-                                    </Canvas>
-                                </Viewbox>
-                            </TabItem.Tag>
                             <views:MemoryView DataContext="{Binding Memory}" />
                         </TabItem>
                         <TabItem Header="Storage">
-                            <TabItem.Tag>
-                                <Viewbox Width="16" Height="16">
-                                    <Canvas Width="16" Height="16">
-                                        <Rectangle Style="{StaticResource NavIconStroke}" Canvas.Left="2" Canvas.Top="1.5" Width="12" Height="5" RadiusX="1.5" RadiusY="1.5" />
-                                        <Rectangle Style="{StaticResource NavIconStroke}" Canvas.Left="2" Canvas.Top="9.5" Width="12" Height="5" RadiusX="1.5" RadiusY="1.5" />
-                                        <Ellipse Style="{StaticResource NavIconFill}" Canvas.Left="4" Canvas.Top="3.5" Width="1.5" Height="1.5" />
-                                        <Ellipse Style="{StaticResource NavIconFill}" Canvas.Left="4" Canvas.Top="11.5" Width="1.5" Height="1.5" />
-                                    </Canvas>
-                                </Viewbox>
-                            </TabItem.Tag>
                             <views:StorageView DataContext="{Binding Storage}" />
                         </TabItem>
                         <TabItem Header="Network">
-                            <TabItem.Tag>
-                                <Viewbox Width="16" Height="16">
-                                    <Canvas Width="16" Height="16">
-                                        <Ellipse Style="{StaticResource NavIconStroke}" Canvas.Left="1" Canvas.Top="1" Width="14" Height="14" />
-                                        <Line Style="{StaticResource NavIconStroke}" StrokeThickness="1.2" X1="1" Y1="8" X2="15" Y2="8" />
-                                        <Path Style="{StaticResource NavIconStroke}" StrokeThickness="1.2" Data="M 6,1.3 A 10,10 0 0 0 6,14.7" />
-                                        <Path Style="{StaticResource NavIconStroke}" StrokeThickness="1.2" Data="M 10,1.3 A 10,10 0 0 1 10,14.7" />
-                                    </Canvas>
-                                </Viewbox>
-                            </TabItem.Tag>
                             <views:NetworkView DataContext="{Binding Network}" />
                         </TabItem>
-                        <!-- Round 10: dedicated GPU tab (#53-56) - a small card body with a fan/PCIe-pin
-                             glyph, distinct from the CPU tab's chip-with-legs icon above. -->
+                        <!-- Round 10: dedicated GPU tab (#53-56). -->
                         <TabItem Header="GPU">
-                            <TabItem.Tag>
-                                <Viewbox Width="16" Height="16">
-                                    <Canvas Width="16" Height="16">
-                                        <Rectangle Style="{StaticResource NavIconStroke}" Canvas.Left="1.5" Canvas.Top="3" Width="13" Height="9" RadiusX="1.5" RadiusY="1.5" />
-                                        <Ellipse Style="{StaticResource NavIconStroke}" Canvas.Left="4" Canvas.Top="5.5" Width="4" Height="4" />
-                                        <Line Style="{StaticResource NavIconStroke}" StrokeThickness="1.2" X1="10.5" Y1="6" X2="13" Y2="6" />
-                                        <Line Style="{StaticResource NavIconStroke}" StrokeThickness="1.2" X1="10.5" Y1="8.5" X2="13" Y2="8.5" />
-                                        <Line Style="{StaticResource NavIconStroke}" StrokeThickness="1.4" X1="3" Y1="12" X2="3" Y2="14.5" />
-                                        <Line Style="{StaticResource NavIconStroke}" StrokeThickness="1.4" X1="6" Y1="12" X2="6" Y2="14.5" />
-                                        <Line Style="{StaticResource NavIconStroke}" StrokeThickness="1.4" X1="9" Y1="12" X2="9" Y2="14.5" />
-                                        <Line Style="{StaticResource NavIconStroke}" StrokeThickness="1.4" X1="12" Y1="12" X2="12" Y2="14.5" />
-                                    </Canvas>
-                                </Viewbox>
-                            </TabItem.Tag>
                             <views:GpuView DataContext="{Binding Gpu}" />
                         </TabItem>
                         <TabItem Header="Energy &amp; Thermals">
-                            <TabItem.Tag>
-                                <Viewbox Width="16" Height="16">
-                                    <Canvas Width="16" Height="16">
-                                        <Path Style="{StaticResource NavIconFill}" Data="M 8.8,0.8 L 3,9 L 7,9 L 6.2,15.2 L 13,6.2 L 8.6,6.2 Z" />
-                                    </Canvas>
-                                </Viewbox>
-                            </TabItem.Tag>
                             <views:EnergyThermalsView DataContext="{Binding EnergyThermals}" />
                         </TabItem>
                     </TabControl>
@@ -340,40 +279,12 @@
                     </TabItem.Tag>
                     <TabControl Style="{StaticResource GroupTabControl}" SelectedIndex="0">
                         <TabItem Header="Processes">
-                            <TabItem.Tag>
-                                <Viewbox Width="16" Height="16">
-                                    <Canvas Width="16" Height="16">
-                                        <Line Style="{StaticResource NavIconStroke}" StrokeThickness="1.8" X1="2" Y1="4" X2="14" Y2="4" />
-                                        <Line Style="{StaticResource NavIconStroke}" StrokeThickness="1.8" X1="2" Y1="8" X2="14" Y2="8" />
-                                        <Line Style="{StaticResource NavIconStroke}" StrokeThickness="1.8" X1="2" Y1="12" X2="14" Y2="12" />
-                                    </Canvas>
-                                </Viewbox>
-                            </TabItem.Tag>
                             <views:ProcessesView DataContext="{Binding Processes}" />
                         </TabItem>
                         <TabItem Header="Services">
-                            <TabItem.Tag>
-                                <Viewbox Width="16" Height="16">
-                                    <Canvas Width="16" Height="16">
-                                        <Ellipse Style="{StaticResource NavIconStroke}" Canvas.Left="4" Canvas.Top="4" Width="8" Height="8" />
-                                        <Line Style="{StaticResource NavIconStroke}" X1="8" Y1="0.5" X2="8" Y2="2.5" />
-                                        <Line Style="{StaticResource NavIconStroke}" X1="8" Y1="13.5" X2="8" Y2="15.5" />
-                                        <Line Style="{StaticResource NavIconStroke}" X1="0.5" Y1="8" X2="2.5" Y2="8" />
-                                        <Line Style="{StaticResource NavIconStroke}" X1="13.5" Y1="8" X2="15.5" Y2="8" />
-                                    </Canvas>
-                                </Viewbox>
-                            </TabItem.Tag>
                             <views:ServicesView DataContext="{Binding Services}" />
                         </TabItem>
                         <TabItem Header="Startup">
-                            <TabItem.Tag>
-                                <Viewbox Width="16" Height="16">
-                                    <Canvas Width="16" Height="16">
-                                        <Path Style="{StaticResource NavIconStroke}" Data="M 11.3,3.6 A 6,6 0 1 1 4.7,3.6" />
-                                        <Line Style="{StaticResource NavIconStroke}" X1="8" Y1="1" X2="8" Y2="7" />
-                                    </Canvas>
-                                </Viewbox>
-                            </TabItem.Tag>
                             <views:StartupView DataContext="{Binding Startup}" />
                         </TabItem>
                     </TabControl>
@@ -391,54 +302,34 @@
                     </TabItem.Tag>
                     <TabControl Style="{StaticResource GroupTabControl}" SelectedIndex="0">
                         <TabItem Header="System">
-                            <TabItem.Tag>
-                                <Viewbox Width="16" Height="16">
-                                    <Canvas Width="16" Height="16">
-                                        <Ellipse Style="{StaticResource NavIconStroke}" Canvas.Left="1" Canvas.Top="1" Width="14" Height="14" />
-                                        <Ellipse Style="{StaticResource NavIconFill}" Canvas.Left="7.25" Canvas.Top="4" Width="1.5" Height="1.5" />
-                                        <Line Style="{StaticResource NavIconStroke}" X1="8" Y1="7" X2="8" Y2="12" />
-                                    </Canvas>
-                                </Viewbox>
-                            </TabItem.Tag>
                             <views:SystemSpecsView DataContext="{Binding SystemSpecs}" />
                         </TabItem>
-                        <!-- #453: Devices & Drivers - small hand-drawn chip/circuit-board glyph, same
-                             minimal stroke style as the neighboring icons. -->
+                        <!-- #453: Devices & Drivers. -->
                         <TabItem Header="Devices &amp; Drivers">
-                            <TabItem.Tag>
-                                <Viewbox Width="16" Height="16">
-                                    <Canvas Width="16" Height="16">
-                                        <Rectangle Style="{StaticResource NavIconStroke}" Canvas.Left="4" Canvas.Top="4" Width="8" Height="8" RadiusX="1" RadiusY="1" />
-                                        <Rectangle Style="{StaticResource NavIconFill}" Canvas.Left="6.5" Canvas.Top="6.5" Width="3" Height="3" />
-                                        <Line Style="{StaticResource NavIconStroke}" X1="6" Y1="0.5" X2="6" Y2="4" />
-                                        <Line Style="{StaticResource NavIconStroke}" X1="10" Y1="0.5" X2="10" Y2="4" />
-                                        <Line Style="{StaticResource NavIconStroke}" X1="6" Y1="12" X2="6" Y2="15.5" />
-                                        <Line Style="{StaticResource NavIconStroke}" X1="10" Y1="12" X2="10" Y2="15.5" />
-                                        <Line Style="{StaticResource NavIconStroke}" X1="0.5" Y1="6" X2="4" Y2="6" />
-                                        <Line Style="{StaticResource NavIconStroke}" X1="0.5" Y1="10" X2="4" Y2="10" />
-                                        <Line Style="{StaticResource NavIconStroke}" X1="12" Y1="6" X2="15.5" Y2="6" />
-                                        <Line Style="{StaticResource NavIconStroke}" X1="12" Y1="10" X2="15.5" Y2="10" />
-                                    </Canvas>
-                                </Viewbox>
-                            </TabItem.Tag>
                             <views:DevicesDriversView DataContext="{Binding DevicesDrivers}" />
                         </TabItem>
-                        <!-- #769-800: new top-level tab - a simple heartbeat-pulse glyph, distinct
-                             from Stability's jagged crash-spike icon above. -->
+                        <!-- #769-800: Windows Health. -->
                         <TabItem Header="Windows Health">
-                            <TabItem.Tag>
-                                <Viewbox Width="16" Height="16">
-                                    <Canvas Width="16" Height="16">
-                                        <Path Style="{StaticResource NavIconStroke}" Data="M 1,8.5 L 4.5,8.5 L 6,4.5 L 8.5,12.5 L 10,6.5 L 11.5,8.5 L 15,8.5" />
-                                    </Canvas>
-                                </Viewbox>
-                            </TabItem.Tag>
                             <views:WindowsHealthView DataContext="{Binding WindowsHealth}" />
                         </TabItem>
                     </TabControl>
                 </TabItem>
 
-                <TabItem Header="Diagnostics">
+                <!-- suggestions.md #1004: the group header mirrors Stability's new-dump alert badge.
+                     Stability's own badge (below) lives in the level-2 strip, which is only on
+                     screen while Diagnostics is the selected group - without this mirror, a user
+                     sitting on Summary or CPU got no visible signal at all when a new crash dump
+                     landed. AutomationProperties.Name is load-bearing per the Stability precedent:
+                     a panel Header would otherwise be unmatchable by SelectTabByName and announced
+                     as the literal type name by screen readers. -->
+                <TabItem AutomationProperties.Name="Diagnostics">
+                    <TabItem.Header>
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="Diagnostics" VerticalAlignment="Center" />
+                            <Ellipse Width="7" Height="7" Fill="{DynamicResource DangerBrush}" Margin="4,0,0,0" VerticalAlignment="Top"
+                                     Visibility="{Binding DataContext.Stability.HasNewDumpAlert, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVisibilityConverter}}" />
+                        </StackPanel>
+                    </TabItem.Header>
                     <TabItem.Tag>
                         <Viewbox Width="16" Height="16">
                             <Canvas Width="16" Height="16">
@@ -450,38 +341,19 @@
                     </TabItem.Tag>
                     <TabControl Style="{StaticResource GroupTabControl}" SelectedIndex="0">
                         <TabItem Header="Troubleshoot">
-                            <TabItem.Tag>
-                                <Viewbox Width="16" Height="16">
-                                    <Canvas Width="16" Height="16">
-                                        <Ellipse Style="{StaticResource NavIconStroke}" Canvas.Left="1" Canvas.Top="1" Width="14" Height="14" />
-                                        <Line Style="{StaticResource NavIconStroke}" StrokeThickness="1.8" X1="8" Y1="4.5" X2="8" Y2="9" />
-                                        <Ellipse Style="{StaticResource NavIconFill}" Canvas.Left="7.25" Canvas.Top="10.5" Width="1.5" Height="1.5" />
-                                    </Canvas>
-                                </Viewbox>
-                            </TabItem.Tag>
                             <views:TroubleshootView DataContext="{Binding Troubleshoot}" />
                         </TabItem>
-                        <!-- New Responsiveness tab (suggestions.md #201-214) - DPC/ISR latency measurement,
-                             between Energy & Thermals and Processes. A speedometer/gauge glyph (arc + needle)
-                             rather than the Stability tab's existing heartbeat-line glyph just below, so the
-                             two "how healthy is this system" tabs stay visually distinct. -->
+                        <!-- Responsiveness tab (suggestions.md #201-214) - DPC/ISR latency measurement
+                             and the rest of the lag/stutter/freeze diagnostics. -->
                         <TabItem Header="Responsiveness">
-                            <TabItem.Tag>
-                                <Viewbox Width="16" Height="16">
-                                    <Canvas Width="16" Height="16">
-                                        <Path Style="{StaticResource NavIconStroke}" Data="M 2,12 A 6,6 0 0 1 14,12" />
-                                        <Line Style="{StaticResource NavIconStroke}" StrokeThickness="1.6" X1="8" Y1="12" X2="11.5" Y2="7" />
-                                        <Ellipse Style="{StaticResource NavIconFill}" Canvas.Left="7" Canvas.Top="10.5" Width="2" Height="2" />
-                                    </Canvas>
-                                </Viewbox>
-                            </TabItem.Tag>
                             <views:ResponsivenessView DataContext="{Binding Responsiveness}" />
                         </TabItem>
-                        <!-- AutomationProperties.Name is load-bearing, not decorative: this is the one TabItem
-                             whose Header is a panel rather than a string (it carries the alert badge below), so
-                             UI Automation otherwise exposes it to screen readers as the literal
-                             "System.Windows.Controls.TabItem Header: Content:", and SelectTabByName could not
-                             resolve "Stability" at all. See SelectTabByName in MainWindow.xaml.cs. -->
+                        <!-- AutomationProperties.Name is load-bearing, not decorative: this TabItem's Header
+                             is a panel rather than a string (it carries the alert badge below - as does the
+                             Diagnostics group header above, same rule), so UI Automation otherwise exposes it
+                             to screen readers as the literal "System.Windows.Controls.TabItem Header: Content:",
+                             and SelectTabByName could not resolve "Stability" at all. See SelectTabByName in
+                             MainWindow.xaml.cs. -->
                         <TabItem AutomationProperties.Name="Stability">
                             <TabItem.Header>
                                 <!-- Round 14, item 27: small red dot badge when the new-dump watcher has
@@ -492,26 +364,9 @@
                                              Visibility="{Binding DataContext.Stability.HasNewDumpAlert, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVisibilityConverter}}" />
                                 </StackPanel>
                             </TabItem.Header>
-                            <TabItem.Tag>
-                                <Viewbox Width="16" Height="16">
-                                    <Canvas Width="16" Height="16">
-                                        <Path Style="{StaticResource NavIconStroke}" Data="M 1,8 L 5,8 L 6.5,3 L 9.5,13 L 11,8 L 15,8" />
-                                    </Canvas>
-                                </Viewbox>
-                            </TabItem.Tag>
                             <views:StabilityView DataContext="{Binding Stability}" />
                         </TabItem>
                         <TabItem Header="Events">
-                            <TabItem.Tag>
-                                <Viewbox Width="16" Height="16">
-                                    <Canvas Width="16" Height="16">
-                                        <Rectangle Style="{StaticResource NavIconStroke}" Canvas.Left="1.5" Canvas.Top="1.5" Width="13" Height="13" RadiusX="1.5" RadiusY="1.5" />
-                                        <Line Style="{StaticResource NavIconStroke}" StrokeThickness="1.2" X1="4" Y1="5.5" X2="12" Y2="5.5" />
-                                        <Line Style="{StaticResource NavIconStroke}" StrokeThickness="1.2" X1="4" Y1="8" X2="12" Y2="8" />
-                                        <Line Style="{StaticResource NavIconStroke}" StrokeThickness="1.2" X1="4" Y1="10.5" X2="9" Y2="10.5" />
-                                    </Canvas>
-                                </Viewbox>
-                            </TabItem.Tag>
                             <views:EventsView DataContext="{Binding Events}" />
                         </TabItem>
                     </TabControl>

@@ -153,7 +153,7 @@
          Sections. A 23-card spec sheet reads better as named pages than as one long column. -->
     <TabControl Style="{StaticResource SectionTabControl}" SelectedIndex="0">
         <TabItem Header="Overview">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <Grid Margin="0,0,0,4">
                         <Grid.ColumnDefinitions>
@@ -268,7 +268,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Memory">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- #451: RAM health rollup - mismatched DIMMs, ECC corrected errors, memory
                          diagnostic results, XMP state, channel population and memory-related bugchecks,
@@ -553,7 +553,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Graphics">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- Graphics -->
                     <Border Style="{StaticResource CardStyle}">
@@ -770,7 +770,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Storage">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- Storage -->
                     <Border Style="{StaticResource CardStyle}">
@@ -836,7 +836,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Devices">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- USB devices (#69): flags a Windows-reported enumeration/driver problem - helps
                          catch a misbehaving peripheral or a failing USB controller/hub. Per-device power
@@ -884,7 +884,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Software">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- #59: installed .NET runtime versions, from the shared-framework directory layout
                          dotnet.exe itself uses. -->
@@ -975,7 +975,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Security">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- Security posture: Secure Boot / TPM / VBS - each individually nullable (see
                          SecurityInfo's remarks), rendered as a warning color only on a confirmed "off"/

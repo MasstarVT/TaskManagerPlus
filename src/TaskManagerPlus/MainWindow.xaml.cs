@@ -67,6 +67,11 @@ public partial class MainWindow : Window
         // capability of its own (see SearchNavigationRequest's remarks) - this Window performs
         // whatever a search result's activation asked for.
         _viewModel.Search.NavigationRequested += OnSearchNavigationRequested;
+
+        // suggestions.md #1006: the palette's "jump to tab/section" destinations come from the real
+        // tab tree (safe here: InitializeComponent has run, so every nested TabControl and view is
+        // constructed), not a hand-maintained list that drifts every time a tab or section is added.
+        _viewModel.Search.SetTabDestinations(EnumerateTabDestinations());
     }
 
     /// <summary>#107: stops the Events tab's live-tail "Follow" subscription whenever the tab
@@ -79,27 +84,32 @@ public partial class MainWindow : Window
     /// OriginalSource being MainTabControl itself - which is now never true for the change that
     /// actually moves off Events - this asks the only question that matters: after this change, is
     /// Events still the visible leaf? A bubbled change from somewhere Events isn't visible answers
-    /// no and stops the watcher, which is the correct outcome either way.</summary>
+    /// no and stops the watcher, which is the correct outcome either way.
+    ///
+    /// suggestions.md #1009: the guard admits only the two nav-strip levels (MainTabControl and a
+    /// group's own TabControl) - only those can move the selection on or off Events. Without it,
+    /// every in-page SectionTabControl chip click app-wide bubbled here too and re-ran
+    /// OnTabDeactivated, quietly coupling this handler's correctness to that method staying
+    /// idempotent and cheap.</summary>
     private void MainTabControl_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (e.OriginalSource is not TabControl) return;
+        if (MainTabControl is null) return; // initial selection during InitializeComponent
+        if (e.OriginalSource is not TabControl strip) return;
+        if (!ReferenceEquals(strip, MainTabControl) && !IsGroupStrip(strip)) return;
         if (!IsLeafTabActive("Events")) _viewModel.Events.OnTabDeactivated();
     }
 
-    /// <summary>True when <paramref name="name"/> is on the currently selected path of tabs -
-    /// i.e. its view is the one on screen. Walks down from MainTabControl through each selected
-    /// TabItem whose content is itself a TabControl (the group level).</summary>
-    private bool IsLeafTabActive(string name)
-    {
-        for (TabControl? control = MainTabControl; control is not null;)
-        {
-            if (control.SelectedItem is not TabItem tab) return false;
-            if (string.Equals(HeaderNameOf(tab), name, StringComparison.OrdinalIgnoreCase)) return true;
-            control = tab.Content as TabControl;
-        }
+    /// <summary>True when <paramref name="control"/> is one of the level-2 group TabControls,
+    /// i.e. the direct content of a level-1 group TabItem.</summary>
+    private bool IsGroupStrip(TabControl control)
+        => MainTabControl.Items.OfType<TabItem>().Any(t => ReferenceEquals(t.Content, control));
 
-        return false;
-    }
+    /// <summary>True when <paramref name="name"/> is on the currently selected path of tabs -
+    /// i.e. its view is the one on screen. suggestions.md #1011: expressed via FindTabPath (the
+    /// one tree walk in this file) - the named tab is active exactly when every step of its path
+    /// is its owner's current selection.</summary>
+    private bool IsLeafTabActive(string name)
+        => FindTabPath(name) is { } path && path.All(step => ReferenceEquals(step.Owner.SelectedItem, step.Tab));
 
     /// <summary>#690: forwards WM_DISPLAYCHANGE (resolution/color-depth change, or a monitor
     /// connect/disconnect that Windows resolves into a new desktop configuration) into
@@ -150,7 +160,7 @@ public partial class MainWindow : Window
 
     private void OnSearchNavigationRequested(TaskManagerPlus.Models.SearchNavigationRequest nav)
     {
-        if (nav.TabName is { Length: > 0 } tab) SelectTabByName(tab);
+        if (nav.TabName is { Length: > 0 } tab) SelectTabByName(tab, nav.Section);
 
         if (nav.TroubleshootPanel == "Glossary") _viewModel.Troubleshoot.ShowGlossaryCommand.Execute(null);
         else if (nav.TroubleshootPanel == "Timeline") _viewModel.Troubleshoot.ShowTimelineCommand.Execute(null);
@@ -165,18 +175,118 @@ public partial class MainWindow : Window
     }
 
     /// <summary>Round 12, #84: selects a tab by header text (case-insensitive) - used by the
-    /// `--tab &lt;name&gt;` launch flag from App.xaml.cs. Matches the same way Ctrl+1..9 already
-    /// does (by header text, not a hardcoded index), so it keeps working if tabs are ever
-    /// reordered. Silently does nothing on an unrecognized name rather than showing an error for
-    /// what's ultimately a convenience shortcut, not a required argument.</summary>
-    public void SelectTabByName(string name)
+    /// `--tab &lt;name&gt;` launch flag from App.xaml.cs, Ctrl+1..9, the Ctrl+K palette and every
+    /// cross-tab jump. Silently does nothing (returning false) on an unrecognized name rather than
+    /// showing an error for what's ultimately a convenience shortcut, not a required argument.
+    ///
+    /// suggestions.md #1001: when the match is a group tab (its content is a nested TabControl),
+    /// the selection below it is normalized to the first leaf. Without this, "System" with the
+    /// System group already open on, say, Windows Health was a complete no-op - the path
+    /// assignment stopped at the already-selected group and the user stayed where they were.
+    ///
+    /// suggestions.md #1003: <paramref name="section"/> extends the address to `tab › section` -
+    /// after selecting the leaf, its in-page SectionTabControl (if any) is switched to the chip
+    /// with that header, so cross-tab jumps land on the card they advertise instead of whatever
+    /// section chip bar's SelectedIndex="0" default happens to show.</summary>
+    public bool SelectTabByName(string name, string? section = null)
     {
         var path = FindTabPath(name);
-        if (path is null) return;
+        if (path is null) return false;
 
         // Outermost first: selecting the group is what makes its nested TabControl the live one,
         // so the inner assignment has to come after it, not before.
         foreach (var (owner, tab) in path) owner.SelectedItem = tab;
+
+        // #1001: normalize everything below a group match to its first leaf.
+        var match = path[^1].Tab;
+        var nested = match.Content as TabControl;
+        while (nested is not null)
+        {
+            nested.SelectedIndex = 0;
+            nested = (nested.SelectedItem as TabItem)?.Content as TabControl;
+        }
+
+        if (section is { Length: > 0 }) SelectSectionByName(match, section);
+        return true;
+    }
+
+    /// <summary>#1003: switches <paramref name="leaf"/>'s in-page section chip bar to the section
+    /// with the given header text. A leaf with no SectionTabControl, or no matching section, is
+    /// left as-is - same silent-degrade contract as SelectTabByName itself.</summary>
+    private static void SelectSectionByName(TabItem leaf, string section)
+    {
+        if (leaf.Content is not DependencyObject root) return;
+        if (FindSectionTabControl(root) is not TabControl sections) return;
+
+        foreach (var item in sections.Items)
+        {
+            if (item is TabItem tab && string.Equals(HeaderNameOf(tab), section, StringComparison.OrdinalIgnoreCase))
+            {
+                sections.SelectedItem = tab;
+                return;
+            }
+        }
+    }
+
+    /// <summary>Finds a view's section chip bar: the shallowest logical-tree descendant TabControl
+    /// wearing the SectionTabControl style. The style check matters - views can contain other
+    /// TabControls (detail panes etc.) that are not navigation. Logical tree, not visual, for the
+    /// same never-realized reason FindTabPath walks TabItem.Content.</summary>
+    private static TabControl? FindSectionTabControl(DependencyObject root)
+    {
+        object? sectionStyle = Application.Current.TryFindResource("SectionTabControl");
+        if (sectionStyle is null) return null;
+
+        var queue = new Queue<DependencyObject>();
+        queue.Enqueue(root);
+        while (queue.Count > 0)
+        {
+            var node = queue.Dequeue();
+            if (node is TabControl control && ReferenceEquals(control.Style, sectionStyle)) return control;
+            foreach (object child in LogicalTreeHelper.GetChildren(node))
+                if (child is DependencyObject dependencyChild) queue.Enqueue(dependencyChild);
+        }
+
+        return null;
+    }
+
+    /// <summary>suggestions.md #1006: every navigable destination for the Ctrl+K palette - group
+    /// tabs, leaf tabs, and each leaf's `tab › section` chips - read off the real tab tree once at
+    /// startup. The System group/leaf name collision is deduplicated (BFS order means the entry
+    /// kept is the one SelectTabByName will actually resolve).</summary>
+    private List<TaskManagerPlus.Models.TabDestination> EnumerateTabDestinations()
+    {
+        var result = new List<TaskManagerPlus.Models.TabDestination>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        void Add(string tabName, string? section)
+        {
+            var destination = new TaskManagerPlus.Models.TabDestination(tabName, section);
+            if (seen.Add(destination.DisplayName)) result.Add(destination);
+        }
+
+        void Walk(TabControl control)
+        {
+            foreach (var item in control.Items)
+            {
+                if (item is not TabItem tab || HeaderNameOf(tab) is not { } name) continue;
+                Add(name, null);
+
+                if (tab.Content is TabControl nestedGroup)
+                {
+                    Walk(nestedGroup);
+                }
+                else if (tab.Content is DependencyObject view && FindSectionTabControl(view) is { } sections)
+                {
+                    foreach (var sectionItem in sections.Items)
+                        if (sectionItem is TabItem sectionTab && HeaderNameOf(sectionTab) is { } sectionName)
+                            Add(name, sectionName);
+                }
+            }
+        }
+
+        Walk(MainTabControl);
+        return result;
     }
 
     /// <summary>Finds a tab by name anywhere in the group/leaf tree and returns the full
@@ -189,22 +299,35 @@ public partial class MainWindow : Window
     /// This walks TabItem.Content rather than the visual tree because a TabControl only realizes
     /// the selected tab's content - the nested TabControls are plain XAML-declared objects and are
     /// therefore reachable this way whether or not their group has ever been shown, which a
-    /// VisualTreeHelper walk would not be.</summary>
+    /// VisualTreeHelper walk would not be.
+    ///
+    /// suggestions.md #1011: visited tabs are recorded once with a parent index and the path is
+    /// materialized only for the match, instead of copy-allocating a prefix List per visited tab.</summary>
     private List<(TabControl Owner, TabItem Tab)>? FindTabPath(string name)
     {
-        var queue = new Queue<(TabControl Owner, List<(TabControl, TabItem)> Prefix)>();
-        queue.Enqueue((MainTabControl, new List<(TabControl, TabItem)>()));
+        var visited = new List<(TabControl Owner, TabItem Tab, int Parent)>();
+        var queue = new Queue<(TabControl Owner, int Parent)>();
+        queue.Enqueue((MainTabControl, -1));
 
         while (queue.Count > 0)
         {
-            var (owner, prefix) = queue.Dequeue();
+            var (owner, parent) = queue.Dequeue();
             foreach (var item in owner.Items)
             {
                 if (item is not TabItem tab) continue;
 
-                var path = new List<(TabControl, TabItem)>(prefix) { (owner, tab) };
-                if (string.Equals(HeaderNameOf(tab), name, StringComparison.OrdinalIgnoreCase)) return path;
-                if (tab.Content is TabControl nested) queue.Enqueue((nested, path));
+                visited.Add((owner, tab, parent));
+                int index = visited.Count - 1;
+
+                if (string.Equals(HeaderNameOf(tab), name, StringComparison.OrdinalIgnoreCase))
+                {
+                    var path = new List<(TabControl, TabItem)>();
+                    for (int i = index; i >= 0; i = visited[i].Parent)
+                        path.Insert(0, (visited[i].Owner, visited[i].Tab));
+                    return path;
+                }
+
+                if (tab.Content is TabControl nested) queue.Enqueue((nested, index));
             }
         }
 
@@ -318,9 +441,10 @@ public partial class MainWindow : Window
     /// <summary>Round 11, #80: Ctrl+1..Ctrl+9 jump straight to a tab, matching Task Manager's own
     /// Ctrl+Shift+Esc-style muscle memory for "get me to a specific view fast". The mapping (which
     /// tab each number opens) comes from MainViewModel.TabShortcutOrder - configurable via
-    /// ui-preferences.json, defaulting to this app's first nine tabs in their normal strip order.
-    /// Matches by tab Header text rather than a hardcoded index, so the mapping still works even if
-    /// tabs are ever reordered in MainWindow.xaml.</summary>
+    /// ui-preferences.json, defaulting to a flat list of leaf-tab names (see
+    /// DefaultTabShortcutOrder's remarks - since the strip became six groups, list position no
+    /// longer corresponds to strip position). Matches by tab Header text rather than a hardcoded
+    /// index, so the mapping still works even if tabs are ever reordered in MainWindow.xaml.</summary>
     private void MainWindow_PreviewKeyDown(object sender, KeyEventArgs e)
     {
         // suggestions.md #1000: Ctrl+K opens the command palette - checked before the
@@ -351,10 +475,9 @@ public partial class MainWindow : Window
         // level down inside their group, and this is the one place that knows how to walk there.
         // It also picks up HeaderNameOf's AutomationProperties.Name fallback, so Ctrl+1..9 can
         // reach Stability - whose Header is a panel, not a string - which it previously could not.
-        var target = order[index];
-        if (FindTabPath(target) is null) return;
-
-        SelectTabByName(target);
+        // #1011: its bool return doubles as the existence test (one BFS, not two) - an
+        // unrecognized configured name leaves the keystroke unhandled, same as before.
+        if (!SelectTabByName(order[index])) return;
         e.Handled = true;
     }
 

@@ -497,9 +497,14 @@ public sealed class ThemeViewModel : ObservableObject
             // #76: deliberately NOT saturation-adjusted - these three are chosen specifically for
             // their distinguishability under deuteranopia/protanopia, and running them through the
             // same saturation slider as the rest of the palette could undermine that.
-            // Which set applies is decided from the family's own background luminance rather than
-            // by name-checking "Light", so a future light family gets the right one for free.
-            bool onLight = ColorMath.RelativeLuminance(p.Bg) > 0.5;
+            // Which set applies is decided from the background luminance rather than by
+            // name-checking "Light", so a future light family gets the right one for free.
+            // suggestions.md #1008: the gate uses the WCAG (sRGB-linearized) luminance the sets
+            // were tuned against - not the cheap gamma-encoded RelativeLuminance, whose midpoint
+            // sits elsewhere and would hand a mid-tone family the low-contrast pairing - and it is
+            // fed the saturation-adjusted background, i.e. the surface actually painted. 0.179 is
+            // the luminance where white and black text reach equal contrast.
+            bool onLight = ColorMath.WcagRelativeLuminance(Adj(p.Bg)) > 0.179;
             _appResources["SuccessBrush"] = Frozen(onLight ? CbSafeSuccessOnLight : CbSafeSuccessOnDark);
             _appResources["WarningBrush"] = Frozen(onLight ? CbSafeWarningOnLight : CbSafeWarningOnDark);
             _appResources["DangerBrush"] = Frozen(onLight ? CbSafeDangerOnLight : CbSafeDangerOnDark);

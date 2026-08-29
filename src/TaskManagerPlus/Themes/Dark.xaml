@@ -1,6 +1,7 @@
 ﻿<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-                    xmlns:sys="clr-namespace:System;assembly=mscorlib">
+                    xmlns:sys="clr-namespace:System;assembly=mscorlib"
+                    xmlns:common="clr-namespace:TaskManagerPlus.Common">
 
     <!-- ============================= Palette ============================= -->
     <!-- Layered dark surfaces: window < panel < elevated < hover, each one step lighter. -->
@@ -73,8 +74,11 @@
          was that nothing lined up across tabs and the most common body size was 11.5px.
 
          Those are collapsed onto the scale below and the floor is raised: nothing renders under
-         12px any more. Use these keys (or the Text* styles below them) for anything new - a
-         literal FontSize="11.5" in a view is precisely what this scale exists to stop coming back.
+         12px any more. Use these keys for anything new - a literal FontSize="11.5" in a view is
+         precisely what this scale exists to stop coming back. (An earlier revision also shipped a
+         set of Text* TextBlock styles wrapping these keys; suggestions.md #1010 found they had
+         zero consumers - every view inlines FontSize/Foreground attributes instead - so they were
+         deleted rather than left advertising a convention the codebase doesn't follow.)
 
          Note these are StaticResource-consumed doubles, not brushes: unlike the palette they never
          change at runtime, so they don't need the DynamicResource treatment the color keys do. -->
@@ -87,59 +91,19 @@
     <sys:Double x:Key="FontHero">30</sys:Double>
 
     <!-- Spacing: a 4px grid. StackGap* is the bottom-margin between stacked siblings (by far the
-         most common margin shape in this app); Inline* is the trailing gap between horizontal
-         siblings. -->
-    <Thickness x:Key="StackGapXs">0,0,0,4</Thickness>
+         most common margin shape in this app). #1010: only the steps with real consumers are
+         kept - re-add an Xs/Xl/inline step on the same 4px grid if something actually needs it. -->
     <Thickness x:Key="StackGapSm">0,0,0,8</Thickness>
     <Thickness x:Key="StackGapMd">0,0,0,12</Thickness>
     <Thickness x:Key="StackGapLg">0,0,0,16</Thickness>
-    <Thickness x:Key="StackGapXl">0,0,0,24</Thickness>
-    <Thickness x:Key="InlineGapSm">0,0,8,0</Thickness>
-    <Thickness x:Key="InlineGapMd">0,0,12,0</Thickness>
 
-    <CornerRadius x:Key="RadiusSm">4</CornerRadius>
-    <CornerRadius x:Key="RadiusMd">6</CornerRadius>
     <CornerRadius x:Key="RadiusLg">10</CornerRadius>
 
-    <!-- ==================== Type scale ==================== -->
-    <!-- Six steps, each with a default colour matching its role, so a view can usually say
-         Style="{StaticResource TextBody}" and set nothing else. -->
-    <Style x:Key="TextCaption" TargetType="TextBlock">
-        <Setter Property="FontSize" Value="{StaticResource FontCaption}" />
-        <Setter Property="Foreground" Value="{DynamicResource TextTertiaryBrush}" />
-        <Setter Property="TextWrapping" Value="Wrap" />
-    </Style>
-    <Style x:Key="TextBody" TargetType="TextBlock">
-        <Setter Property="FontSize" Value="{StaticResource FontBody}" />
-        <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
-        <Setter Property="TextWrapping" Value="Wrap" />
-    </Style>
-    <Style x:Key="TextStrong" TargetType="TextBlock">
-        <Setter Property="FontSize" Value="{StaticResource FontStrong}" />
-        <Setter Property="FontWeight" Value="SemiBold" />
-        <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
-        <Setter Property="TextWrapping" Value="Wrap" />
-    </Style>
-    <Style x:Key="TextSection" TargetType="TextBlock">
-        <Setter Property="FontSize" Value="{StaticResource FontSection}" />
-        <Setter Property="FontWeight" Value="SemiBold" />
-        <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
-    </Style>
-    <Style x:Key="TextTitle" TargetType="TextBlock">
-        <Setter Property="FontSize" Value="{StaticResource FontTitle}" />
-        <Setter Property="FontWeight" Value="SemiBold" />
-        <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
-    </Style>
-    <Style x:Key="TextDisplay" TargetType="TextBlock">
-        <Setter Property="FontSize" Value="{StaticResource FontDisplay}" />
-        <Setter Property="FontWeight" Value="SemiBold" />
-        <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
-    </Style>
-    <Style x:Key="TextHero" TargetType="TextBlock">
-        <Setter Property="FontSize" Value="{StaticResource FontHero}" />
-        <Setter Property="FontWeight" Value="Light" />
-        <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
-    </Style>
+    <!-- suggestions.md #1012: the section-chip geometry, shared by the two places that draw the
+         chip visual (SectionTabItem for real section bars, SectionChipButton for Devices &
+         Drivers' button-based strip) so a chip restyle is one edit, not two. -->
+    <CornerRadius x:Key="ChipCornerRadius">14</CornerRadius>
+    <Thickness x:Key="ChipPadding">14,6</Thickness>
 
     <!-- ============================= Focus visual (#1000) ============================= -->
     <!-- suggestions.md #1000: a visible focus adorner - this app had none before (grep-confirmed:
@@ -165,7 +129,7 @@
         <Setter Property="Background" Value="{DynamicResource BgBrush}" />
         <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
         <Setter Property="FontFamily" Value="Segoe UI Variable Text, Segoe UI" />
-        <Setter Property="FontSize" Value="13" />
+        <Setter Property="FontSize" Value="{StaticResource FontBody}" />
         <Setter Property="TextOptions.TextFormattingMode" Value="Display" />
         <Setter Property="TextOptions.TextRenderingMode" Value="ClearType" />
     </Style>
@@ -368,45 +332,61 @@
          the row behind the tab headers rendered as a bright white bar.
          Laid out as a TMOG-style top horizontal tab strip (TabStripPlacement="Top" on the
          TabControl) plus a content pane below it, instead of the old left nav rail. The strip's
-         ScrollViewer scrolls horizontally so all 10 tabs stay reachable without wrapping/clipping
-         at narrower window widths. TabControl.Tag is presented docked to the right (trailing)
-         edge of the strip so the caller can supply a footer entry (the "Colors" button) without
-         this template needing to know about app-specific commands. -->
+         ScrollViewer scrolls horizontally so all tabs stay reachable without wrapping/clipping at
+         narrower window widths; its scrollbar is Hidden, not Auto (suggestions.md #1016) - an
+         Auto bar appearing changes the strip's own height inside an Auto-height row, re-measuring
+         the whole content row twice per resize tick near the fit threshold. TabControl.Tag is
+         presented docked to the right (trailing) edge of the strip so the caller can supply a
+         footer entry (the Settings button) without this template needing to know about
+         app-specific commands (levels 2/3 leave Tag null, which renders nothing).
+
+         suggestions.md #1014: this is the ONE strip template, shared by all three navigation
+         levels; the per-level chrome differences (header background/border, strip margin) come in
+         through the common:TabStrip attached properties each level's Style sets. The items host is
+         a StackPanel, never a TabPanel: TabPanel accounts for a child's Margin when measuring but
+         not when arranging, so each tab is arranged that much narrower than it measured and its
+         label is clipped ("Troubleshoot" rendered as "Troubleshc" at 20px spacing; level 1's old
+         private TabPanel copy was only masked by its 2px margins). TabPanel's multi-row wrapping
+         is not wanted here anyway - the strip scrolls instead. -->
+    <ControlTemplate x:Key="TabStripTemplate" TargetType="{x:Type TabControl}">
+        <Grid KeyboardNavigation.TabNavigation="Local" Background="{TemplateBinding Background}">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <Border Grid.Row="0"
+                    Background="{TemplateBinding common:TabStrip.HeaderBackground}"
+                    BorderBrush="{TemplateBinding common:TabStrip.HeaderBorderBrush}"
+                    BorderThickness="{TemplateBinding common:TabStrip.HeaderBorderThickness}">
+                <DockPanel>
+                    <ContentPresenter DockPanel.Dock="Right" Content="{TemplateBinding Tag}" />
+                    <ScrollViewer DockPanel.Dock="Left" HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Disabled">
+                        <StackPanel Orientation="Horizontal" IsItemsHost="True" Background="Transparent"
+                                    Margin="{TemplateBinding common:TabStrip.StripMargin}" />
+                    </ScrollViewer>
+                </DockPanel>
+            </Border>
+
+            <Border Grid.Row="1" Background="{TemplateBinding Background}">
+                <ContentPresenter x:Name="PART_SelectedContentHost" ContentSource="SelectedContent" />
+            </Border>
+        </Grid>
+    </ControlTemplate>
+
     <Style TargetType="{x:Type TabControl}">
         <Setter Property="Background" Value="{DynamicResource BgBrush}" />
         <Setter Property="BorderThickness" Value="0" />
-        <Setter Property="Template">
-            <Setter.Value>
-                <ControlTemplate TargetType="{x:Type TabControl}">
-                    <Grid KeyboardNavigation.TabNavigation="Local" Background="{TemplateBinding Background}">
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="*" />
-                        </Grid.RowDefinitions>
-
-                        <Border Grid.Row="0" Background="{DynamicResource BgPanelBrush}"
-                                BorderBrush="{DynamicResource BorderBrush2}" BorderThickness="0,0,0,1">
-                            <DockPanel>
-                                <ContentPresenter DockPanel.Dock="Right" Content="{TemplateBinding Tag}" />
-                                <ScrollViewer DockPanel.Dock="Left" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
-                                    <TabPanel x:Name="HeaderPanel" Panel.ZIndex="1"
-                                              IsItemsHost="True" Background="Transparent" Margin="14,8,10,8" />
-                                </ScrollViewer>
-                            </DockPanel>
-                        </Border>
-
-                        <Border Grid.Row="1" Background="{TemplateBinding Background}">
-                            <ContentPresenter x:Name="PART_SelectedContentHost" ContentSource="SelectedContent" />
-                        </Border>
-                    </Grid>
-                </ControlTemplate>
-            </Setter.Value>
-        </Setter>
+        <Setter Property="common:TabStrip.HeaderBackground" Value="{DynamicResource BgPanelBrush}" />
+        <Setter Property="common:TabStrip.HeaderBorderBrush" Value="{DynamicResource BorderBrush2}" />
+        <Setter Property="common:TabStrip.HeaderBorderThickness" Value="0,0,0,1" />
+        <Setter Property="common:TabStrip.StripMargin" Value="14,8,10,8" />
+        <Setter Property="Template" Value="{StaticResource TabStripTemplate}" />
     </Style>
 
     <Style TargetType="{x:Type TabItem}">
         <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
-        <Setter Property="FontSize" Value="13" />
+        <Setter Property="FontSize" Value="{StaticResource FontBody}" />
         <Setter Property="Width" Value="Auto" />
         <Setter Property="Height" Value="38" />
         <Setter Property="Padding" Value="14,0" />
@@ -453,38 +433,13 @@
 
          SectionTabControl below is level 3. Three nav levels only works if a glance tells you
          which one you are looking at, so the shapes go: pill-with-icon, then underline, then
-         chip. -->
-    <Style x:Key="GroupTabControl" TargetType="{x:Type TabControl}">
-        <Setter Property="Background" Value="{DynamicResource BgBrush}" />
-        <Setter Property="BorderThickness" Value="0" />
-        <Setter Property="ItemContainerStyle" Value="{DynamicResource GroupTabItem}" />
-        <Setter Property="Template">
-            <Setter.Value>
-                <ControlTemplate TargetType="{x:Type TabControl}">
-                    <Grid KeyboardNavigation.TabNavigation="Local" Background="{TemplateBinding Background}">
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="*" />
-                        </Grid.RowDefinitions>
-                        <Border Grid.Row="0" Background="{DynamicResource BgBrush}"
-                                BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,0,0,1">
-                            <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
-                                <!-- StackPanel, not TabPanel: TabPanel accounts for a child's Margin when
-                                     measuring but not when arranging, so each tab is arranged that much
-                                     narrower than it measured and its label is clipped. Level 1 hides this
-                                     because its tabs use a 2px margin; at the 20px spacing this row wants,
-                                     "Troubleshoot" rendered as "Troubleshc". TabPanel's multi-row wrapping
-                                     is not wanted here anyway - the strip scrolls instead. -->
-                                <StackPanel Orientation="Horizontal" IsItemsHost="True" Background="Transparent" Margin="18,0,18,0" />
-                            </ScrollViewer>
-                        </Border>
-                        <ContentPresenter Grid.Row="1" ContentSource="SelectedContent" />
-                    </Grid>
-                </ControlTemplate>
-            </Setter.Value>
-        </Setter>
-    </Style>
+         chip.
 
+         suggestions.md #1015: the *TabItem styles are declared before the *TabControl styles that
+         consume them, so ItemContainerStyle can be a plain StaticResource - the old
+         declared-after ordering forced DynamicResource, which made every ApplyPalette tick walk
+         live resource-reference listeners on all ~17 strip consumers for styles that never
+         change. -->
     <Style x:Key="GroupTabItem" TargetType="{x:Type TabItem}">
         <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
         <Setter Property="FontSize" Value="{StaticResource FontSection}" />
@@ -524,6 +479,17 @@
         </Setter>
     </Style>
 
+    <Style x:Key="GroupTabControl" TargetType="{x:Type TabControl}">
+        <Setter Property="Background" Value="{DynamicResource BgBrush}" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="ItemContainerStyle" Value="{StaticResource GroupTabItem}" />
+        <Setter Property="common:TabStrip.HeaderBackground" Value="{DynamicResource BgBrush}" />
+        <Setter Property="common:TabStrip.HeaderBorderBrush" Value="{DynamicResource BorderSubtleBrush}" />
+        <Setter Property="common:TabStrip.HeaderBorderThickness" Value="0,0,0,1" />
+        <Setter Property="common:TabStrip.StripMargin" Value="18,0,18,0" />
+        <Setter Property="Template" Value="{StaticResource TabStripTemplate}" />
+    </Style>
+
     <!-- ==================== Level 3: in-page section chips ==================== -->
     <!-- Why this exists: tabs in this app grew by appending one card per backlog item to a single
          ScrollViewer > StackPanel, and Stability reached 80 cards in one unbroken scroll (Network
@@ -535,43 +501,17 @@
          Set Style="{StaticResource SectionTabControl}" on the TabControl only; its
          ItemContainerStyle styles the child TabItems, so individual sections stay a plain
          <TabItem Header="..."> with nothing else on them. -->
-    <Style x:Key="SectionTabControl" TargetType="{x:Type TabControl}">
-        <Setter Property="Background" Value="Transparent" />
-        <Setter Property="BorderThickness" Value="0" />
-        <Setter Property="ItemContainerStyle" Value="{DynamicResource SectionTabItem}" />
-        <Setter Property="Template">
-            <Setter.Value>
-                <ControlTemplate TargetType="{x:Type TabControl}">
-                    <Grid KeyboardNavigation.TabNavigation="Local" Background="{TemplateBinding Background}">
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="*" />
-                        </Grid.RowDefinitions>
-                        <ScrollViewer Grid.Row="0" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled"
-                                      Margin="16,12,16,4">
-                            <!-- StackPanel for the same reason as GroupTabControl above: a chip needs its
-                                 gap outside its border, so the spacing has to be Margin, and TabPanel
-                                 would clip 8px off every chip's label. -->
-                            <StackPanel Orientation="Horizontal" IsItemsHost="True" Background="Transparent" />
-                        </ScrollViewer>
-                        <ContentPresenter Grid.Row="1" ContentSource="SelectedContent" />
-                    </Grid>
-                </ControlTemplate>
-            </Setter.Value>
-        </Setter>
-    </Style>
-
     <Style x:Key="SectionTabItem" TargetType="{x:Type TabItem}">
         <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
         <Setter Property="FontSize" Value="{StaticResource FontBody}" />
         <Setter Property="FontWeight" Value="SemiBold" />
-        <Setter Property="Padding" Value="14,6" />
+        <Setter Property="Padding" Value="{StaticResource ChipPadding}" />
         <Setter Property="Margin" Value="0,0,8,0" />
         <Setter Property="Cursor" Value="Hand" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="{x:Type TabItem}">
-                    <Border x:Name="chip" CornerRadius="14" Padding="{TemplateBinding Padding}"
+                    <Border x:Name="chip" CornerRadius="{StaticResource ChipCornerRadius}" Padding="{TemplateBinding Padding}"
                             Background="{DynamicResource BgPanelBrush}"
                             BorderBrush="{DynamicResource BorderBrush2}" BorderThickness="1">
                         <ContentPresenter ContentSource="Header" VerticalAlignment="Center" RecognizesAccessKey="True" />
@@ -597,32 +537,51 @@
         </Setter>
     </Style>
 
+    <Style x:Key="SectionTabControl" TargetType="{x:Type TabControl}">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="ItemContainerStyle" Value="{StaticResource SectionTabItem}" />
+        <Setter Property="common:TabStrip.StripMargin" Value="16,12,16,4" />
+        <Setter Property="Template" Value="{StaticResource TabStripTemplate}" />
+    </Style>
+
+    <!-- suggestions.md #1013: the standard body wrapper for a section's cards - every converted
+         section's content starts with this ScrollViewer, so the section gutters are tunable here
+         in one place instead of 75 copy-pasted attribute pairs across a dozen views. -->
+    <Style x:Key="SectionBody" TargetType="{x:Type ScrollViewer}">
+        <Setter Property="VerticalScrollBarVisibility" Value="Auto" />
+        <Setter Property="Padding" Value="16,4,16,16" />
+    </Style>
+
     <!-- Devices & Drivers switched sections with plain Buttons and an IsXxxViewActive bool per
          section long before the chip bar existed (see DevicesDriversViewModel). Rather than
          rewrite that into TabItems, this style makes those buttons render as the same chip, so
-         the one tab that navigates differently at least does not also look different. The caller
-         still supplies its own DataTrigger for the active state - only the resting look is here. -->
+         the one tab that navigates differently at least does not also look different.
+
+         Active state (suggestions.md #1012): bind the button's Tag to the section's Is*ViewActive
+         bool - the DataTrigger below paints the accent chip, so callers don't paste the
+         three-setter accent cluster per button any more. The triggers live in Style.Triggers, not
+         the template, and their order is load-bearing (suggestions.md #1002): the active trigger
+         is declared after the hover trigger, so hovering the active chip keeps its accent fill
+         instead of repainting it hover-grey under accent-dark text (~1.3:1 - the bug that made
+         the active section unreadable under the pointer). -->
     <Style x:Key="SectionChipButton" TargetType="{x:Type Button}" BasedOn="{StaticResource {x:Type Button}}">
         <Setter Property="FontSize" Value="{StaticResource FontBody}" />
         <Setter Property="FontWeight" Value="SemiBold" />
         <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
         <Setter Property="Background" Value="{DynamicResource BgPanelBrush}" />
         <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush2}" />
-        <Setter Property="Padding" Value="14,6" />
+        <Setter Property="Padding" Value="{StaticResource ChipPadding}" />
         <Setter Property="Margin" Value="0,0,8,0" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="{x:Type Button}">
-                    <Border x:Name="chip" CornerRadius="14" Padding="{TemplateBinding Padding}"
+                    <Border x:Name="chip" CornerRadius="{StaticResource ChipCornerRadius}" Padding="{TemplateBinding Padding}"
                             Background="{TemplateBinding Background}"
                             BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1">
                         <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" RecognizesAccessKey="True" />
                     </Border>
                     <ControlTemplate.Triggers>
-                        <Trigger Property="IsMouseOver" Value="True">
-                            <Setter TargetName="chip" Property="Background" Value="{DynamicResource BgHoverBrush}" />
-                            <Setter TargetName="chip" Property="BorderBrush" Value="{DynamicResource TextTertiaryBrush}" />
-                        </Trigger>
                         <Trigger Property="IsEnabled" Value="False">
                             <Setter TargetName="chip" Property="Opacity" Value="0.38" />
                         </Trigger>
@@ -630,6 +589,18 @@
                 </ControlTemplate>
             </Setter.Value>
         </Setter>
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="{DynamicResource BgHoverBrush}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource TextTertiaryBrush}" />
+                <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+            </Trigger>
+            <DataTrigger Binding="{Binding Tag, RelativeSource={RelativeSource Self}}" Value="True">
+                <Setter Property="Background" Value="{DynamicResource AccentBrush}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+                <Setter Property="Foreground" Value="{DynamicResource AccentForegroundBrush}" />
+            </DataTrigger>
+        </Style.Triggers>
     </Style>
 
     <!-- ============================= DataGrid ============================= -->
@@ -650,7 +621,10 @@
         <Setter Property="SelectionMode" Value="Single" />
         <Setter Property="SelectionUnit" Value="FullRow" />
         <Setter Property="RowHeight" Value="{DynamicResource DataGridRowHeightValue}" />
-        <Setter Property="FontSize" Value="12.5" />
+        <!-- suggestions.md #1005: grids are the densest, most-read surface in the app, so their
+             text sits on the type scale like everything else (body text was a literal 12.5, and
+             column headers a literal 11 - below the 12px floor the scale exists to enforce). -->
+        <Setter Property="FontSize" Value="{StaticResource FontBody}" />
         <Setter Property="VerticalGridLinesBrush" Value="{DynamicResource BorderSubtleBrush}" />
         <Setter Property="HorizontalGridLinesBrush" Value="{DynamicResource BorderSubtleBrush}" />
         <Setter Property="RowHeaderWidth" Value="0" />
@@ -665,7 +639,7 @@
         <Setter Property="BorderThickness" Value="0,0,0,1" />
         <Setter Property="HorizontalContentAlignment" Value="Left" />
         <Setter Property="FontWeight" Value="SemiBold" />
-        <Setter Property="FontSize" Value="11" />
+        <Setter Property="FontSize" Value="{StaticResource FontCaption}" />
         <Setter Property="Cursor" Value="Hand" />
         <Setter Property="Template">
             <Setter.Value>
@@ -864,7 +838,7 @@
         <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
         <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush2}" />
         <Setter Property="Padding" Value="8,5" />
-        <Setter Property="FontSize" Value="12" />
+        <Setter Property="FontSize" Value="{StaticResource FontCaption}" />
     </Style>
 
     <Style TargetType="{x:Type ContextMenu}">

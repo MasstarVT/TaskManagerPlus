@@ -12,7 +12,7 @@
          Sections, matching the other Hardware tabs. -->
     <TabControl Style="{StaticResource SectionTabControl}" SelectedIndex="0">
         <TabItem Header="Overview">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- Shown only when no GPU adapter and no "GPU Engine" counter category could be found
                          at all (a headless/basic-display-only VM being the realistic case) - degrade to an
@@ -297,7 +297,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Processes &amp; memory">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- #56/#680: "which app is using it" - re-presents the Processes tab's already-
                          polling GPU% column, live-sorted here instead of sampled again, split out by which
@@ -398,7 +398,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Driver &amp; hardware">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,4,16,16">
+            <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- #671/#672: TDR registry configuration + Hardware-accelerated GPU Scheduling state -
                          read-only, from HKLM\SYSTEM\CurrentControlSet\Control\GraphicsDrivers. -->

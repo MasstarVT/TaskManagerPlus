@@ -31,15 +31,16 @@ public sealed class GlobalSearchViewModel : ObservableObject
     private readonly RulesEditorViewModel _rulesEditor;
     private readonly TroubleshootViewModel _troubleshoot;
 
-    /// <summary>#1000: every top-level tab's header text, in strip order - the command palette's
-    /// "jump to tab" results. Kept as a plain constant list (mirroring MainViewModel.
-    /// DefaultTabShortcutOrder's own hand-maintained approach) rather than reflecting over
-    /// MainWindow's TabControl, since this ViewModel has no reference to that Window at all.</summary>
-    public static readonly string[] AllTabNames =
-    {
-        "Summary", "CPU", "Memory", "Storage", "Network", "GPU", "Energy & Thermals",
-        "Processes", "Services", "Startup", "System", "Stability", "Troubleshoot",
-    };
+    /// <summary>suggestions.md #1006: every navigable destination - group tabs, leaf tabs, and
+    /// `tab › section` chip pairs - generated from MainWindow's real TabControl tree at startup
+    /// (MainWindow.EnumerateTabDestinations) and injected here via <see cref="SetTabDestinations"/>,
+    /// since this ViewModel has no reference to that Window. Replaces a hand-maintained constant
+    /// list that had silently drifted twice (it never learned the group names or the five newest
+    /// tabs, and could not address sections at all).</summary>
+    private IReadOnlyList<TabDestination> _tabDestinations = Array.Empty<TabDestination>();
+
+    /// <summary>Called once by MainWindow after its tab tree is constructed.</summary>
+    public void SetTabDestinations(IReadOnlyList<TabDestination> destinations) => _tabDestinations = destinations;
 
     public ObservableCollection<SearchResult> Results { get; } = new();
 
@@ -104,9 +105,17 @@ public sealed class GlobalSearchViewModel : ObservableObject
         foreach (var u in _systemSpecs.UsbDevices.Where(u => Has(u.Primary, q)).Take(MaxPerCategory))
             Results.Add(new SearchResult { Category = "USB device", Name = u.Primary, Detail = u.HealthText });
 
-        // #1000: tab names - jump straight to a tab by typing its name.
-        foreach (var tab in AllTabNames.Where(t => Has(t, q)).Take(MaxPerCategory))
-            Results.Add(new SearchResult { Category = "Tab", Name = tab, Detail = "Jump to this tab", Navigation = new SearchNavigationRequest { TabName = tab } });
+        // #1000/#1006: tab and section names - jump straight to a destination by typing its name
+        // ("crashes" finds Stability › Crashes). Section matches search the section's own name so a
+        // query matching only the parent tab doesn't drown the tab hit in its section list.
+        foreach (var t in _tabDestinations.Where(t => Has(t.Section ?? t.TabName, q)).Take(MaxPerCategory))
+            Results.Add(new SearchResult
+            {
+                Category = t.Section is null ? "Tab" : "Section",
+                Name = t.DisplayName,
+                Detail = t.Section is null ? "Jump to this tab" : "Jump to this section",
+                Navigation = new SearchNavigationRequest { TabName = t.TabName, Section = t.Section },
+            });
 
         // #1000: currently fired Health Check findings - selecting one navigates to Summary (this
         // app has no per-finding scroll-into-view anchor to target more precisely than that).

@@ -230,34 +230,66 @@ different shape so a glance tells you which one you are looking at:
 3. **Sections** — a chip bar at the top of a tab's content.
    `SectionTabControl` + `SectionTabItem`, same `ItemContainerStyle` trick.
 
+All three levels share **one** strip `ControlTemplate` (`TabStripTemplate`
+in `Dark.xaml`), parameterized per level via the `Common/TabStrip.cs`
+attached properties (header background/border, strip margin) — the items
+host is a horizontal `StackPanel` inside a `ScrollViewer` (scrollbar
+`Hidden`, since an `Auto` bar appearing re-measures the whole content row),
+never a `TabPanel`, which clips each tab by its own `Margin` during
+arrange. The `*TabItem` styles are declared *before* the `*TabControl`
+styles that consume them so `ItemContainerStyle` stays `StaticResource`.
+
 Level 3 exists because tabs grew by appending one card per backlog item to
 a single `ScrollViewer > StackPanel`: Stability reached 91 stacked cards in
 one unbroken scroll, Energy & Thermals 63, Responsiveness 64, Storage 43.
 Wrapping runs of cards in section `TabItem`s needs **no ViewModel change** —
 no `IsXxxViewActive` bool, no new commands — and WPF handles selection,
 keyboard nav and automation. Prefer this over adding another bool-per-section
-switch. `DevicesDriversView` is the one tab that still switches sections with
+switch. A section's content starts with a
+`<ScrollViewer Style="{StaticResource SectionBody}">` wrapper (the shared
+gutters), and the chip geometry lives in the `ChipCornerRadius`/
+`ChipPadding` tokens shared by `SectionTabItem` and `SectionChipButton`.
+`DevicesDriversView` is the one tab that still switches sections with
 ViewModel bools (it predates the chip bar); its buttons use
-`SectionChipButton` so it at least looks the same.
+`SectionChipButton` with `Tag` bound to the section's `Is*ViewActive` bool —
+the style's own trigger paints the accent active chip (and keeps it through
+hover), so no per-button accent setters.
 
 **Every leaf tab keeps its original header text**, because that text is the
 address used by `--tab`, Ctrl+1..9, the Ctrl+K palette and every cross-tab
-jump. `SelectTabByName` walks the group tree breadth-first (so a group beats
-a same-named leaf) and selects the whole ancestor path, outermost first. It
-walks `TabItem.Content`, not the visual tree, because a `TabControl` only
+jump. `SelectTabByName(name, section?)` walks the group tree breadth-first
+(so a group beats a same-named leaf), selects the whole ancestor path,
+outermost first, then normalizes everything *below* the match to its first
+leaf (so selecting a group is never a silent no-op when a different leaf
+was open), and returns whether the name resolved. It walks
+`TabItem.Content`, not the visual tree, because a `TabControl` only
 realizes the selected tab's content — the nested `TabControl`s are
 XAML-declared objects and are reachable whether or not their group has ever
-been shown. If you add a group, do not rename the leaves inside it.
+been shown. The optional `section` argument extends the address to
+`tab › section`: it switches the leaf's `SectionTabControl` (found by style
+identity in the view's logical tree) to the chip with that header — use it
+for any cross-tab jump whose target card lives in a section, or the user
+lands on the tab's first section instead of the advertised card. The Ctrl+K
+palette's tab/section destinations are generated from this same tab tree at
+startup (`MainWindow.EnumerateTabDestinations` →
+`GlobalSearchViewModel.SetTabDestinations`), so a new tab or section is
+searchable with no list to maintain. If you add a group, do not rename the
+leaves inside it. A `TabItem` whose Header must carry non-string content
+(the Stability dump-alert badge, and its mirror on the Diagnostics group
+header so the alert is visible from other groups) needs
+`AutomationProperties.Name` — see the XAML rule below.
 
 ### UI shell (top tab strip, icons, footer, tray)
 
 `MainWindow.xaml`'s `TabControl` is re-templated (in `Themes/Dark.xaml`) as
 a TMOG-style top icon+label tab strip — `TabStripPlacement="Top"` gets the
 horizontal layout for free, and the strip scrolls horizontally so all tabs
-stay reachable at narrower widths. Each `TabItem.Tag` holds a small
-hand-drawn `Viewbox`/`Canvas` glyph styled via `NavIconStroke`/
-`NavIconFill` (bound to the ancestor `TabItem.Foreground`, so icons recolor
-automatically with the theme). The "Colors" button and other footer
+stay reachable at narrower widths. Each **level-1 group** `TabItem.Tag`
+holds a small hand-drawn `Viewbox`/`Canvas` glyph styled via
+`NavIconStroke`/`NavIconFill` (bound to the ancestor `TabItem.Foreground`,
+so icons recolor automatically with the theme); only the level-1 template
+presents `Tag`, so don't give a nested leaf tab one — it would be parsed
+and allocated but never rendered. The "Colors" button and other footer
 controls live in `TabControl.Tag`, which the template docks to the trailing
 edge of the strip — keeps `Dark.xaml` generic while `MainWindow.xaml`
 supplies real bindings. A slim footer status bar under the tab body shows
@@ -285,9 +317,13 @@ entry" trick used for accent brushes and for `CompactRows`'s row-height
 resources. **This only works because every consumer references these
 brushes via `DynamicResource`, not `StaticResource` — if you add a new
 view, use `DynamicResource` for any base palette brush key, or it won't
-re-theme.** `ThemeViewModel.FontScale` doesn't touch font sizes directly
-(most views hardcode `FontSize`); instead it drives a `ScaleTransform` via
-`LayoutTransform` on the whole `TabControl`.
+re-theme.** `ThemeViewModel.FontScale` doesn't touch font sizes; it drives
+a `ScaleTransform` via `LayoutTransform` on the whole `TabControl`. The
+color-blind-safe alert set picks its light-vs-dark variant with
+`ColorMath.WcagRelativeLuminance` (the sRGB-linearized WCAG luminance) of
+the *saturation-adjusted* background — the plain `RelativeLuminance` is a
+cheap gamma-space average whose midpoint doesn't match WCAG's, fine for the
+accent-foreground flip but not for anything tuned against contrast ratios.
 
 ### Chart styling (glow + gradient)
 
@@ -468,14 +504,19 @@ per file:
   sizes (the most common body size was 11.5px), 179 distinct `Margin`
   values and 11 `CornerRadius` values. Those are collapsed onto a 7-step
   type scale (`FontCaption` 12 / `FontBody` 13 / `FontStrong` 13.5 /
-  `FontSection` 15 / `FontTitle` 17 / `FontDisplay` 22 / `FontHero` 30), a
-  4px spacing grid and three radii, with matching `Text*` styles. There are
-  now **zero** literal font sizes in `Views/`. Use
-  `FontSize="{StaticResource FontBody}"` or `Style="{StaticResource
-  TextBody}"`; a literal `FontSize="11.5"` is exactly what the scale exists
-  to stop coming back. Unlike the palette these are plain
-  `StaticResource`-consumed doubles — they never change at runtime, so they
-  don't need the `DynamicResource` treatment the color keys do.
+  `FontSection` 15 / `FontTitle` 17 / `FontDisplay` 22 / `FontHero` 30)
+  plus the spacing/radius tokens that have real consumers (`StackGapSm/Md/
+  Lg`, `RadiusLg`, `ChipCornerRadius`/`ChipPadding`). There are **zero**
+  literal font sizes in `Views/` — and none left in `Dark.xaml`'s own
+  `DataGrid`/`TabItem`/`ToolTip` styles either, which sat below the 12px
+  floor until suggestions.md #1005. Use `FontSize="{StaticResource
+  FontBody}"`; a literal `FontSize="11.5"` is exactly what the scale exists
+  to stop coming back. (An earlier revision also shipped `Text*` TextBlock
+  styles wrapping these keys; they gained zero consumers — every view
+  inlines the attributes — so #1010 deleted them rather than leave a
+  convention the codebase doesn't follow.) Unlike the palette these are
+  plain `StaticResource`-consumed doubles — they never change at runtime,
+  so they don't need the `DynamicResource` treatment the color keys do.
 
 - **XAML: `<Run Text="{Binding ...}">` must carry `Mode=OneWay`.** Unlike
   `TextBlock.Text`, `Run.Text` sets `BindsTwoWayByDefault`, so a Run bound to
