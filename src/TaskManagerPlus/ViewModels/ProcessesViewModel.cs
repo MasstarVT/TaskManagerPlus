@@ -609,6 +609,11 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
                 existing.ThreadCount = fresh.ThreadCount;
                 existing.HandleCount = fresh.HandleCount;
                 existing.SignatureStatus = fresh.SignatureStatus;
+                // Publisher/IsSelfSigned resolve asynchronously now (see GetResultOrQueue in
+                // ProcessMonitorService.Sample) - a row born while its binary's verify was still
+                // queued starts as Unknown and picks up the real values here a tick later.
+                existing.Publisher = fresh.Publisher;
+                existing.IsSelfSigned = fresh.IsSelfSigned;
                 existing.IsHighPrivilege = fresh.IsHighPrivilege;
                 existing.IsLeakSuspect = fresh.IsLeakSuspect;
                 existing.GpuPercent = fresh.GpuPercent;

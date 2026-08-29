@@ -646,6 +646,27 @@ per file:
   Network` provider and aggregate `KERNEL_NETWORK_TASK_TCPIP` events by PID.
   Never runs unattended — same on-demand-only rule as any other expensive
   capture, with a visible "capture running" indicator while it's active.
+- **Per-pid performance counters read the whole category once per tick**
+  (`PerformanceCounterCategory.ReadCategory()` + `CounterSample.Calculate`,
+  see `ProcessPerfCounterService` and `ReadGpuUsageByPid`) — never one
+  `PerformanceCounter` object per instance. Every raw `NextValue()`
+  re-reads the *entire* category from the provider, so the counter-per-
+  instance version of `ProcessPerfCounterService` cost 4–9 **seconds** per
+  tick on the ~350-instance "Process" category alone — the process list
+  took ~10s to first populate and refreshed far slower than its configured
+  interval, while the column it fed showed nothing. A rate counter needs
+  last tick's `CounterSample` kept per instance (first sight of an
+  instance reads 0), which replaces the old priming-`NextValue()` trick.
+- **Signature checks on the polled path are non-blocking.**
+  `SignatureCheckService.GetResultOrQueue` returns the cached result or
+  queues the path for one background worker and reports Unknown until the
+  verify lands; `ProcessesViewModel.MergeInto` reassigns
+  `SignatureStatus`/`Publisher`/`IsSelfSigned` every tick so the real
+  values appear once computed. The synchronous `GetResult` stays for
+  button-driven callers (Startup refresh, Security scans). This matters
+  mainly when elevated: `MainModule.FileName` then resolves for
+  essentially every process, and the first tick used to verify 150+
+  uncached system binaries synchronously before the first row appeared.
 - **Elevation**: the whole app runs elevated (`app.manifest` →
   `requireAdministrator`) rather than elevating per-action, so ending other
   users' processes and controlling services just work without extra

@@ -102,16 +102,16 @@ public static class SignatureCheckService
     /// maps to "Unsigned" rather than "Signed" - old consumers already color "Unsigned" as a
     /// warning, and a distrusted/expired chain deserves that same visual flag, not a false-clean
     /// "Signed".</summary>
-    public static string GetStatus(string? filePath)
+    public static string GetStatus(string? filePath) => StatusTextOf(GetResult(filePath));
+
+    /// <summary>The GetStatus string mapping, callable on an already-obtained result so
+    /// GetResultOrQueue callers don't trigger a second lookup.</summary>
+    public static string StatusTextOf(SignatureResult result) => result.Verification switch
     {
-        var result = GetResult(filePath);
-        return result.Verification switch
-        {
-            SignatureVerification.SignedEmbedded or SignatureVerification.SignedCatalog => "Signed",
-            SignatureVerification.Unknown => "Unknown",
-            _ => "Unsigned",
-        };
-    }
+        SignatureVerification.SignedEmbedded or SignatureVerification.SignedCatalog => "Signed",
+        SignatureVerification.Unknown => "Unknown",
+        _ => "Unsigned",
+    };
 
     /// <summary>#836: the richer verification outcome for new callers.</summary>
     public static SignatureVerification GetVerification(string? filePath) => GetResult(filePath).Verification;
@@ -165,6 +165,107 @@ public static class SignatureCheckService
         Cache[cacheKey] = computed;
         if (haveStat) SavePersisted(cacheKey, computed);
         return computed;
+    }
+
+    // ---- Non-blocking variant for polled callers ----------------------------------------------
+    // The process poll used to call GetResult synchronously per row, which is fine once the cache
+    // is warm but pathological on a cold first tick when the app runs elevated: elevated,
+    // MainModule.FileName resolves for essentially every process (non-elevated it's denied for
+    // most system processes and the check short-circuits on a null path), so the first sample
+    // paid a WinVerifyTrust embedded+catalog verification - hashing each file - for 150+ system
+    // binaries in one synchronous burst before a single row could reach the grid. Combined with
+    // the rest of the first-tick cost that only exists elevated, the Processes tab (and the
+    // footer's process count) sat at zero for tens of seconds after every elevated launch.
+    // GetResultOrQueue returns the cached result when one exists and otherwise queues the path
+    // for one background worker, reporting Unknown until the verify lands - the same
+    // degrade-to-Unknown-then-fill-in shape the rest of the app uses. On-demand callers
+    // (Startup refresh, the Security tab's scans) keep the synchronous GetResult - a
+    // button-driven scan wants the definitive answer.
+
+    private static readonly ConcurrentDictionary<string, byte> QueuedPaths = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly ConcurrentQueue<string> PendingQueue = new();
+    private static int _workerRunning;
+
+    /// <summary>Cached-or-Unknown lookup that never verifies on the calling thread - see the
+    /// remarks above. Safe to call per row per tick; a given path is queued at most once until
+    /// its verification completes.</summary>
+    public static SignatureResult GetResultOrQueue(string? filePath)
+    {
+        if (string.IsNullOrEmpty(filePath)) return SignatureResult.UnknownResult;
+
+        string cacheKey = filePath;
+        bool haveStat = false;
+        try
+        {
+            var fi = new FileInfo(filePath);
+            if (fi.Exists)
+            {
+                cacheKey = $"{filePath}|{fi.Length}|{fi.LastWriteTimeUtc.Ticks}";
+                haveStat = true;
+            }
+        }
+        catch { /* same path-only fallback as GetResult */ }
+
+        if (Cache.TryGetValue(cacheKey, out var cached)) return cached;
+
+        if (haveStat)
+        {
+            var fromDisk = TryLoadPersisted(cacheKey);
+            if (fromDisk is not null)
+            {
+                Cache[cacheKey] = fromDisk;
+                return fromDisk;
+            }
+        }
+
+        if (QueuedPaths.TryAdd(filePath, 0))
+        {
+            PendingQueue.Enqueue(filePath);
+            EnsureWorkerRunning();
+        }
+        return SignatureResult.UnknownResult;
+    }
+
+    private static void EnsureWorkerRunning()
+    {
+        if (Interlocked.CompareExchange(ref _workerRunning, 1, 0) != 0) return;
+        Task.Run(() =>
+        {
+            try
+            {
+                while (PendingQueue.TryDequeue(out var path))
+                {
+                    try { GetResult(path); } catch { /* degrade - stays Unknown until re-queued */ }
+                    QueuedPaths.TryRemove(path, out _);
+                }
+                // SavePersisted's 2s throttle can swallow the tail of a burst (the reason the
+                // persisted cache used to plateau well below the number of verified binaries) -
+                // one unconditional flush once the queue drains catches it.
+                FlushPersisted();
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _workerRunning, 0);
+                // A path enqueued between the final TryDequeue and the flag reset would otherwise
+                // wait for the next cache miss to restart the worker.
+                if (!PendingQueue.IsEmpty) EnsureWorkerRunning();
+            }
+        });
+    }
+
+    private static void FlushPersisted()
+    {
+        lock (PersistLock)
+        {
+            if (_persisted is null) return;
+            _lastPersistSaveUtc = DateTime.UtcNow;
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(PersistPath)!);
+                File.WriteAllText(PersistPath, JsonSerializer.Serialize(_persisted));
+            }
+            catch { /* best-effort, same as SavePersisted */ }
+        }
     }
 
     /// <summary>#838: revocation-aware check, kept entirely separate from the cached hot-path

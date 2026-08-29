@@ -43,8 +43,10 @@ public sealed class ProcessMonitorService : IDisposable
 
     // #36: per-process GPU usage, keyed by "GPU Engine" perf-counter instance name (which churns
     // far more than the CPU core instances HardwareMonitorService tracks - engines come and go
-    // as processes start/stop using the GPU) - see ReadGpuUsageByPid.
-    private readonly Dictionary<string, PerformanceCounter> _gpuEngineCounters = new();
+    // as processes start/stop using the GPU) - see ReadGpuUsageByPid. Previous-tick CounterSamples
+    // per instance, for the same one-ReadCategory-per-tick shape ProcessPerfCounterService uses
+    // (utilization is a busy-time rate, so it needs last tick's sample to compute).
+    private readonly Dictionary<string, CounterSample> _gpuEngineSamples = new();
     private static readonly Regex GpuEnginePidRegex = new(@"pid_(\d+)_", RegexOptions.Compiled);
 
     /// <summary>Well-known high-privilege service accounts - flagged distinctly from an
@@ -245,11 +247,14 @@ public sealed class ProcessMonitorService : IDisposable
 
                 double cpuPercentClamped = Math.Round(Math.Min(cpuPercent, 100.0 * _logicalProcessors), 1);
 
-                // #837: publisher (subject CN, falling back to issuer CN) - piggybacks on the
-                // same cached SignatureCheckService lookup SignatureStatus below already performs,
-                // so this costs nothing extra beyond the first check of a given file path.
+                // #837: publisher (subject CN, falling back to issuer CN). GetResultOrQueue, not
+                // GetResult: a cold cache miss must never verify (hash + WinVerifyTrust) on this
+                // sampling thread - elevated, the first tick sees 150+ uncached system binaries at
+                // once and the whole process list sat empty until that burst finished. The row
+                // reports Unknown/Unsigned-pending until the background verify lands; MergeInto
+                // reassigns these fields every tick, so the real values appear a tick later.
                 string processName = SafeName(proc);
-                var signer = SignatureCheckService.GetSignerInfo(filePath);
+                var signer = SignatureCheckService.GetResultOrQueue(filePath);
                 string publisher = signer.SubjectCn ?? signer.IssuerCn ?? "Unknown";
 
                 // #840: expected-Microsoft-binary / near-miss-name check - see
@@ -285,7 +290,7 @@ public sealed class ProcessMonitorService : IDisposable
                     StartTime = startTime,
                     FilePath = filePath,
                     CommandLine = GetCommandLineCached(pid),
-                    SignatureStatus = SignatureCheckService.GetStatus(filePath),
+                    SignatureStatus = SignatureCheckService.StatusTextOf(signer),
                     Publisher = publisher,
                     IsSelfSigned = signer.SelfSigned,
                     TrustWarning = trustWarning,
@@ -517,38 +522,38 @@ public sealed class ProcessMonitorService : IDisposable
         var result = new Dictionary<int, double>();
         try
         {
-            var instances = new PerformanceCounterCategory("GPU Engine").GetInstanceNames();
-            var seen = new HashSet<string>(instances);
+            // One ReadCategory per tick, not one cached PerformanceCounter per engine instance:
+            // this category routinely has several hundred instances (755 on the dev machine), and
+            // every raw NextValue() re-reads the whole category from the provider - the counter-
+            // per-instance version cost ~1s per tick on this category alone. Same rationale as
+            // ProcessPerfCounterService (see its class remarks for the measured numbers).
+            var category = new PerformanceCounterCategory("GPU Engine").ReadCategory();
+            var utilization = category["Utilization Percentage"];
+            if (utilization is null) return result;
 
-            foreach (var stale in _gpuEngineCounters.Keys.Where(k => !seen.Contains(k)).ToList())
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (InstanceData instance in utilization.Values)
             {
-                _gpuEngineCounters[stale].Dispose();
-                _gpuEngineCounters.Remove(stale);
-            }
+                string name = instance.InstanceName;
+                seen.Add(name);
 
-            foreach (var instance in instances)
-            {
-                if (!_gpuEngineCounters.TryGetValue(instance, out var counter))
-                {
-                    try
-                    {
-                        var newCounter = new PerformanceCounter("GPU Engine", "Utilization Percentage", instance, readOnly: true);
-                        newCounter.NextValue(); // prime it - a rate counter's first-ever sample is meaningless (always 0), so consume it now rather than let the next tick's read report a false 0.
-                        _gpuEngineCounters[instance] = newCounter;
-                    }
-                    catch { /* instance disappeared between GetInstanceNames() and here - skip it */ }
-                    continue;
-                }
+                var sample = instance.Sample;
+                bool havePrevious = _gpuEngineSamples.TryGetValue(name, out var previous);
+                _gpuEngineSamples[name] = sample;
+                // Utilization is a busy-time rate - the first-ever sample of an instance can't
+                // produce a value yet (the old code burned a priming NextValue() for the same
+                // reason); it reads from the next tick on.
+                if (!havePrevious) continue;
 
-                var match = GpuEnginePidRegex.Match(instance);
+                var match = GpuEnginePidRegex.Match(name);
                 if (!match.Success || !int.TryParse(match.Groups[1].Value, out int pid)) continue;
 
-                double value;
-                try { value = counter.NextValue(); }
-                catch { continue; }
-
+                double value = CounterSample.Calculate(previous, sample);
                 result[pid] = result.TryGetValue(pid, out var existing) ? existing + value : value;
             }
+
+            foreach (var stale in _gpuEngineSamples.Keys.Where(k => !seen.Contains(k)).ToList())
+                _gpuEngineSamples.Remove(stale);
         }
         catch
         {
@@ -794,8 +799,7 @@ public sealed class ProcessMonitorService : IDisposable
 
     public void Dispose()
     {
-        foreach (var counter in _gpuEngineCounters.Values) counter.Dispose();
-        _gpuEngineCounters.Clear();
+        _gpuEngineSamples.Clear();
         _pageFaultCounters.Dispose();
         _privateWorkingSetCounters.Dispose();
     }
