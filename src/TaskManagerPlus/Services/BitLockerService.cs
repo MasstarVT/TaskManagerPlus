@@ -24,7 +24,15 @@ namespace TaskManagerPlus.Services;
 public static class BitLockerService
 {
     // #389-391/#393: one-time-at-tab-load read for every fixed volume.
-    public static async Task<List<BitLockerVolumeInfo>> ReadAllAsync()
+    //
+    // The Task.Run wrapper is load-bearing: nothing below ever truly awaits, so without it the
+    // whole read runs synchronously on the CALLER'S thread - and StorageViewModel's constructor
+    // calls this during MainViewModel construction, on the UI thread, where connecting to the
+    // MicrosoftVolumeEncryption WMI namespace measured ~5 seconds PER DRIVE in a non-elevated
+    // process (access-denied discovery is slow). That one call was ~10s of the app's ~14.5s
+    // time-to-first-window; elevated launches were "mysteriously" faster because the namespace
+    // answers quickly when access succeeds.
+    public static Task<List<BitLockerVolumeInfo>> ReadAllAsync() => Task.Run(async () =>
     {
         var result = new List<BitLockerVolumeInfo>();
         var fixedDrives = DriveInfo.GetDrives().Where(d => d.DriveType == DriveType.Fixed && d.IsReady).ToList();
@@ -34,7 +42,7 @@ public static class BitLockerService
             result.Add(await ReadOneAsync(driveLetter));
         }
         return result;
-    }
+    });
 
     private static async Task<BitLockerVolumeInfo> ReadOneAsync(string driveLetter)
     {

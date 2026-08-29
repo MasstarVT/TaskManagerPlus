@@ -27,48 +27,84 @@ public sealed class ServiceControlService
 
     public static bool IsProtectedCoreService(string serviceName) => ProtectedCoreServiceNames.Contains(serviceName);
 
+    /// <summary>Per-service data that can't change without a service reinstall or a reboot -
+    /// computed on first sight of a service name and reused every later tick. Description and the
+    /// DelayedAutostart flag are registry reads, and the two dependency directions are the
+    /// genuinely expensive part: ServicesDependedOn opens each service's config and
+    /// DependentServices enumerates the whole service table per service (~120ms combined per tick
+    /// across ~290 services, on top of ~300ms of per-service registry reads - most of the old
+    /// ~450ms tick).</summary>
+    private sealed record StaticServiceInfo(string Description, bool IsDelayedAutoStart, List<string> DependsOn, List<string> DependentServices);
+
+    private readonly Dictionary<string, StaticServiceInfo> _staticInfoCache = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Ticks between refreshes of the cached logon-account map. Accounts effectively
+    /// never change mid-session (and only via an explicit reconfiguration when they do), but the
+    /// Win32_Service query that carries StartName costs ~200ms - too much to pay per tick for a
+    /// static column, worth re-checking occasionally so an external change does eventually land.</summary>
+    private const int AccountRefreshTicks = 30;
+    private Dictionary<string, string>? _accountCache;
+    private int _ticksSinceAccountRefresh;
+
     /// <summary>Builds the current list of services. Safe to call from a background thread.</summary>
     public List<ServiceRow> Sample()
     {
-        var pids = ReadServicePids();
-        var exitCodes = ReadServiceExitCodes();
-        var accounts = ReadServiceAccounts();
+        // Pid + last exit code come from one EnumServicesStatusEx syscall (~1ms; WMI fallback
+        // inside) - this used to be three separate ~100-200ms Win32_Service WMI queries per tick.
+        var statusInfo = NativeServiceStatusReader.ReadPidsAndExitCodes();
+        if (_accountCache is null || ++_ticksSinceAccountRefresh >= AccountRefreshTicks)
+        {
+            _accountCache = ReadServiceAccounts();
+            _ticksSinceAccountRefresh = 0;
+        }
         int autoStartDelaySeconds = ReadGlobalAutoStartDelaySeconds();
         var rows = new List<ServiceRow>();
+        var seenNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var sc in ServiceController.GetServices())
         {
             try
             {
+                seenNames.Add(sc.ServiceName);
+                if (!_staticInfoCache.TryGetValue(sc.ServiceName, out var staticInfo))
+                {
+                    // #37: dependency graph - so a user understands the blast radius before
+                    // stopping a service. Cached per name: dependencies, the registry Description,
+                    // and the #755 DelayedAutostart flag can't change without a reboot/reinstall.
+                    List<string> dependsOn = new(), dependents = new();
+                    try { dependsOn = sc.ServicesDependedOn.Select(s => s.DisplayName).ToList(); }
+                    catch { /* leave empty */ }
+                    try { dependents = sc.DependentServices.Select(s => s.DisplayName).ToList(); }
+                    catch { /* leave empty */ }
+                    staticInfo = new StaticServiceInfo(
+                        ReadDescriptionFromRegistry(sc.ServiceName),
+                        ReadDelayedAutostart(sc.ServiceName),
+                        dependsOn,
+                        dependents);
+                    _staticInfoCache[sc.ServiceName] = staticInfo;
+                }
+
                 var row = new ServiceRow
                 {
                     ServiceName = sc.ServiceName,
                     DisplayName = sc.DisplayName,
                     Status = sc.Status,
-                    Description = ReadDescriptionFromRegistry(sc.ServiceName),
+                    Description = staticInfo.Description,
                     IsProtectedCore = IsProtectedCoreService(sc.ServiceName),
                 };
                 try { row.StartType = sc.StartType; } catch { row.StartType = ServiceStartMode.Manual; }
-                if (pids.TryGetValue(sc.ServiceName, out var pid))
-                    row.ProcessId = pid;
-                if (exitCodes.TryGetValue(sc.ServiceName, out var exitCode))
-                    row.ExitCode = exitCode;
-                if (accounts.TryGetValue(sc.ServiceName, out var account))
+                if (statusInfo.TryGetValue(sc.ServiceName, out var info))
+                {
+                    row.ProcessId = info.ProcessId;
+                    row.ExitCode = info.ExitCode;
+                }
+                if (_accountCache.TryGetValue(sc.ServiceName, out var account))
                     row.LogOnAs = account;
 
-                // #755: a single trivial registry read, same cost class as Description above - see
-                // ServiceRow.StartTypeDisplay for how this and the machine-wide delay are shown.
-                row.IsDelayedAutoStart = ReadDelayedAutostart(sc.ServiceName);
+                row.IsDelayedAutoStart = staticInfo.IsDelayedAutoStart;
                 row.AutoStartDelaySeconds = autoStartDelaySeconds;
-
-                // #37: dependency graph - so a user understands the blast radius before stopping
-                // a service. Read fresh every tick, the same "no per-row caching" tradeoff
-                // Description above already makes, since dependencies can't change without a
-                // reboot/reinstall anyway.
-                try { row.DependsOn = sc.ServicesDependedOn.Select(s => s.DisplayName).ToList(); }
-                catch { /* leave empty */ }
-                try { row.DependentServices = sc.DependentServices.Select(s => s.DisplayName).ToList(); }
-                catch { /* leave empty */ }
+                row.DependsOn = staticInfo.DependsOn;
+                row.DependentServices = staticInfo.DependentServices;
 
                 rows.Add(row);
             }
@@ -81,6 +117,10 @@ public sealed class ServiceControlService
                 sc.Dispose();
             }
         }
+
+        // Drop cached static info for services that no longer exist (uninstalled mid-session).
+        foreach (var stale in _staticInfoCache.Keys.Where(k => !seenNames.Contains(k)).ToList())
+            _staticInfoCache.Remove(stale);
 
         return rows.OrderBy(r => r.DisplayName, StringComparer.OrdinalIgnoreCase).ToList();
     }

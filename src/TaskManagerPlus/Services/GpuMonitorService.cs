@@ -43,14 +43,13 @@ public sealed class GpuMonitorService : IDisposable
         @"^luid_(0x[0-9A-Fa-f]+)_(0x[0-9A-Fa-f]+)_phys_\d+$",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
-    private readonly Dictionary<string, PerformanceCounter> _engineCounters = new();
-    private readonly Dictionary<string, PerformanceCounter> _dedicatedMemCounters = new();
-    private readonly Dictionary<string, PerformanceCounter> _sharedMemCounters = new();
+    // Previous-tick CounterSamples per engine instance - utilization is a busy-time rate, so each
+    // value needs last tick's sample. One ReadCategory() call per tick replaces the old
+    // PerformanceCounter-per-instance dictionaries: every raw NextValue() re-reads its ENTIRE
+    // category, and "GPU Engine" routinely has 700+ instances, which made this sampler cost
+    // ~500ms per tick (see ProcessPerfCounterService's remarks for the same fix and numbers).
+    private readonly Dictionary<string, CounterSample> _engineSamples = new(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>#674: "\GPU Adapter Memory(*)\Total Committed" - a third counter on the same
-    /// category as Dedicated/Shared Usage above, confirmed present on this app's target Windows
-    /// builds (`Get-Counter -ListSet "GPU Adapter Memory"`). See GpuAdapterSnapshot.TotalCommittedBytes.</summary>
-    private readonly Dictionary<string, PerformanceCounter> _totalCommittedCounters = new();
 
     public IReadOnlyList<GpuAdapterIdentity> Adapters { get; }
 
@@ -147,37 +146,32 @@ public sealed class GpuMonitorService : IDisposable
         var byPid = new Dictionary<int, Dictionary<string, double>>();
         try
         {
-            var instances = new PerformanceCounterCategory("GPU Engine").GetInstanceNames();
-            var seen = new HashSet<string>(instances);
-            foreach (var stale in _engineCounters.Keys.Where(k => !seen.Contains(k)).ToList())
-            {
-                _engineCounters[stale].Dispose();
-                _engineCounters.Remove(stale);
-            }
+            // One ReadCategory per tick - see _engineSamples' declaration remarks for why this is
+            // not a PerformanceCounter per instance.
+            var category = new PerformanceCounterCategory("GPU Engine").ReadCategory();
+            var utilization = category["Utilization Percentage"];
+            if (utilization is null) return (byLuid, byPid);
 
-            foreach (var instance in instances)
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (InstanceData instanceData in utilization.Values)
             {
+                string instance = instanceData.InstanceName;
+                seen.Add(instance);
+
+                var sample = instanceData.Sample;
+                bool havePrevious = _engineSamples.TryGetValue(instance, out var previous);
+                _engineSamples[instance] = sample;
+                // A rate's first-ever sample of an instance can't produce a value yet (the old
+                // code burned a priming NextValue() for the same reason) - it reads next tick.
+                if (!havePrevious) continue;
+
                 var match = EngineInstanceRegex.Match(instance);
                 if (!match.Success) continue;
                 if (!int.TryParse(match.Groups[1].Value, out int pid)) continue;
                 string luid = $"{match.Groups[2].Value}_{match.Groups[3].Value}";
                 string engineType = SplitPascalCase(match.Groups[4].Value);
 
-                if (!_engineCounters.TryGetValue(instance, out var counter))
-                {
-                    try
-                    {
-                        var newCounter = new PerformanceCounter("GPU Engine", "Utilization Percentage", instance, readOnly: true);
-                        newCounter.NextValue(); // prime it - a rate counter's first-ever sample is meaningless (always 0), so consume it now rather than let the next tick's read report a false 0.
-                        _engineCounters[instance] = newCounter;
-                    }
-                    catch { /* instance disappeared between GetInstanceNames() and here - skip it */ }
-                    continue;
-                }
-
-                double value;
-                try { value = counter.NextValue(); }
-                catch { continue; }
+                double value = CounterSample.Calculate(previous, sample);
 
                 if (!byLuid.TryGetValue(luid, out var byType))
                     byLuid[luid] = byType = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
@@ -191,6 +185,9 @@ public sealed class GpuMonitorService : IDisposable
                     byPid[pid] = pidByType = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
                 pidByType[engineType] = pidByType.TryGetValue(engineType, out var existingPid) ? existingPid + value : value;
             }
+
+            foreach (var stale in _engineSamples.Keys.Where(k => !seen.Contains(k)).ToList())
+                _engineSamples.Remove(stale);
         }
         catch
         {
@@ -209,76 +206,33 @@ public sealed class GpuMonitorService : IDisposable
         var committed = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
         try
         {
-            var instances = new PerformanceCounterCategory("GPU Adapter Memory").GetInstanceNames();
-            var seen = new HashSet<string>(instances);
+            // One ReadCategory serves all three gauges - same rationale as the engine counters
+            // above. These are instantaneous byte values, so no previous-sample bookkeeping.
+            var category = new PerformanceCounterCategory("GPU Adapter Memory").ReadCategory();
+            var dedicatedData = category["Dedicated Usage"];
+            var sharedData = category["Shared Usage"];
+            // Older Windows builds may not expose "Total Committed" - degrade to 0 (Committed
+            // hidden in the UI), same as the old per-counter creation failure did.
+            var committedData = category["Total Committed"];
+            if (dedicatedData is null && sharedData is null && committedData is null)
+                return (dedicated, shared, committed);
 
-            foreach (var stale in _dedicatedMemCounters.Keys.Where(k => !seen.Contains(k)).ToList())
+            static void Accumulate(System.Diagnostics.InstanceDataCollection? data, Regex instanceRegex, Dictionary<string, long> into)
             {
-                _dedicatedMemCounters[stale].Dispose();
-                _dedicatedMemCounters.Remove(stale);
-            }
-            foreach (var stale in _sharedMemCounters.Keys.Where(k => !seen.Contains(k)).ToList())
-            {
-                _sharedMemCounters[stale].Dispose();
-                _sharedMemCounters.Remove(stale);
-            }
-            foreach (var stale in _totalCommittedCounters.Keys.Where(k => !seen.Contains(k)).ToList())
-            {
-                _totalCommittedCounters[stale].Dispose();
-                _totalCommittedCounters.Remove(stale);
-            }
-
-            foreach (var instance in instances)
-            {
-                var match = MemoryInstanceRegex.Match(instance);
-                if (!match.Success) continue;
-                string luid = $"{match.Groups[1].Value}_{match.Groups[2].Value}";
-
-                if (!_dedicatedMemCounters.TryGetValue(instance, out var dedCounter))
+                if (data is null) return;
+                foreach (InstanceData instanceData in data.Values)
                 {
-                    try { _dedicatedMemCounters[instance] = dedCounter = new PerformanceCounter("GPU Adapter Memory", "Dedicated Usage", instance, readOnly: true); }
-                    catch { dedCounter = null; }
-                }
-                if (dedCounter is not null)
-                {
-                    try
-                    {
-                        long v = (long)dedCounter.NextValue();
-                        dedicated[luid] = dedicated.TryGetValue(luid, out var d) ? d + v : v;
-                    }
-                    catch { /* leave unset for this tick */ }
-                }
-
-                if (!_sharedMemCounters.TryGetValue(instance, out var shCounter))
-                {
-                    try { _sharedMemCounters[instance] = shCounter = new PerformanceCounter("GPU Adapter Memory", "Shared Usage", instance, readOnly: true); }
-                    catch { shCounter = null; }
-                }
-                if (shCounter is not null)
-                {
-                    try
-                    {
-                        long v = (long)shCounter.NextValue();
-                        shared[luid] = shared.TryGetValue(luid, out var s) ? s + v : v;
-                    }
-                    catch { /* leave unset for this tick */ }
-                }
-
-                if (!_totalCommittedCounters.TryGetValue(instance, out var commCounter))
-                {
-                    try { _totalCommittedCounters[instance] = commCounter = new PerformanceCounter("GPU Adapter Memory", "Total Committed", instance, readOnly: true); }
-                    catch { commCounter = null; } // older Windows builds may not expose this counter - degrade to 0 (Committed hidden in the UI)
-                }
-                if (commCounter is not null)
-                {
-                    try
-                    {
-                        long v = (long)commCounter.NextValue();
-                        committed[luid] = committed.TryGetValue(luid, out var c) ? c + v : v;
-                    }
-                    catch { /* leave unset for this tick */ }
+                    var match = instanceRegex.Match(instanceData.InstanceName);
+                    if (!match.Success) continue;
+                    string luid = $"{match.Groups[1].Value}_{match.Groups[2].Value}";
+                    long v = instanceData.Sample.RawValue;
+                    into[luid] = into.TryGetValue(luid, out var existing) ? existing + v : v;
                 }
             }
+
+            Accumulate(dedicatedData, MemoryInstanceRegex, dedicated);
+            Accumulate(sharedData, MemoryInstanceRegex, shared);
+            Accumulate(committedData, MemoryInstanceRegex, committed);
         }
         catch
         {
@@ -397,11 +351,5 @@ public sealed class GpuMonitorService : IDisposable
         return sb.ToString();
     }
 
-    public void Dispose()
-    {
-        foreach (var c in _engineCounters.Values) c.Dispose();
-        foreach (var c in _dedicatedMemCounters.Values) c.Dispose();
-        foreach (var c in _sharedMemCounters.Values) c.Dispose();
-        foreach (var c in _totalCommittedCounters.Values) c.Dispose();
-    }
+    public void Dispose() => _engineSamples.Clear();
 }

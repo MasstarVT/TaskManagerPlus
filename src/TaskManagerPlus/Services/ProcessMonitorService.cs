@@ -651,7 +651,8 @@ public sealed class ProcessMonitorService : IDisposable
         {
             using var searcher = new ManagementObjectSearcher(
                 "SELECT ProcessId, ParentProcessId, CommandLine FROM Win32_Process");
-            foreach (ManagementObject mo in searcher.Get())
+            using var results = searcher.Get();
+            foreach (ManagementObject mo in results)
             {
                 using (mo)
                 {
@@ -701,12 +702,19 @@ public sealed class ProcessMonitorService : IDisposable
         {
             using var searcher = new ManagementObjectSearcher(
                 $"SELECT Handle FROM Win32_Process WHERE ProcessId = {pid}");
-            foreach (ManagementObject mo in searcher.Get())
+            using var results = searcher.Get();
+            foreach (ManagementObject mo in results)
             {
-                var args = new object[] { string.Empty, string.Empty };
-                var result = (uint)mo.InvokeMethod("GetOwner", args);
-                if (result == 0)
-                    owner = (string)args[0];
+                // Explicit disposal: WMI result objects are finalizable COM wrappers, and this
+                // runs on the poll path - leaving them to the finalizer thread showed up as
+                // steady ManagementObjectCollection.Finalize churn in idle CPU traces.
+                using (mo)
+                {
+                    var args = new object[] { string.Empty, string.Empty };
+                    var result = (uint)mo.InvokeMethod("GetOwner", args);
+                    if (result == 0)
+                        owner = (string)args[0];
+                }
             }
         }
         catch
@@ -731,8 +739,9 @@ public sealed class ProcessMonitorService : IDisposable
         {
             using var searcher = new ManagementObjectSearcher(
                 $"SELECT CommandLine FROM Win32_Process WHERE ProcessId = {pid}");
-            foreach (ManagementObject mo in searcher.Get())
-                commandLine = mo["CommandLine"] as string;
+            using var results = searcher.Get();
+            foreach (ManagementObject mo in results)
+                using (mo) commandLine = mo["CommandLine"] as string;
         }
         catch
         {
@@ -755,8 +764,9 @@ public sealed class ProcessMonitorService : IDisposable
         {
             using var searcher = new ManagementObjectSearcher(
                 $"SELECT ParentProcessId FROM Win32_Process WHERE ProcessId = {pid}");
-            foreach (ManagementObject mo in searcher.Get())
-                parentPid = Convert.ToInt32(mo["ParentProcessId"] ?? 0);
+            using var results = searcher.Get();
+            foreach (ManagementObject mo in results)
+                using (mo) parentPid = Convert.ToInt32(mo["ParentProcessId"] ?? 0);
         }
         catch
         {

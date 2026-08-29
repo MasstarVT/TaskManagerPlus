@@ -8,120 +8,49 @@ namespace TaskManagerPlus.Services;
 
 /// <summary>
 /// Reads system-wide performance data: CPU usage/clock speed (overall and per
-/// core), RAM, disk activity and network throughput. Performance counters are
-/// created once and reused, since counters that measure a rate need two
-/// samples to produce a meaningful value.
+/// core), RAM, disk activity and network throughput. Each performance counter
+/// CATEGORY is read exactly once per tick via CategorySampler (see its remarks -
+/// this class used to hold ~130 PerformanceCounter objects whose per-tick
+/// NextValue() calls each re-read their whole category, costing ~70ms of every
+/// one-second tick); individual values come out of those per-tick snapshots.
 /// </summary>
 public sealed class HardwareMonitorService : IDisposable
 {
-    private readonly PerformanceCounter _cpuTotalCounter;
-    private readonly PerformanceCounter[] _cpuCoreUsageCounters;
+    // One sampler per category this class reads. "Processor Information" carries total + per-core
+    // usage, requested/delivered clock, parking and C-states; the classic "Processor" category is
+    // still used for interrupt/DPC time since that's the one guaranteed to exist with a plain
+    // "_Total" instance on every SKU. "Process"/"System" cover the _Total handle/thread/process
+    // counts, "LogicalDisk" only the page-file volume's queue length (#432).
+    private readonly CategorySampler _processorInfo = new("Processor Information");
+    private readonly CategorySampler _processor = new("Processor");
+    private readonly CategorySampler _physicalDisk = new("PhysicalDisk");
+    private readonly CategorySampler _memory = new("Memory");
+    private readonly CategorySampler _system = new("System");
+    private readonly CategorySampler _process = new("Process");
+    private readonly CategorySampler _pagingFile = new("Paging File");
+    private readonly CategorySampler _tcp = new("TCPv4");
+    private readonly CategorySampler _logicalDisk = new("LogicalDisk");
 
-    // #78: per-core parking status. Same "Processor Information" instances as the usage counters
-    // above, just a different counter name - kept as a separate array (rather than folded into
-    // one struct) since it's allowed to fail independently: older Windows versions don't expose
-    // "Parking Status" at all, in which case this stays empty and every core reports "unparked".
-    private readonly PerformanceCounter[] _cpuParkingCounters;
+    // Instance-name orderings, fixed at construction: consumers index CpuPerCorePercent by the
+    // OS's logical-processor number (see the ctor's sorting remarks), and #362's per-disk list
+    // stays in disk-index order.
+    private readonly string[] _coreInstanceNames;
+    private readonly string[] _diskInstanceNames;
 
-    // #630: per-core "% Processor Performance" (OS-requested clock, reflecting turbo multiplier
-    // over base) and "% of Maximum Frequency" (silicon-delivered clock, accounting for any
-    // throttling) - a persistent gap between the two means the OS is asking for more than the
-    // silicon delivers. Best-effort, same shape as _cpuParkingCounters above: if either counter
-    // name isn't exposed on this Windows version, its array just stays empty rather than failing
-    // the whole service.
-    private readonly PerformanceCounter[] _cpuPerformancePerCoreCounters;
-    private readonly PerformanceCounter[] _cpuMaxFreqPerCoreCounters;
-    private readonly PerformanceCounter _cpuTotalPerformanceCounter;
-    private readonly PerformanceCounter _diskTimeCounter;
-    private readonly PerformanceCounter _diskReadCounter;
-    private readonly PerformanceCounter _diskWriteCounter;
-    private readonly PerformanceCounter _diskQueueLengthCounter;
-    private readonly PerformanceCounter _diskReadLatencyCounter;
-    private readonly PerformanceCounter _diskWriteLatencyCounter;
-
-    // Round 18, #365/#366: "% Disk Time" is a busy-time counter that saturates and can read above
-    // 100% under a deep queue - "% Idle Time" doesn't, so 100 - idle is what Task Manager's own
-    // "Active time" actually shows. Read/write time split and Disk Transfers/sec (for deriving
-    // average bytes/transfer) are the same idea as the existing _Total counters above, just two/
-    // three more instantaneous gauges - wrapped as TryCreateCounter (not required) since, like the
-    // C-state tiers below, not every counter is guaranteed present on every Windows/driver combo.
-    private readonly PerformanceCounter? _diskIdleTimeCounter;
-    private readonly PerformanceCounter? _diskReadTimePercentCounter;
-    private readonly PerformanceCounter? _diskWriteTimePercentCounter;
-    private readonly PerformanceCounter? _diskTransfersCounter;
-
-    // Round 18, #362: one counter set per PhysicalDisk instance (not just "_Total" above), built
-    // via the exact same GetInstanceNames()-filtered-to-real-instances pattern the per-core CPU
-    // counters below use - so a single slow drive isn't averaged away by others when queue length/
-    // latency is read only from "_Total". See the nested PhysicalDiskCounterSet class below.
-    private readonly PhysicalDiskCounterSet[] _perDiskCounters;
-
-    private readonly PerformanceCounter _handleCountCounter;
-    private readonly PerformanceCounter _threadCountCounter;
-    private readonly PerformanceCounter _processCountCounter;
-    private readonly PerformanceCounter _committedBytesCounter;
-    private readonly PerformanceCounter _commitLimitCounter;
-    private readonly PerformanceCounter _cacheBytesCounter;
-    private readonly PerformanceCounter _pageFileUsageCounter;
-
-    // CPU diagnostics (#13/#14/#15): interrupt/DPC time use the classic "Processor" category
-    // (not "Processor Information") since that's the one guaranteed to exist with a plain
-    // "_Total" instance on every SKU; context switches and queue length have no instance at all.
-    private readonly PerformanceCounter _cpuInterruptCounter;
-    private readonly PerformanceCounter _cpuDpcCounter;
-    private readonly PerformanceCounter _contextSwitchesCounter;
-    private readonly PerformanceCounter _cpuQueueLengthCounter;
-
-    // Memory diagnostics (#20/#22/#24): page fault rates, the standby (reclaimable) list, and
-    // kernel pool usage - all instantaneous/rate PerfCounters like the ones above, no new
-    // dependency. Standby list is split across three priority-tier counters that get summed.
-    private readonly PerformanceCounter _pageFaultsCounter;
-    private readonly PerformanceCounter _hardFaultsCounter;
-    private readonly PerformanceCounter _standbyCoreCounter;
-    private readonly PerformanceCounter _standbyNormalCounter;
-    private readonly PerformanceCounter _standbyReserveCounter;
-    private readonly PerformanceCounter _poolNonpagedCounter;
-    private readonly PerformanceCounter _poolPagedCounter;
-
-    // #422/#423: driver-locked/non-pageable memory and the modified (dirty, not-yet-written-back)
-    // page list - all documented "Memory" category counters, same instantiate-once-reuse-per-tick
-    // shape as everything else in this class. Wrapped individually via TryCreateCounter since
-    // these are less universally documented than the ones above and this app has no way to test
-    // every Windows SKU/version they might be missing on - a missing one degrades to 0 rather than
-    // failing the whole sampler.
-    private readonly PerformanceCounter? _poolNonpagedAllocsCounter;
-    private readonly PerformanceCounter? _systemDriverResidentCounter;
-    private readonly PerformanceCounter? _systemDriverTotalCounter;
-    private readonly PerformanceCounter? _systemCodeResidentCounter;
-    private readonly PerformanceCounter? _modifiedListCounter;
-
-    // #432/#437: page-file thrashing inputs and the file-system-cache component of Cache Bytes -
-    // same best-effort TryCreateCounter wrapping as the group above.
-    private readonly PerformanceCounter? _pagesInputCounter;
-    private readonly PerformanceCounter? _pagesOutputCounter;
-    private readonly PerformanceCounter? _pageFileVolumeQueueCounter;
-    private readonly PerformanceCounter? _systemCacheResidentCounter;
+    // Availability flags, decided once at construction from what the categories actually expose -
+    // the replacement for the old "TryCreateCounter returned null" checks. A missing counter
+    // (e.g. "Parking Status" on older Windows, C-state tiers on some platforms) degrades exactly
+    // as before: empty per-core arrays, 0 values, or the documented fallback.
+    private readonly bool _parkingAvailable;
+    private readonly bool _perCorePerformanceAvailable;
+    private readonly bool _perCoreMaxFreqAvailable;
+    private readonly bool _cStatesAvailable;
+    private readonly string? _pageFileVolumeInstance;
 
     // #423: installed physical RAM (Win32_PhysicalMemory, summed) vs. GlobalMemoryStatusEx's own
     // total - the gap is platform/firmware-reserved memory Windows never sees. Read once via WMI,
     // same "WMI for the rarely-changing total" tradeoff _pageFileTotalMb already makes.
     private readonly long _installedRamBytes;
-
-    // Network diagnostic (#32): TCP retransmit rate. Wrapped separately since the "TCPv4"
-    // category can legitimately be absent on an unusual network stack config - null means
-    // "not available", and Sample() just reports 0 rather than throwing.
-    private readonly PerformanceCounter? _tcpRetransmitsCounter;
-
-    // C-state residency (#83): "% C1/C2/C3 Time" on "Processor Information"\_Total - a power-
-    // related slowdown signal distinct from thermal throttling (a CPU stuck mostly in a deep
-    // C-state under light load is idling for power savings, not being held back). Each wrapped
-    // independently - not every CPU/chipset generation reports all three tiers (some modern
-    // platforms only ever populate C1), so a missing one just reports 0 rather than failing the
-    // whole group.
-    private readonly PerformanceCounter? _cIdleTimeCounter;
-    private readonly PerformanceCounter? _c1TimeCounter;
-    private readonly PerformanceCounter? _c2TimeCounter;
-    private readonly PerformanceCounter? _c3TimeCounter;
 
     private readonly string _cpuName;
     private readonly double _cpuBaseClockGhz;
@@ -144,196 +73,59 @@ public sealed class HardwareMonitorService : IDisposable
         _logicalProcessors = Environment.ProcessorCount;
 
         (_cpuName, _cpuBaseClockGhz, _physicalCores) = ReadCpuInfoFromWmi();
+        _pageFileTotalMb = ReadPageFileTotalMb();
+        _installedRamBytes = ReadInstalledRamBytes();
 
-        _cpuTotalCounter = new PerformanceCounter("Processor Information", "% Processor Time", "_Total", readOnly: true);
-        _cpuTotalPerformanceCounter = new PerformanceCounter("Processor Information", "% Processor Performance", "_Total", readOnly: true);
+        // Prime every sampler once: a rate's first-ever read returns 0 (see CategorySampler's
+        // remarks), so this plays the role the old per-counter priming NextValue() loop did -
+        // the very first UI Sample() gets real values.
+        _processorInfo.Tick();
+        _processor.Tick();
+        _physicalDisk.Tick();
+        _memory.Tick();
+        _system.Tick();
+        _process.Tick();
+        _pagingFile.Tick();
+        _tcp.Tick();
 
-        // Instance names in this category are "<NUMA node>,<core>" (e.g. "0,0", "0,1", ...,
-        // "0,_Total" for a per-node aggregate). Two bugs to avoid here: (1) filtering only the
-        // exact string "_Total" misses per-node aggregates like "0,_Total", which would otherwise
-        // be counted as a bogus extra "core"; (2) sorting the instance names as strings puts
-        // "0,10" before "0,2" (lexicographic, not numeric). Both matter beyond cosmetics: CPU
-        // topology (CpuTopologyService) indexes cores by the OS's actual logical-processor
+        // Instance names in "Processor Information" are "<NUMA node>,<core>" (e.g. "0,0", "0,1",
+        // ..., "0,_Total" for a per-node aggregate). Two bugs to avoid here: (1) filtering only
+        // the exact string "_Total" misses per-node aggregates like "0,_Total", which would
+        // otherwise be counted as a bogus extra "core"; (2) sorting the instance names as strings
+        // puts "0,10" before "0,2" (lexicographic, not numeric). Both matter beyond cosmetics:
+        // CPU topology (CpuTopologyService) indexes cores by the OS's actual logical-processor
         // number, so CpuPerCorePercent[i] needs to line up 1:1 with that same index - sort
         // numerically by (node, core) instead.
-        var coreInstances = new PerformanceCounterCategory("Processor Information")
-            .GetInstanceNames()
+        _coreInstanceNames = _processorInfo.InstanceNames("% Processor Time")
             .Where(n => n != "_Total" && !n.EndsWith(",_Total", StringComparison.OrdinalIgnoreCase))
             .Select(n => (Name: n, Key: ParseNumaCoreKey(n)))
             .OrderBy(x => x.Key.NumaNode)
             .ThenBy(x => x.Key.Core)
             .Select(x => x.Name)
             .ToArray();
-        _cpuCoreUsageCounters = coreInstances
-            .Select(name => new PerformanceCounter("Processor Information", "% Processor Time", name, readOnly: true))
-            .ToArray();
 
-        // #78: best-effort - wrapped as a whole rather than per-counter, since if "Parking Status"
-        // doesn't exist on this Windows version it won't exist for any instance either.
-        try
-        {
-            _cpuParkingCounters = coreInstances
-                .Select(name => new PerformanceCounter("Processor Information", "Parking Status", name, readOnly: true))
-                .ToArray();
-        }
-        catch
-        {
-            _cpuParkingCounters = Array.Empty<PerformanceCounter>();
-        }
-
-        // #630: same best-effort-array shape as _cpuParkingCounters above.
-        try
-        {
-            _cpuPerformancePerCoreCounters = coreInstances
-                .Select(name => new PerformanceCounter("Processor Information", "% Processor Performance", name, readOnly: true))
-                .ToArray();
-        }
-        catch
-        {
-            _cpuPerformancePerCoreCounters = Array.Empty<PerformanceCounter>();
-        }
-
-        try
-        {
-            _cpuMaxFreqPerCoreCounters = coreInstances
-                .Select(name => new PerformanceCounter("Processor Information", "% of Maximum Frequency", name, readOnly: true))
-                .ToArray();
-        }
-        catch
-        {
-            _cpuMaxFreqPerCoreCounters = Array.Empty<PerformanceCounter>();
-        }
-
-        _diskTimeCounter = new PerformanceCounter("PhysicalDisk", "% Disk Time", "_Total", readOnly: true);
-        _diskReadCounter = new PerformanceCounter("PhysicalDisk", "Disk Read Bytes/sec", "_Total", readOnly: true);
-        _diskWriteCounter = new PerformanceCounter("PhysicalDisk", "Disk Write Bytes/sec", "_Total", readOnly: true);
-        // "Avg. Disk Queue Length" is a classic bottleneck signal (requests waiting, not just
-        // active) and "Avg. Disk sec/Read|Write" is per-I/O latency in seconds - both instantaneous
-        // gauges like the Memory ones above, not rates, so they need priming too (below).
-        _diskQueueLengthCounter = new PerformanceCounter("PhysicalDisk", "Avg. Disk Queue Length", "_Total", readOnly: true);
-        _diskReadLatencyCounter = new PerformanceCounter("PhysicalDisk", "Avg. Disk sec/Read", "_Total", readOnly: true);
-        _diskWriteLatencyCounter = new PerformanceCounter("PhysicalDisk", "Avg. Disk sec/Write", "_Total", readOnly: true);
-
-        // #365/#366
-        _diskIdleTimeCounter = TryCreateCounter("PhysicalDisk", "% Idle Time", "_Total");
-        _diskReadTimePercentCounter = TryCreateCounter("PhysicalDisk", "% Disk Read Time", "_Total");
-        _diskWriteTimePercentCounter = TryCreateCounter("PhysicalDisk", "% Disk Write Time", "_Total");
-        _diskTransfersCounter = TryCreateCounter("PhysicalDisk", "Disk Transfers/sec", "_Total");
-
-        // #362: instance names in this category look like "0 C:" (disk index, then every drive
+        // #362: instance names in "PhysicalDisk" look like "0 C:" (disk index, then every drive
         // letter that disk hosts) or just "0" when no drive letter is assigned - sort numerically
-        // on the leading index rather than lexicographically, same reasoning ParseNumaCoreKey below
-        // documents for the per-core CPU counters ("0,10" before "0,2" would otherwise be wrong).
-        var diskInstances = new PerformanceCounterCategory("PhysicalDisk")
-            .GetInstanceNames()
+        // on the leading index, same reasoning as ParseNumaCoreKey above.
+        _diskInstanceNames = _physicalDisk.InstanceNames("% Disk Time")
             .Where(n => n != "_Total")
             .OrderBy(ParsePhysicalDiskIndex)
             .ToArray();
-        _perDiskCounters = diskInstances
-            .Select(TryCreatePhysicalDiskCounterSet)
-            .Where(set => set is not null)
-            .Select(set => set!)
-            .ToArray();
 
-        _handleCountCounter = new PerformanceCounter("Process", "Handle Count", "_Total", readOnly: true);
-        _threadCountCounter = new PerformanceCounter("Process", "Thread Count", "_Total", readOnly: true);
-        _processCountCounter = new PerformanceCounter("System", "Processes", readOnly: true);
-
-        // Instantaneous gauges (not rates), so no priming needed below like the disk/CPU
-        // counters get. Used for the Memory tab's Committed/Cached breakdown - see CLAUDE.md's
-        // Memory deep-dive notes for why these are the Windows-native categories used instead of
-        // macOS-style "wired"/"compressed" labels.
-        _committedBytesCounter = new PerformanceCounter("Memory", "Committed Bytes", readOnly: true);
-        _commitLimitCounter = new PerformanceCounter("Memory", "Commit Limit", readOnly: true);
-        _cacheBytesCounter = new PerformanceCounter("Memory", "Cache Bytes", readOnly: true);
-        // "Paging File\% Usage\_Total" is Windows' own live figure for how full the page file
-        // currently is - paired with the WMI-read total size below to get an actual MB-used value,
-        // the same "WMI for the rarely-changing total, PerformanceCounter for the live rate/percent"
-        // split ReadCpuInfoFromWmi + "% Processor Performance" already uses for clock speed.
-        _pageFileUsageCounter = new PerformanceCounter("Paging File", "% Usage", "_Total", readOnly: true);
-        _pageFileTotalMb = ReadPageFileTotalMb();
-
-        _cpuInterruptCounter = new PerformanceCounter("Processor", "% Interrupt Time", "_Total", readOnly: true);
-        _cpuDpcCounter = new PerformanceCounter("Processor", "% DPC Time", "_Total", readOnly: true);
-        _contextSwitchesCounter = new PerformanceCounter("System", "Context Switches/sec", readOnly: true);
-        _cpuQueueLengthCounter = new PerformanceCounter("System", "Processor Queue Length", readOnly: true);
-
-        _pageFaultsCounter = new PerformanceCounter("Memory", "Page Faults/sec", readOnly: true);
-        _hardFaultsCounter = new PerformanceCounter("Memory", "Pages/sec", readOnly: true);
-        _standbyCoreCounter = new PerformanceCounter("Memory", "Standby Cache Core Bytes", readOnly: true);
-        _standbyNormalCounter = new PerformanceCounter("Memory", "Standby Cache Normal Priority Bytes", readOnly: true);
-        _standbyReserveCounter = new PerformanceCounter("Memory", "Standby Cache Reserve Bytes", readOnly: true);
-        _poolNonpagedCounter = new PerformanceCounter("Memory", "Pool Nonpaged Bytes", readOnly: true);
-        _poolPagedCounter = new PerformanceCounter("Memory", "Pool Paged Bytes", readOnly: true);
-
-        _poolNonpagedAllocsCounter = TryCreateCounter("Memory", "Pool Nonpaged Allocs");
-        _systemDriverResidentCounter = TryCreateCounter("Memory", "System Driver Resident Bytes");
-        _systemDriverTotalCounter = TryCreateCounter("Memory", "System Driver Total Bytes");
-        _systemCodeResidentCounter = TryCreateCounter("Memory", "System Code Resident Bytes");
-        _modifiedListCounter = TryCreateCounter("Memory", "Modified Page List Bytes");
-        _installedRamBytes = ReadInstalledRamBytes();
-
-        // #432/#437
-        _pagesInputCounter = TryCreateCounter("Memory", "Pages Input/sec");
-        _pagesOutputCounter = TryCreateCounter("Memory", "Pages Output/sec");
-        _systemCacheResidentCounter = TryCreateCounter("Memory", "System Cache Resident Bytes");
+        // #78/#630/#83: per-core parking, requested/delivered clock, and the C-state tiers are
+        // not exposed on every Windows/CPU generation - probe once and degrade exactly as the old
+        // TryCreateCounter checks did (empty arrays / 0 values).
+        _parkingAvailable = _processorInfo.HasCounter("Parking Status");
+        _perCorePerformanceAvailable = _processorInfo.HasCounter("% Processor Performance");
+        _perCoreMaxFreqAvailable = _processorInfo.HasCounter("% of Maximum Frequency");
+        _cStatesAvailable = _processorInfo.HasCounter("% Idle Time");
 
         // #432: the page file's own drive letter, best-effort - only used to target the
         // "LogicalDisk\Avg. Disk Queue Length" instance for that specific volume rather than the
-        // system-wide "PhysicalDisk" total already sampled above, which can span drives the page
-        // file isn't even on.
+        // system-wide "PhysicalDisk" total, which can span drives the page file isn't even on.
         string? pageFileDrive = ReadPageFileDriveLetter();
-        _pageFileVolumeQueueCounter = pageFileDrive is null
-            ? null
-            : TryCreateCounter("LogicalDisk", "Avg. Disk Queue Length", pageFileDrive + ":");
-
-        try
-        {
-            _tcpRetransmitsCounter = new PerformanceCounter("TCPv4", "Segments Retransmitted/sec", readOnly: true);
-            _ = _tcpRetransmitsCounter.NextValue();
-        }
-        catch
-        {
-            // "TCPv4" category can be missing on an unusual network stack config - degrade to
-            // "not available" (Sample() reports 0) rather than failing the whole service.
-            _tcpRetransmitsCounter = null;
-        }
-
-        _cIdleTimeCounter = TryCreateCounter("Processor Information", "% Idle Time", "_Total");
-        _c1TimeCounter = TryCreateCounter("Processor Information", "% C1 Time", "_Total");
-        _c2TimeCounter = TryCreateCounter("Processor Information", "% C2 Time", "_Total");
-        _c3TimeCounter = TryCreateCounter("Processor Information", "% C3 Time", "_Total");
-
-        // Rate counters return 0 on their first read; prime them now so the
-        // very first UI sample isn't a meaningless zero.
-        _ = _cpuTotalCounter.NextValue();
-        _ = _cpuTotalPerformanceCounter.NextValue();
-        foreach (var c in _cpuCoreUsageCounters) _ = c.NextValue();
-        foreach (var c in _cpuPerformancePerCoreCounters) { try { _ = c.NextValue(); } catch { /* best-effort */ } }
-        foreach (var c in _cpuMaxFreqPerCoreCounters) { try { _ = c.NextValue(); } catch { /* best-effort */ } }
-        _ = _diskTimeCounter.NextValue();
-        _ = _diskReadCounter.NextValue();
-        _ = _diskWriteCounter.NextValue();
-        _ = _diskQueueLengthCounter.NextValue();
-        _ = _diskReadLatencyCounter.NextValue();
-        _ = _diskWriteLatencyCounter.NextValue();
-        _ = _diskIdleTimeCounter?.NextValue();
-        _ = _diskReadTimePercentCounter?.NextValue();
-        _ = _diskWriteTimePercentCounter?.NextValue();
-        _ = _diskTransfersCounter?.NextValue();
-        _ = _pageFileVolumeQueueCounter?.NextValue(); // #432: same "queue length" counter type as _diskQueueLengthCounter above - needs priming too.
-        _ = _pageFileUsageCounter.NextValue();
-        _ = _cpuInterruptCounter.NextValue();
-        _ = _cpuDpcCounter.NextValue();
-        _ = _contextSwitchesCounter.NextValue();
-        _ = _pageFaultsCounter.NextValue();
-        _ = _hardFaultsCounter.NextValue();
-        _ = _pagesInputCounter?.NextValue();
-        _ = _pagesOutputCounter?.NextValue();
-        _ = _cIdleTimeCounter?.NextValue();
-        _ = _c1TimeCounter?.NextValue();
-        _ = _c2TimeCounter?.NextValue();
-        _ = _c3TimeCounter?.NextValue();
+        _pageFileVolumeInstance = pageFileDrive is null ? null : pageFileDrive + ":";
+        if (_pageFileVolumeInstance is not null) _logicalDisk.Tick();
 
         (_lastBytesReceived, _lastBytesSent) = ReadTotalNetworkBytes();
         _lastNetSampleUtc = DateTime.UtcNow;
@@ -343,65 +135,67 @@ public sealed class HardwareMonitorService : IDisposable
     {
         var now = DateTime.UtcNow;
 
-        double cpuTotal = Clamp(_cpuTotalCounter.NextValue());
-        double perf = _cpuTotalPerformanceCounter.NextValue();
+        // One category read each per tick - every Value() below comes out of these snapshots.
+        _processorInfo.Tick();
+        _processor.Tick();
+        _physicalDisk.Tick();
+        _memory.Tick();
+        _system.Tick();
+        _process.Tick();
+        _pagingFile.Tick();
+        _tcp.Tick();
+        if (_pageFileVolumeInstance is not null) _logicalDisk.Tick();
+
+        double cpuTotal = Clamp(_processorInfo.Value("% Processor Time", "_Total"));
+        double perf = _processorInfo.Value("% Processor Performance", "_Total");
         double currentClockGhz = Math.Round(_cpuBaseClockGhz * (perf / 100.0), 2);
 
-        var perCore = new double[_cpuCoreUsageCounters.Length];
-        for (int i = 0; i < _cpuCoreUsageCounters.Length; i++)
-            perCore[i] = Clamp(_cpuCoreUsageCounters[i].NextValue());
+        var perCore = new double[_coreInstanceNames.Length];
+        for (int i = 0; i < _coreInstanceNames.Length; i++)
+            perCore[i] = Clamp(_processorInfo.Value("% Processor Time", _coreInstanceNames[i]));
 
         // #78: "Parking Status" reports a small integer (0 = unparked); any nonzero value means
         // the scheduler has parked that logical core to save power - a common, otherwise invisible
         // reason "only half my CPU seems to be doing anything" under light load.
-        var coreParked = new bool[_cpuParkingCounters.Length];
-        for (int i = 0; i < _cpuParkingCounters.Length; i++)
-        {
-            try { coreParked[i] = _cpuParkingCounters[i].NextValue() != 0; }
-            catch { coreParked[i] = false; }
-        }
+        var coreParked = new bool[_parkingAvailable ? _coreInstanceNames.Length : 0];
+        for (int i = 0; i < coreParked.Length; i++)
+            coreParked[i] = _processorInfo.Value("Parking Status", _coreInstanceNames[i]) != 0;
 
         // #630: per-core requested (% Processor Performance) vs. delivered (% of Maximum
-        // Frequency) clock, as percents of rated max - see the fields' remarks.
-        var perCoreRequested = new double[_cpuPerformancePerCoreCounters.Length];
-        for (int i = 0; i < _cpuPerformancePerCoreCounters.Length; i++)
-        {
-            try { perCoreRequested[i] = Math.Max(0, _cpuPerformancePerCoreCounters[i].NextValue()); }
-            catch { perCoreRequested[i] = 0; }
-        }
-        var perCoreDelivered = new double[_cpuMaxFreqPerCoreCounters.Length];
-        for (int i = 0; i < _cpuMaxFreqPerCoreCounters.Length; i++)
-        {
-            try { perCoreDelivered[i] = Math.Max(0, _cpuMaxFreqPerCoreCounters[i].NextValue()); }
-            catch { perCoreDelivered[i] = 0; }
-        }
+        // Frequency) clock, as percents of rated max - see the availability fields' remarks.
+        var perCoreRequested = new double[_perCorePerformanceAvailable ? _coreInstanceNames.Length : 0];
+        for (int i = 0; i < perCoreRequested.Length; i++)
+            perCoreRequested[i] = Math.Max(0, _processorInfo.Value("% Processor Performance", _coreInstanceNames[i]));
+        var perCoreDelivered = new double[_perCoreMaxFreqAvailable ? _coreInstanceNames.Length : 0];
+        for (int i = 0; i < perCoreDelivered.Length; i++)
+            perCoreDelivered[i] = Math.Max(0, _processorInfo.Value("% of Maximum Frequency", _coreInstanceNames[i]));
 
-        double diskPercent = Clamp(_diskTimeCounter.NextValue());
-        double diskRead = _diskReadCounter.NextValue();
-        double diskWrite = _diskWriteCounter.NextValue();
-        double diskQueueLength = Math.Max(0, _diskQueueLengthCounter.NextValue());
+        double diskPercent = Clamp(_physicalDisk.Value("% Disk Time", "_Total"));
+        double diskRead = _physicalDisk.Value("Disk Read Bytes/sec", "_Total");
+        double diskWrite = _physicalDisk.Value("Disk Write Bytes/sec", "_Total");
+        double diskQueueLength = Math.Max(0, _physicalDisk.Value("Avg. Disk Queue Length", "_Total"));
         // Avg. Disk sec/Read|Write reports in seconds; ms is the unit anyone diagnosing
         // "is my disk slow" actually thinks in.
-        double diskReadLatencyMs = Math.Max(0, _diskReadLatencyCounter.NextValue() * 1000.0);
-        double diskWriteLatencyMs = Math.Max(0, _diskWriteLatencyCounter.NextValue() * 1000.0);
+        double diskReadLatencyMs = Math.Max(0, _physicalDisk.Value("Avg. Disk sec/Read", "_Total") * 1000.0);
+        double diskWriteLatencyMs = Math.Max(0, _physicalDisk.Value("Avg. Disk sec/Write", "_Total") * 1000.0);
 
         // #365: corrected utilization - 100 minus idle time, rather than the saturating "% Disk
         // Time" above. Falls back to diskPercent (not a fabricated 0/100) when the counter isn't
         // available on this system, same "degrade to the best signal actually present" approach
         // the C-state tiers below use.
-        bool diskIdleTimeAvailable = _diskIdleTimeCounter is not null;
-        double diskIdlePercent = diskIdleTimeAvailable ? Clamp(_diskIdleTimeCounter!.NextValue()) : 0;
+        bool diskIdleTimeAvailable = _physicalDisk.HasCounter("% Idle Time");
+        double diskIdlePercent = diskIdleTimeAvailable ? Clamp(_physicalDisk.Value("% Idle Time", "_Total")) : 0;
         double diskUtilizationPercent = diskIdleTimeAvailable ? Math.Clamp(100.0 - diskIdlePercent, 0, 100) : diskPercent;
 
         // #366
-        double diskReadTimePercent = _diskReadTimePercentCounter is null ? 0 : Clamp(_diskReadTimePercentCounter.NextValue());
-        double diskWriteTimePercent = _diskWriteTimePercentCounter is null ? 0 : Clamp(_diskWriteTimePercentCounter.NextValue());
-        double diskTransfersPerSec = _diskTransfersCounter is null ? 0 : Math.Max(0, _diskTransfersCounter.NextValue());
+        double diskReadTimePercent = Clamp(_physicalDisk.Value("% Disk Read Time", "_Total"));
+        double diskWriteTimePercent = Clamp(_physicalDisk.Value("% Disk Write Time", "_Total"));
+        double diskTransfersPerSec = Math.Max(0, _physicalDisk.Value("Disk Transfers/sec", "_Total"));
 
         // #362: per-instance sweep, alongside (not instead of) the _Total figures above.
-        var physicalDisks = new PhysicalDiskSample[_perDiskCounters.Length];
-        for (int i = 0; i < _perDiskCounters.Length; i++)
-            physicalDisks[i] = _perDiskCounters[i].Sample();
+        var physicalDisks = new PhysicalDiskSample[_diskInstanceNames.Length];
+        for (int i = 0; i < _diskInstanceNames.Length; i++)
+            physicalDisks[i] = SamplePhysicalDisk(_diskInstanceNames[i], diskIdleTimeAvailable);
 
         var (bytesReceived, bytesSent) = ReadTotalNetworkBytes();
         var (netInErrors, netInDiscards, netOutErrors, netOutDiscards) = ReadNetworkErrorCounters();
@@ -414,11 +208,11 @@ public sealed class HardwareMonitorService : IDisposable
 
         GetMemoryStatus(out long totalBytes, out long availBytes);
 
-        double totalFaultsPerSec = Math.Max(0, _pageFaultsCounter.NextValue());
-        double hardFaultsPerSec = Math.Max(0, _hardFaultsCounter.NextValue());
-        long standbyCoreBytes = (long)_standbyCoreCounter.NextValue();
-        long standbyNormalBytes = (long)_standbyNormalCounter.NextValue();
-        long standbyReserveBytes = (long)_standbyReserveCounter.NextValue();
+        double totalFaultsPerSec = Math.Max(0, _memory.Value("Page Faults/sec"));
+        double hardFaultsPerSec = Math.Max(0, _memory.Value("Pages/sec"));
+        long standbyCoreBytes = (long)_memory.Value("Standby Cache Core Bytes");
+        long standbyNormalBytes = (long)_memory.Value("Standby Cache Normal Priority Bytes");
+        long standbyReserveBytes = (long)_memory.Value("Standby Cache Reserve Bytes");
         long standbyBytes = standbyCoreBytes + standbyNormalBytes + standbyReserveBytes;
 
         return new HardwareSnapshot
@@ -434,42 +228,42 @@ public sealed class HardwareMonitorService : IDisposable
             CpuName = _cpuName,
             LogicalProcessors = _logicalProcessors,
             PhysicalCores = _physicalCores,
-            CpuInterruptPercent = Math.Round(Clamp(_cpuInterruptCounter.NextValue()), 2),
-            CpuDpcPercent = Math.Round(Clamp(_cpuDpcCounter.NextValue()), 2),
-            ContextSwitchesPerSec = Math.Round(Math.Max(0, _contextSwitchesCounter.NextValue()), 0),
-            CpuQueueLength = Math.Round(Math.Max(0, _cpuQueueLengthCounter.NextValue()), 0),
+            CpuInterruptPercent = Math.Round(Clamp(_processor.Value("% Interrupt Time", "_Total")), 2),
+            CpuDpcPercent = Math.Round(Clamp(_processor.Value("% DPC Time", "_Total")), 2),
+            ContextSwitchesPerSec = Math.Round(Math.Max(0, _system.Value("Context Switches/sec")), 0),
+            CpuQueueLength = Math.Round(Math.Max(0, _system.Value("Processor Queue Length")), 0),
 
-            CStatesAvailable = _cIdleTimeCounter is not null,
-            CpuIdlePercent = _cIdleTimeCounter is null ? 0 : Math.Round(Clamp(_cIdleTimeCounter.NextValue()), 1),
-            CpuC1Percent = _c1TimeCounter is null ? 0 : Math.Round(Clamp(_c1TimeCounter.NextValue()), 1),
-            CpuC2Percent = _c2TimeCounter is null ? 0 : Math.Round(Clamp(_c2TimeCounter.NextValue()), 1),
-            CpuC3Percent = _c3TimeCounter is null ? 0 : Math.Round(Clamp(_c3TimeCounter.NextValue()), 1),
+            CStatesAvailable = _cStatesAvailable,
+            CpuIdlePercent = !_cStatesAvailable ? 0 : Math.Round(Clamp(_processorInfo.Value("% Idle Time", "_Total")), 1),
+            CpuC1Percent = Math.Round(Clamp(_processorInfo.Value("% C1 Time", "_Total")), 1),
+            CpuC2Percent = Math.Round(Clamp(_processorInfo.Value("% C2 Time", "_Total")), 1),
+            CpuC3Percent = Math.Round(Clamp(_processorInfo.Value("% C3 Time", "_Total")), 1),
 
             RamTotalBytes = totalBytes,
             RamUsedBytes = totalBytes - availBytes,
             RamAvailableBytes = availBytes,
-            CommittedBytes = (long)_committedBytesCounter.NextValue(),
-            CommitLimitBytes = (long)_commitLimitCounter.NextValue(),
-            CacheBytes = (long)_cacheBytesCounter.NextValue(),
+            CommittedBytes = (long)_memory.Value("Committed Bytes"),
+            CommitLimitBytes = (long)_memory.Value("Commit Limit"),
+            CacheBytes = (long)_memory.Value("Cache Bytes"),
             PageFileTotalBytes = _pageFileTotalMb * 1024L * 1024L,
-            PageFileUsedBytes = (long)(_pageFileTotalMb * 1024L * 1024L * (Clamp(_pageFileUsageCounter.NextValue()) / 100.0)),
+            PageFileUsedBytes = (long)(_pageFileTotalMb * 1024L * 1024L * (Clamp(_pagingFile.Value("% Usage", "_Total")) / 100.0)),
             PageFaultsPerSec = Math.Round(totalFaultsPerSec, 0),
             HardFaultsPerSec = Math.Round(hardFaultsPerSec, 0),
             StandbyListBytes = Math.Max(0, standbyBytes),
             StandbyCoreBytes = Math.Max(0, standbyCoreBytes),
             StandbyNormalBytes = Math.Max(0, standbyNormalBytes),
             StandbyReserveBytes = Math.Max(0, standbyReserveBytes),
-            PagesInputPerSec = _pagesInputCounter is null ? 0 : Math.Round(Math.Max(0, _pagesInputCounter.NextValue()), 0),
-            PagesOutputPerSec = _pagesOutputCounter is null ? 0 : Math.Round(Math.Max(0, _pagesOutputCounter.NextValue()), 0),
-            PageFileVolumeQueueLength = _pageFileVolumeQueueCounter is null ? null : Math.Round(Math.Max(0, _pageFileVolumeQueueCounter.NextValue()), 2),
-            SystemCacheResidentBytes = _systemCacheResidentCounter is null ? 0 : (long)Math.Max(0, _systemCacheResidentCounter.NextValue()),
-            PoolNonpagedBytes = (long)_poolNonpagedCounter.NextValue(),
-            PoolPagedBytes = (long)_poolPagedCounter.NextValue(),
-            PoolNonpagedAllocs = _poolNonpagedAllocsCounter is null ? 0 : (long)Math.Max(0, _poolNonpagedAllocsCounter.NextValue()),
-            SystemDriverResidentBytes = _systemDriverResidentCounter is null ? 0 : (long)Math.Max(0, _systemDriverResidentCounter.NextValue()),
-            SystemDriverTotalBytes = _systemDriverTotalCounter is null ? 0 : (long)Math.Max(0, _systemDriverTotalCounter.NextValue()),
-            SystemCodeResidentBytes = _systemCodeResidentCounter is null ? 0 : (long)Math.Max(0, _systemCodeResidentCounter.NextValue()),
-            ModifiedListBytes = _modifiedListCounter is null ? 0 : (long)Math.Max(0, _modifiedListCounter.NextValue()),
+            PagesInputPerSec = Math.Round(Math.Max(0, _memory.Value("Pages Input/sec")), 0),
+            PagesOutputPerSec = Math.Round(Math.Max(0, _memory.Value("Pages Output/sec")), 0),
+            PageFileVolumeQueueLength = _pageFileVolumeInstance is null ? null : Math.Round(Math.Max(0, _logicalDisk.Value("Avg. Disk Queue Length", _pageFileVolumeInstance)), 2),
+            SystemCacheResidentBytes = (long)Math.Max(0, _memory.Value("System Cache Resident Bytes")),
+            PoolNonpagedBytes = (long)_memory.Value("Pool Nonpaged Bytes"),
+            PoolPagedBytes = (long)_memory.Value("Pool Paged Bytes"),
+            PoolNonpagedAllocs = (long)Math.Max(0, _memory.Value("Pool Nonpaged Allocs")),
+            SystemDriverResidentBytes = (long)Math.Max(0, _memory.Value("System Driver Resident Bytes")),
+            SystemDriverTotalBytes = (long)Math.Max(0, _memory.Value("System Driver Total Bytes")),
+            SystemCodeResidentBytes = (long)Math.Max(0, _memory.Value("System Code Resident Bytes")),
+            ModifiedListBytes = (long)Math.Max(0, _memory.Value("Modified Page List Bytes")),
             HardwareReservedBytes = Math.Max(0, _installedRamBytes - totalBytes),
 
             DiskActivePercent = Math.Round(diskPercent, 1),
@@ -493,46 +287,43 @@ public sealed class HardwareMonitorService : IDisposable
             NetworkInDiscards = netInDiscards,
             NetworkOutErrors = netOutErrors,
             NetworkOutDiscards = netOutDiscards,
-            TcpRetransmitsPerSec = _tcpRetransmitsCounter is null ? 0 : Math.Round(Math.Max(0, _tcpRetransmitsCounter.NextValue()), 1),
+            TcpRetransmitsPerSec = Math.Round(Math.Max(0, _tcp.Value("Segments Retransmitted/sec")), 1),
 
-            ProcessCount = (int)_processCountCounter.NextValue(),
-            ThreadCount = (int)_threadCountCounter.NextValue(),
-            HandleCount = (int)_handleCountCounter.NextValue(),
+            ProcessCount = (int)_system.Value("Processes"),
+            ThreadCount = (int)_process.Value("Thread Count", "_Total"),
+            HandleCount = (int)_process.Value("Handle Count", "_Total"),
             Uptime = TimeSpan.FromMilliseconds(Environment.TickCount64),
         };
     }
 
+    /// <summary>#362: one PhysicalDisk instance's figures, mirroring the "_Total" fields above but
+    /// per physical drive - so one slow drive isn't averaged away by others when queue length/
+    /// latency is read only from "_Total". Reads out of the same per-tick _physicalDisk snapshot
+    /// the _Total figures use (the old per-instance PerformanceCounter sets are exactly what this
+    /// class's rewrite removed - see the class remarks).</summary>
+    private PhysicalDiskSample SamplePhysicalDisk(string instanceName, bool idleAvailable)
+    {
+        double active = Clamp(_physicalDisk.Value("% Disk Time", instanceName));
+        double idle = idleAvailable ? Clamp(_physicalDisk.Value("% Idle Time", instanceName)) : 0;
+        double utilization = idleAvailable ? Math.Clamp(100.0 - idle, 0, 100) : active;
+
+        return new PhysicalDiskSample
+        {
+            InstanceName = instanceName,
+            ActivePercent = Math.Round(active, 1),
+            IdleTimeAvailable = idleAvailable,
+            IdlePercent = Math.Round(idle, 1),
+            UtilizationPercent = Math.Round(utilization, 1),
+            ReadBytesPerSec = Math.Max(0, _physicalDisk.Value("Disk Read Bytes/sec", instanceName)),
+            WriteBytesPerSec = Math.Max(0, _physicalDisk.Value("Disk Write Bytes/sec", instanceName)),
+            QueueLength = Math.Round(Math.Max(0, _physicalDisk.Value("Avg. Disk Queue Length", instanceName)), 2),
+            ReadLatencyMs = Math.Round(Math.Max(0, _physicalDisk.Value("Avg. Disk sec/Read", instanceName) * 1000.0), 2),
+            WriteLatencyMs = Math.Round(Math.Max(0, _physicalDisk.Value("Avg. Disk sec/Write", instanceName) * 1000.0), 2),
+            TransferLatencyMs = Math.Round(Math.Max(0, _physicalDisk.Value("Avg. Disk sec/Transfer", instanceName) * 1000.0), 2),
+        };
+    }
+
     private static double Clamp(double v) => Math.Max(0, Math.Min(100, v));
-
-    /// <summary>Best-effort counter construction - some counter/instance combinations
-    /// (C-state tiers above being the main case in this app) legitimately don't exist on every
-    /// Windows/CPU generation, so a failure here just means "not available" rather than crashing
-    /// the whole service.</summary>
-    private static PerformanceCounter? TryCreateCounter(string category, string name, string instance)
-    {
-        try
-        {
-            return new PerformanceCounter(category, name, instance, readOnly: true);
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    /// <summary>#422/#423: instance-less overload for single-instance "Memory" category counters -
-    /// same best-effort/degrade-to-null contract as the three-argument overload above.</summary>
-    private static PerformanceCounter? TryCreateCounter(string category, string name)
-    {
-        try
-        {
-            return new PerformanceCounter(category, name, readOnly: true);
-        }
-        catch
-        {
-            return null;
-        }
-    }
 
     /// <summary>#423: sums Win32_PhysicalMemory.Capacity across every installed memory module -
     /// the platform's own record of how much RAM is physically installed, independent of how much
@@ -571,101 +362,6 @@ public sealed class HardwareMonitorService : IDisposable
     {
         var head = instanceName.Split(' ')[0];
         return int.TryParse(head, out int index) ? index : int.MaxValue;
-    }
-
-    /// <summary>Best-effort per-disk counter-set construction - mirrors TryCreateCounter's
-    /// "degrade to not available rather than crash the whole service" approach, but for a whole
-    /// PhysicalDiskCounterSet at once: if this particular instance's counters fail to construct
-    /// (e.g. a race between GetInstanceNames() and the disk being removed), that one disk is
-    /// skipped rather than losing per-disk data for every other drive too.</summary>
-    private static PhysicalDiskCounterSet? TryCreatePhysicalDiskCounterSet(string instanceName)
-    {
-        try
-        {
-            return new PhysicalDiskCounterSet(instanceName);
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    /// <summary>#362: one PhysicalDisk instance's counter set, mirroring the "_Total" fields above
-    /// but per physical drive - so one slow drive isn't averaged away by others when queue length/
-    /// latency is read only from "_Total". "% Idle Time" is wrapped as optional (TryCreateCounter)
-    /// like the class-level _diskIdleTimeCounter above, since it's not guaranteed present on every
-    /// Windows/driver combination.</summary>
-    private sealed class PhysicalDiskCounterSet : IDisposable
-    {
-        public string InstanceName { get; }
-
-        private readonly PerformanceCounter _time;
-        private readonly PerformanceCounter? _idleTime;
-        private readonly PerformanceCounter _read;
-        private readonly PerformanceCounter _write;
-        private readonly PerformanceCounter _queueLength;
-        private readonly PerformanceCounter _readLatency;
-        private readonly PerformanceCounter _writeLatency;
-        private readonly PerformanceCounter _transferLatency;
-
-        public PhysicalDiskCounterSet(string instanceName)
-        {
-            InstanceName = instanceName;
-            _time = new PerformanceCounter("PhysicalDisk", "% Disk Time", instanceName, readOnly: true);
-            _idleTime = TryCreateCounter("PhysicalDisk", "% Idle Time", instanceName);
-            _read = new PerformanceCounter("PhysicalDisk", "Disk Read Bytes/sec", instanceName, readOnly: true);
-            _write = new PerformanceCounter("PhysicalDisk", "Disk Write Bytes/sec", instanceName, readOnly: true);
-            _queueLength = new PerformanceCounter("PhysicalDisk", "Avg. Disk Queue Length", instanceName, readOnly: true);
-            _readLatency = new PerformanceCounter("PhysicalDisk", "Avg. Disk sec/Read", instanceName, readOnly: true);
-            _writeLatency = new PerformanceCounter("PhysicalDisk", "Avg. Disk sec/Write", instanceName, readOnly: true);
-            _transferLatency = new PerformanceCounter("PhysicalDisk", "Avg. Disk sec/Transfer", instanceName, readOnly: true);
-
-            // Rate/gauge counters return 0 on their first read - prime them now, same as the
-            // class-level counters in HardwareMonitorService's own constructor.
-            _ = _time.NextValue();
-            _ = _idleTime?.NextValue();
-            _ = _read.NextValue();
-            _ = _write.NextValue();
-            _ = _queueLength.NextValue();
-            _ = _readLatency.NextValue();
-            _ = _writeLatency.NextValue();
-            _ = _transferLatency.NextValue();
-        }
-
-        public PhysicalDiskSample Sample()
-        {
-            bool idleAvailable = _idleTime is not null;
-            double active = Clamp(_time.NextValue());
-            double idle = idleAvailable ? Clamp(_idleTime!.NextValue()) : 0;
-            double utilization = idleAvailable ? Math.Clamp(100.0 - idle, 0, 100) : active;
-
-            return new PhysicalDiskSample
-            {
-                InstanceName = InstanceName,
-                ActivePercent = Math.Round(active, 1),
-                IdleTimeAvailable = idleAvailable,
-                IdlePercent = Math.Round(idle, 1),
-                UtilizationPercent = Math.Round(utilization, 1),
-                ReadBytesPerSec = Math.Max(0, _read.NextValue()),
-                WriteBytesPerSec = Math.Max(0, _write.NextValue()),
-                QueueLength = Math.Round(Math.Max(0, _queueLength.NextValue()), 2),
-                ReadLatencyMs = Math.Round(Math.Max(0, _readLatency.NextValue() * 1000.0), 2),
-                WriteLatencyMs = Math.Round(Math.Max(0, _writeLatency.NextValue() * 1000.0), 2),
-                TransferLatencyMs = Math.Round(Math.Max(0, _transferLatency.NextValue() * 1000.0), 2),
-            };
-        }
-
-        public void Dispose()
-        {
-            _time.Dispose();
-            _idleTime?.Dispose();
-            _read.Dispose();
-            _write.Dispose();
-            _queueLength.Dispose();
-            _readLatency.Dispose();
-            _writeLatency.Dispose();
-            _transferLatency.Dispose();
-        }
     }
 
     private static (long Received, long Sent) ReadTotalNetworkBytes()
@@ -801,56 +497,7 @@ public sealed class HardwareMonitorService : IDisposable
         }
     }
 
-    public void Dispose()
-    {
-        _cpuTotalCounter.Dispose();
-        _cpuTotalPerformanceCounter.Dispose();
-        foreach (var c in _cpuCoreUsageCounters) c.Dispose();
-        foreach (var c in _cpuParkingCounters) c.Dispose();
-        foreach (var c in _cpuPerformancePerCoreCounters) c.Dispose();
-        foreach (var c in _cpuMaxFreqPerCoreCounters) c.Dispose();
-        _diskTimeCounter.Dispose();
-        _diskReadCounter.Dispose();
-        _diskWriteCounter.Dispose();
-        _diskQueueLengthCounter.Dispose();
-        _diskReadLatencyCounter.Dispose();
-        _diskWriteLatencyCounter.Dispose();
-        _diskIdleTimeCounter?.Dispose();
-        _diskReadTimePercentCounter?.Dispose();
-        _diskWriteTimePercentCounter?.Dispose();
-        _diskTransfersCounter?.Dispose();
-        foreach (var d in _perDiskCounters) d.Dispose();
-        _handleCountCounter.Dispose();
-        _threadCountCounter.Dispose();
-        _processCountCounter.Dispose();
-        _committedBytesCounter.Dispose();
-        _commitLimitCounter.Dispose();
-        _cacheBytesCounter.Dispose();
-        _pageFileUsageCounter.Dispose();
-        _cpuInterruptCounter.Dispose();
-        _cpuDpcCounter.Dispose();
-        _contextSwitchesCounter.Dispose();
-        _cpuQueueLengthCounter.Dispose();
-        _pageFaultsCounter.Dispose();
-        _hardFaultsCounter.Dispose();
-        _standbyCoreCounter.Dispose();
-        _standbyNormalCounter.Dispose();
-        _standbyReserveCounter.Dispose();
-        _poolNonpagedCounter.Dispose();
-        _poolPagedCounter.Dispose();
-        _poolNonpagedAllocsCounter?.Dispose();
-        _systemDriverResidentCounter?.Dispose();
-        _systemDriverTotalCounter?.Dispose();
-        _systemCodeResidentCounter?.Dispose();
-        _modifiedListCounter?.Dispose();
-        _pagesInputCounter?.Dispose();
-        _pagesOutputCounter?.Dispose();
-        _pageFileVolumeQueueCounter?.Dispose();
-        _systemCacheResidentCounter?.Dispose();
-        _tcpRetransmitsCounter?.Dispose();
-        _cIdleTimeCounter?.Dispose();
-        _c1TimeCounter?.Dispose();
-        _c2TimeCounter?.Dispose();
-        _c3TimeCounter?.Dispose();
-    }
+    /// <summary>Nothing to release since the CategorySampler rewrite - kept because
+    /// PerformanceViewModel still disposes this service on shutdown.</summary>
+    public void Dispose() { }
 }

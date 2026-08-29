@@ -646,17 +646,42 @@ per file:
   Network` provider and aggregate `KERNEL_NETWORK_TASK_TCPIP` events by PID.
   Never runs unattended — same on-demand-only rule as any other expensive
   capture, with a visible "capture running" indicator while it's active.
-- **Per-pid performance counters read the whole category once per tick**
-  (`PerformanceCounterCategory.ReadCategory()` + `CounterSample.Calculate`,
-  see `ProcessPerfCounterService` and `ReadGpuUsageByPid`) — never one
-  `PerformanceCounter` object per instance. Every raw `NextValue()`
-  re-reads the *entire* category from the provider, so the counter-per-
+- **Performance counters are read one CATEGORY per tick, never one
+  `PerformanceCounter` object per value** — every raw `NextValue()`
+  re-reads the *entire* category from the provider. The counter-per-
   instance version of `ProcessPerfCounterService` cost 4–9 **seconds** per
-  tick on the ~350-instance "Process" category alone — the process list
-  took ~10s to first populate and refreshed far slower than its configured
-  interval, while the column it fed showed nothing. A rate counter needs
-  last tick's `CounterSample` kept per instance (first sight of an
-  instance reads 0), which replaces the old priming-`NextValue()` trick.
+  tick on the ~350-instance "Process" category alone (the process list
+  took ~10s to first populate while the column it fed showed nothing), and
+  `HardwareMonitorService`'s ~130 individual counters cost ~70ms of every
+  1-second tick. `Services/CategorySampler.cs` is the shared
+  implementation (`ReadCategory()` + `CounterSample.Calculate`, previous
+  samples kept per (counter, instance) for rate math — a rate's first
+  sight reads 0, replacing the old priming-`NextValue()` trick, so ctors
+  `Tick()` once to prime); `ProcessPerfCounterService` and
+  `GpuMonitorService` carry their own equivalent for pid-keyed reads.
+  When touching these, verify value parity the way the rewrite did: run
+  old and new implementations *simultaneously* in a harness and diff the
+  snapshot fields.
+
+- **An `async` method with no real `await` before its expensive work runs
+  that work on the CALLER'S thread.** `BitLockerService.ReadAllAsync` was
+  async-shaped but never truly awaited, so `StorageViewModel`'s
+  constructor ran its full WMI conversation on the UI thread during
+  startup — ~10s of the app's ~14.5s time-to-first-window (elevated
+  launches were "mysteriously" faster only because that WMI namespace
+  answers quickly when access succeeds). Its `Task.Run` wrapper is
+  load-bearing; give any similar fire-and-forget constructor load the
+  same treatment, and check new ones with a startup trace
+  (`dotnet-trace collect -- <exe>`) rather than assuming `async` means
+  off-thread.
+
+- **The Services poll caches what can't change without a reboot/reinstall**
+  (Description, DelayedAutostart, both dependency directions — see
+  `ServiceControlService.StaticServiceInfo`) and reads pid + last exit
+  code for all services from one `EnumServicesStatusEx` syscall
+  (`NativeServiceStatusReader`, WMI fallback inside, values verified
+  bit-identical to `Win32_Service`); the logon-account WMI query runs
+  every 30th tick, not every tick. Together: ~450ms → ~80ms per tick.
 - **Signature checks on the polled path are non-blocking.**
   `SignatureCheckService.GetResultOrQueue` returns the cached result or
   queues the path for one background worker and reports Unknown until the
