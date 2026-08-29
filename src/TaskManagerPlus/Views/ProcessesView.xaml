@@ -189,7 +189,12 @@
                 </Style>
             </DataGrid.RowStyle>
             <DataGrid.Columns>
-                <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="2*" />
+                <!-- Fixed widths, not stars: this grid's ~40 fixed columns are far wider than the
+                     viewport, and a DataGrid with ANY star column responds to that by compressing
+                     every column toward MinWidth to avoid horizontal scrolling - the whole grid
+                     rendered as ~28px single-letter columns. All-fixed widths overflow into a
+                     normal horizontal scrollbar instead. -->
+                <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="220" ElementStyle="{StaticResource CellTextTrim}" />
                 <DataGridTextColumn Header="PID" Binding="{Binding Pid}" Width="70" />
                 <DataGridTemplateColumn Header="CPU" Width="90" SortMemberPath="CpuPercent">
                     <DataGridTemplateColumn.CellTemplate>
@@ -674,7 +679,7 @@
                         </DataTemplate>
                     </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>
-                <DataGridTextColumn Header="Path" Binding="{Binding FilePath}" Width="3*" />
+                <DataGridTextColumn Header="Path" Binding="{Binding FilePath}" Width="320" ElementStyle="{StaticResource CellTextTrim}" />
                 <!-- Round 17, item 60: crashes/hangs for this executable in the last 30 days -
                      from CrashHistoryCacheService's own cheap cache, not a per-tick query. -->
                 <DataGridTemplateColumn Header="Crashes (30d)" Width="100" SortMemberPath="CrashCount30d">

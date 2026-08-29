@@ -338,6 +338,14 @@ update both series of a pair together. Fan RPM-vs-temperature uses a
 Reliability History (Stability tab) uses `ColumnSeries` — the only bar
 chart in the app, since a discrete daily count reads better as bars.
 
+A chart with a visible legend (`LegendPosition="Bottom"`) also needs
+`common:ChartTheme.ThemedLegend="True"` — LiveCharts' default legend text
+paint is near-black and invisible on the dark cards (the GPU per-engine
+legend rendered as colored dashes with no labels). SkiaSharp paints live
+outside WPF's resource system, so this is an attached property setting
+`LegendTextPaint` in code (`Common/ChartTheme.cs`), using the same fixed
+gray as the ViewModels' `AxisTextColor` axis labels.
+
 ### Events tab (nested sub-ViewModels for toggleable panels)
 
 The Events tab (`EventsViewModel`/`EventsView.xaml`) is a real Event Viewer
@@ -540,6 +548,43 @@ per file:
   `DynamicResource` rule under "Theming" below: a missing DynamicResource key
   silently resolves to null (a brush that renders transparent), a missing
   StaticResource key throws.
+
+- **XAML: a local `<Style TargetType="...">` on a control type Dark.xaml
+  themes implicitly (Button, ToggleButton, ComboBox, TextBox, DataGrid, ...)
+  must carry `BasedOn="{StaticResource {x:Type ...}}"`.** A local style
+  *replaces* the implicit one, so a bare visibility-toggle style silently
+  reverts that control to Windows' default light chrome — the Events tab's
+  two DataGrids each carried a bare style and rendered as a white grid in
+  the middle of the dark theme, and ~20 Button/TextBox/DataGrid toggles
+  across the views had the same bug. Dark.xaml now also themes `ComboBox`/
+  `ComboBoxItem` and `ToggleButton` (both custom-templated; the default
+  chrome ignores Background setters and was unreadable against the dark
+  palette — CheckBox has its own type key and is deliberately left stock).
+  No ComboBox in the app is `IsEditable`; the template omits
+  `PART_EditableTextBox`, so add that part before making one editable.
+
+- **DataGrid text cells ellipsize instead of hard-clipping.** The implicit
+  DataGrid style carries a `Style.Resources` TextBlock style setting
+  `TextTrimming="CharacterEllipsis"` for every grid, and `CellTextTrim`
+  (ellipsis + full-value hover tooltip) is the ElementStyle for columns
+  whose values are routinely wider than the column (paths, commands, app
+  names — see the Startup grid). A cell template that sets its own local
+  TextBlock style loses the implicit trimming (same BasedOn rule as above)
+  and needs `TextTrimming` inline.
+
+- **DataGrid: never mix star-sized columns into a grid whose fixed columns
+  alone exceed the viewport.** With any star column present, DataGrid fits
+  ALL columns into the viewport instead of scrolling horizontally — the
+  Processes grid (~40 fixed columns plus star Name/Path) compressed every
+  column to ~28px single-letter stubs. All-fixed widths overflow into a
+  normal horizontal scrollbar. Stars are fine in small grids that always
+  fit (the module list, Events' burst grid).
+
+- **A fixed toolbar row that can outgrow the window wraps instead.** The
+  Services filter/action row was an 11-column Grid that clipped its
+  trailing buttons at the default window width; it's a `WrapPanel` now.
+  Prefer `WrapPanel` (as most tabs' button rows already do) for any row of
+  filters/actions that isn't guaranteed to fit at 1266px.
 
 - **XAML: a `TabItem` whose `Header` isn't a string needs
   `AutomationProperties.Name`.** `SelectTabByName` (the `--tab` launch flag,

@@ -2198,7 +2198,7 @@
                                         </TextBlock>
                                         <Button Content="View in Processes" Click="ViewDriftedProcesses_Click" Margin="10,0,0,0" Padding="8,2" FontSize="{StaticResource FontBody}">
                                             <Button.Style>
-                                                <Style TargetType="Button">
+                                                <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
                                                     <Setter Property="Visibility" Value="Visible" />
                                                     <Style.Triggers>
                                                         <DataTrigger Binding="{Binding ProcessEnvironmentDriftCount}" Value="0">

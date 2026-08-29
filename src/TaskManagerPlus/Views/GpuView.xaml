@@ -1,6 +1,7 @@
 ﻿<UserControl x:Class="TaskManagerPlus.Views.GpuView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:common="clr-namespace:TaskManagerPlus.Common"
              xmlns:vm="clr-namespace:TaskManagerPlus.ViewModels"
              xmlns:views="clr-namespace:TaskManagerPlus.Views"
              xmlns:lvc="clr-namespace:LiveChartsCore.SkiaSharpView.WPF;assembly=LiveChartsCore.SkiaSharpView.WPF"
@@ -290,7 +291,7 @@
                             <TextBlock Style="{StaticResource SubStat}" Margin="0,-2,0,10" TextWrapping="Wrap"
                                        Text="3D / Copy / Video Decode / Video Encode / Compute utilization over time, for the primary adapter." />
                             <lvc:CartesianChart Series="{Binding EngineHistorySeries}" XAxes="{Binding EngineHistoryXAxes}" YAxes="{Binding EngineHistoryYAxes}"
-                                                 Height="180" TooltipPosition="Top" LegendPosition="Bottom" Background="Transparent" />
+                                                 Height="180" TooltipPosition="Top" LegendPosition="Bottom" common:ChartTheme.ThemedLegend="True" Background="Transparent" />
                         </StackPanel>
                     </Border>
                 </StackPanel>
@@ -727,7 +728,7 @@
                                        Text="TDR and driver-crash counts bucketed by the display driver version staged at the time (from the driver store, via pnputil) - &quot;all the TDRs happened after one update&quot; is the finding this table exists to surface. Best-effort: only as detailed as the driver packages Windows has kept staged, and a single row just means every event happened under the one version currently installed." />
                             <DataGrid ItemsSource="{Binding DriverVersionBuckets}" IsReadOnly="True" MaxHeight="220">
                                 <DataGrid.Style>
-                                    <Style TargetType="DataGrid">
+                                    <Style TargetType="DataGrid" BasedOn="{StaticResource {x:Type DataGrid}}">
                                         <Setter Property="Visibility" Value="Visible" />
                                         <Style.Triggers>
                                             <DataTrigger Binding="{Binding DriverVersionBuckets.Count}" Value="0">
@@ -812,7 +813,7 @@
                                 </StackPanel>
                                 <Button Grid.Column="1" Content="Set to Off" Command="{Binding SetAspmOffCommand}" VerticalAlignment="Center">
                                     <Button.Style>
-                                        <Style TargetType="Button">
+                                        <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
                                             <Setter Property="Visibility" Value="Collapsed" />
                                             <Style.Triggers>
                                                 <DataTrigger Binding="{Binding AspmIsAggressive}" Value="True">

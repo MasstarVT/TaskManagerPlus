@@ -44,57 +44,45 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <Grid Grid.Row="0" Margin="0,0,0,8">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="260" />
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="Auto" />
-            </Grid.ColumnDefinitions>
+        <!-- A WrapPanel, not the old 11-column Grid: at the default window width the fixed row
+             overflowed and hard-clipped its trailing buttons ("Trigger info" rendered as "Tr"). -->
+        <WrapPanel Grid.Row="0" Margin="0,0,0,8">
+            <TextBox Text="{Binding FilterText, UpdateSourceTrigger=PropertyChanged}" Width="260"
+                     VerticalContentAlignment="Center" Height="32" Margin="0,0,0,4" />
 
-            <TextBox Grid.Column="0" Text="{Binding FilterText, UpdateSourceTrigger=PropertyChanged}"
-                     VerticalContentAlignment="Center" Height="32" />
-
-            <CheckBox Grid.Column="1" Content="Failed to start only" VerticalAlignment="Center" Margin="16,0,0,0"
+            <CheckBox Content="Failed to start only" VerticalAlignment="Center" Margin="16,0,0,4"
                       IsChecked="{Binding FailedToStartOnly}"
                       ToolTip="Show only Automatic services whose last start attempt reported an error" />
 
             <!-- Round 7 #15 -->
-            <CheckBox Grid.Column="2" Content="Show drivers" VerticalAlignment="Center" Margin="16,0,0,0"
+            <CheckBox Content="Show drivers" VerticalAlignment="Center" Margin="16,0,0,4"
                       IsChecked="{Binding ShowDrivers}"
                       ToolTip="Show kernel/file-system drivers (ServiceController.GetDevices) instead of ordinary Win32 services" />
 
             <!-- #750: populated only after "Load failure history" runs. -->
-            <CheckBox Grid.Column="3" Content="Crash-looping only" VerticalAlignment="Center" Margin="16,0,0,0"
+            <CheckBox Content="Crash-looping only" VerticalAlignment="Center" Margin="16,0,0,4"
                       IsChecked="{Binding CrashLoopingOnly}"
                       ToolTip="Show only services that terminated unexpectedly more than a handful of times in the last 24h (requires 'Load failure history')" />
 
             <!-- #753: populated only after "Run service audit" runs. -->
-            <CheckBox Grid.Column="4" Content="Orphaned only" VerticalAlignment="Center" Margin="16,0,0,0"
+            <CheckBox Content="Orphaned only" VerticalAlignment="Center" Margin="16,0,0,4"
                       IsChecked="{Binding OrphanedOnly}"
                       ToolTip="Show only services whose ImagePath resolves to a binary that no longer exists (requires 'Run service audit')" />
 
             <!-- #761/#762 -->
-            <CheckBox Grid.Column="5" Content="Show svchost groups" VerticalAlignment="Center" HorizontalAlignment="Left" Margin="16,0,0,0"
+            <CheckBox Content="Show svchost groups" VerticalAlignment="Center" Margin="16,0,16,4"
                       IsChecked="{Binding ShowSvcHostGroups}"
                       ToolTip="Roll up CPU time/working set/handles/threads per svchost.exe -k group" />
 
-            <Button Grid.Column="6" Content="Start" Margin="0,0,8,0" Command="{Binding StartCommand}" Style="{StaticResource SuccessButton}" />
-            <Button Grid.Column="7" Content="Stop" Margin="0,0,8,0" Command="{Binding StopCommand}" Style="{StaticResource DangerButton}" />
-            <Button Grid.Column="8" Content="Restart" Margin="0,0,8,0" Command="{Binding RestartCommand}" Style="{StaticResource PrimaryButton}" />
+            <Button Content="Start" Margin="0,0,8,4" Command="{Binding StartCommand}" Style="{StaticResource SuccessButton}" />
+            <Button Content="Stop" Margin="0,0,8,4" Command="{Binding StopCommand}" Style="{StaticResource DangerButton}" />
+            <Button Content="Restart" Margin="0,0,8,4" Command="{Binding RestartCommand}" Style="{StaticResource PrimaryButton}" />
             <!-- #71: what Windows does when this service crashes (auto-restart, run a program,
                  reboot, ...) - loaded on demand, see ServicesViewModel.LoadFailureActionsAsync. -->
-            <Button Grid.Column="9" Content="Recovery actions" Margin="0,0,8,0" Command="{Binding ViewFailureActionsCommand}" />
+            <Button Content="Recovery actions" Margin="0,0,8,4" Command="{Binding ViewFailureActionsCommand}" />
             <!-- #756: trigger-start conditions - loaded on demand, see ServicesViewModel.LoadTriggerInfoAsync. -->
-            <Button Grid.Column="10" Content="Trigger info" Command="{Binding ViewTriggerInfoCommand}" />
-        </Grid>
+            <Button Content="Trigger info" Margin="0,0,0,4" Command="{Binding ViewTriggerInfoCommand}" />
+        </WrapPanel>
 
         <!-- Round 7 #13/#16, #749-754: start-duration history, config-drift baseline actions,
              SCM failure history (#749/#750/#751), and registry inventory audit (#752/#753/#754).

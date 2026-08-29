@@ -189,7 +189,7 @@
                                      ToolTip="Uses whichever channels are checked in the tree on the left (or every accessible channel if none are checked), with the XPath box above." />
                             <Button Content="Load more" Command="{Binding LoadMoreMultiChannelCommand}" Padding="8,3" Margin="0,0,8,0">
                                 <Button.Style>
-                                    <Style TargetType="Button">
+                                    <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
                                         <Setter Property="Visibility" Value="Collapsed" />
                                         <Style.Triggers>
                                             <DataTrigger Binding="{Binding HasMoreMultiChannel}" Value="True">
@@ -664,7 +664,7 @@
                                        ToolTip="Groups runs of the same signature within the window below into one expandable incident row, instead of flooding the grid with near-identical rows (#129)." />
                         <Button Grid.Column="2" Content="Load more" Command="{Binding LoadMoreCommand}" Padding="10,4">
                             <Button.Style>
-                                <Style TargetType="Button">
+                                <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
                                     <Setter Property="Visibility" Value="Collapsed" />
                                     <Style.Triggers>
                                         <DataTrigger Binding="{Binding HasMore}" Value="True">
@@ -706,7 +706,7 @@
                     <DataGrid ItemsSource="{Binding CollapsedEventBursts}" IsReadOnly="True" AutoGenerateColumns="False"
                                Margin="4,10,4,0" RowDetailsVisibilityMode="VisibleWhenSelected">
                         <DataGrid.Style>
-                            <Style TargetType="DataGrid">
+                            <Style TargetType="DataGrid" BasedOn="{StaticResource {x:Type DataGrid}}">
                                 <Setter Property="Visibility" Value="Collapsed" />
                                 <Style.Triggers>
                                     <DataTrigger Binding="{Binding ShowBurstCollapsedView}" Value="True">
@@ -743,7 +743,7 @@
                                VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
                                EnableRowVirtualization="True" ScrollViewer.CanContentScroll="True">
                         <DataGrid.Style>
-                            <Style TargetType="DataGrid">
+                            <Style TargetType="DataGrid" BasedOn="{StaticResource {x:Type DataGrid}}">
                                 <Setter Property="Visibility" Value="Visible" />
                                 <Style.Triggers>
                                     <DataTrigger Binding="{Binding ShowBurstCollapsedView}" Value="True">
@@ -1068,7 +1068,7 @@
                                           FontFamily="Consolas" FontSize="{StaticResource FontCaption}" BorderThickness="0" Background="Transparent"
                                           VerticalScrollBarVisibility="Disabled" AcceptsReturn="True">
                                     <TextBox.Style>
-                                        <Style TargetType="TextBox">
+                                        <Style TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
                                             <Setter Property="Visibility" Value="Collapsed" />
                                             <Style.Triggers>
                                                 <DataTrigger Binding="{Binding ShowRawXml}" Value="True">

@@ -1223,7 +1223,7 @@
                             </TextBlock>
                             <DataGrid ItemsSource="{Binding PowerPlanSettingDiffs}" IsReadOnly="True" MaxHeight="260">
                                 <DataGrid.Style>
-                                    <Style TargetType="DataGrid">
+                                    <Style TargetType="DataGrid" BasedOn="{StaticResource {x:Type DataGrid}}">
                                         <Setter Property="Visibility" Value="Visible" />
                                         <Style.Triggers>
                                             <DataTrigger Binding="{Binding PowerPlanSettingDiffs.Count}" Value="0">
@@ -1371,7 +1371,7 @@
                             <TextBlock Text="{Binding PowerEfficiencyStatusText}" Margin="0,0,0,8" TextWrapping="Wrap" Style="{StaticResource SubStat}" />
                             <DataGrid ItemsSource="{Binding PowerEfficiencyFindings}" IsReadOnly="True" MaxHeight="300">
                                 <DataGrid.Style>
-                                    <Style TargetType="DataGrid">
+                                    <Style TargetType="DataGrid" BasedOn="{StaticResource {x:Type DataGrid}}">
                                         <Setter Property="Visibility" Value="Visible" />
                                         <Style.Triggers>
                                             <DataTrigger Binding="{Binding PowerEfficiencyFindings.Count}" Value="0">
@@ -2031,7 +2031,7 @@
                             </TextBlock>
                             <DataGrid ItemsSource="{Binding SleepStudySessions}" IsReadOnly="True" Height="180" Margin="0,0,0,10">
                                 <DataGrid.Style>
-                                    <Style TargetType="DataGrid">
+                                    <Style TargetType="DataGrid" BasedOn="{StaticResource {x:Type DataGrid}}">
                                         <Setter Property="Visibility" Value="Visible" />
                                         <Style.Triggers>
                                             <DataTrigger Binding="{Binding SleepStudySessions.Count}" Value="0">
@@ -2095,7 +2095,7 @@
                             <TextBlock Text="{Binding PowerRequestsStatusText}" TextWrapping="Wrap" Style="{StaticResource SubStat}" Margin="0,0,0,8" />
                             <DataGrid ItemsSource="{Binding PowerRequests}" IsReadOnly="True" Height="160">
                                 <DataGrid.Style>
-                                    <Style TargetType="DataGrid">
+                                    <Style TargetType="DataGrid" BasedOn="{StaticResource {x:Type DataGrid}}">
                                         <Setter Property="Visibility" Value="Visible" />
                                         <Style.Triggers>
                                             <DataTrigger Binding="{Binding PowerRequests.Count}" Value="0">

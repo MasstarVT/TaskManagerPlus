@@ -1,6 +1,7 @@
 ﻿<UserControl x:Class="TaskManagerPlus.Views.NetworkView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:common="clr-namespace:TaskManagerPlus.Common"
              xmlns:vm="clr-namespace:TaskManagerPlus.ViewModels"
              xmlns:views="clr-namespace:TaskManagerPlus.Views"
              xmlns:lvc="clr-namespace:LiveChartsCore.SkiaSharpView.WPF;assembly=LiveChartsCore.SkiaSharpView.WPF"
@@ -82,7 +83,7 @@
                                        FontSize="{StaticResource FontCaption}" HorizontalAlignment="Right" Margin="0,0,0,4" />
                             <lvc:CartesianChart Series="{Binding Performance.NetworkSeries}" XAxes="{Binding Performance.HiddenXAxes}" YAxes="{Binding Performance.NetworkYAxes}"
                                                  Sections="{Binding Performance.EventMarkerSections}"
-                                                 Height="200" TooltipPosition="Top" LegendPosition="Bottom" Background="Transparent"
+                                                 Height="200" TooltipPosition="Top" LegendPosition="Bottom" common:ChartTheme.ThemedLegend="True" Background="Transparent"
                                                  LegendTextPaint="{Binding Performance.LegendTextPaint}" LegendBackgroundPaint="{Binding Performance.LegendBackgroundPaint}"
                                                  TooltipTextPaint="{Binding Performance.TooltipTextPaint}" TooltipBackgroundPaint="{Binding Performance.TooltipBackgroundPaint}" />
                         </StackPanel>
@@ -139,7 +140,7 @@
                                  own rolling window - see NetworkViewModel.RecomputeEventMarkers' remarks. -->
                             <lvc:CartesianChart Series="{Binding LatencySeries}" XAxes="{Binding LatencyHiddenXAxes}" YAxes="{Binding LatencyMsYAxes}"
                                                  Sections="{Binding LatencyEventMarkers}"
-                                                 Height="160" TooltipPosition="Top" LegendPosition="Bottom" Background="Transparent"
+                                                 Height="160" TooltipPosition="Top" LegendPosition="Bottom" common:ChartTheme.ThemedLegend="True" Background="Transparent"
                                                  LegendTextPaint="{Binding Performance.LegendTextPaint}" LegendBackgroundPaint="{Binding Performance.LegendBackgroundPaint}"
                                                  TooltipTextPaint="{Binding Performance.TooltipTextPaint}" TooltipBackgroundPaint="{Binding Performance.TooltipBackgroundPaint}" />
 
@@ -325,7 +326,7 @@
                             <TextBlock Text="Throughput (left axis) and Gateway latency (right axis) on one shared time axis."
                                        Style="{StaticResource SubStat}" Margin="0,-8,0,10" TextWrapping="Wrap" />
                             <lvc:CartesianChart Series="{Binding LatencyOverlaySeries}" XAxes="{Binding Performance.HiddenXAxes}" YAxes="{Binding OverlayYAxes}"
-                                                 Height="200" TooltipPosition="Top" LegendPosition="Bottom" Background="Transparent"
+                                                 Height="200" TooltipPosition="Top" LegendPosition="Bottom" common:ChartTheme.ThemedLegend="True" Background="Transparent"
                                                  LegendTextPaint="{Binding Performance.LegendTextPaint}" LegendBackgroundPaint="{Binding Performance.LegendBackgroundPaint}"
                                                  TooltipTextPaint="{Binding Performance.TooltipTextPaint}" TooltipBackgroundPaint="{Binding Performance.TooltipBackgroundPaint}" />
                         </StackPanel>
@@ -2265,7 +2266,7 @@
                             <TextBlock Text="Shares the Latency card's Start/Stop monitoring toggle at the top of this page - start monitoring there to see this chart update."
                                        Style="{StaticResource SubStat}" TextWrapping="Wrap" Opacity="0.85" Margin="0,0,0,8" />
                             <lvc:CartesianChart Series="{Binding DnsResponseSeries}" XAxes="{Binding DnsResponseHiddenXAxes}" YAxes="{Binding DnsResponseMsYAxes}"
-                                                 Height="180" TooltipPosition="Top" LegendPosition="Bottom" Background="Transparent"
+                                                 Height="180" TooltipPosition="Top" LegendPosition="Bottom" common:ChartTheme.ThemedLegend="True" Background="Transparent"
                                                  LegendTextPaint="{Binding Performance.LegendTextPaint}" LegendBackgroundPaint="{Binding Performance.LegendBackgroundPaint}"
                                                  TooltipTextPaint="{Binding Performance.TooltipTextPaint}" TooltipBackgroundPaint="{Binding Performance.TooltipBackgroundPaint}" />
                         </StackPanel>
@@ -2761,7 +2762,7 @@
                             <TextBlock Text="{Binding PortLookupStatusText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,6" />
                             <DataGrid ItemsSource="{Binding PortLookupResults}" AutoGenerateColumns="False" IsReadOnly="True" HeadersVisibility="Column" MaxHeight="180" Margin="0,0,0,4">
                                 <DataGrid.Style>
-                                    <Style TargetType="DataGrid">
+                                    <Style TargetType="DataGrid" BasedOn="{StaticResource {x:Type DataGrid}}">
                                         <Style.Triggers>
                                             <DataTrigger Binding="{Binding PortLookupResults.Count}" Value="0">
                                                 <Setter Property="Visibility" Value="Collapsed" />
@@ -2799,7 +2800,7 @@
 
                             <DataGrid ItemsSource="{Binding Connections}" Height="260" IsReadOnly="True">
                                 <DataGrid.Style>
-                                    <Style TargetType="DataGrid">
+                                    <Style TargetType="DataGrid" BasedOn="{StaticResource {x:Type DataGrid}}">
                                         <Style.Triggers>
                                             <DataTrigger Binding="{Binding ShowUdpConnections}" Value="True">
                                                 <Setter Property="Visibility" Value="Collapsed" />

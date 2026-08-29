@@ -1,6 +1,7 @@
 ﻿<UserControl x:Class="TaskManagerPlus.Views.SummaryView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:common="clr-namespace:TaskManagerPlus.Common"
              xmlns:vm="clr-namespace:TaskManagerPlus.ViewModels"
              xmlns:views="clr-namespace:TaskManagerPlus.Views"
              xmlns:conv="clr-namespace:TaskManagerPlus.Converters"
@@ -780,7 +781,7 @@
                                          XAxes="{Binding DataContext.Logging.ReplayXAxes, RelativeSource={RelativeSource AncestorType=Window}}"
                                          YAxes="{Binding DataContext.Logging.ReplayYAxes, RelativeSource={RelativeSource AncestorType=Window}}"
                                          Sections="{Binding DataContext.Logging.ReplayMarkerSections, RelativeSource={RelativeSource AncestorType=Window}}"
-                                         Height="180" TooltipPosition="Top" LegendPosition="Bottom" Background="Transparent">
+                                         Height="180" TooltipPosition="Top" LegendPosition="Bottom" common:ChartTheme.ThemedLegend="True" Background="Transparent">
                         <lvc:CartesianChart.Style>
                             <Style TargetType="lvc:CartesianChart">
                                 <Setter Property="Visibility" Value="Visible" />
