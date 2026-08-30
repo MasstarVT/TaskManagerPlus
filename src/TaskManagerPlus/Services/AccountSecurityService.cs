@@ -348,11 +348,26 @@ public static class AccountSecurityService
             4672 => $"{ExtractDataValue(record, "SubjectUserName") ?? targetUser} - admin-level logon",
             4720 => $"Account created: {targetUser}",
             4726 => $"Account deleted: {targetUser}",
-            4732 => $"{targetUser} added to group \"{ExtractDataValue(record, "TargetUserName") ?? "?"}\" by {ExtractDataValue(record, "SubjectUserName") ?? "?"}",
+            // #1047: for 4732, TargetUserName IS the group - the added member is in MemberName/
+            // MemberSid, so the member slot must not echo targetUser (which resolved to the group).
+            4732 => $"{DescribeGroupMember(record)} added to group \"{(targetUser.Length > 0 ? targetUser : "?")}\" by {ExtractDataValue(record, "SubjectUserName") ?? "?"}",
             _ => label,
         };
 
         return new SignInTimelineEvent(time, id, label, targetUser, logonType, ip, summary);
+    }
+
+    /// <summary>#1047: the account added by a 4732 group-membership event. MemberName carries the
+    /// member's DN but is often "-" for local SAM additions, where only MemberSid is populated -
+    /// prefer the name, fall back to the SID, and degrade to "(unknown member)" rather than ever
+    /// echoing the group name into the member slot.</summary>
+    private static string DescribeGroupMember(EventRecord record)
+    {
+        string? memberName = ExtractDataValue(record, "MemberName");
+        if (!string.IsNullOrEmpty(memberName) && memberName != "-") return memberName;
+        string? memberSid = ExtractDataValue(record, "MemberSid");
+        if (!string.IsNullOrEmpty(memberSid) && memberSid != "-") return memberSid;
+        return "(unknown member)";
     }
 
     /// <summary>Same adaptive "scan the event's rendered XML for a &lt;Data Name=...&gt; field"
@@ -413,26 +428,8 @@ public static class AccountSecurityService
         };
     }
 
+    /// <summary>#1084: delegates to the shared <see cref="ToolRunner"/> (run tool, capture
+    /// stdout+stderr, kill the whole process tree on timeout).</summary>
     private static string RunCapturedSync(string exe, string args, TimeSpan timeout)
-    {
-        var psi = new ProcessStartInfo(exe, args)
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        using var proc = Process.Start(psi) ?? throw new InvalidOperationException($"couldn't start {exe}");
-
-        var outputTask = proc.StandardOutput.ReadToEndAsync();
-        var errorTask = proc.StandardError.ReadToEndAsync();
-
-        if (!proc.WaitForExit((int)timeout.TotalMilliseconds))
-        {
-            try { proc.Kill(); } catch { /* best-effort */ }
-            return string.Empty;
-        }
-
-        return outputTask.GetAwaiter().GetResult() + errorTask.GetAwaiter().GetResult();
-    }
+        => ToolRunner.RunCaptured(exe, args, timeout).Output;
 }

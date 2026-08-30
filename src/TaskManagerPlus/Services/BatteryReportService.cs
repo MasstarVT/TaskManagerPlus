@@ -157,8 +157,11 @@ public static class BatteryReportService
     /// <summary>powercfg's XML date/time fields are a known-quirky part of this otherwise
     /// undocumented format: some Windows builds wrap the locale-formatted string in Unicode
     /// bidi-direction marks (U+200E/U+200F) around date separators, which plain DateTime.Parse
-    /// rejects outright. Strips any non-printable "format" characters first, then tries both
-    /// invariant and current-culture parsing before giving up.</summary>
+    /// rejects outright. Strips any non-printable "format" characters first, then tries
+    /// current-culture parsing before falling back to invariant. #1057: current culture goes
+    /// FIRST because these strings are locale-formatted by powercfg itself - trying invariant
+    /// (MM/dd) first meant that on a dd/MM locale every date with day &lt;= 12 "succeeded" with
+    /// month and day swapped, landing months out of order in the capacity-fade chart.</summary>
     internal static bool TryParseFlexibleDate(string raw, out DateTime result)
     {
         result = default;
@@ -168,8 +171,8 @@ public static class BatteryReportService
             !char.IsControl(c) && CharUnicodeInfo.GetUnicodeCategory(c) != UnicodeCategory.Format).ToArray()).Trim();
         if (cleaned.Length == 0) return false;
 
-        return DateTime.TryParse(cleaned, CultureInfo.InvariantCulture, DateTimeStyles.None, out result) ||
-               DateTime.TryParse(cleaned, CultureInfo.CurrentCulture, DateTimeStyles.None, out result);
+        return DateTime.TryParse(cleaned, CultureInfo.CurrentCulture, DateTimeStyles.None, out result) ||
+               DateTime.TryParse(cleaned, CultureInfo.InvariantCulture, DateTimeStyles.None, out result);
     }
 
     // ---- #643: root\wmi / Win32_PortableBattery fallback -----------------------------------
@@ -273,38 +276,8 @@ public static class BatteryReportService
         _ => string.Empty,
     };
 
-    /// <summary>Shells out and captures combined stdout+stderr, bounded by a real timeout - the
-    /// same concurrent-read/bounded-wait/kill-on-timeout pattern PowerPlanService.RunCapturedAsync
-    /// already established (see its remarks for why this avoids the classic .NET Process
-    /// redirection deadlock). Duplicated here rather than shared, matching this app's existing
-    /// convention of each shelled-out-tool service owning its own small copy (PowerPlanService,
-    /// TracerouteService).</summary>
-    private static async Task<(string Output, int? ExitCode)> RunProcessAsync(string exe, string args, int timeoutMs)
-    {
-        var psi = new ProcessStartInfo(exe, args)
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        using var proc = Process.Start(psi) ?? throw new InvalidOperationException($"couldn't start {exe}");
-
-        var outputTask = proc.StandardOutput.ReadToEndAsync();
-        var errorTask = proc.StandardError.ReadToEndAsync();
-
-        using var cts = new CancellationTokenSource(timeoutMs);
-        try
-        {
-            await proc.WaitForExitAsync(cts.Token);
-        }
-        catch (OperationCanceledException)
-        {
-            try { proc.Kill(); } catch { /* best-effort */ }
-            return ("(command timed out)", null);
-        }
-
-        string output = (await outputTask) + (await errorTask);
-        return (output, proc.ExitCode);
-    }
+    /// <summary>#1084: the shared <see cref="ToolRunner"/> owns the run/capture/kill-on-timeout
+    /// mechanism.</summary>
+    private static Task<(string Output, int? ExitCode)> RunProcessAsync(string exe, string args, int timeoutMs)
+        => ToolRunner.RunCapturedAsync(exe, args, timeoutMs);
 }

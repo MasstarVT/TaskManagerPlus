@@ -14,6 +14,18 @@ using TaskManagerPlus.Services;
 
 namespace TaskManagerPlus.ViewModels;
 
+/// <summary>Round 18, #1020: the handful of scalar sensor readings the stress-test safety
+/// supervisor samples each second, published as one immutable value under a lock so that
+/// background thread never touches this ViewModel's UI-owned ObservableCollections (whose
+/// Clear+Add rebuilds each tick would throw into a concurrent enumerator) or its Nullable
+/// properties (whose multi-word reads can tear off-thread).</summary>
+public readonly record struct StressSensorSnapshot(
+    double? CpuPackageTempC,
+    double? GpuTempC,
+    double? TotalPackagePowerW,
+    double? VcoreRailVoltage,
+    double? PrimaryFanRpm);
+
 /// <summary>
 /// Backs the Energy &amp; Thermals tab. Unlike Cpu/Memory/Storage/Network (thin wrappers over the
 /// shared PerformanceViewModel sampler), this owns its own SensorMonitorService and
@@ -28,6 +40,19 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
     private readonly SensorMonitorService _sensors = new();
     private readonly DispatcherTimer _timer;
     private bool _isRefreshing;
+
+    // Round 18, #1020: see StressSensorSnapshot's remarks - written on the UI thread each sensor
+    // tick, read from the stress-test supervisor's background thread.
+    private readonly object _stressSnapshotLock = new();
+    private StressSensorSnapshot _stressSnapshot;
+
+    /// <summary>Round 18, #1020: thread-safe scalar snapshot for StressTestViewModel's background
+    /// safety supervisor - the one supported way to read this ViewModel's sensor values off the UI
+    /// thread.</summary>
+    public StressSensorSnapshot GetStressSensorSnapshot()
+    {
+        lock (_stressSnapshotLock) return _stressSnapshot;
+    }
 
     // #601: a second, driver-free throttle source (Windows' own "Thermal Zone Information" perf
     // counters) - kept as a separate service/collection from SensorMonitorService's Temperatures
@@ -1084,8 +1109,12 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         // power-info/USB-device loads working.
         SetPowerPlanCommand = new AsyncRelayCommand(SetPowerPlanAsync, _ => !ReadOnlyModeService.IsReadOnly);
         // #691: overlay switch - folded into the same LoadPowerInfoCommand refresh (SetPowerPlanAsync
-        // itself already re-calls LoadPowerInfoAsync after a successful plan switch).
-        SetOverlaySchemeCommand = new AsyncRelayCommand(SetOverlaySchemeAsync);
+        // itself already re-calls LoadPowerInfoAsync after a successful plan switch). Round 18,
+        // #1074: mutating, so it carries the same read-only gate (and journal append in its
+        // handler) as SetPowerPlanCommand above - as do the other five powercfg/registry-writing
+        // commands below (FixPassiveCooling, ToggleUsbDeviceSuspend, DisablePlanUsbSuspend,
+        // DisableDeviceWake, ToggleHibernation).
+        SetOverlaySchemeCommand = new AsyncRelayCommand(SetOverlaySchemeAsync, _ => !ReadOnlyModeService.IsReadOnly);
         LoadUsbDevicesCommand = new AsyncRelayCommand(_ => LoadUsbDevicesAsync());
 
         // #660-#664: power-plan-card extensions - every one a real subprocess call, gated behind
@@ -1094,14 +1123,14 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         RunPowerEfficiencyScanCommand = new AsyncRelayCommand(_ => RunPowerEfficiencyScanAsync());
         LoadPowerPlanDiffCommand = new AsyncRelayCommand(_ => LoadPowerPlanDiffAsync());
         LoadHiddenPowerSettingsCommand = new AsyncRelayCommand(_ => LoadHiddenPowerSettingsAsync());
-        FixPassiveCoolingCommand = new AsyncRelayCommand(_ => FixPassiveCoolingAsync());
+        FixPassiveCoolingCommand = new AsyncRelayCommand(_ => FixPassiveCoolingAsync(), _ => !ReadOnlyModeService.IsReadOnly);
         PowerPlanChangeHistory.Clear();
         foreach (var e in PowerPlanHistoryService.Load()) PowerPlanChangeHistory.Add(e);
 
         // #665-#669: USB-card extensions - all on-demand (event-log scans and WMI reads).
         LoadUsbEventsCommand = new AsyncRelayCommand(_ => LoadUsbEventsAsync());
-        ToggleUsbDeviceSuspendCommand = new AsyncRelayCommand(ToggleUsbDeviceSuspendAsync);
-        DisablePlanUsbSuspendCommand = new AsyncRelayCommand(_ => DisablePlanUsbSuspendAsync());
+        ToggleUsbDeviceSuspendCommand = new AsyncRelayCommand(ToggleUsbDeviceSuspendAsync, _ => !ReadOnlyModeService.IsReadOnly);
+        DisablePlanUsbSuspendCommand = new AsyncRelayCommand(_ => DisablePlanUsbSuspendAsync(), _ => !ReadOnlyModeService.IsReadOnly);
         LoadFirmwareEventsCommand = new AsyncRelayCommand(_ => LoadFirmwareEventsAsync());
         LoadPsuInfoCommand = new AsyncRelayCommand(_ => LoadPsuInfoAsync());
         SavePsuWattageCommand = new RelayCommand(_ => SavePsuWattage());
@@ -1119,10 +1148,10 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         LoadSleepStudyCommand = new AsyncRelayCommand(_ => LoadSleepStudyAsync());
         LoadPowerRequestsCommand = new AsyncRelayCommand(_ => LoadPowerRequestsAsync());
         LoadWakeArmedDevicesCommand = new AsyncRelayCommand(_ => LoadWakeArmedDevicesAsync());
-        DisableDeviceWakeCommand = new AsyncRelayCommand(DisableDeviceWakeAsync);
+        DisableDeviceWakeCommand = new AsyncRelayCommand(DisableDeviceWakeAsync, _ => !ReadOnlyModeService.IsReadOnly);
         LoadWakeHistoryCommand = new AsyncRelayCommand(_ => LoadWakeHistoryAsync());
         LoadHibernationStatusCommand = new AsyncRelayCommand(_ => LoadHibernationStatusAsync());
-        ToggleHibernationCommand = new AsyncRelayCommand(_ => ToggleHibernationAsync());
+        ToggleHibernationCommand = new AsyncRelayCommand(_ => ToggleHibernationAsync(), _ => !ReadOnlyModeService.IsReadOnly);
 
         // #649/#651: sleep-state support (Modern Standby vs. legacy S3) fired once at startup too
         // (not just behind LoadPowerInfoCommand) - it's a single cheap `powercfg /a` shell-out
@@ -1559,8 +1588,26 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
     {
         if (param is not string guid || string.IsNullOrWhiteSpace(guid)) return;
 
+        string previousOverlay = ActiveOverlaySchemeText;
         var (success, error) = await PowerPlanService.SetActiveOverlaySchemeAsync(guid);
         PowerPlanStatusText = success ? "Power mode overlay switched." : $"Couldn't switch power mode overlay: {error}";
+
+        // Round 18, #1074: record the mutation, same as SetPowerPlanAsync above. Not undoable via
+        // the journal - only the prior overlay's display text is known here, not its GUID, and
+        // PowerPlanChange's inverse runs powercfg /setactive (a scheme switch, not an overlay one).
+        ChangeJournalService.Append(new ChangeJournalEntry
+        {
+            Kind = ChangeKind.PowerPlanChange,
+            Target = "Power mode overlay",
+            ActionDescription = "Switched active power-mode overlay",
+            BeforeValue = string.IsNullOrWhiteSpace(previousOverlay) ? null : previousOverlay,
+            AfterValue = guid,
+            TriggeredBy = "Energy & Thermals tab",
+            Success = success,
+            IsUndoable = false,
+            NotUndoableReason = "Switch the overlay back from the same list to reverse this.",
+        });
+
         if (success) ActiveOverlaySchemeText = await Task.Run(PowerPlanService.ReadActiveOverlaySchemeText);
     }
 
@@ -1646,6 +1693,22 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         UsbFixStatusText = success
             ? $"{device.Name}: selective suspend {(target ? "enabled" : "disabled")}. Unplug/replug (or restart) the device for it to take full effect."
             : $"Couldn't change selective suspend for {device.Name}: {error}";
+
+        // Round 18, #1074: record the mutation, same shape as SetPowerPlanAsync. Not undoable via
+        // the journal's generic inverse - the same toggle in the USB list reverses it directly.
+        ChangeJournalService.Append(new ChangeJournalEntry
+        {
+            Kind = ChangeKind.PowerSettingChange,
+            Target = device.Name,
+            ActionDescription = $"{(target ? "Enabled" : "Disabled")} USB selective suspend for device",
+            BeforeValue = device.SelectiveSuspendEnabled is { } prior ? (prior ? "Enabled" : "Disabled") : "Unknown",
+            AfterValue = target ? "Enabled" : "Disabled",
+            TriggeredBy = "Energy & Thermals tab",
+            Success = success,
+            IsUndoable = false,
+            NotUndoableReason = "Use the same toggle in the USB devices list to reverse this.",
+        });
+
         if (success) await LoadUsbDevicesAsync();
     }
 
@@ -1660,6 +1723,20 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         UsbFixStatusText = success
             ? "USB selective suspend disabled for the active power plan (AC)."
             : $"Couldn't change the plan-level USB selective-suspend setting: {error}";
+
+        // Round 18, #1074: record the mutation, same shape as SetPowerPlanAsync.
+        ChangeJournalService.Append(new ChangeJournalEntry
+        {
+            Kind = ChangeKind.PowerSettingChange,
+            Target = "Active power plan (AC): USB selective suspend",
+            ActionDescription = "Disabled plan-level USB selective suspend on AC",
+            BeforeValue = null,
+            AfterValue = "Disabled",
+            TriggeredBy = "Energy & Thermals tab",
+            Success = success,
+            IsUndoable = false,
+            NotUndoableReason = "The prior plan-level value wasn't read before the change - re-enable it in Power Options if needed.",
+        });
     }
 
     // ================================================================================
@@ -1722,11 +1799,27 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
     /// <summary>#663: one-click fix for the passive-cooling-on-AC flag above.</summary>
     private async Task FixPassiveCoolingAsync()
     {
+        bool wasPassive = PassiveCoolingOnAcDetected;
         var (success, error) = await PowerPlanService.SetAcValueIndexAsync(
             "SCHEME_CURRENT", PowerPlanService.SubProcessorGuid, PowerPlanService.SystemCoolingPolicyGuid, 0);
         PassiveCoolingFixStatusText = success
             ? "System cooling policy set to Active on AC."
             : $"Couldn't change system cooling policy: {error}";
+
+        // Round 18, #1074: record the mutation, same shape as SetPowerPlanAsync.
+        ChangeJournalService.Append(new ChangeJournalEntry
+        {
+            Kind = ChangeKind.PowerSettingChange,
+            Target = "Active power plan (AC): system cooling policy",
+            ActionDescription = "Set system cooling policy to Active on AC",
+            BeforeValue = wasPassive ? "Passive" : null,
+            AfterValue = "Active",
+            TriggeredBy = "Energy & Thermals tab",
+            Success = success,
+            IsUndoable = false,
+            NotUndoableReason = "Set the cooling policy back to Passive in Power Options if needed.",
+        });
+
         if (success) await LoadHiddenPowerSettingsAsync();
     }
 
@@ -1827,6 +1920,14 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         try
         {
             await RefreshCoreAsync();
+        }
+        catch
+        {
+            // Round 18, #1033: this runs inside an async void DispatcherTimer tick, so anything
+            // RefreshCoreAsync's own targeted catches miss would otherwise reach
+            // App.OnDispatcherUnhandledException's modal dialog - and, because the timer keeps
+            // ticking (pumped by the modal's own message loop), stack a fresh dialog every
+            // interval. Skip the tick and degrade silently like every sibling polling ViewModel.
         }
         finally
         {
@@ -1961,6 +2062,20 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         GpuHotspotDeltaC = gpuEdge.HasValue && gpuHotspot.HasValue && gpuHotspot > gpuEdge
             ? gpuHotspot - gpuEdge : null;
         GpuTempC = gpuEdge;
+
+        // Round 18, #1020: publish the scalar snapshot the stress-test safety supervisor reads
+        // from its background thread. The Vcore/fan lookups mirror what StressTestViewModel.
+        // BuildTraceSample used to run directly against the Voltages/Fans collections.
+        {
+            var stressRail = voltageReadingsList.FirstOrDefault(v => v.Value.HasValue &&
+                (v.SensorName.Contains("Vcore", StringComparison.OrdinalIgnoreCase) ||
+                 v.SensorName.Contains("CPU Core", StringComparison.OrdinalIgnoreCase)));
+            var stressFan = enrichedFanReadings.FirstOrDefault(f => f.Value.HasValue);
+            var stressSnapshot = new StressSensorSnapshot(
+                CpuPackageTempC, GpuTempC, TotalPackagePowerW,
+                (double?)stressRail?.Value, (double?)stressFan?.Value);
+            lock (_stressSnapshotLock) _stressSnapshot = stressSnapshot;
+        }
 
         // #675: memory-junction temperature - GDDR6X-only, so null (tile hidden) is the expected
         // common case, not a bug. Kept as its own lookup rather than folded into the hotspot hint
@@ -2253,10 +2368,7 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
     }
 
     private static string FormatDuration(double seconds)
-    {
-        var ts = TimeSpan.FromSeconds(Math.Max(0, seconds));
-        return ts.TotalMinutes >= 1 ? $"{(int)ts.TotalMinutes}m {ts.Seconds}s" : $"{ts.Seconds}s";
-    }
+        => Formatting.FormatSpanMinutes(TimeSpan.FromSeconds(Math.Max(0, seconds)));
 
     /// <summary>#604: per-week episode count over the last <see cref="WeeklySparklineWeeks"/>
     /// weeks, oldest first, zero-filled for weeks with no episodes at all.</summary>
@@ -3675,6 +3787,21 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         WakeArmedDevicesStatusText = success
             ? $"Disabled wake for \"{name}\"."
             : $"Couldn't disable wake for \"{name}\": {error}";
+
+        // Round 18, #1074: record the mutation, same shape as SetPowerPlanAsync.
+        ChangeJournalService.Append(new ChangeJournalEntry
+        {
+            Kind = ChangeKind.PowerSettingChange,
+            Target = name,
+            ActionDescription = "Disabled wake for device (powercfg /devicedisablewake)",
+            BeforeValue = "Wake armed",
+            AfterValue = "Wake disabled",
+            TriggeredBy = "Energy & Thermals tab",
+            Success = success,
+            IsUndoable = false,
+            NotUndoableReason = "Re-enable wake via powercfg /deviceenablewake or the device's Power Management tab.",
+        });
+
         if (success) await LoadWakeArmedDevicesAsync();
     }
 
@@ -3752,7 +3879,23 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
     private async Task ToggleHibernationAsync()
     {
         bool targetEnabled = Hibernation?.Enabled != true;
+        bool? priorEnabled = Hibernation?.Enabled;
         var (success, error) = await HibernationService.SetHibernationEnabledAsync(targetEnabled);
+
+        // Round 18, #1074: record the mutation, same shape as SetPowerPlanAsync.
+        ChangeJournalService.Append(new ChangeJournalEntry
+        {
+            Kind = ChangeKind.PowerSettingChange,
+            Target = "Hibernation",
+            ActionDescription = $"{(targetEnabled ? "Enabled" : "Disabled")} hibernation (powercfg /hibernate {(targetEnabled ? "on" : "off")})",
+            BeforeValue = priorEnabled switch { true => "Enabled", false => "Disabled", null => "Unknown" },
+            AfterValue = targetEnabled ? "Enabled" : "Disabled",
+            TriggeredBy = "Energy & Thermals tab",
+            Success = success,
+            IsUndoable = false,
+            NotUndoableReason = "Use the same hibernation toggle to reverse this.",
+        });
+
         if (success)
         {
             await LoadHibernationStatusAsync();

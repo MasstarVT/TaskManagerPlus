@@ -279,10 +279,20 @@ public static class CrashDumpConfigService
             var (output, exitCode) = await RunCapturedAsync("powercfg.exe", "/a");
             if (exitCode == 0 && !string.IsNullOrWhiteSpace(output))
             {
+                // powercfg /a prints two sections - the states "available on this system" first,
+                // then the ones that "are not available on this system" (each with a reason line
+                // beneath). "Hibernate" appears as a bare state-name line in EITHER section, so
+                // only the text above the not-available header may be scanned - otherwise a VM/
+                // firmware without hibernation support reads as "enabled".
+                int notAvailableIdx = output.IndexOf("not available", StringComparison.OrdinalIgnoreCase);
+                string availableSection = notAvailableIdx >= 0 ? output[..notAvailableIdx] : output;
+
                 if (output.Contains("Hibernation has not been enabled", StringComparison.OrdinalIgnoreCase))
                     hibernationText = "Hibernation is disabled on this machine (no hiberfil.sys) - this doesn't affect crash dumps directly, but a Kernel/Automatic dump's size headroom can be shared with the hibernation file's own reservation on some configurations, so it's worth knowing about.";
-                else if (Regex.IsMatch(output, @"^\s*Hibernate\s*$", RegexOptions.Multiline | RegexOptions.IgnoreCase))
+                else if (Regex.IsMatch(availableSection, @"^\s*Hibernate\s*$", RegexOptions.Multiline | RegexOptions.IgnoreCase))
                     hibernationText = "Hibernation is enabled (hiberfil.sys exists).";
+                else if (notAvailableIdx >= 0 && Regex.IsMatch(output[notAvailableIdx..], @"^\s*Hibernate\s*$", RegexOptions.Multiline | RegexOptions.IgnoreCase))
+                    hibernationText = "Hibernation isn't available on this machine (powercfg /a lists Hibernate as not available).";
                 else
                     hibernationText = "Unknown - powercfg /a didn't report hibernation in a recognizable way.";
             }
@@ -591,35 +601,8 @@ public static class CrashDumpConfigService
         catch { return false; }
     }
 
-    /// <summary>Shells out and captures combined stdout+stderr under a bounded timeout - the same
-    /// concurrent-read/kill-on-timeout pattern PowerPlanService.RunCapturedAsync/
-    /// TracerouteService.RunAsync already establish elsewhere in this app.</summary>
-    private static async Task<(string Output, int? ExitCode)> RunCapturedAsync(string exe, string args, int timeoutMs = 10000)
-    {
-        var psi = new ProcessStartInfo(exe, args)
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        using var proc = Process.Start(psi) ?? throw new InvalidOperationException($"couldn't start {exe}");
-
-        var outputTask = proc.StandardOutput.ReadToEndAsync();
-        var errorTask = proc.StandardError.ReadToEndAsync();
-
-        using var cts = new CancellationTokenSource(timeoutMs);
-        try
-        {
-            await proc.WaitForExitAsync(cts.Token);
-        }
-        catch (OperationCanceledException)
-        {
-            try { proc.Kill(); } catch { /* best-effort */ }
-            return ("(command timed out)", null);
-        }
-
-        string output = (await outputTask) + (await errorTask);
-        return (output, proc.ExitCode);
-    }
+    /// <summary>#1084: the shared <see cref="ToolRunner"/> owns the run/capture/kill-on-timeout
+    /// mechanism; this wrapper keeps the service's historical default timeout.</summary>
+    private static Task<(string Output, int? ExitCode)> RunCapturedAsync(string exe, string args, int timeoutMs = 10000)
+        => ToolRunner.RunCapturedAsync(exe, args, timeoutMs);
 }

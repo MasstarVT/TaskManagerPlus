@@ -275,12 +275,25 @@ public static class FirewallService
         return false;
     }
 
+    /// <summary>#1062: a rule DisplayName is attacker-controllable (any installer can register a
+    /// rule containing a quote), and netsh's own command grammar has no way to escape a quote
+    /// inside <c>name="..."</c> - an embedded quote would terminate the name early and make the
+    /// set-rule command target a *different* rule (or splice in extra netsh arguments). There is
+    /// no safe way to pass such a name through, so both set-rule sites refuse it outright.</summary>
+    private static bool ContainsUnquotableCharacter(string ruleName) => ruleName.Contains('"');
+
+    private const string UnquotableRuleNameMessage =
+        "This rule's name contains a quote character, which netsh cannot escape inside name=\"...\" - " +
+        "refusing to run the command, since it could target a different rule. " +
+        "Manage this rule via Windows Defender Firewall with Advanced Security instead.";
+
     /// <summary>#882: per-rule Disable action - NEVER delete, matching this section's own text.
     /// Note the rule name is not guaranteed unique (several built-in rules commonly share a
     /// DisplayName across profiles) - "set rule name=" applies to every rule with that exact name,
     /// the same ambiguity netsh itself has.</summary>
     public static (bool Success, string Output) DisableRule(string exactRuleName)
     {
+        if (ContainsUnquotableCharacter(exactRuleName)) return (false, UnquotableRuleNameMessage);
         try
         {
             string output = RunCapturedSync("netsh.exe", $"advfirewall firewall set rule name=\"{exactRuleName}\" new enable=no", TimeSpan.FromSeconds(15));
@@ -297,6 +310,7 @@ public static class FirewallService
     /// DisabledFirewallRuleNames list.</summary>
     public static (bool Success, string Output) EnableRule(string exactRuleName)
     {
+        if (ContainsUnquotableCharacter(exactRuleName)) return (false, UnquotableRuleNameMessage);
         try
         {
             string output = RunCapturedSync("netsh.exe", $"advfirewall firewall set rule name=\"{exactRuleName}\" new enable=yes", TimeSpan.FromSeconds(15));
@@ -318,29 +332,8 @@ public static class FirewallService
         try { return mo[name] as bool?; } catch { return null; }
     }
 
-    /// <summary>Synchronous shell-out-and-capture - same kill-on-timeout shape as
-    /// AutorunsService.RunCapturedSync/PlatformSecurityService's local copy; not shared directly
-    /// since both are private to their own files.</summary>
+    /// <summary>#1084: delegates to the shared <see cref="ToolRunner"/> (run tool, capture
+    /// stdout+stderr, kill the whole process tree on timeout).</summary>
     private static string RunCapturedSync(string exe, string args, TimeSpan timeout)
-    {
-        var psi = new ProcessStartInfo(exe, args)
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        using var proc = Process.Start(psi) ?? throw new InvalidOperationException($"couldn't start {exe}");
-
-        var outputTask = proc.StandardOutput.ReadToEndAsync();
-        var errorTask = proc.StandardError.ReadToEndAsync();
-
-        if (!proc.WaitForExit((int)timeout.TotalMilliseconds))
-        {
-            try { proc.Kill(entireProcessTree: true); } catch { /* best-effort */ }
-            return string.Empty;
-        }
-
-        return outputTask.GetAwaiter().GetResult() + errorTask.GetAwaiter().GetResult();
-    }
+        => ToolRunner.RunCaptured(exe, args, timeout).Output;
 }

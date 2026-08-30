@@ -131,35 +131,9 @@ public static class CodeIntegrityPostureService
         return (count, last, messages);
     }
 
-    /// <summary>Same concurrent-read/bounded-wait/kill-on-timeout shape as
-    /// ScheduledTaskService.RunCapturedAsync - duplicated here rather than shared, matching how
-    /// this app's other shell-out services each stay self-contained (see KernelModuleService's own
-    /// remarks on the same tradeoff).</summary>
+    /// <summary>#1084: the shared <see cref="ToolRunner"/> owns the run/capture/kill-on-timeout
+    /// mechanism; this wrapper keeps the service's historical output-only shape (empty string
+    /// for a timed-out run).</summary>
     private static async Task<string> RunCapturedAsync(string exe, string args, int timeoutMs = 10000)
-    {
-        var psi = new ProcessStartInfo(exe, args)
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        using var proc = Process.Start(psi) ?? throw new InvalidOperationException($"couldn't start {exe}");
-
-        var outputTask = proc.StandardOutput.ReadToEndAsync();
-        var errorTask = proc.StandardError.ReadToEndAsync();
-
-        using var cts = new CancellationTokenSource(timeoutMs);
-        try
-        {
-            await proc.WaitForExitAsync(cts.Token);
-        }
-        catch (OperationCanceledException)
-        {
-            try { proc.Kill(); } catch { /* best-effort */ }
-            return string.Empty;
-        }
-
-        return (await outputTask) + (await errorTask);
-    }
+        => (await ToolRunner.RunCapturedAsync(exe, args, timeoutMs, timeoutOutput: string.Empty)).Output;
 }

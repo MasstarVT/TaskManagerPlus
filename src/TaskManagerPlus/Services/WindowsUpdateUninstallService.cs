@@ -131,66 +131,19 @@ public static class WindowsUpdateUninstallService
         return await RunAndClassifyAsync(exe, args, 300000);
     }
 
-    /// <summary>Same concurrent-read/bounded-wait/kill-on-timeout shell-out pattern as every other
-    /// process launched in this app (see ScheduledTaskService/TracerouteService), plus the shared
+    /// <summary>#1084: delegates to the shared <see cref="ToolRunner"/>, keeping the shared
     /// "0/3010 = success" exit-code convention wusa.exe and dism.exe both use.</summary>
     private static async Task<(bool Success, bool RebootRequired, string Output)> RunAndClassifyAsync(string exe, string args, int timeoutMs)
     {
-        var psi = new ProcessStartInfo(exe, args)
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        using var proc = Process.Start(psi);
-        if (proc is null) return (false, false, $"couldn't start {exe}");
-
-        var outputTask = proc.StandardOutput.ReadToEndAsync();
-        var errorTask = proc.StandardError.ReadToEndAsync();
-
-        using var cts = new CancellationTokenSource(timeoutMs);
-        try
-        {
-            await proc.WaitForExitAsync(cts.Token);
-        }
-        catch (OperationCanceledException)
-        {
-            try { proc.Kill(); } catch { /* best-effort */ }
-            return (false, false, "(command timed out)");
-        }
-
-        string output = ((await outputTask) + (await errorTask)).Trim();
-        bool rebootRequired = proc.ExitCode == 3010;
-        bool success = proc.ExitCode == 0 || rebootRequired;
-        return (success, rebootRequired, output);
+        var (output, exitCode) = await ToolRunner.RunCapturedAsync(exe, args, timeoutMs);
+        if (exitCode is null) return (false, false, "(command timed out)");
+        bool rebootRequired = exitCode == 3010;
+        return (exitCode == 0 || rebootRequired, rebootRequired, output.Trim());
     }
 
+    /// <summary>#1084: the shared <see cref="ToolRunner"/> owns the run/capture/kill-on-timeout
+    /// mechanism; this wrapper keeps the service's historical output-only shape ("(command
+    /// timed out)" for a timed-out run).</summary>
     private static async Task<string> RunCapturedAsync(string exe, string args, int timeoutMs)
-    {
-        var psi = new ProcessStartInfo(exe, args)
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        using var proc = Process.Start(psi) ?? throw new InvalidOperationException($"couldn't start {exe}");
-
-        var outputTask = proc.StandardOutput.ReadToEndAsync();
-        var errorTask = proc.StandardError.ReadToEndAsync();
-
-        using var cts = new CancellationTokenSource(timeoutMs);
-        try
-        {
-            await proc.WaitForExitAsync(cts.Token);
-        }
-        catch (OperationCanceledException)
-        {
-            try { proc.Kill(); } catch { /* best-effort */ }
-            return "(command timed out)";
-        }
-
-        return (await outputTask) + (await errorTask);
-    }
+        => (await ToolRunner.RunCapturedAsync(exe, args, timeoutMs)).Output;
 }

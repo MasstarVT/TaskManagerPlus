@@ -19,36 +19,14 @@ namespace TaskManagerPlus.Services;
 /// </summary>
 public static class ReclaimableSpaceService
 {
+    /// <summary>#1084: delegates to the shared <see cref="ToolRunner"/>, keeping this service's
+    /// degrade-to-empty shape (empty output, Completed=false on timeout or start failure).</summary>
     private static async Task<(string Output, bool Completed)> RunProcessAsync(string exe, string arguments, int timeoutMs)
     {
         try
         {
-            var psi = new ProcessStartInfo(exe, arguments)
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return (string.Empty, false);
-
-            var outputTask = proc.StandardOutput.ReadToEndAsync();
-            var errorTask = proc.StandardError.ReadToEndAsync();
-
-            using var cts = new CancellationTokenSource(timeoutMs);
-            try
-            {
-                await proc.WaitForExitAsync(cts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                try { proc.Kill(); } catch { /* best-effort */ }
-                return (string.Empty, false);
-            }
-
-            string output = (await outputTask) + (await errorTask);
-            return (output, true);
+            var (output, exitCode) = await ToolRunner.RunCapturedAsync(exe, arguments, timeoutMs, timeoutOutput: string.Empty);
+            return exitCode is null ? (string.Empty, false) : (output, true);
         }
         catch
         {

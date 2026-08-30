@@ -14,7 +14,9 @@ namespace TaskManagerPlus.Services;
 /// one core - the same managed API ProcessControlService.SetAffinity already uses elsewhere in
 /// this app, rather than new raw SetThreadAffinityMask P/Invoke. That does mean the UI thread is
 /// briefly limited to one core too while the benchmark runs (well under a second), which is why
-/// CpuViewModel only calls this from a slow, infrequent timer - never per-tick.
+/// CpuViewModel only calls this from a slow, infrequent timer - never per-tick - and (Round 18,
+/// #1079) only while the CPU tab is actually on screen, so a session that never opens that tab
+/// never has the whole app pinned to core 0 at all.
 /// </summary>
 public static class ClockStretchService
 {

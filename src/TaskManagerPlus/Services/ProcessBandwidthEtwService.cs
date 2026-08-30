@@ -165,11 +165,11 @@ public sealed class ProcessBandwidthEtwService : IDisposable
         return null;
     }
 
+    /// <summary>#1087: delegates to the shared <see cref="ProcessNameLookup"/> (which disposes the
+    /// Process object - the local copy here leaked it), keeping this service's ".exe" suffix and
+    /// "PID {pid}" fallback for a process that already exited or can't be queried.</summary>
     private static string ResolveProcessName(int pid)
-    {
-        try { return Process.GetProcessById(pid).ProcessName + ".exe"; }
-        catch { return $"PID {pid}"; } // process already exited, or a protected/system PID this app can't query
-    }
+        => ProcessNameLookup.TryGetProcessName(pid) is { } name ? name + ".exe" : $"PID {pid}";
 
     /// <summary>Stops the capture and returns the final per-process totals, sorted by total bytes
     /// descending - the snapshot #583 persists into history and the "Per-process bandwidth

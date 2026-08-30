@@ -296,19 +296,22 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
         CheckConfigDriftCommand = new RelayCommand(_ => CheckConfigDrift());
         LoadFailureHistoryCommand = new RelayCommand(_ => _ = LoadFailureHistoryAsync());
         RunInventoryAuditCommand = new RelayCommand(_ => _ = RunInventoryAuditAsync());
-        DeleteOrphanedServiceCommand = new RelayCommand(_ => _ = DeleteOrphanedServiceAsync(), _ => !IsBusy && SelectedService is { IsOrphaned: true });
+        // #1073: the three destructive commands below carry the same !ReadOnlyModeService.IsReadOnly
+        // gate as Start/Stop/Restart (CanStart/CanStop) - read-only mode must not be able to delete
+        // a service, rewrite recovery actions, or kill a shared host process.
+        DeleteOrphanedServiceCommand = new RelayCommand(_ => _ = DeleteOrphanedServiceAsync(), _ => !IsBusy && !ReadOnlyModeService.IsReadOnly && SelectedService is { IsOrphaned: true });
         ViewTriggerInfoCommand = new RelayCommand(_ => _ = LoadTriggerInfoAsync(), _ => SelectedService is not null);
 
         RunRecoveryAuditCommand = new RelayCommand(_ => _ = RunRecoveryAuditAsync(), _ => !IsRunningRecoveryAudit);
         JumpToRecoveryAuditServiceCommand = new RelayCommand(param => JumpToRecoveryAuditService(param as ServiceRecoveryAuditEntry));
         SaveRecoveryActionsCommand = new RelayCommand(_ => _ = SaveRecoveryActionsAsync(),
-            _ => !IsBusy && SelectedService is { } s && !ServiceControlService.IsProtectedCoreService(s.ServiceName));
+            _ => !IsBusy && !ReadOnlyModeService.IsReadOnly && SelectedService is { } s && !ServiceControlService.IsProtectedCoreService(s.ServiceName));
 
         LoadStartTypeChangesCommand = new RelayCommand(_ => _ = LoadStartTypeChangesAsync());
         LoadNewServiceInstallsCommand = new RelayCommand(_ => _ = LoadNewServiceInstallsAsync());
 
         DiagnoseHangCommand = new RelayCommand(_ => _ = DiagnoseHangAsync(), _ => !IsBusy && SelectedService is not null);
-        ForceKillHostProcessCommand = new RelayCommand(_ => _ = ForceKillHostProcessAsync(), _ => !IsBusy && SelectedService is { ProcessId: > 0 });
+        ForceKillHostProcessCommand = new RelayCommand(_ => _ = ForceKillHostProcessAsync(), _ => !IsBusy && !ReadOnlyModeService.IsReadOnly && SelectedService is { ProcessId: > 0 });
 
         // Round 12, #100: configurable poll interval - see PollIntervalSettingsService's remarks.
         _timer = new DispatcherTimer(DispatcherPriority.Background)
@@ -709,7 +712,13 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
             }
         }
 
-        var rowsByDisplayName = Services.ToDictionary(r => r.DisplayName, StringComparer.OrdinalIgnoreCase);
+        // #1034: duplicate-safe, like byDisplayName above - ToDictionary throws ArgumentException
+        // on a case-insensitive display-name collision (registry-written or localized names), and
+        // that exception vanishes into LoadFailureHistoryAsync's discarded task, sticking
+        // StatusMessage at "Scanning…" forever. First row wins on a collision.
+        var rowsByDisplayName = new Dictionary<string, ServiceRow>(StringComparer.OrdinalIgnoreCase);
+        foreach (var row in Services)
+            rowsByDisplayName.TryAdd(row.DisplayName, row);
         foreach (var row in Services)
             row.DependencyRootCauseText = BuildRootCause(row, rowsByDisplayName);
     }
@@ -823,6 +832,21 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
             var (success, error) = await ServiceControlService.DeleteAsync(target.ServiceName);
             StatusMessage = success ? $"Deleted {target.DisplayName}." : $"Couldn't delete {target.DisplayName}: {error}";
             if (success) Services.Remove(target);
+
+            // #1073: record the mutation, like every other system-mutating action (see RunAction).
+            ChangeJournalService.Append(new ChangeJournalEntry
+            {
+                Kind = ChangeKind.ServiceStateChange,
+                Target = target.DisplayName,
+                ActionDescription = "Deleted orphaned service (sc delete)",
+                BeforeValue = target.OrphanedImagePath,
+                AfterValue = "Service registration removed",
+                TriggeredBy = "Services tab",
+                Success = success,
+                IsUndoable = false,
+                NotUndoableReason = "The service registration was permanently removed - reinstall the service to restore it.",
+                ServiceName = target.ServiceName,
+            });
         }
         finally
         {
@@ -950,6 +974,22 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
                 ? $"Recovery actions updated for {target.DisplayName}."
                 : $"Couldn't update recovery actions for {target.DisplayName}: {error}";
 
+            // #1073: record the mutation, like every other system-mutating action (see RunAction).
+            // The prior recovery actions aren't captured in a machine-reversible form, so this is
+            // journaled as a one-shot run of the exact command shown in the confirmation dialog.
+            ChangeJournalService.Append(new ChangeJournalEntry
+            {
+                Kind = ChangeKind.OneShotToolRun,
+                Target = target.DisplayName,
+                ActionDescription = "Changed service recovery actions",
+                AfterValue = $"sc.exe {args}",
+                TriggeredBy = "Services tab",
+                Success = success,
+                IsUndoable = false,
+                NotUndoableReason = "The prior recovery actions weren't recorded - set them again from this form to change them back.",
+                ServiceName = target.ServiceName,
+            });
+
             // Refresh the on-demand "Recovery actions" text (if it was already loaded) so the
             // confirmed change is visible immediately, without a second manual click.
             if (success && target.FailureActionsText.Length > 0)
@@ -1066,6 +1106,21 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
             StatusMessage = success
                 ? $"Ended host process (PID {target.ProcessId})."
                 : $"Couldn't end host process: {error}";
+
+            // #1073: record the mutation, like every other system-mutating action (see RunAction).
+            ChangeJournalService.Append(new ChangeJournalEntry
+            {
+                Kind = ChangeKind.OneShotToolRun,
+                Target = $"{target.DisplayName} (host PID {target.ProcessId})",
+                ActionDescription = "Force-ended service host process",
+                TriggeredBy = "Services tab",
+                Success = success,
+                IsUndoable = false,
+                NotUndoableReason = "The host process was forcibly ended - start the affected service(s) again to recover.",
+                ServiceName = target.ServiceName,
+                Pid = target.ProcessId,
+            });
+
             if (success) await RefreshAsync();
         }
         finally

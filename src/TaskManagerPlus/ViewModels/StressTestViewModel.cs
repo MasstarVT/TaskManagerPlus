@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.IO;
 using System.Threading;
 using Microsoft.Win32;
@@ -41,9 +42,6 @@ public sealed class StressTestViewModel : ObservableObject, IDisposable
     private volatile bool _manualStopRequested;
     private CpuTortureResult? _cpuResult;
     private MemoryVerifyResult? _memoryResult;
-
-    public IReadOnlyList<StressTestType> TestTypes { get; } =
-        new[] { StressTestType.CpuTorture, StressTestType.MemoryVerify, StressTestType.GpuLoad, StressTestType.CombinedSoak };
 
     private StressTestType _selectedTestType = StressTestType.CpuTorture;
     public StressTestType SelectedTestType { get => _selectedTestType; set => SetProperty(ref _selectedTestType, value); }
@@ -206,6 +204,11 @@ public sealed class StressTestViewModel : ObservableObject, IDisposable
 
         var type = SelectedTestType;
         var runStart = DateTime.Now;
+        // Round 18, #1053: natural completion and ActualDuration come off a monotonic clock -
+        // a DST/NTP wall-clock step during an overnight soak must neither extend the real
+        // CPU/GPU/disk load past the requested duration nor mis-report how long it ran.
+        // runStart (wall clock) stays for timestamps and event-log filtering only.
+        long runStartTimestamp = Stopwatch.GetTimestamp();
         var requestedDuration = TimeSpan.FromSeconds(Math.Max(1, DurationSeconds));
 
         double effectiveCeiling = ResolveEffectiveTempCeiling();
@@ -223,57 +226,83 @@ public sealed class StressTestViewModel : ObservableObject, IDisposable
         _cts = cts;
         var ct = cts.Token;
 
-        // #699: the ONE supervising sample loop every test type funnels through - this is what
-        // makes the safety-abort guard unconditional rather than something each test type would
-        // need to remember to wire up itself.
-        var supervisorTask = Task.Run(async () =>
+        // Round 18, #1021: everything from here on runs under try/finally - a fault anywhere
+        // (most plausibly the supervisor itself) must still cancel the workloads and reset
+        // IsRunning/_cts, or the GPU render loop keeps running with the temperature-ceiling
+        // abort dead and Start stays disabled until app restart, breaking the "always-on safety
+        // monitor, no opt-out" invariant in the class remarks.
+        try
         {
-            while (true)
+            // #699: the ONE supervising sample loop every test type funnels through - this is what
+            // makes the safety-abort guard unconditional rather than something each test type would
+            // need to remember to wire up itself.
+            var supervisorTask = Task.Run(async () =>
             {
-                trace.Add(BuildTraceSample(safety));
+                try
+                {
+                    while (true)
+                    {
+                        trace.Add(BuildTraceSample(safety));
 
-                // GPU-driving test types watch whichever of CPU/GPU is hotter, not just one - a
-                // combined soak can push either past a safe ceiling.
-                double? tempForSafety = type is StressTestType.GpuLoad or StressTestType.CombinedSoak
-                    ? HotterOf(_energyThermals.CpuPackageTempC, _energyThermals.GpuTempC)
-                    : _energyThermals.CpuPackageTempC;
+                        // GPU-driving test types watch whichever of CPU/GPU is hotter, not just
+                        // one - a combined soak can push either past a safe ceiling. Round 18,
+                        // #1020: read off the lock-protected scalar snapshot, never the UI-owned
+                        // sensor collections/properties, from this background thread.
+                        var sensors = _energyThermals.GetStressSensorSnapshot();
+                        double? tempForSafety = type is StressTestType.GpuLoad or StressTestType.CombinedSoak
+                            ? HotterOf(sensors.CpuPackageTempC, sensors.GpuTempC)
+                            : sensors.CpuPackageTempC;
 
-                var reason = safety.CheckSample(tempForSafety);
-                if (reason is not null) { abortReason = reason; break; }
+                        var reason = safety.CheckSample(tempForSafety);
+                        if (reason is not null) { abortReason = reason; break; }
 
-                if (DateTime.Now - runStart >= requestedDuration) break; // natural completion
+                        if (Stopwatch.GetElapsedTime(runStartTimestamp) >= requestedDuration) break; // natural completion (#1053: monotonic)
 
-                try { await Task.Delay(SampleInterval, ct); }
-                catch (OperationCanceledException) { break; }
+                        try { await Task.Delay(SampleInterval, ct); }
+                        catch (OperationCanceledException) { break; }
+                    }
+                }
+                finally
+                {
+                    // Signal every workload to stop, whether this loop broke because of an abort,
+                    // natural duration completion, an external Stop()/cts.Cancel() - or (#1021) a
+                    // fault in the loop itself. Idempotent if already cancelled.
+                    try { cts.Cancel(); } catch { /* already cancelled/disposed */ }
+                }
+            });
+
+            Task workloadTask = type switch
+            {
+                StressTestType.CpuTorture => RunCpuTortureAsync(requestedDuration, ct),
+                StressTestType.MemoryVerify => RunMemoryVerifyAsync(ct),
+                StressTestType.GpuLoad => RunGpuLoadAsync(ct),
+                StressTestType.CombinedSoak => RunCombinedSoakAsync(requestedDuration, ct),
+                _ => Task.CompletedTask,
+            };
+
+            try { await workloadTask; }
+            catch { /* individual test services already catch internally - defensive only */ }
+
+            try { cts.Cancel(); } catch { /* ensure the supervisor also stops if the workload finished early (e.g. memory test) */ }
+
+            // #1021: a supervisor fault must not skip FinishRun/the reset below - surface it as an
+            // abort reason (honest: the safety guard stopped watching partway through) instead.
+            try { await supervisorTask; }
+            catch (Exception ex)
+            {
+                abortReason ??= $"safety supervisor error ({ex.Message})";
             }
 
-            // Signal every workload to stop, whether this loop broke because of an abort, natural
-            // duration completion, or an external Stop()/cts.Cancel() - idempotent if already
-            // cancelled.
-            try { cts.Cancel(); } catch { /* already cancelled/disposed */ }
-        });
+            if (abortReason is null && _manualStopRequested) abortReason = "stopped by user before completion";
 
-        Task workloadTask = type switch
+            FinishRun(type, runStart, requestedDuration, Stopwatch.GetElapsedTime(runStartTimestamp), trace, abortReason, effectiveCeiling);
+        }
+        finally
         {
-            StressTestType.CpuTorture => RunCpuTortureAsync(requestedDuration, ct),
-            StressTestType.MemoryVerify => RunMemoryVerifyAsync(ct),
-            StressTestType.GpuLoad => RunGpuLoadAsync(ct),
-            StressTestType.CombinedSoak => RunCombinedSoakAsync(requestedDuration, ct),
-            _ => Task.CompletedTask,
-        };
-
-        try { await workloadTask; }
-        catch { /* individual test services already catch internally - defensive only */ }
-
-        try { cts.Cancel(); } catch { /* ensure the supervisor also stops if the workload finished early (e.g. memory test) */ }
-        await supervisorTask;
-
-        if (abortReason is null && _manualStopRequested) abortReason = "stopped by user before completion";
-
-        FinishRun(type, runStart, requestedDuration, trace, abortReason, effectiveCeiling);
-
-        _cts = null;
-        IsRunning = false;
+            try { cts.Cancel(); } catch { /* already cancelled/disposed */ }
+            _cts = null;
+            IsRunning = false;
+        }
     }
 
     private async Task RunCpuTortureAsync(TimeSpan duration, CancellationToken ct)
@@ -330,23 +359,27 @@ public sealed class StressTestViewModel : ObservableObject, IDisposable
         return resolved;
     }
 
+    /// <summary>Round 18, #1020: runs on the supervisor's background thread, so it never touches
+    /// the source ViewModels' UI-owned ObservableCollections (Voltages/Fans/LiveAdapters), whose
+    /// Clear+Add rebuilds on the UI thread would throw InvalidOperationException into a
+    /// mid-enumeration reader here - those values come from the lock-protected scalar snapshots
+    /// the ViewModels publish each tick instead. The remaining direct reads are plain (non-nullable)
+    /// doubles off PerformanceViewModel, whose aligned 64-bit reads are atomic.</summary>
     private StressTestTraceSample BuildTraceSample(StressTestSafetyMonitor safety)
     {
         double? throttlePercent = _performance.CpuVsBasePercent < 0 ? Math.Min(100, -_performance.CpuVsBasePercent) : 0;
-        var railVoltage = _energyThermals.Voltages.FirstOrDefault(v => v.Value.HasValue &&
-            (v.SensorName.Contains("Vcore", StringComparison.OrdinalIgnoreCase) || v.SensorName.Contains("CPU Core", StringComparison.OrdinalIgnoreCase)));
-        var fan = _energyThermals.Fans.FirstOrDefault(f => f.Value.HasValue);
-        double? gpuUtilization = _gpu.LiveAdapters.Count > 0 ? _gpu.LiveAdapters.Max(a => a.TotalUtilizationPercent) : null;
+        var sensors = _energyThermals.GetStressSensorSnapshot();
+        double? gpuUtilization = _gpu.GetMaxAdapterUtilizationSnapshot();
 
         return new StressTestTraceSample
         {
             Timestamp = DateTime.Now,
-            TempC = HotterOf(_energyThermals.CpuPackageTempC, _energyThermals.GpuTempC),
+            TempC = HotterOf(sensors.CpuPackageTempC, sensors.GpuTempC),
             ClockGhz = _performance.CpuCurrentClockGhz > 0 ? _performance.CpuCurrentClockGhz : null,
-            PackagePowerW = _energyThermals.TotalPackagePowerW,
+            PackagePowerW = sensors.TotalPackagePowerW,
             ThrottlePercent = throttlePercent,
-            FanRpm = fan?.Value,
-            RailVoltage = railVoltage?.Value,
+            FanRpm = sensors.PrimaryFanRpm,
+            RailVoltage = sensors.VcoreRailVoltage,
             GpuUtilizationPercent = gpuUtilization,
             WheaEventsSinceStart = safety.WheaEventsSinceStart,
             TdrEventsSinceStart = safety.TdrEventsSinceStart,
@@ -364,10 +397,8 @@ public sealed class StressTestViewModel : ObservableObject, IDisposable
         _ => null,
     };
 
-    private void FinishRun(StressTestType type, DateTime runStart, TimeSpan requestedDuration, List<StressTestTraceSample> trace, string? abortReason, double effectiveCeiling)
+    private void FinishRun(StressTestType type, DateTime runStart, TimeSpan requestedDuration, TimeSpan actualDuration, List<StressTestTraceSample> trace, string? abortReason, double effectiveCeiling)
     {
-        var actualDuration = DateTime.Now - runStart;
-
         bool computationChecked = _cpuResult is not null || _memoryResult is not null;
         bool computationOk = (_cpuResult?.Passed ?? true) && (_memoryResult?.Passed ?? true);
 

@@ -448,46 +448,8 @@ public static class PowerPlanService
         });
     }
 
-    /// <summary>
-    /// Shells out and captures combined stdout+stderr, bounded by a real timeout - the same
-    /// concurrent-read/bounded-wait/kill-on-timeout pattern TracerouteService.RunAsync already
-    /// established. The previous version called the blocking `proc.StandardOutput.ReadToEnd()`
-    /// (and StandardError.ReadToEnd()) synchronously *before* waiting for exit at all, which is
-    /// the classic .NET Process redirection deadlock (both streams' OS pipe buffers are small and
-    /// fixed-size - if the child fills one while nothing is draining it, the child blocks writing
-    /// and the parent blocks reading, forever), and then read `proc.WaitForExit(10000)`'s bool
-    /// result without checking it, so a process that legitimately took longer than 10s would throw
-    /// an InvalidOperationException from `proc.ExitCode` (undetermined). Reading both streams
-    /// concurrently via ReadToEndAsync and awaiting WaitForExitAsync under a bounded
-    /// CancellationTokenSource avoids the deadlock and lets a genuine timeout be handled as data
-    /// (ExitCode: null) rather than an exception.
-    /// </summary>
-    private static async Task<(string Output, int? ExitCode)> RunCapturedAsync(string exe, string args, int timeoutMs = 10000)
-    {
-        var psi = new ProcessStartInfo(exe, args)
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        using var proc = Process.Start(psi) ?? throw new InvalidOperationException($"couldn't start {exe}");
-
-        var outputTask = proc.StandardOutput.ReadToEndAsync();
-        var errorTask = proc.StandardError.ReadToEndAsync();
-
-        using var cts = new CancellationTokenSource(timeoutMs);
-        try
-        {
-            await proc.WaitForExitAsync(cts.Token);
-        }
-        catch (OperationCanceledException)
-        {
-            try { proc.Kill(); } catch { /* best-effort */ }
-            return ("(command timed out)", null);
-        }
-
-        string output = (await outputTask) + (await errorTask);
-        return (output, proc.ExitCode);
-    }
+    /// <summary>#1084: the shared <see cref="ToolRunner"/> owns the run/capture/kill-on-timeout
+    /// mechanism; this wrapper keeps the service's historical default timeout.</summary>
+    private static Task<(string Output, int? ExitCode)> RunCapturedAsync(string exe, string args, int timeoutMs = 10000)
+        => ToolRunner.RunCapturedAsync(exe, args, timeoutMs);
 }

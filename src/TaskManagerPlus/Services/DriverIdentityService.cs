@@ -171,28 +171,15 @@ public static class DriverIdentityService
         return result;
     }
 
+    /// <summary>#1084: delegates to the shared <see cref="ToolRunner"/> - notably, the local copy
+    /// this replaces never killed a timed-out child at all (the cancellation escaped to the catch
+    /// below with the tool still running); the shared runner kills the whole process tree.</summary>
     private static async Task<(bool Ok, string Output)> RunAsync(string exe, string args, TimeSpan timeout)
     {
         try
         {
-            var psi = new ProcessStartInfo(exe, args)
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return (false, "couldn't start process");
-
-            var outTask = proc.StandardOutput.ReadToEndAsync();
-            var errTask = proc.StandardError.ReadToEndAsync();
-
-            using var cts = new CancellationTokenSource(timeout);
-            await proc.WaitForExitAsync(cts.Token);
-
-            string combined = (await outTask) + (await errTask);
-            return (proc.ExitCode == 0, combined.Trim());
+            var (output, exitCode) = await ToolRunner.RunCapturedAsync(exe, args, (int)timeout.TotalMilliseconds);
+            return exitCode is null ? (false, "(command timed out)") : (exitCode == 0, output.Trim());
         }
         catch (Exception ex)
         {

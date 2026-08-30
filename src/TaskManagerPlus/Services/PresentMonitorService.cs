@@ -286,7 +286,7 @@ public sealed class PresentMonitorService
             if (!isPresentLike && !isQueuePacket && !isPreempt) continue;
 
             if (!_pidToName.ContainsKey(ev.Pid))
-                _pidToName[ev.Pid] = TryGetProcessName(ev.Pid) ?? $"pid {ev.Pid}";
+                _pidToName[ev.Pid] = ProcessNameLookup.TryGetProcessName(ev.Pid) ?? $"pid {ev.Pid}";
 
             if (isPresentLike)
             {
@@ -391,19 +391,6 @@ public sealed class PresentMonitorService
         return asHundredNs is > 0 and < 10_000_000 ? asHundredNs : raw;
     }
 
-    private static string? TryGetProcessName(int pid)
-    {
-        try
-        {
-            using var p = Process.GetProcessById(pid);
-            return p.ProcessName;
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
     private sealed record RawPresentEvent(int Pid, DateTime? TimeUtc, string TaskHint, Dictionary<string, string> Fields);
 
     /// <summary>Flattens each &lt;Event&gt; into pid/timestamp/task-hint plus a name/value field
@@ -461,38 +448,25 @@ public sealed class PresentMonitorService
         }
     }
 
+    /// <summary>#1084: delegates to the shared <see cref="ToolRunner"/> - notably, the local copy
+    /// this replaces never killed a timed-out child at all; the shared runner kills the whole
+    /// process tree. External cancellation still rethrows; a plain timeout reads (false, "timed
+    /// out"), and ignoreExitCode stays for the tools whose exit codes can't be trusted.</summary>
     private static async Task<(bool Ok, string Output)> RunProcessAsync(string exe, string args, TimeSpan timeout, CancellationToken ct, bool ignoreExitCode = false)
     {
         try
         {
-            var psi = new ProcessStartInfo(exe, args)
+            var (output, exitCode) = await ToolRunner.RunCapturedAsync(exe, args, (int)timeout.TotalMilliseconds, ct);
+            if (exitCode is null)
             {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return (false, "couldn't start process");
-
-            var outTask = proc.StandardOutput.ReadToEndAsync();
-            var errTask = proc.StandardError.ReadToEndAsync();
-
-            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            cts.CancelAfter(timeout);
-            await proc.WaitForExitAsync(cts.Token);
-
-            string combined = (await outTask) + (await errTask);
-            bool ok = ignoreExitCode || proc.ExitCode == 0;
-            return (ok, combined.Trim());
+                ct.ThrowIfCancellationRequested();
+                return (false, "timed out");
+            }
+            return (ignoreExitCode || exitCode == 0, output.Trim());
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             throw;
-        }
-        catch (OperationCanceledException)
-        {
-            return (false, "timed out");
         }
         catch (Exception ex)
         {

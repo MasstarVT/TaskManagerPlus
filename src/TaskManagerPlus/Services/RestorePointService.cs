@@ -58,13 +58,15 @@ public static class RestorePointService
             inParams["EventType"] = EventTypeBeginSystemChange;
 
             using var outParams = restoreClass.InvokeMethod("CreateRestorePoint", inParams, null);
-            uint returnValue = outParams is null ? 0 : Convert.ToUInt32(outParams["ReturnValue"]);
+            if (outParams is null)
+                return (false, "System Restore point could not be created - the WMI call returned no result.");
+            uint returnValue = Convert.ToUInt32(outParams["ReturnValue"]);
 
-            // CreateRestorePoint returns 0 on failure, 1 (ERROR_SUCCESS-equivalent) on success -
-            // per the documented SystemRestore WMI class contract.
-            return returnValue != 0
+            // CreateRestorePoint returns 0 (ERROR_SUCCESS) on success and a Win32 error code on
+            // failure - per the documented SystemRestore WMI class contract.
+            return returnValue == 0
                 ? (true, "System Restore point created.")
-                : (false, "System Restore point could not be created - System Restore may be turned off for this drive, or the service isn't running.");
+                : (false, $"System Restore point could not be created (error {returnValue}) - System Restore may be turned off for this drive, or the service isn't running.");
         }
         catch (Exception ex)
         {

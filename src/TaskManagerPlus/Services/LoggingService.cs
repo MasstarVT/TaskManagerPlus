@@ -144,6 +144,12 @@ public sealed class LoggingService : IDisposable
 
     private static string Escape(string value)
     {
+        // #1063: neutralize spreadsheet formula injection - a field beginning with = + - or @
+        // would otherwise be evaluated as a live formula when the exported .csv is opened in
+        // Excel. A leading apostrophe makes Excel treat the cell as literal text; any other CSV
+        // consumer just sees the data. Kept identical to SecurityReportService.Escape.
+        if (value.Length > 0 && value[0] is '=' or '+' or '-' or '@')
+            value = "'" + value;
         if (value.IndexOfAny(new[] { ',', '"', '\n', '\r' }) < 0) return value;
         return "\"" + value.Replace("\"", "\"\"") + "\"";
     }

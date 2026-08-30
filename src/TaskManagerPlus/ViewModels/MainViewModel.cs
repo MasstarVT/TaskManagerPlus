@@ -13,7 +13,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     // #401/#406: cross-restart per-process history and the pinned leak-watch sampler - both
     // field-initialized (no dependencies of their own) so they're ready before ProcessesViewModel
-    // needs them below.
+    // needs them below. #1078: this field initializer runs on the UI thread during window
+    // construction, which is safe only because ProcessHistoryService's ctor does no I/O - it
+    // spawns its own Task.Run to parse the multi-MB history store and merges when done.
     public ProcessHistoryService ProcessHistory { get; } = new();
     public LeakWatchViewModel LeakWatch { get; } = new();
 
@@ -115,7 +117,6 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private readonly RemoteMonitorSettings _remoteMonitorSettings = RemoteMonitorSettingsService.Load();
     public RemoteMonitorService RemoteMonitor { get; }
     public RelayCommand ToggleRemoteMonitorCommand { get; }
-    public int RemoteMonitorPort => _remoteMonitorSettings.Port;
 
     public bool IsRemoteMonitorEnabled
     {
@@ -745,6 +746,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Events.Dispose();
         LeakWatch.Dispose();
         ProcessHistory.Flush();
+        // #1082: same clean-exit persist as ProcessHistory above - writes any free-space low-water
+        // marks still inside FreeSpaceHistoryService's debounce window.
+        FreeSpaceHistoryService.Flush();
         RulesEditor.Dispose();
         RulesEngine.Dispose();
         Troubleshoot.Dispose();

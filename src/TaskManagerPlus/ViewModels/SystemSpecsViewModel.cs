@@ -384,8 +384,10 @@ public sealed class SystemSpecsViewModel : ObservableObject
         while (DisplayChangeHistory.Count > 150) DisplayChangeHistory.RemoveAt(DisplayChangeHistory.Count - 1);
     }
 
+    /// <summary>Formatting.FormatSpan (#1086) above one hour; below it this keeps its own "0h 42m"
+    /// form (an uptime record reads as hours+minutes, not the shared ladder's bare "42m").</summary>
     private static string FormatUptime(TimeSpan span)
-        => span.TotalDays >= 1 ? $"{(int)span.TotalDays}d {span.Hours}h" : $"{span.Hours}h {span.Minutes}m";
+        => span.TotalHours >= 1 ? Formatting.FormatSpan(span) : $"{span.Hours}h {span.Minutes}m";
 
     private void Apply(SystemSpecs specs)
     {

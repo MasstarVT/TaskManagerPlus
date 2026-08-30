@@ -12,9 +12,10 @@ namespace TaskManagerPlus.Services;
 /// instance per managed process, named "processname" or "processname#N" for multiple instances of
 /// the same exe - the well-established .NET convention for resolving one of these instances back to
 /// a PID is to read the matching "Process(&lt;instance&gt;)\ID Process" counter (the "Process" and
-/// ".NET CLR *" categories publish under the same instance-name scheme for a given process). Built
-/// once per tick (one GetInstanceNames() call, one small loop) per the coordinator's own guidance,
-/// rather than re-scanning per process.
+/// ".NET CLR *" categories publish under the same instance-name scheme for a given process).
+/// #1076: sampled as three whole-category CategorySampler reads per tick (locks, memory, and
+/// Process for pid resolution) - never one PerformanceCounter object per value, since every raw
+/// NextValue() re-reads its entire category from the provider (see CategorySampler's remarks).
 ///
 /// #274: Contention Rate / sec, Total # of Contentions, Current Queue Length.
 /// #275: % Time in GC, # Gen 0/1/2 Collections, # Induced GC, Allocated Bytes/sec - aggregate perf-
@@ -46,9 +47,17 @@ public sealed class DotNetPerfCounterService : IDisposable
 
     public bool CategoriesAvailable { get; }
 
-    // Cached PerformanceCounter objects keyed by "category|counterName|instance" - constructed once
-    // per instance, NextValue() every tick, the same shape PerCoreDpcService's per-core counters use.
-    private readonly Dictionary<string, PerformanceCounter> _counters = new();
+    // #1076: one CategorySampler per category, each read as a whole exactly once per Sample() call -
+    // the shared replacement for the old one-PerformanceCounter-per-(category|counter|instance)
+    // dictionary, whose every NextValue() re-read its entire category from the provider (the same
+    // anti-pattern the 82e4bf2 perf pass removed elsewhere; see CategorySampler's remarks). The
+    // "Process" sampler exists only to resolve instance names to PIDs via "ID Process" - one
+    // category read per tick instead of one per managed instance. (ProcessPerfCounterService's
+    // Processes-tick read of the same category can't be reused from here without new plumbing
+    // through files owned elsewhere - a possible future consolidation.)
+    private readonly CategorySampler _locksSampler = new(LocksCategory);
+    private readonly CategorySampler _memorySampler = new(MemoryCategory);
+    private readonly CategorySampler _processSampler = new(ProcessCategory);
 
     // #276: environment-derived GC mode/concurrency, cached forever per pid the first time it's
     // seen as managed - see the class remarks on why this never needs to be re-read.
@@ -71,8 +80,8 @@ public sealed class DotNetPerfCounterService : IDisposable
     }
 
     /// <summary>Samples every currently-published managed-process instance, keyed by resolved PID.
-    /// Safe to call from a background thread (Task.Run) - PerformanceCounter reads are cheap but
-    /// this still touches several counters per managed process.</summary>
+    /// Safe to call from a background thread (Task.Run) - three whole-category reads per call,
+    /// independent of how many managed processes exist.</summary>
     public Dictionary<int, DotNetProcessCounters> Sample()
     {
         var result = new Dictionary<int, DotNetProcessCounters>();
@@ -80,31 +89,40 @@ public sealed class DotNetPerfCounterService : IDisposable
 
         try
         {
-            var lockCategory = new PerformanceCounterCategory(LocksCategory);
-            var instanceNames = lockCategory.GetInstanceNames()
+            // #1076: exactly three whole-category reads per tick, regardless of how many managed
+            // processes are running. Rate counters (Contention Rate / sec, % Time in GC, Allocated
+            // Bytes/sec) compute against the previous tick's sample kept inside each sampler -
+            // NextValue()-equivalent semantics, with the same first-sight-reads-0 behavior the old
+            // freshly-constructed counters had.
+            _locksSampler.Tick();
+            _memorySampler.Tick();
+            _processSampler.Tick();
+
+            var instanceNames = _locksSampler.InstanceNames("# of current logical Threads")
                 .Where(n => !n.Equals("_Global_", StringComparison.OrdinalIgnoreCase))
                 .ToList();
 
             var seenPids = new HashSet<int>();
-            var liveKeys = new HashSet<string>();
 
             foreach (var inst in instanceNames)
             {
-                int pid = ResolveInstancePid(inst, liveKeys);
+                // The ".NET CLR *" categories publish under the same "processname#N" instance-name
+                // scheme as "Process", so "Process(<instance>)\ID Process" resolves the PID.
+                int pid = (int)_processSampler.Value("ID Process", inst);
                 if (pid <= 0) continue;
                 seenPids.Add(pid);
 
-                double contentionRate = ReadCounter(LocksCategory, "Contention Rate / sec", inst, liveKeys);
-                double totalContentions = ReadCounter(LocksCategory, "Total # of Contentions", inst, liveKeys);
-                double queueLength = ReadCounter(LocksCategory, "Current Queue Length", inst, liveKeys);
-                double logicalThreads = ReadCounter(LocksCategory, "# of current logical Threads", inst, liveKeys);
+                double contentionRate = _locksSampler.Value("Contention Rate / sec", inst);
+                double totalContentions = _locksSampler.Value("Total # of Contentions", inst);
+                double queueLength = _locksSampler.Value("Current Queue Length", inst);
+                double logicalThreads = _locksSampler.Value("# of current logical Threads", inst);
 
-                double pctTimeInGc = ReadCounter(MemoryCategory, "% Time in GC", inst, liveKeys);
-                double gen0 = ReadCounter(MemoryCategory, "# Gen 0 Collections", inst, liveKeys);
-                double gen1 = ReadCounter(MemoryCategory, "# Gen 1 Collections", inst, liveKeys);
-                double gen2 = ReadCounter(MemoryCategory, "# Gen 2 Collections", inst, liveKeys);
-                double inducedGc = ReadCounter(MemoryCategory, "# Induced GC", inst, liveKeys);
-                double allocBytesPerSec = ReadCounter(MemoryCategory, "Allocated Bytes/sec", inst, liveKeys);
+                double pctTimeInGc = _memorySampler.Value("% Time in GC", inst);
+                double gen0 = _memorySampler.Value("# Gen 0 Collections", inst);
+                double gen1 = _memorySampler.Value("# Gen 1 Collections", inst);
+                double gen2 = _memorySampler.Value("# Gen 2 Collections", inst);
+                double inducedGc = _memorySampler.Value("# Induced GC", inst);
+                double allocBytesPerSec = _memorySampler.Value("Allocated Bytes/sec", inst);
 
                 var (gcMode, gcConcurrent) = ResolveGcConfig(pid);
                 bool starvationHint = ComputeStarvationHint(pid, logicalThreads, queueLength, contentionRate);
@@ -126,7 +144,6 @@ public sealed class DotNetPerfCounterService : IDisposable
                 };
             }
 
-            PruneStaleCounters(liveKeys);
             PruneHistory(seenPids);
         }
         catch
@@ -135,52 +152,6 @@ public sealed class DotNetPerfCounterService : IDisposable
         }
 
         return result;
-    }
-
-    private int ResolveInstancePid(string instanceName, HashSet<string> liveKeys)
-    {
-        try
-        {
-            double pidValue = ReadCounter(ProcessCategory, "ID Process", instanceName, liveKeys);
-            return (int)pidValue;
-        }
-        catch
-        {
-            return 0;
-        }
-    }
-
-    private double ReadCounter(string category, string counterName, string instance, HashSet<string> liveKeys)
-    {
-        string key = $"{category}|{counterName}|{instance}";
-        liveKeys.Add(key);
-
-        if (!_counters.TryGetValue(key, out var counter))
-        {
-            try
-            {
-                if (!PerformanceCounterCategory.CounterExists(counterName, category)) return 0;
-                counter = new PerformanceCounter(category, counterName, instance, readOnly: true);
-                _counters[key] = counter;
-            }
-            catch
-            {
-                return 0;
-            }
-        }
-
-        try { return counter.NextValue(); }
-        catch { return 0; }
-    }
-
-    private void PruneStaleCounters(HashSet<string> liveKeys)
-    {
-        foreach (var key in _counters.Keys.ToList())
-        {
-            if (liveKeys.Contains(key)) continue;
-            try { _counters[key].Dispose(); } catch { /* ignore */ }
-            _counters.Remove(key);
-        }
     }
 
     private void PruneHistory(HashSet<int> seenPids)
@@ -283,7 +254,7 @@ public sealed class DotNetPerfCounterService : IDisposable
 
     public void Dispose()
     {
-        foreach (var c in _counters.Values) c.Dispose();
-        _counters.Clear();
+        // #1076: nothing to dispose anymore - CategorySampler holds no PerformanceCounter objects,
+        // only the previous tick's samples. Kept so the owning ViewModel's Dispose wiring stands.
     }
 }

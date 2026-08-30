@@ -428,6 +428,20 @@ public static class SmartRawAttributeService
                 return null;
             }
 
+            // A bridge/SATL that rejects the ATA command still returns TRUE from DeviceIoControl -
+            // the SCSI-level failure lands in the written-back ScsiStatus (0x02 = CHECK CONDITION,
+            // details in the sense buffer) with the data buffer left zero-filled. Treating that as
+            // a good read would render an empty-but-"successful" attribute table instead of the
+            // Unavailable-with-reason path.
+            var completed = Marshal.PtrToStructure<ScsiPassThroughDirectWithSense>(requestBuffer);
+            if (completed.Sptd.ScsiStatus != 0)
+            {
+                reason = completed.Sptd.ScsiStatus == 0x02
+                    ? "The device rejected the ATA pass-through command (SCSI CHECK CONDITION) - this bridge/controller likely doesn't pass SMART through."
+                    : $"The device returned SCSI status 0x{completed.Sptd.ScsiStatus:X2} for the ATA pass-through command.";
+                return null;
+            }
+
             return dataBuffer;
         }
         catch (Exception ex)

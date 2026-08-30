@@ -220,7 +220,12 @@ public static class RegistryChangeJournalService
         try
         {
             Directory.CreateDirectory(AppPaths.SettingsDirectory);
-            File.WriteAllText(FilePath, JsonSerializer.Serialize(history, JsonOptions));
+            // #1026: write-to-temp-then-rename instead of truncating the real file in place - a
+            // crash/power loss mid-write would otherwise leave partial JSON, which LoadHistoryUnlocked
+            // silently degrades to an empty history, permanently destroying the whole undo record.
+            string tempPath = FilePath + ".tmp";
+            File.WriteAllText(tempPath, JsonSerializer.Serialize(history, JsonOptions));
+            File.Move(tempPath, FilePath, overwrite: true);
         }
         catch
         {

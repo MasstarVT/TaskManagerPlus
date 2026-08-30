@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.IO;
 using System.Text;
+using TaskManagerPlus.Common;
 
 namespace TaskManagerPlus.Services;
 
@@ -46,7 +47,7 @@ public static class LogReplayService
             var lines = File.ReadAllLines(path);
             if (lines.Length < 2) return (null, "File has no data rows.");
 
-            var header = ParseCsvLine(lines[0]);
+            var header = CsvLine.Split(lines[0]);
             int Idx(string name) => header.FindIndex(h => h.Equals(name, StringComparison.OrdinalIgnoreCase));
             int iTime = Idx("Timestamp"), iCpu = Idx("CPU Total (%)"), iRam = Idx("RAM (%)"), iDisk = Idx("Disk Active (%)");
             if (iTime < 0) return (null, "This doesn't look like a Task Manager Plus log file (no Timestamp column).");
@@ -64,7 +65,7 @@ public static class LogReplayService
             for (int i = 1; i < lines.Length; i++)
             {
                 if (lines[i].Length == 0) continue;
-                var fields = ParseCsvLine(lines[i]);
+                var fields = CsvLine.Split(lines[i]);
                 if (fields.Count <= iTime) continue;
                 if (!DateTime.TryParse(fields[iTime], CultureInfo.InvariantCulture, DateTimeStyles.None, out var ts)) continue;
 
@@ -104,7 +105,7 @@ public static class LogReplayService
 
     /// <summary>
     /// #300: "Built on the existing LogReplayService chart-replay code" - extended here (a second
-    /// parse method reusing ParseCsvLine/the same by-header-name column lookup as Parse() above)
+    /// parse method reusing CsvLine.Split/the same by-header-name column lookup as Parse() above)
     /// rather than reusing Parse() literally: that method's return shape (Timestamp/CPU/RAM/Disk)
     /// is a fixed 4-column CSV chart shape tied to this app's regular logging CSV, and #296's
     /// flight-recorder ring buffer is a genuinely different schema (DPC%, queue length, hard
@@ -120,7 +121,7 @@ public static class LogReplayService
             var lines = File.ReadAllLines(path);
             if (lines.Length < 2) return (null, "File has no data rows.");
 
-            var header = ParseCsvLine(lines[0]);
+            var header = CsvLine.Split(lines[0]);
             int Idx(string name) => header.FindIndex(h => h.Equals(name, StringComparison.OrdinalIgnoreCase));
             int iTime = Idx("Timestamp"), iCpu = Idx("CPU (%)"), iDpc = Idx("Max core DPC (%)"),
                 iQueue = Idx("Processor queue length"), iFaults = Idx("Hard faults/sec"),
@@ -137,7 +138,7 @@ public static class LogReplayService
             for (int i = 1; i < lines.Length; i++)
             {
                 if (lines[i].Length == 0) continue;
-                var fields = ParseCsvLine(lines[i]);
+                var fields = CsvLine.Split(lines[i]);
                 if (fields.Count <= iTime) continue;
                 if (!DateTime.TryParse(fields[iTime], CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var ts)) continue;
 
@@ -174,31 +175,4 @@ public static class LogReplayService
     // Same small quoted-CSV line parser ScheduledTaskService already uses for schtasks' output -
     // this app's own LoggingService escapes with the identical rule (wrap in quotes, double an
     // embedded quote), so one hand-rolled parser covers both without a CSV library dependency.
-    private static List<string> ParseCsvLine(string line)
-    {
-        var fields = new List<string>();
-        var current = new StringBuilder();
-        bool inQuotes = false;
-        for (int i = 0; i < line.Length; i++)
-        {
-            char c = line[i];
-            if (inQuotes)
-            {
-                if (c == '"')
-                {
-                    if (i + 1 < line.Length && line[i + 1] == '"') { current.Append('"'); i++; }
-                    else inQuotes = false;
-                }
-                else current.Append(c);
-            }
-            else
-            {
-                if (c == '"') inQuotes = true;
-                else if (c == ',') { fields.Add(current.ToString()); current.Clear(); }
-                else current.Append(c);
-            }
-        }
-        fields.Add(current.ToString());
-        return fields;
-    }
 }

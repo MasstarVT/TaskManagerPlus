@@ -4,6 +4,7 @@ using System.Management;
 using System.Text;
 using Microsoft.Win32;
 using TaskManagerPlus.Models;
+using TaskManagerPlus.Common;
 
 namespace TaskManagerPlus.Services;
 
@@ -137,7 +138,7 @@ public static class DriverInventoryService
             var lines = output.Split('\n').Select(l => l.TrimEnd('\r')).Where(l => l.Length > 0).ToList();
             if (lines.Count < 2) return result;
 
-            var header = ParseCsvLine(lines[0]);
+            var header = CsvLine.Split(lines[0]);
             int Idx(string name) => header.FindIndex(h => h.Equals(name, StringComparison.OrdinalIgnoreCase));
             int iModule = Idx("Module Name"), iDisplay = Idx("Display Name"), iDesc = Idx("Description"),
                 iType = Idx("Driver Type"), iStart = Idx("Start Mode"), iState = Idx("State"), iPath = Idx("Path");
@@ -145,7 +146,7 @@ public static class DriverInventoryService
 
             for (int i = 1; i < lines.Count; i++)
             {
-                var fields = ParseCsvLine(lines[i]);
+                var fields = CsvLine.Split(lines[i]);
                 if (fields.Count <= iModule) continue;
                 string module = fields[iModule].Trim();
                 if (module.Length == 0 || module.Equals("Module Name", StringComparison.OrdinalIgnoreCase)) continue;
@@ -324,65 +325,13 @@ public static class DriverInventoryService
 
     private static string At(List<string> fields, int index) => index >= 0 && index < fields.Count ? fields[index].Trim() : string.Empty;
 
-    /// <summary>Same concurrent-read/bounded-wait/kill-on-timeout shape as
-    /// ScheduledTaskService.RunCapturedAsync - duplicated here rather than shared, matching how
-    /// this app's other shell-out services each stay self-contained.</summary>
+    /// <summary>#1084: the shared <see cref="ToolRunner"/> owns the run/capture/kill-on-timeout
+    /// mechanism; this wrapper keeps the service's historical output-only shape (empty string
+    /// for a timed-out run).</summary>
     private static async Task<string> RunCapturedAsync(string exe, string args, int timeoutMs = 10000)
-    {
-        var psi = new ProcessStartInfo(exe, args)
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        using var proc = Process.Start(psi) ?? throw new InvalidOperationException($"couldn't start {exe}");
-
-        var outputTask = proc.StandardOutput.ReadToEndAsync();
-        var errorTask = proc.StandardError.ReadToEndAsync();
-
-        using var cts = new CancellationTokenSource(timeoutMs);
-        try
-        {
-            await proc.WaitForExitAsync(cts.Token);
-        }
-        catch (OperationCanceledException)
-        {
-            try { proc.Kill(); } catch { /* best-effort */ }
-            return string.Empty;
-        }
-
-        return (await outputTask) + (await errorTask);
-    }
+        => (await ToolRunner.RunCapturedAsync(exe, args, timeoutMs, timeoutOutput: string.Empty)).Output;
 
     // driverquery's CSV output quotes every field and escapes an embedded quote by doubling it ("") -
     // same hand-rolled parser as ScheduledTaskService/KernelModuleService, duplicated rather than
     // shared per this app's own established "each service stays self-contained" convention.
-    private static List<string> ParseCsvLine(string line)
-    {
-        var fields = new List<string>();
-        var current = new StringBuilder();
-        bool inQuotes = false;
-        for (int i = 0; i < line.Length; i++)
-        {
-            char c = line[i];
-            if (inQuotes)
-            {
-                if (c == '"')
-                {
-                    if (i + 1 < line.Length && line[i + 1] == '"') { current.Append('"'); i++; }
-                    else inQuotes = false;
-                }
-                else current.Append(c);
-            }
-            else
-            {
-                if (c == '"') inQuotes = true;
-                else if (c == ',') { fields.Add(current.ToString()); current.Clear(); }
-                else current.Append(c);
-            }
-        }
-        fields.Add(current.ToString());
-        return fields;
-    }
 }

@@ -242,7 +242,7 @@
                              Value="{Binding ProgressPercent, Mode=OneWay, TargetNullValue=0}"
                              IsIndeterminate="{Binding IsProgressIndeterminate}">
                     <ProgressBar.Style>
-                        <Style TargetType="ProgressBar">
+                        <Style TargetType="ProgressBar" BasedOn="{StaticResource {x:Type ProgressBar}}">
                             <Setter Property="Visibility" Value="Collapsed" />
                             <Style.Triggers>
                                 <MultiDataTrigger>

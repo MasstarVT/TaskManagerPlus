@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using TaskManagerPlus.Common;
 using TaskManagerPlus.Models;
 
 namespace TaskManagerPlus.Services;
@@ -230,7 +231,9 @@ public static class StressTestReportService
 
     private static string Num(double? v) => v.HasValue ? v.Value.ToString("0.###", CultureInfo.InvariantCulture) : string.Empty;
 
-    private static string FormatDuration(TimeSpan d) => d.TotalMinutes >= 1 ? $"{(int)d.TotalMinutes}m {d.Seconds}s" : $"{d.TotalSeconds:0}s";
+    /// <summary>Formatting.FormatSpanMinutes (#1086) above one minute; below it this keeps its
+    /// original rounded second count ("43s" for 42.7s, where the shared ladder floors to "42s").</summary>
+    private static string FormatDuration(TimeSpan d) => d.TotalMinutes >= 1 ? Formatting.FormatSpanMinutes(d) : $"{d.TotalSeconds:0}s";
 
     public static string DescribeType(StressTestType type) => type switch
     {

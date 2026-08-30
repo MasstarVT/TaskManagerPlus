@@ -157,6 +157,12 @@ public static class SecurityReportService
     // Same escaping rule as LoggingService.Escape - only quote a field when it actually needs it.
     private static string Escape(string value)
     {
+        // #1063: neutralize spreadsheet formula injection - a field beginning with = + - or @
+        // (e.g. malware registering an autorun named "=cmd|'/c calc'!A1") would otherwise be
+        // evaluated as a live formula when the saved .csv is opened in Excel. A leading apostrophe
+        // makes Excel treat the cell as literal text; any other CSV consumer just sees the data.
+        if (value.Length > 0 && value[0] is '=' or '+' or '-' or '@')
+            value = "'" + value;
         if (value.IndexOfAny(new[] { ',', '"', '\n', '\r' }) < 0) return value;
         return "\"" + value.Replace("\"", "\"\"") + "\"";
     }

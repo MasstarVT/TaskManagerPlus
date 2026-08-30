@@ -679,7 +679,7 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
             {
                 var message = e.Message.Replace("\n", " ").Replace("\r", "").Replace("|", "\\|");
                 if (message.Length > 120) message = message[..120] + "…";
-                Line($"| {e.TimeCreated:g} | {e.LogName} | {e.ProviderName} | {e.EventId} | {message} |");
+                Line($"| {e.TimeCreated:g} | {MdCell(e.LogName)} | {MdCell(e.ProviderName)} | {e.EventId} | {message} |");
             }
         }
         Line();
@@ -688,14 +688,14 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         Line("| Process | PID | CPU % | Memory |");
         Line("|---|---|---|---|");
         foreach (var p in Processes.Processes.OrderByDescending(p => p.CpuPercent).Take(10))
-            Line($"| {p.Name} | {p.Pid} | {p.CpuPercent:0.0} | {Formatting.FormatBytes(p.MemoryBytes)} |");
+            Line($"| {MdCell(p.Name)} | {p.Pid} | {p.CpuPercent:0.0} | {Formatting.FormatBytes(p.MemoryBytes)} |");
         Line();
 
         Line("## Top memory processes");
         Line("| Process | PID | Memory | CPU % |");
         Line("|---|---|---|---|");
         foreach (var p in Processes.Processes.OrderByDescending(p => p.MemoryBytes).Take(10))
-            Line($"| {p.Name} | {p.Pid} | {Formatting.FormatBytes(p.MemoryBytes)} | {p.CpuPercent:0.0} |");
+            Line($"| {MdCell(p.Name)} | {p.Pid} | {Formatting.FormatBytes(p.MemoryBytes)} | {p.CpuPercent:0.0} |");
         Line();
 
         AppendLeakEvidenceMarkdown(Line);
@@ -726,10 +726,16 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         foreach (var s in top)
         {
             string window = $"{s.FirstSampleUtc.ToLocalTime():g} to {s.LastSampleUtc.ToLocalTime():g} ({s.SampleCount} samples)";
-            line($"| {s.ImageName} | {s.PrivateBytesSlopeMbPerHour:0.00} | {s.PrivateBytesRSquared:0.00} | " +
+            line($"| {MdCell(s.ImageName)} | {s.PrivateBytesSlopeMbPerHour:0.00} | {s.PrivateBytesRSquared:0.00} | " +
                  $"{s.HandleSlopePerHour:0.0} | {s.HandleRSquared:0.00} | {s.ThreadSlopePerHour:0.0} | {window} |");
         }
     }
+
+    /// <summary>#1065: escapes a value interpolated into a Markdown table cell - an embedded pipe
+    /// (legal, and attacker-chosen, in a process name or event log/provider name) would otherwise
+    /// start a phantom column and misalign the whole row against the header. Same escaping the
+    /// recent-events message cell already applies inline.</summary>
+    private static string MdCell(string value) => value.Replace("|", "\\|");
 
     /// <summary>#97: the HTML twin of GenerateReport() above - same underlying data, rendered as
     /// one self-contained .html file (inline &lt;style&gt;, inline SVG charts, no external
@@ -1193,11 +1199,6 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         }
     }
 
-    /// <summary>CPU package temperature past this point reads as "running hot" for the Health
-    /// Check card - a rough, conservative threshold (most desktop/laptop CPUs throttle well
-    /// above this), not a precise per-model limit.</summary>
-    private const double HotCpuTempC = 90.0;
-
     private void RefreshHealthIssues()
     {
         // #916-919: the bulk of what used to be a hardcoded if-chain here now lives as JSON rule
@@ -1262,14 +1263,10 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
                 IsCritical = true,
             });
 
-        if (_energyThermals.CpuPackageTempC is { } cpuTemp && cpuTemp >= HotCpuTempC)
-            issues.Add(new HealthIssue { Message = $"CPU running hot ({cpuTemp:0}°C)", IsCritical = cpuTemp >= 100 });
-
-        if (_energyThermals.DeadFanDetected)
-            issues.Add(new HealthIssue { Message = $"Possible stopped fan: {_energyThermals.DeadFanName}", IsCritical = true });
-
-        if (Performance.PageFilePercent >= 90)
-            issues.Add(new HealthIssue { Message = $"Page file is {Performance.PageFilePercent:0}% full", IsCritical = false });
+        // #1083: the CPU-hot, dead-fan, and page-file-full checks that used to sit here live in
+        // RulesEngineService.BuiltInPackJson (builtin.cpu.hot-warning/-critical,
+        // builtin.thermal.dead-fan, builtin.mem.pagefile-full) - keeping the hardcoded ifs too
+        // made each finding surface twice per health tick.
 
         // #420: nonpaged pool exhaustion is a hard bugcheck risk, not just a slowdown - see
         // PerformanceViewModel.IsNonpagedPoolWarning/PoolLimitsService for what the limit is
@@ -1281,29 +1278,10 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
                 IsCritical = Performance.PoolNonpagedPercent >= 95,
             });
 
-        // Round 8 #41: swap-thrash - sustained heavy paging (hard faults) together with very
-        // little free RAM is a much stronger "the system is thrashing" signal than either figure
-        // alone; either one by itself happens routinely under ordinary load (a hard-fault burst
-        // during a big file load, or briefly low available RAM after opening several apps).
-        if (Performance.HardFaultsPerSec >= 500 && Performance.RamAvailablePercent < 10)
-            issues.Add(new HealthIssue
-            {
-                Message = $"Possible memory thrashing: {Performance.HardFaultsPerSec:0} hard faults/sec with only {Performance.RamAvailablePercent:0}% RAM available",
-                IsCritical = true,
-            });
-
-        if (Performance.HasNetworkErrors)
-            issues.Add(new HealthIssue { Message = "Network adapter errors detected", IsCritical = false });
-
-        int failedServices = _services.Services.Count(s => s.HasFailedToStart);
-        if (failedServices > 0)
-            issues.Add(new HealthIssue { Message = $"{failedServices} service{(failedServices == 1 ? "" : "s")} failed to start", IsCritical = false });
-
-        if (_systemSpecs.OutdatedDrivers.Count > 0)
-            issues.Add(new HealthIssue { Message = $"{_systemSpecs.OutdatedDrivers.Count} driver{(_systemSpecs.OutdatedDrivers.Count == 1 ? "" : "s")} may need updating", IsCritical = false });
-
-        if (_systemSpecs.MultipleActiveAvWarning)
-            issues.Add(new HealthIssue { Message = "Multiple antivirus products look active", IsCritical = false });
+        // #1083: the thrashing, network-errors, failed-services, outdated-drivers, and multi-AV
+        // checks that used to sit here live in RulesEngineService.BuiltInPackJson
+        // (builtin.mem.thrashing, builtin.network.errors, builtin.services.failed,
+        // builtin.system.outdated-drivers, builtin.system.multiple-av).
 
         // Round 19, item 82: "Verifier is currently enabled" warning, also read directly off
         // StabilityViewModel's own already-computed VerifierNagDue/VerifierEnabledDurationText
@@ -1325,10 +1303,8 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         if (_systemSpecs.RamHealthIsWarning)
             issues.Add(new HealthIssue { Message = $"RAM health check: {string.Join("; ", _systemSpecs.RamHealthFindings.Take(2))}", IsCritical = false });
 
-        // Round 11, #73: Windows Update/servicing reboot pending - see
-        // SystemSpecsService.ReadRebootPending for which registry keys are checked.
-        if (_systemSpecs.RebootPending)
-            issues.Add(new HealthIssue { Message = "A restart is pending to finish installing updates", IsCritical = false });
+        // #1083: the Round 11 #73 reboot-pending check that used to sit here lives in
+        // RulesEngineService.BuiltInPackJson (builtin.system.reboot-pending).
 
         // A few checks stay hand-rolled here rather than becoming rule-pack JSON, because they
         // don't cleanly fit the metric-bag/condition shape (#916): the reboot-pending correlation
@@ -1339,8 +1315,8 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
 
         // Round 12, #98: "which of my changes since the baseline are still pending that reboot" -
         // a derived rollup, no new registry reads: just correlates SnapshotDiff (already computed
-        // by CompareSnapshot, above) against the same RebootPending flag the rule right above this
-        // one already reads. Only fires once a baseline comparison has actually been run this
+        // by CompareSnapshot, above) against the same RebootPending flag the rule pack's
+        // builtin.system.reboot-pending rule reads. Only fires once a baseline comparison has actually been run this
         // session (SnapshotDiff is null until then) and only when it found real changes - a
         // reboot-pending flag with no baseline comparison on hand says nothing about *which*
         // change caused it, so this rule stays silent rather than implying a link it can't show.

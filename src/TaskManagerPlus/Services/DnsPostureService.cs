@@ -155,26 +155,8 @@ public static class DnsPostureService
         }
     }
 
+    /// <summary>#1084: delegates to the shared <see cref="ToolRunner"/> (run tool, capture
+    /// stdout+stderr, kill the whole process tree on timeout).</summary>
     private static string RunCapturedSync(string exe, string args, TimeSpan timeout)
-    {
-        var psi = new ProcessStartInfo(exe, args)
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        using var proc = Process.Start(psi) ?? throw new InvalidOperationException($"couldn't start {exe}");
-
-        var outputTask = proc.StandardOutput.ReadToEndAsync();
-        var errorTask = proc.StandardError.ReadToEndAsync();
-
-        if (!proc.WaitForExit((int)timeout.TotalMilliseconds))
-        {
-            try { proc.Kill(entireProcessTree: true); } catch { /* best-effort */ }
-            return string.Empty;
-        }
-
-        return outputTask.GetAwaiter().GetResult() + errorTask.GetAwaiter().GetResult();
-    }
+        => ToolRunner.RunCaptured(exe, args, timeout).Output;
 }

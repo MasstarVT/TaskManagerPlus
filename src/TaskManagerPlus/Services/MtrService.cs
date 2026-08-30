@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net.NetworkInformation;
 
 namespace TaskManagerPlus.Services;
@@ -107,12 +108,16 @@ public sealed class MtrService : IDisposable
         for (int ttl = 1; ttl <= maxTtl && !ct.IsCancellationRequested; ttl++)
         {
             PingReply? reply = null;
+            double elapsedMs = 0;
             try
             {
                 using var ping = new Ping();
                 var options = new PingOptions { Ttl = ttl, DontFragment = false };
                 var buffer = new byte[32];
+                var sw = Stopwatch.StartNew();
                 reply = await ping.SendPingAsync(host, TimeoutMs, buffer, options);
+                sw.Stop();
+                elapsedMs = sw.Elapsed.TotalMilliseconds;
             }
             catch
             {
@@ -133,7 +138,14 @@ public sealed class MtrService : IDisposable
                 {
                     tracker.Received++;
                     if (reply!.Address is not null) tracker.Address = reply.Address.ToString();
-                    double rtt = reply.RoundtripTime;
+                    // The Windows ICMP API fills in RoundtripTime only for the destination's own
+                    // echo reply - a TtlExpired reply from an intermediate hop reports 0. Those
+                    // hops use the Stopwatch measurement around the probe instead: slightly
+                    // generous (it includes async-scheduling overhead), but a real measurement
+                    // rather than a fabricated 0 ms for every hop but the last.
+                    double rtt = reply.Status == IPStatus.Success && reply.RoundtripTime > 0
+                        ? reply.RoundtripTime
+                        : elapsedMs;
                     tracker.MinMs = Math.Min(tracker.MinMs, rtt);
                     tracker.MaxMs = Math.Max(tracker.MaxMs, rtt);
                     tracker.SumMs += rtt;

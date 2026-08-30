@@ -276,30 +276,8 @@ public static class SmbShareService
         return results;
     }
 
+    /// <summary>#1084: delegates to the shared <see cref="ToolRunner"/>, keeping this service's
+    /// historical trimmed-output shape and "{exe} timed out." sentinel.</summary>
     private static async Task<string> RunCommandAsync(string exe, string args, int timeoutMs = 15000)
-    {
-        var psi = new ProcessStartInfo(exe, args)
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        using var proc = Process.Start(psi);
-        if (proc is null) return $"Couldn't start {exe}.";
-
-        var outputTask = proc.StandardOutput.ReadToEndAsync();
-        var errorTask = proc.StandardError.ReadToEndAsync();
-        using var cts = new CancellationTokenSource(timeoutMs);
-        try
-        {
-            await proc.WaitForExitAsync(cts.Token);
-            return ((await outputTask) + (await errorTask)).Trim();
-        }
-        catch (OperationCanceledException)
-        {
-            try { proc.Kill(); } catch { /* best-effort */ }
-            return $"{exe} timed out.";
-        }
-    }
+        => (await ToolRunner.RunCapturedAsync(exe, args, timeoutMs, timeoutOutput: $"{exe} timed out.")).Output.Trim();
 }

@@ -3,6 +3,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using TaskManagerPlus.Models;
+using TaskManagerPlus.Common;
 
 namespace TaskManagerPlus.Services;
 
@@ -161,14 +162,14 @@ public static class KernelModuleService
         var lines = output.Split('\n').Select(l => l.TrimEnd('\r')).Where(l => l.Length > 0).ToList();
         if (lines.Count < 2) return result;
 
-        var header = ParseCsvLine(lines[0]);
+        var header = CsvLine.Split(lines[0]);
         int iModule = header.FindIndex(h => h.Equals("Module Name", StringComparison.OrdinalIgnoreCase));
         int iDisplay = header.FindIndex(h => h.Equals("Display Name", StringComparison.OrdinalIgnoreCase));
         if (iModule < 0 || iDisplay < 0) return result;
 
         for (int i = 1; i < lines.Count; i++)
         {
-            var fields = ParseCsvLine(lines[i]);
+            var fields = CsvLine.Split(lines[i]);
             if (fields.Count <= Math.Max(iModule, iDisplay)) continue;
             string module = fields[iModule].Trim();
             string display = fields[iDisplay].Trim();
@@ -178,36 +179,6 @@ public static class KernelModuleService
         return result;
     }
 
-    // driverquery's CSV output quotes every field, same escaping rule as schtasks' own CSV output -
-    // ScheduledTaskService.ParseCsvLine duplicated here rather than shared, matching how this
-    // app's other services each stay self-contained instead of building a shared CSV helper.
-    private static List<string> ParseCsvLine(string line)
-    {
-        var fields = new List<string>();
-        var current = new StringBuilder();
-        bool inQuotes = false;
-        for (int i = 0; i < line.Length; i++)
-        {
-            char c = line[i];
-            if (inQuotes)
-            {
-                if (c == '"')
-                {
-                    if (i + 1 < line.Length && line[i + 1] == '"') { current.Append('"'); i++; }
-                    else inQuotes = false;
-                }
-                else current.Append(c);
-            }
-            else
-            {
-                if (c == '"') inQuotes = true;
-                else if (c == ',') { fields.Add(current.ToString()); current.Clear(); }
-                else current.Append(c);
-            }
-        }
-        fields.Add(current.ToString());
-        return fields;
-    }
 
     private const int SystemModuleInformation = 11;
     private const int StatusInfoLengthMismatch = unchecked((int)0xC0000004);

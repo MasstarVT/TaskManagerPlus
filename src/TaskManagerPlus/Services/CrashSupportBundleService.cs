@@ -293,41 +293,11 @@ public static class CrashSupportBundleService
 
     private static string Truncate(string s, int maxLen = 300) => string.IsNullOrEmpty(s) ? s : (s.Length <= maxLen ? s.Trim() : s[..maxLen].Trim() + "…");
 
-    /// <summary>Shells out and captures combined stdout+stderr under a bounded timeout - the same
-    /// pattern every other service in this domain already establishes.</summary>
+    /// <summary>#1084: delegates to the shared <see cref="ToolRunner"/>, keeping this service's
+    /// soft-start degradation (a tool that can't start yields an empty result, never a throw).</summary>
     private static async Task<(string Output, int? ExitCode)> RunCapturedAsync(string exe, string args, int timeoutMs)
     {
-        var psi = new ProcessStartInfo(exe, args)
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-
-        Process? proc;
-        try { proc = Process.Start(psi); }
+        try { return await ToolRunner.RunCapturedAsync(exe, args, timeoutMs); }
         catch { return (string.Empty, null); }
-        if (proc is null) return (string.Empty, null);
-
-        using (proc)
-        {
-            var outputTask = proc.StandardOutput.ReadToEndAsync();
-            var errorTask = proc.StandardError.ReadToEndAsync();
-
-            using var cts = new CancellationTokenSource(timeoutMs);
-            try
-            {
-                await proc.WaitForExitAsync(cts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                try { proc.Kill(); } catch { /* best-effort */ }
-                return ("(command timed out)", null);
-            }
-
-            string output = (await outputTask) + (await errorTask);
-            return (output, proc.ExitCode);
-        }
     }
 }

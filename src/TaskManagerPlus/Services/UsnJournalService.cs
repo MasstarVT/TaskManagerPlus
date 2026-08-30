@@ -219,6 +219,24 @@ public static class UsnJournalService
             }
         }
 
+        // #1044: after a timeout Kill, the async OutputDataReceived callbacks are still draining
+        // already-buffered lines - and mutating byFile - so enumerating it below would race them
+        // (InvalidOperationException, or silently corrupted tallies) on exactly the large-journal
+        // busy-volume case the timeout exists for. A second, short-bounded WaitForExitAsync on the
+        // now-killed process also awaits the redirected streams' EOF, i.e. every pending callback
+        // has been raised by the time it completes; if even that doesn't finish, cancel the async
+        // reads outright as a last resort before touching byFile.
+        try
+        {
+            using var drainCts = new CancellationTokenSource(5000);
+            await proc.WaitForExitAsync(drainCts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            try { proc.CancelOutputRead(); } catch { /* best-effort */ }
+            try { proc.CancelErrorRead(); } catch { /* best-effort */ }
+        }
+
         if (totalRecords == 0 && errorBuilder.Length > 0)
             return new UsnHotSpotResult { StatusText = $"Failed: {errorBuilder.ToString().Trim()}" };
 
@@ -313,7 +331,12 @@ public static class UsnJournalService
         if (fileName.Length == 0) return null;
 
         uint reason = TryParseHexOrDecimal(fields[2], out ulong reasonRaw) ? (uint)reasonRaw : 0;
-        DateTime? timestamp = DateTime.TryParse(fields[3].Trim(), CultureInfo.InvariantCulture, DateTimeStyles.None, out var dt) ? dt : null;
+        // #1058: fsutil renders the timestamp column in the machine's own locale format (like
+        // vssadmin's creation times - see VssService), so CurrentCulture is correct here, unlike
+        // the invariant hex/decimal fields above. Parsing it invariant returned null on any
+        // non-US locale, and a null timestamp bypasses FindHotSpotsAsync's window filter - every
+        // record then counted as "in the last N minutes" while StatusText claimed a windowed count.
+        DateTime? timestamp = DateTime.TryParse(fields[3].Trim(), CultureInfo.CurrentCulture, DateTimeStyles.None, out var dt) ? dt : null;
         ulong parentFrn = TryParseHexOrDecimal(fields[6], out ulong pf) ? pf : 0;
 
         return new UsnCsvRecord(fileName, reason, timestamp, parentFrn);

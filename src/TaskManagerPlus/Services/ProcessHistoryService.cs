@@ -26,6 +26,18 @@ namespace TaskManagerPlus.Services;
 /// Flushes to disk on a slow, size-bounded cadence rather than every tick - "record often,
 /// persist occasionally" is the same split LoggingService's 100MB rotation exists for, just
 /// time-based instead of size-based here.
+///
+/// #1078: persistence is decimate-and-append, not rewrite-the-world. Each 30s flush appends one
+/// small JSON line to process-history.jsonl carrying only the newest sample per dirty name (a
+/// natural decimation to FlushInterval resolution - the cross-restart trend math regresses over
+/// real timestamps, so it never needed 1s-resolution history on disk); the journal is compacted
+/// into a single decimated snapshot line only when it outgrows CompactThresholdBytes. The old
+/// shape serialized and File.WriteAllText'd the whole ~15-25MB store every 30s (2-3 GB/hour of
+/// writes for a sparkline and three slopes). Loading is also off-thread now: the ctor spawns a
+/// Task.Run that parses the journal (or the legacy process-history.json, still read so an
+/// upgrade keeps its history) and merges it under the lock - construction itself does no I/O,
+/// which is what let MainViewModel's field initializer run on the UI thread safely (the
+/// BitLockerService startup-stall lesson).
 /// </summary>
 public sealed class ProcessHistoryService
 {
@@ -53,14 +65,43 @@ public sealed class ProcessHistoryService
     private const double ThreadRunawayMinRSquared = 0.6;
     private const int MinSamplesForRegression = 6;
 
-    private readonly Dictionary<string, ProcessHistoryRecord> _byName;
+    // #1078: once the append-only journal grows past this, the next flush rewrites it as one
+    // decimated snapshot line instead of appending - the only time the whole store is written.
+    // At the observed delta rate (a few KB per 30s flush) this fires every hour or two.
+    private const long CompactThresholdBytes = 4 * 1024 * 1024;
+
+    private readonly Dictionary<string, ProcessHistoryRecord> _byName = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _gate = new();
+
+    // #1078: file-writer gate, always taken OUTSIDE _gate (Flush and the load-merge both order
+    // _flushGate -> _gate, never the reverse) - serializes journal appends/compactions against
+    // each other and against the background load's merge, without holding the data lock during I/O.
+    private readonly object _flushGate = new();
+    private long _journalBytes;
+
+    // Newest sample timestamp already persisted per image name - what BuildDeltaLocked diffs
+    // against so a flush appends each sample at most once. Pruned alongside _byName.
+    private readonly Dictionary<string, DateTime> _lastPersistedUtc = new(StringComparer.OrdinalIgnoreCase);
+
     private DateTime _lastFlushUtc = DateTime.UtcNow;
     private bool _dirty;
 
+    /// <summary>One line of process-history.jsonl: a full-store snapshot (written at compaction)
+    /// or a per-flush delta of newest-sample-per-name records. Load starts from the last snapshot
+    /// line and replays the deltas after it.</summary>
+    private sealed class JournalLine
+    {
+        public string Kind { get; set; } = "delta";
+        public List<ProcessHistoryRecord> Records { get; set; } = new();
+    }
+
     public ProcessHistoryService()
     {
-        _byName = Load();
+        // #1078: no synchronous I/O in the ctor - MainViewModel field-initializes this on the UI
+        // thread during window construction. The load parses off-thread and merges under the lock,
+        // so samples recorded before the merge lands are kept (loaded history is older and is
+        // prepended beneath them).
+        _ = Task.Run(LoadAndMerge);
     }
 
     /// <summary>
@@ -251,60 +292,226 @@ public sealed class ProcessHistoryService
             .Take(_byName.Count - MaxTrackedNames)
             .Select(r => r.ImageName)
             .ToList();
-        foreach (var name in toRemove) _byName.Remove(name);
+        foreach (var name in toRemove)
+        {
+            _byName.Remove(name);
+            _lastPersistedUtc.Remove(name);
+        }
     }
 
-    /// <summary>Writes the current in-memory history to disk (#401 - best-effort, same silent-
-    /// fail-to-defaults shape every settings file in this app already uses). Safe to call from
-    /// any thread; also called once from MainViewModel.Dispose so a session shorter than
-    /// FlushInterval still persists something on a clean exit.</summary>
+    private static string JournalPath => AppPaths.GetPath("process-history.jsonl");
+    private static string LegacyStorePath => AppPaths.GetPath("process-history.json");
+
+    /// <summary>Persists what changed since the last flush (#401/#1078 - best-effort, same
+    /// silent-fail-to-defaults shape every settings file in this app already uses). Appends one
+    /// small newest-sample-per-name delta line; only compaction (journal past
+    /// CompactThresholdBytes) rewrites the file, as a single decimated snapshot line. Safe to
+    /// call from any thread; also called once from MainViewModel.Dispose so a session shorter
+    /// than FlushInterval still persists something on a clean exit.</summary>
     public void Flush()
     {
-        List<ProcessHistoryRecord> snapshot;
-        lock (_gate)
+        lock (_flushGate)
         {
-            if (!_dirty) return;
-            snapshot = _byName.Values.ToList();
-            _dirty = false;
-        }
+            List<ProcessHistoryRecord> delta;
+            lock (_gate)
+            {
+                if (!_dirty) return;
+                delta = BuildDeltaLocked();
+                _dirty = false;
+            }
 
-        try
-        {
-            var path = AppPaths.GetPath("process-history.json");
-            var dir = Path.GetDirectoryName(path)!;
-            Directory.CreateDirectory(dir);
-            var json = JsonSerializer.Serialize(snapshot);
-            File.WriteAllText(path, json);
-        }
-        catch
-        {
-            // Best-effort - a failed write just means this session's trend data doesn't survive
-            // the next restart; the in-memory history for the running session is unaffected.
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(JournalPath)!);
+
+                if (_journalBytes >= CompactThresholdBytes)
+                {
+                    List<ProcessHistoryRecord> snapshot;
+                    lock (_gate) snapshot = BuildDecimatedSnapshotLocked();
+                    var line = JsonSerializer.Serialize(new JournalLine { Kind = "snapshot", Records = snapshot }) + Environment.NewLine;
+
+                    // Temp-then-replace so a crash mid-compaction leaves the old journal intact
+                    // rather than a truncated one.
+                    string temp = JournalPath + ".tmp";
+                    File.WriteAllText(temp, line);
+                    File.Move(temp, JournalPath, overwrite: true);
+                    _journalBytes = line.Length;
+                }
+                else if (delta.Count > 0)
+                {
+                    var line = JsonSerializer.Serialize(new JournalLine { Kind = "delta", Records = delta }) + Environment.NewLine;
+                    File.AppendAllText(JournalPath, line);
+                    _journalBytes += line.Length;
+                }
+            }
+            catch
+            {
+                // Best-effort - a failed write just means this session's trend data doesn't
+                // survive the next restart; the in-memory history for the running session is
+                // unaffected.
+            }
         }
     }
 
-    private static Dictionary<string, ProcessHistoryRecord> Load()
+    /// <summary>Newest not-yet-persisted sample per image name - one sample per name per flush,
+    /// which is exactly the FlushInterval-resolution decimation the on-disk store keeps.</summary>
+    private List<ProcessHistoryRecord> BuildDeltaLocked()
     {
+        var delta = new List<ProcessHistoryRecord>();
+        foreach (var record in _byName.Values)
+        {
+            if (record.Samples.Count == 0) continue;
+            var newest = record.Samples[^1];
+            if (_lastPersistedUtc.TryGetValue(record.ImageName, out var last) && newest.TimestampUtc <= last) continue;
+
+            delta.Add(new ProcessHistoryRecord
+            {
+                ImageName = record.ImageName,
+                LastSeenUtc = record.LastSeenUtc,
+                Samples = new List<ProcessHistorySample> { newest },
+            });
+            _lastPersistedUtc[record.ImageName] = newest.TimestampUtc;
+        }
+        return delta;
+    }
+
+    /// <summary>The full store, decimated per name to FlushInterval spacing (always keeping the
+    /// newest sample) - the same resolution the delta lines persist at, so compaction never
+    /// bloats the file back up with this session's 1s-resolution in-memory samples.</summary>
+    private List<ProcessHistoryRecord> BuildDecimatedSnapshotLocked()
+    {
+        var snapshot = new List<ProcessHistoryRecord>(_byName.Count);
+        foreach (var record in _byName.Values)
+        {
+            var kept = new List<ProcessHistorySample>();
+            DateTime lastKept = DateTime.MinValue;
+            for (int i = 0; i < record.Samples.Count; i++)
+            {
+                var s = record.Samples[i];
+                if (i == record.Samples.Count - 1 || s.TimestampUtc - lastKept >= FlushInterval)
+                {
+                    kept.Add(s);
+                    lastKept = s.TimestampUtc;
+                }
+            }
+            snapshot.Add(new ProcessHistoryRecord { ImageName = record.ImageName, LastSeenUtc = record.LastSeenUtc, Samples = kept });
+        }
+        return snapshot;
+    }
+
+    /// <summary>#1078: the ctor's Task.Run body - parses the journal (or the legacy single-file
+    /// store, so an upgrade keeps its history) off-thread, then merges beneath whatever this
+    /// session has already recorded. Any failure degrades to an empty loaded set rather than
+    /// failing startup, same as every other settings/history file in this app.</summary>
+    private void LoadAndMerge()
+    {
+        Dictionary<string, ProcessHistoryRecord> loaded;
+        long journalBytes = 0;
+        bool forceCompactOnFirstFlush = false;
+
         try
         {
-            var path = AppPaths.GetPath("process-history.json");
-            if (File.Exists(path))
+            if (File.Exists(JournalPath))
             {
-                var json = File.ReadAllText(path);
-                var records = JsonSerializer.Deserialize<List<ProcessHistoryRecord>>(json);
-                if (records is not null)
-                {
-                    return records
-                        .Where(r => !string.IsNullOrEmpty(r.ImageName))
-                        .ToDictionary(r => r.ImageName, r => r, StringComparer.OrdinalIgnoreCase);
-                }
+                loaded = LoadFromJournal(out journalBytes);
+            }
+            else if (File.Exists(LegacyStorePath))
+            {
+                loaded = LoadFromLegacyStore();
+                // The legacy file is never written again - force the first flush to compact, so
+                // the journal starts with a snapshot carrying this history forward.
+                forceCompactOnFirstFlush = loaded.Count > 0;
+            }
+            else
+            {
+                loaded = new Dictionary<string, ProcessHistoryRecord>(StringComparer.OrdinalIgnoreCase);
             }
         }
         catch
         {
-            // Corrupt or unreadable file - start with an empty history rather than failing
-            // startup, same as every other settings/history file in this app.
+            loaded = new Dictionary<string, ProcessHistoryRecord>(StringComparer.OrdinalIgnoreCase);
         }
-        return new Dictionary<string, ProcessHistoryRecord>(StringComparer.OrdinalIgnoreCase);
+
+        lock (_flushGate)
+        {
+            lock (_gate)
+            {
+                foreach (var (name, record) in loaded)
+                {
+                    if (record.Samples.Count == 0) continue;
+
+                    if (_byName.TryGetValue(name, out var existing))
+                    {
+                        // The session started recording this name before the load landed - the
+                        // loaded samples are from a previous session (older), so they go first.
+                        existing.Samples.InsertRange(0, record.Samples);
+                        while (existing.Samples.Count > MaxSamplesPerName) existing.Samples.RemoveAt(0);
+                    }
+                    else
+                    {
+                        while (record.Samples.Count > MaxSamplesPerName) record.Samples.RemoveAt(0);
+                        _byName[name] = record;
+                    }
+
+                    // Everything just loaded is already on disk - don't re-append it, unless a
+                    // flush this session already persisted something newer for the name.
+                    var newest = record.Samples[^1].TimestampUtc;
+                    if (!_lastPersistedUtc.TryGetValue(name, out var t) || newest > t)
+                        _lastPersistedUtc[name] = newest;
+                }
+                PruneStaleNames();
+                if (forceCompactOnFirstFlush) _dirty = true;
+            }
+            _journalBytes = forceCompactOnFirstFlush ? CompactThresholdBytes : Math.Max(_journalBytes, journalBytes);
+        }
+    }
+
+    private static Dictionary<string, ProcessHistoryRecord> LoadFromJournal(out long journalBytes)
+    {
+        var byName = new Dictionary<string, ProcessHistoryRecord>(StringComparer.OrdinalIgnoreCase);
+        var lines = File.ReadAllLines(JournalPath);
+        journalBytes = new FileInfo(JournalPath).Length;
+
+        foreach (var raw in lines)
+        {
+            if (string.IsNullOrWhiteSpace(raw)) continue;
+
+            JournalLine? line;
+            try { line = JsonSerializer.Deserialize<JournalLine>(raw); }
+            catch { continue; } // one corrupt line never takes the rest of the journal down
+            if (line is null) continue;
+
+            // A snapshot line supersedes everything before it.
+            if (string.Equals(line.Kind, "snapshot", StringComparison.OrdinalIgnoreCase)) byName.Clear();
+
+            foreach (var record in line.Records)
+            {
+                if (string.IsNullOrEmpty(record.ImageName)) continue;
+                if (byName.TryGetValue(record.ImageName, out var existing))
+                {
+                    existing.Samples.AddRange(record.Samples);
+                    while (existing.Samples.Count > MaxSamplesPerName) existing.Samples.RemoveAt(0);
+                    if (record.LastSeenUtc > existing.LastSeenUtc) existing.LastSeenUtc = record.LastSeenUtc;
+                }
+                else
+                {
+                    byName[record.ImageName] = record;
+                }
+            }
+        }
+        return byName;
+    }
+
+    /// <summary>The pre-#1078 single-file store, read (never written) so an upgrade doesn't lose
+    /// the history it had accumulated.</summary>
+    private static Dictionary<string, ProcessHistoryRecord> LoadFromLegacyStore()
+    {
+        var json = File.ReadAllText(LegacyStorePath);
+        var records = JsonSerializer.Deserialize<List<ProcessHistoryRecord>>(json);
+        return records is null
+            ? new Dictionary<string, ProcessHistoryRecord>(StringComparer.OrdinalIgnoreCase)
+            : records
+                .Where(r => !string.IsNullOrEmpty(r.ImageName))
+                .ToDictionary(r => r.ImageName, r => r, StringComparer.OrdinalIgnoreCase);
     }
 }

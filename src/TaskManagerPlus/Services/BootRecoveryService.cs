@@ -93,15 +93,9 @@ public static class BootRecoveryService
                 "dsrepair" => "Directory Services Repair Mode - " + description,
                 _ => $"{raw} - {description}",
             },
-            "testsigning" => raw.Equals("Yes", StringComparison.OrdinalIgnoreCase)
-                ? "On - " + description
-                : "Off",
-            "nointegritychecks" => raw.Equals("Yes", StringComparison.OrdinalIgnoreCase)
-                ? "On - " + description
-                : "Off",
-            "debug" => raw.Equals("Yes", StringComparison.OrdinalIgnoreCase)
-                ? "On - " + description
-                : "Off",
+            "testsigning" => DescribeYesNoFlag(raw, description),
+            "nointegritychecks" => DescribeYesNoFlag(raw, description),
+            "debug" => DescribeYesNoFlag(raw, description),
             "bootstatuspolicy" => raw.ToLowerInvariant() switch
             {
                 "ignoreallfailures" => "IgnoreAllFailures - failed boots are never reported and WinRE never launches automatically. " + description,
@@ -117,15 +111,29 @@ public static class BootRecoveryService
         };
     }
 
+    /// <summary>#1055: bcdedit renders its boolean elements as "Yes"/"No" on English Windows, but a
+    /// localized MUI install can render the value cell in its own language (e.g. "Ja"/"Oui"). Only
+    /// an exact Yes/No is decoded; any other value degrades to "set, but unrecognized" - and is
+    /// flagged as a warning by <see cref="IsWarningValue"/> - rather than fabricating a definitive
+    /// Off for a flag that may well be On.</summary>
+    private static string DescribeYesNoFlag(string raw, string description)
+    {
+        if (raw.Equals("Yes", StringComparison.OrdinalIgnoreCase)) return "On - " + description;
+        if (raw.Equals("No", StringComparison.OrdinalIgnoreCase)) return "Off";
+        return $"Set to \"{raw}\" - unrecognized value (possibly localized bcdedit output), so this flag may be On. {description}";
+    }
+
     private static bool IsWarningValue(string name, string raw)
     {
         if (string.IsNullOrEmpty(raw)) return false;
         return name switch
         {
             "safeboot" => true,
-            "testsigning" => raw.Equals("Yes", StringComparison.OrdinalIgnoreCase),
-            "nointegritychecks" => raw.Equals("Yes", StringComparison.OrdinalIgnoreCase),
-            "debug" => raw.Equals("Yes", StringComparison.OrdinalIgnoreCase),
+            // #1055: for the Yes/No flags, warn on anything that is set and isn't an explicit
+            // "No" - an unrecognized (possibly localized) value must not read as a clean Off.
+            "testsigning" => !raw.Equals("No", StringComparison.OrdinalIgnoreCase),
+            "nointegritychecks" => !raw.Equals("No", StringComparison.OrdinalIgnoreCase),
+            "debug" => !raw.Equals("No", StringComparison.OrdinalIgnoreCase),
             "bootstatuspolicy" => raw.StartsWith("Ignore", StringComparison.OrdinalIgnoreCase),
             "hypervisorlaunchtype" => raw.Equals("Off", StringComparison.OrdinalIgnoreCase),
             _ => false,
@@ -185,42 +193,11 @@ public static class BootRecoveryService
         return (false, $"Couldn't clear the Safe Mode boot flag: {output.Trim()}");
     }
 
-    /// <summary>Shells out and captures combined stdout+stderr under a bounded timeout - the same
-    /// pattern DriverVerifierService.RunCapturedAsync/CrashDumpConfigService.RunCapturedAsync
-    /// already establish elsewhere in this domain.</summary>
+    /// <summary>#1084: delegates to the shared <see cref="ToolRunner"/>, keeping this service's
+    /// soft-start degradation (a tool that can't start yields an empty result, never a throw).</summary>
     private static async Task<(string Output, int? ExitCode)> RunCapturedAsync(string exe, string args, int timeoutMs = 15000)
     {
-        var psi = new ProcessStartInfo(exe, args)
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-
-        Process? proc;
-        try { proc = Process.Start(psi); }
+        try { return await ToolRunner.RunCapturedAsync(exe, args, timeoutMs); }
         catch { return (string.Empty, null); }
-        if (proc is null) return (string.Empty, null);
-
-        using (proc)
-        {
-            var outputTask = proc.StandardOutput.ReadToEndAsync();
-            var errorTask = proc.StandardError.ReadToEndAsync();
-
-            using var cts = new CancellationTokenSource(timeoutMs);
-            try
-            {
-                await proc.WaitForExitAsync(cts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                try { proc.Kill(); } catch { /* best-effort */ }
-                return ("(command timed out)", null);
-            }
-
-            string output = (await outputTask) + (await errorTask);
-            return (output, proc.ExitCode);
-        }
     }
 }

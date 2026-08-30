@@ -46,34 +46,8 @@ public static class PowerWakeQueryService
         return names;
     }
 
-    /// <summary>Same concurrent-read/bounded-wait/kill-on-timeout pattern PowerPlanService and
-    /// ScheduledTaskService already establish.</summary>
-    private static async Task<(string Output, int? ExitCode)> RunCapturedAsync(string exe, string args, int timeoutMs = 10000)
-    {
-        var psi = new ProcessStartInfo(exe, args)
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        using var proc = Process.Start(psi) ?? throw new InvalidOperationException($"couldn't start {exe}");
-
-        var outputTask = proc.StandardOutput.ReadToEndAsync();
-        var errorTask = proc.StandardError.ReadToEndAsync();
-
-        using var cts = new CancellationTokenSource(timeoutMs);
-        try
-        {
-            await proc.WaitForExitAsync(cts.Token);
-        }
-        catch (OperationCanceledException)
-        {
-            try { proc.Kill(); } catch { /* best-effort */ }
-            return ("(command timed out)", null);
-        }
-
-        string output = (await outputTask) + (await errorTask);
-        return (output, proc.ExitCode);
-    }
+    /// <summary>#1084: the shared <see cref="ToolRunner"/> owns the run/capture/kill-on-timeout
+    /// mechanism; this wrapper keeps the service's historical default timeout.</summary>
+    private static Task<(string Output, int? ExitCode)> RunCapturedAsync(string exe, string args, int timeoutMs = 10000)
+        => ToolRunner.RunCapturedAsync(exe, args, timeoutMs);
 }

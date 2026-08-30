@@ -143,7 +143,9 @@ public static class MinidumpParserService
     /// after a 4-byte pad following BugCheckCode) - all well-documented, stable offsets in the
     /// classic kernel/complete-dump header.
     ///
-    /// Item 14: DumpType is read from offset 0xF88 - the same field WinDbg's own `!dumpheader`
+    /// Item 14: DumpType is read from offset 0xF98 - DUMP_HEADER64's own offset for the field
+    /// (the 32-bit DUMP_HEADER puts it at 0xF88, which in the 64-bit header lands inside the
+    /// embedded EXCEPTION_RECORD64 instead) - the same field WinDbg's own `!dumpheader`
     /// extension prints as "DumpType" (0x1 = Complete Memory Dump, 0x2 = Kernel Memory Dump).
     /// Only those two well-known values are mapped to a friendly name; anything else shows the
     /// raw header value rather than guessing at a newer Automatic/Active dump variant - those
@@ -193,9 +195,9 @@ public static class MinidumpParserService
 
         KernelDumpType dumpType = KernelDumpType.Unknown;
         string dumpTypeText = "Unknown (header too short to contain a DumpType field)";
-        if (read >= 0xF8C)
+        if (read >= 0xF9C)
         {
-            uint rawType = BitConverter.ToUInt32(header, 0xF88);
+            uint rawType = BitConverter.ToUInt32(header, 0xF98);
             (dumpType, dumpTypeText) = rawType switch
             {
                 1 => (KernelDumpType.Complete, "Complete memory dump"),

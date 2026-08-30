@@ -6,7 +6,7 @@ namespace TaskManagerPlus.Services;
 
 /// <summary>
 /// #411: enumerates every Section handle system-wide (NtQuerySystemInformation,
-/// SystemHandleInformation - the same system-wide handle table HandleInspectionService already
+/// SystemExtendedHandleInformation - the same system-wide handle table HandleInspectionService already
 /// walks for its per-pid #12 handle-type breakdown, reused here via
 /// HandleInspectionService.ReadSystemHandlesAll rather than a second copy of that P/Invoke),
 /// resolves each one's type and name with HandleInspectionService's existing timeout-guarded
@@ -105,9 +105,7 @@ public static class SharedMemoryInspectionService
     private static string GetProcessNameCached(int pid, Dictionary<int, string> cache)
     {
         if (cache.TryGetValue(pid, out var cached)) return cached;
-        string name;
-        try { using var proc = Process.GetProcessById(pid); name = proc.ProcessName; }
-        catch { name = $"(pid {pid})"; }
+        string name = ProcessNameLookup.TryGetProcessName(pid) ?? $"(pid {pid})";
         cache[pid] = name;
         return name;
     }

@@ -76,9 +76,11 @@ public sealed class HardwareMonitorService : IDisposable
         _pageFileTotalMb = ReadPageFileTotalMb();
         _installedRamBytes = ReadInstalledRamBytes();
 
-        // Prime every sampler once: a rate's first-ever read returns 0 (see CategorySampler's
-        // remarks), so this plays the role the old per-counter priming NextValue() loop did -
-        // the very first UI Sample() gets real values.
+        // Prime every sampler once: an unprimed rate's first-ever read returns 0 (see
+        // CategorySampler's remarks), so this plays the role the old per-counter priming
+        // NextValue() loop did - the very first UI Sample() gets real values. (Round 18, #1029:
+        // CategorySampler.Tick() now folds this priming snapshot into its previous-sample table,
+        // which is what actually makes that true - it used to be silently discarded.)
         _processorInfo.Tick();
         _processor.Tick();
         _physicalDisk.Tick();

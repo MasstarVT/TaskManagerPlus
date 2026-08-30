@@ -97,6 +97,12 @@ public partial class MainWindow : Window
         if (e.OriginalSource is not TabControl strip) return;
         if (!ReferenceEquals(strip, MainTabControl) && !IsGroupStrip(strip)) return;
         if (!IsLeafTabActive("Events")) _viewModel.Events.OnTabDeactivated();
+
+        // Round 18, #1079/#1080: same shell-level hook, second consumer - tells CpuViewModel
+        // whether its leaf is the visible one so the CPU-tab-only work (the 2s per-thread
+        // affinity/hybrid scans and the 45s core-pinning clock-stretch microbenchmark) only runs
+        // while someone is actually looking at that tab.
+        _viewModel.Cpu.SetTabVisible(IsLeafTabActive("CPU"));
     }
 
     /// <summary>True when <paramref name="control"/> is one of the level-2 group TabControls,

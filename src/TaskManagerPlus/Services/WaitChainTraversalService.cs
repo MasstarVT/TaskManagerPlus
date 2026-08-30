@@ -148,7 +148,7 @@ public static class WaitChainTraversalService
             int tid = Marshal.ReadInt32(nodePtr, 0xC);
             int waitTimeMs = Marshal.ReadInt32(nodePtr, 0x10);
             int contextSwitches = Marshal.ReadInt32(nodePtr, 0x14);
-            string procName = TryGetProcessName(procId) is { } n ? $"{n} (pid {procId})" : $"pid {procId}";
+            string procName = ProcessNameLookup.TryGetProcessName(procId) is { } n ? $"{n} (pid {procId})" : $"pid {procId}";
             return new WaitChainNodeRow
             {
                 IndentLevel = indentLevel,
@@ -200,19 +200,6 @@ public static class WaitChainTraversalService
         WctStatusAbandoned => "abandoned (owning thread exited without releasing it)",
         _ => "status unknown",
     };
-
-    private static string? TryGetProcessName(int pid)
-    {
-        try
-        {
-            using var p = Process.GetProcessById(pid);
-            return p.ProcessName;
-        }
-        catch
-        {
-            return null;
-        }
-    }
 
     private static WaitChainTraversalResult Fail(string message) => new() { Success = false, IsDeadlock = false, StatusText = message };
 }

@@ -806,32 +806,9 @@ public static class ServicingLogService
     /// ExitCode: null rather than throwing.</summary>
     private static async Task<(string Output, int? ExitCode)> RunCapturedAsync(string exe, string args, int timeoutMs, CancellationToken ct = default)
     {
-        var psi = new ProcessStartInfo(exe, args)
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        using var proc = Process.Start(psi) ?? throw new InvalidOperationException($"couldn't start {exe}");
-
-        var outputTask = proc.StandardOutput.ReadToEndAsync(ct);
-        var errorTask = proc.StandardError.ReadToEndAsync(ct);
-
-        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        timeoutCts.CancelAfter(timeoutMs);
-        try
-        {
-            await proc.WaitForExitAsync(timeoutCts.Token);
-        }
-        catch (OperationCanceledException)
-        {
-            try { proc.Kill(entireProcessTree: true); } catch { /* best-effort */ }
-            if (ct.IsCancellationRequested) throw;
-            return ("(command timed out)", null);
-        }
-
-        string output = (await outputTask) + (await errorTask);
-        return (output, proc.ExitCode);
+        var result = await ToolRunner.RunCapturedAsync(exe, args, timeoutMs, ct);
+        // External cancellation rethrows (callers drop the work); a plain timeout returns the sentinel.
+        if (result.ExitCode is null) ct.ThrowIfCancellationRequested();
+        return result;
     }
 }

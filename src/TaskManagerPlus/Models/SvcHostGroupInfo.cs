@@ -1,3 +1,5 @@
+using TaskManagerPlus.Common;
+
 namespace TaskManagerPlus.Models;
 
 /// <summary>#761: one svchost.exe host group (e.g. "netsvcs", "LocalService", "termsvcs") - the set
@@ -25,9 +27,7 @@ public sealed class SvcHostGroupInfo
     public int ProcessCount => ProcessIds.Count;
 
     public string ProcessIdsText => ProcessIds.Count == 0 ? "(not running)" : string.Join(", ", ProcessIds);
-    public string CpuTimeText => TotalCpuTime.TotalHours >= 1
-        ? $"{(int)TotalCpuTime.TotalHours}h {TotalCpuTime.Minutes}m"
-        : $"{(int)TotalCpuTime.TotalMinutes}m {TotalCpuTime.Seconds}s";
+    public string CpuTimeText => Formatting.FormatSpanHours(TotalCpuTime);
 }
 
 /// <summary>#762: HKLM\SYSTEM\CurrentControlSet\Control\SvcHostSplitThresholdInKB and whether

@@ -145,34 +145,8 @@ public static class BatteryDrainAttributionService
     private static bool LooksLikeAppValue(string value) =>
         value.Contains('\\') || value.Contains(".exe", StringComparison.OrdinalIgnoreCase) || value.Contains('_');
 
-    /// <summary>Duplicated small process-shelling helper - see BatteryReportService's remarks on
-    /// why each shelled-out-tool service in this app keeps its own copy rather than sharing one.</summary>
-    private static async Task<(string Output, int? ExitCode)> RunProcessAsync(string exe, string args, int timeoutMs)
-    {
-        var psi = new ProcessStartInfo(exe, args)
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        using var proc = Process.Start(psi) ?? throw new InvalidOperationException($"couldn't start {exe}");
-
-        var outputTask = proc.StandardOutput.ReadToEndAsync();
-        var errorTask = proc.StandardError.ReadToEndAsync();
-
-        using var cts = new CancellationTokenSource(timeoutMs);
-        try
-        {
-            await proc.WaitForExitAsync(cts.Token);
-        }
-        catch (OperationCanceledException)
-        {
-            try { proc.Kill(); } catch { /* best-effort */ }
-            return ("(command timed out)", null);
-        }
-
-        string output = (await outputTask) + (await errorTask);
-        return (output, proc.ExitCode);
-    }
+    /// <summary>#1084: the shared <see cref="ToolRunner"/> owns the run/capture/kill-on-timeout
+    /// mechanism.</summary>
+    private static Task<(string Output, int? ExitCode)> RunProcessAsync(string exe, string args, int timeoutMs)
+        => ToolRunner.RunCapturedAsync(exe, args, timeoutMs);
 }

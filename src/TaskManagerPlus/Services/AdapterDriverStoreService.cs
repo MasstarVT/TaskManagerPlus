@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 
 namespace TaskManagerPlus.Services;
 
@@ -182,7 +183,11 @@ public static class AdapterDriverStoreService
 
         string datePart = raw[..spaceIdx].Trim();
         string versionPart = raw[(spaceIdx + 1)..].Trim();
-        DateTime? date = DateTime.TryParse(datePart, out var d) ? d : null;
+        // #1060: the date comes from the INF's own DriverVer directive, which the INF format fixes
+        // as MM/dd/yyyy regardless of locale - machine-formatted tool output, so InvariantCulture
+        // per CLAUDE.md's parsing rule (a culture-less TryParse read d/M-locale dates wrong for
+        // any day <= 12, feeding a wrong month into the driver-date sort).
+        DateTime? date = DateTime.TryParse(datePart, CultureInfo.InvariantCulture, DateTimeStyles.None, out var d) ? d : null;
         return (date, versionPart.Length == 0 ? raw.Trim() : versionPart);
     }
 }

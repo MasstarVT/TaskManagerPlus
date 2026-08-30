@@ -45,6 +45,30 @@ public sealed class CpuViewModel : ObservableObject, IDisposable
     private readonly DispatcherTimer _throttleTimer;
     private bool _affinityRefreshInFlight;
 
+    // Round 18, #1079/#1080: whether the CPU leaf tab is the one on screen - set by
+    // MainWindow.MainTabControl_SelectionChanged via SetTabVisible below (the same shell-level
+    // hook that stops the Events tab's live tail when its tab loses focus). Gates the work that
+    // only feeds CPU-tab cards: the per-thread affinity/hybrid-misplacement scans every 2s tick
+    // (#1080) and the core-pinning clock-stretch microbenchmark every 45s (#1079) - neither has
+    // any business running (and, for the benchmark, pinning the whole app to core 0) while the
+    // tab has never even been opened. False at startup: CPU is never the initial leaf, and any
+    // navigation that lands on it (tab click, Ctrl+1..9, --tab, Ctrl+K) reaches the hook.
+    private bool _isCpuTabVisible;
+
+    /// <summary>Round 18, #1079/#1080: called by MainWindow whenever the nav strips' selection
+    /// changes - see _isCpuTabVisible's remarks. Kicks the tab-gated scans immediately on arrival
+    /// so the heatmap isn't blank for up to a full 2s tick.</summary>
+    public void SetTabVisible(bool visible)
+    {
+        if (_isCpuTabVisible == visible) return;
+        _isCpuTabVisible = visible;
+        if (visible)
+        {
+            _ = RefreshCoreAffinityAsync();
+            _ = RefreshHybridMisplacementFlagAsync();
+        }
+    }
+
     // #233: "large share of residency" in the deepest package C-state (C3 - the deepest tier this
     // app reads) for the deep-idle-exit-latency flag below.
     private const double DeepCStateThresholdPercent = 40.0;
@@ -79,8 +103,9 @@ public sealed class CpuViewModel : ObservableObject, IDisposable
 
     /// <summary>Round 8 #24: best-effort core-affinity heatmap for the current top-CPU processes -
     /// see CoreAffinityService's remarks for why this is framed as "preferred/ideal core", not a
-    /// live trace of actual scheduling. Refreshed on the same 2s cadence as the throttle flag,
-    /// off the UI thread since it walks native per-thread calls.</summary>
+    /// live trace of actual scheduling. Refreshed on the same 2s cadence as the throttle flag
+    /// (but only while the CPU tab is on screen - Round 18, #1080), off the UI thread since it
+    /// walks native per-thread calls.</summary>
     public ObservableCollection<CoreAffinityCell> CoreAffinity { get; } = new();
 
     /// <summary>
@@ -229,7 +254,10 @@ public sealed class CpuViewModel : ObservableObject, IDisposable
         [ThrottleReasonClass.Firmware] = 0,
         [ThrottleReasonClass.CoreParked] = 0,
     };
-    private DateTime _lastDwellTick = DateTime.Now;
+    // Round 18, #1052: a monotonic timestamp (Stopwatch ticks), not DateTime.Now - a DST/NTP
+    // wall-clock step must not credit the whole jump (e.g. 3600s) to whatever reason class
+    // happened to be current, skewing the dwell-share chart for the rest of the session.
+    private long _lastDwellTimestamp = System.Diagnostics.Stopwatch.GetTimestamp();
 
     public ObservableCollection<double> NoneDwellShare { get; } = new() { 100 };
     public ObservableCollection<double> ThermalDwellShare { get; } = new() { 0 };
@@ -339,9 +367,21 @@ public sealed class CpuViewModel : ObservableObject, IDisposable
         };
 
         _throttleTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(2) };
-        _throttleTimer.Tick += (_, _) => { RefreshThrottleStatus(); RefreshDeepIdleLatencyFlag(); _ = RefreshCoreAffinityAsync(); _ = RefreshHybridMisplacementFlagAsync(); };
+        _throttleTimer.Tick += (_, _) =>
+        {
+            RefreshThrottleStatus();
+            RefreshDeepIdleLatencyFlag();
+            // Round 18, #1080: the per-thread ideal-processor scans (top-6-process heatmap plus
+            // the hybrid-misplacement pass - each can legitimately exceed 2s on a busy system)
+            // feed CPU-tab-only cards, so they only run while that tab is actually on screen.
+            if (_isCpuTabVisible)
+            {
+                _ = RefreshCoreAffinityAsync();
+                _ = RefreshHybridMisplacementFlagAsync();
+            }
+        };
         _throttleTimer.Start();
-        _lastDwellTick = DateTime.Now;
+        _lastDwellTimestamp = System.Diagnostics.Stopwatch.GetTimestamp();
         RefreshThrottleStatus();
         RefreshDeepIdleLatencyFlag();
 
@@ -356,8 +396,11 @@ public sealed class CpuViewModel : ObservableObject, IDisposable
         // #629: a slow, infrequent timer (not the 2s throttle tick) - the microbenchmark briefly
         // pins the whole process to one core (see ClockStretchService's remarks), so it can't run
         // as often as the rest of this view-model's per-tick work without being disruptive.
+        // Round 18, #1079: additionally gated on CPU-tab visibility - a 150M-iteration loop that
+        // pins the UI thread and every poll worker to core 0 (polluting the app's own latency/CPU
+        // measurements) must not run every 45s for a session in which the CPU tab was never opened.
         _clockStretchTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(45) };
-        _clockStretchTimer.Tick += (_, _) => _ = RunClockStretchBenchmarkAsync();
+        _clockStretchTimer.Tick += (_, _) => { if (_isCpuTabVisible) _ = RunClockStretchBenchmarkAsync(); };
         _clockStretchTimer.Start();
 
         // #631: live "cores parked under load" line populates immediately; the powercfg-derived
@@ -533,7 +576,7 @@ public sealed class CpuViewModel : ObservableObject, IDisposable
             _powerClampStartedAt ??= DateTime.Now;
             var clampDwell = DateTime.Now - _powerClampStartedAt.Value;
             PowerLimitText = clampDwell.TotalSeconds >= 60
-                ? $"{power:0.#} W (session high {powerMax:0.#} W) and {Performance.CpuVsBasePercent:0}% vs. base clock under load - clamped at the power ceiling for {FormatClampDuration(clampDwell)}"
+                ? $"{power:0.#} W (session high {powerMax:0.#} W) and {Performance.CpuVsBasePercent:0}% vs. base clock under load - clamped at the power ceiling for {Formatting.FormatSpanHours(clampDwell)}"
                 : $"{power:0.#} W (session high {powerMax:0.#} W) and {Performance.CpuVsBasePercent:0}% vs. base clock under load";
         }
         else
@@ -569,9 +612,10 @@ public sealed class CpuViewModel : ObservableObject, IDisposable
             maxZoneThrottle, _energyThermals.FirmwareLimitActive);
 
         // #603: accumulate dwell time per class since this view-model was constructed.
-        var now = DateTime.Now;
-        double elapsed = Math.Max(0, (now - _lastDwellTick).TotalSeconds);
-        _lastDwellTick = now;
+        // Round 18, #1052: measured on the monotonic clock - see _lastDwellTimestamp's remarks.
+        long nowTimestamp = System.Diagnostics.Stopwatch.GetTimestamp();
+        double elapsed = System.Diagnostics.Stopwatch.GetElapsedTime(_lastDwellTimestamp, nowTimestamp).TotalSeconds;
+        _lastDwellTimestamp = nowTimestamp;
         _dwellSeconds[CurrentThrottleClass] += elapsed;
         UpdateDwellShares();
 
@@ -606,9 +650,6 @@ public sealed class CpuViewModel : ObservableObject, IDisposable
         FirmwareDwellShare[0] = Math.Round(_dwellSeconds[ThrottleReasonClass.Firmware] / total * 100, 1);
         CoreParkedDwellShare[0] = Math.Round(_dwellSeconds[ThrottleReasonClass.CoreParked] / total * 100, 1);
     }
-
-    private static string FormatClampDuration(TimeSpan span) =>
-        span.TotalHours >= 1 ? $"{(int)span.TotalHours}h {span.Minutes}m" : $"{(int)span.TotalMinutes}m {span.Seconds}s";
 
     // ================================================================================
     // #627: PL1/PL2/tau inference from a package-power dwell histogram

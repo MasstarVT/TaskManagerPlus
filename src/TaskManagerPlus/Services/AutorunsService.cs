@@ -1,6 +1,7 @@
 using System.Management;
 using Microsoft.Win32;
 using TaskManagerPlus.Models;
+using TaskManagerPlus.Common;
 
 namespace TaskManagerPlus.Services;
 
@@ -2867,7 +2868,7 @@ public static class AutorunsService
 
             foreach (var line in lines.Skip(1))
             {
-                var fields = ParseSimpleCsvLine(line);
+                var fields = CsvLine.Split(line);
                 if (fields.Count == 0 || string.IsNullOrWhiteSpace(fields[0])) continue;
                 result.Add((fields[0], fields.Count > 1 ? fields[1] : string.Empty));
             }
@@ -2877,38 +2878,6 @@ public static class AutorunsService
             // PowerShell/DISM cmdlet unavailable/failed/timed out - contribute nothing.
         }
         return result;
-    }
-
-    /// <summary>Small hand-rolled CSV-line parser (quoted fields, "" escapes an embedded quote) -
-    /// the same shape ScheduledTaskService.ParseCsvLine already uses for schtasks' own CSV output,
-    /// kept as a local copy here since PowerShell's ConvertTo-Csv output is this file's only CSV
-    /// consumer and taking a shared dependency for one dozen-line parser isn't worth it.</summary>
-    private static List<string> ParseSimpleCsvLine(string line)
-    {
-        var fields = new List<string>();
-        var current = new System.Text.StringBuilder();
-        bool inQuotes = false;
-        for (int i = 0; i < line.Length; i++)
-        {
-            char c = line[i];
-            if (inQuotes)
-            {
-                if (c == '"')
-                {
-                    if (i + 1 < line.Length && line[i + 1] == '"') { current.Append('"'); i++; }
-                    else inQuotes = false;
-                }
-                else current.Append(c);
-            }
-            else
-            {
-                if (c == '"') inQuotes = true;
-                else if (c == ',') { fields.Add(current.ToString()); current.Clear(); }
-                else current.Append(c);
-            }
-        }
-        fields.Add(current.ToString());
-        return fields;
     }
 
     // #835: startup shortcut target tampering - resolves every .lnk in the Start Menu, Desktop,
@@ -3060,33 +3029,10 @@ public static class AutorunsService
         }
     }
 
-    /// <summary>Synchronous shell-out-and-capture, mirroring ScheduledTaskService.RunCapturedAsync's
-    /// concurrent-read/bounded-wait/kill-on-timeout shape but blocking - AutorunsService.Scan is a
-    /// synchronous engine called from inside a Task.Run by SecurityViewModel, and #818's netsh call
-    /// is the only shelled-out command in this file, so a small dedicated sync helper is simpler
-    /// than threading async through the whole class for one caller.</summary>
+    /// <summary>#1084: delegates to the shared <see cref="ToolRunner"/> (run tool, capture
+    /// stdout+stderr, kill the whole process tree on timeout).</summary>
     private static string RunCapturedSync(string exe, string args, TimeSpan timeout)
-    {
-        var psi = new System.Diagnostics.ProcessStartInfo(exe, args)
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        using var proc = System.Diagnostics.Process.Start(psi) ?? throw new InvalidOperationException($"couldn't start {exe}");
-
-        var outputTask = proc.StandardOutput.ReadToEndAsync();
-        var errorTask = proc.StandardError.ReadToEndAsync();
-
-        if (!proc.WaitForExit((int)timeout.TotalMilliseconds))
-        {
-            try { proc.Kill(); } catch { /* best-effort */ }
-            return string.Empty;
-        }
-
-        return outputTask.GetAwaiter().GetResult() + errorTask.GetAwaiter().GetResult();
-    }
+        => ToolRunner.RunCaptured(exe, args, timeout).Output;
 
     private static bool ReadDwordAsBool(RegistryKey key, string valueName)
         => key.GetValue(valueName) is int i && i != 0;

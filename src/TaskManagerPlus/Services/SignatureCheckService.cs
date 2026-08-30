@@ -76,10 +76,31 @@ public sealed record SignatureResult(
 /// path automatically invalidates and re-verifies. Loaded once lazily; writes are throttled to at
 /// most once every 2 seconds so a burst of many new entries (a fresh Autoruns scan, a cold process
 /// list) doesn't rewrite the file on every single one.
+///
+/// #1027/#1028 hardening: an indeterminate (Unknown) result can be a *transient* failure (file
+/// locked mid-update, access denied, an unrecognized HRESULT), so Unknowns are never written to
+/// the persisted cache and expire from the in-memory cache after a short TTL instead of pinning
+/// the binary at Unknown forever. And because the persisted key (path|size|mtime) is forgeable by
+/// an attacker with write access to the binary's path (pad the replacement to the original size,
+/// restore mtime), the synchronous button-driven GetResult path re-verifies anything that was only
+/// ever loaded from the cross-session cache rather than trusting it - the non-blocking polled path
+/// (GetResultOrQueue) keeps serving the persisted verdict, an accepted "quick flag, not a verdict"
+/// tradeoff to avoid re-hashing 150+ binaries on every launch.
 /// </summary>
 public static class SignatureCheckService
 {
     private static readonly ConcurrentDictionary<string, SignatureResult> Cache = new(StringComparer.OrdinalIgnoreCase);
+
+    // #1027: expiry timestamps for in-memory Unknown results - an Unknown may be transient, so it
+    // gets retried after this TTL instead of sticking for the whole session. Long enough that the
+    // hot polled path isn't re-verifying a genuinely unreadable file every tick.
+    private static readonly TimeSpan UnknownTtl = TimeSpan.FromMinutes(5);
+    private static readonly ConcurrentDictionary<string, DateTime> UnknownExpiryUtc = new(StringComparer.OrdinalIgnoreCase);
+
+    // #1028: cacheKeys whose in-memory entry came from the persisted cross-session cache rather
+    // than a verification performed this session - the synchronous GetResult path re-verifies
+    // these once (then clears the mark) instead of trusting the forgeable path|size|mtime key.
+    private static readonly ConcurrentDictionary<string, byte> LoadedFromDisk = new(StringComparer.OrdinalIgnoreCase);
 
     private static readonly object PersistLock = new();
     private static Dictionary<string, PersistedEntry>? _persisted;
@@ -149,22 +170,33 @@ public static class SignatureCheckService
             // below; the result for this lookup just won't be persisted to disk.
         }
 
-        if (Cache.TryGetValue(cacheKey, out var cached)) return cached;
-
-        if (haveStat)
+        // #1028: this synchronous, button-driven path never trusts the persisted cross-session
+        // cache - a memory-cache hit counts only if it was verified this session (not merely
+        // loaded from disk by the polled path) and isn't an Unknown past its retry TTL (#1027).
+        if (Cache.TryGetValue(cacheKey, out var cached)
+            && !LoadedFromDisk.ContainsKey(cacheKey)
+            && !IsExpiredUnknown(cacheKey, cached))
         {
-            var fromDisk = TryLoadPersisted(cacheKey);
-            if (fromDisk is not null)
-            {
-                Cache[cacheKey] = fromDisk;
-                return fromDisk;
-            }
+            return cached;
         }
 
         var computed = ComputeResult(filePath);
         Cache[cacheKey] = computed;
+        LoadedFromDisk.TryRemove(cacheKey, out _);
+        if (computed.Verification == SignatureVerification.Unknown)
+            UnknownExpiryUtc[cacheKey] = DateTime.UtcNow + UnknownTtl;
+        else
+            UnknownExpiryUtc.TryRemove(cacheKey, out _);
         if (haveStat) SavePersisted(cacheKey, computed);
         return computed;
+    }
+
+    /// <summary>#1027: true when the cached result is an Unknown whose retry TTL has lapsed -
+    /// callers treat the entry as a miss and re-verify (or re-queue).</summary>
+    private static bool IsExpiredUnknown(string cacheKey, SignatureResult cached)
+    {
+        if (cached.Verification != SignatureVerification.Unknown) return false;
+        return !UnknownExpiryUtc.TryGetValue(cacheKey, out var expiry) || DateTime.UtcNow >= expiry;
     }
 
     // ---- Non-blocking variant for polled callers ----------------------------------------------
@@ -206,14 +238,21 @@ public static class SignatureCheckService
         }
         catch { /* same path-only fallback as GetResult */ }
 
-        if (Cache.TryGetValue(cacheKey, out var cached)) return cached;
-
-        if (haveStat)
+        if (Cache.TryGetValue(cacheKey, out var cached))
+        {
+            // #1027: a cached Unknown may have been transient - once its TTL lapses, drop it and
+            // fall through to re-queue a background verification.
+            if (!IsExpiredUnknown(cacheKey, cached)) return cached;
+            Cache.TryRemove(cacheKey, out _);
+            UnknownExpiryUtc.TryRemove(cacheKey, out _);
+        }
+        else if (haveStat)
         {
             var fromDisk = TryLoadPersisted(cacheKey);
             if (fromDisk is not null)
             {
                 Cache[cacheKey] = fromDisk;
+                LoadedFromDisk[cacheKey] = 0; // #1028: mark as not-verified-this-session for GetResult
                 return fromDisk;
             }
         }
@@ -632,7 +671,18 @@ public static class SignatureCheckService
             {
                 var json = File.ReadAllText(PersistPath);
                 var loaded = JsonSerializer.Deserialize<Dictionary<string, PersistedEntry>>(json);
-                if (loaded is not null) return new Dictionary<string, PersistedEntry>(loaded, StringComparer.OrdinalIgnoreCase);
+                if (loaded is not null)
+                {
+                    // #1027: drop indeterminate entries persisted by earlier builds - they may be
+                    // transient failures frozen forever, so treat them as misses to re-verify.
+                    var cleaned = new Dictionary<string, PersistedEntry>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var (key, entry) in loaded)
+                    {
+                        if (Enum.TryParse<SignatureVerification>(entry.Verification, out var v) && v != SignatureVerification.Unknown)
+                            cleaned[key] = entry;
+                    }
+                    return cleaned;
+                }
             }
         }
         catch
@@ -654,6 +704,12 @@ public static class SignatureCheckService
 
     private static void SavePersisted(string cacheKey, SignatureResult result)
     {
+        // #1027: never persist an indeterminate result - a transient failure (file locked
+        // mid-update, access denied, an unrecognized HRESULT) would otherwise pin this binary at
+        // Unknown for every future session, since the path|size|mtime key doesn't change when the
+        // condition clears.
+        if (result.Verification == SignatureVerification.Unknown) return;
+
         EnsurePersistedLoaded();
         lock (PersistLock)
         {

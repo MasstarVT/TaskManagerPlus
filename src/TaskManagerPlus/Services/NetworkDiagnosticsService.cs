@@ -268,32 +268,15 @@ public sealed class NetworkDiagnosticsService
         return sb.ToString().Trim();
     }
 
+    /// <summary>#1084: delegates to the shared <see cref="ToolRunner"/>, keeping this method's
+    /// historical "tool: output / timed out / failed" display formatting.</summary>
     private static async Task<string> RunCapturedAsync(string exe, string args)
     {
         try
         {
-            var psi = new ProcessStartInfo(exe, args)
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return $"{exe} {args}: couldn't start.";
-
-            var outputTask = proc.StandardOutput.ReadToEndAsync();
-            var errorTask = proc.StandardError.ReadToEndAsync();
-
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-            try { await proc.WaitForExitAsync(cts.Token); }
-            catch (OperationCanceledException)
-            {
-                try { proc.Kill(); } catch { /* best-effort */ }
-                return $"{exe} {args}: timed out.";
-            }
-
-            return $"{exe} {args}:\n{(await outputTask) + (await errorTask)}".Trim();
+            var (output, exitCode) = await ToolRunner.RunCapturedAsync(exe, args, timeoutMs: 20000);
+            if (exitCode is null) return $"{exe} {args}: timed out.";
+            return $"{exe} {args}:\n{output}".Trim();
         }
         catch (Exception ex)
         {
@@ -301,28 +284,10 @@ public sealed class NetworkDiagnosticsService
         }
     }
 
+    /// <summary>#1084: delegates to the shared <see cref="ToolRunner"/> (run tool, capture
+    /// stdout+stderr, kill the whole process tree on timeout).</summary>
     private static string RunCapturedSyncStatic(string exe, string args, TimeSpan timeout)
-    {
-        var psi = new ProcessStartInfo(exe, args)
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        using var proc = Process.Start(psi) ?? throw new InvalidOperationException($"couldn't start {exe}");
-
-        var outputTask = proc.StandardOutput.ReadToEndAsync();
-        var errorTask = proc.StandardError.ReadToEndAsync();
-
-        if (!proc.WaitForExit((int)timeout.TotalMilliseconds))
-        {
-            try { proc.Kill(entireProcessTree: true); } catch { /* best-effort */ }
-            return string.Empty;
-        }
-
-        return outputTask.GetAwaiter().GetResult() + errorTask.GetAwaiter().GetResult();
-    }
+        => ToolRunner.RunCaptured(exe, args, timeout).Output;
 
     // Same 2-year "worth checking for an update" bar SystemSpecsService.ReadOutdatedDrivers uses -
     // deliberately not a claim that a newer version is actually known to exist online (this app

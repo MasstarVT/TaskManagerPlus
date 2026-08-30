@@ -20,6 +20,10 @@ public sealed class StartupManagerService
     // duplicating these two literals - still not public, so nothing outside this assembly's own
     // Services/* layer depends on the exact path shape.
     internal const string ApprovedRunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
+    // Explorer keeps 32-bit (WOW6432Node) Run-key approvals under the sibling Run32 key, not Run -
+    // writing a WOW6432 entry's flag to Run would no-op for Explorer (or disable a same-named
+    // 64-bit entry instead).
+    internal const string ApprovedRun32KeyPath = @"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run32";
     internal const string ApprovedFolderKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\StartupFolder";
 
     // #742: the rest of the autorun-location sweep - RunOnce/RunOnceEx/RunServices/
@@ -44,10 +48,12 @@ public sealed class StartupManagerService
 
         AddRegistryValueItems(items, Registry.CurrentUser, RunKeyPath, ApprovedRunKeyPath, StartupSource.RegistryRunHkcu);
         AddRegistryValueItems(items, Registry.LocalMachine, RunKeyPath, ApprovedRunKeyPath, StartupSource.RegistryRunHklm);
-        AddRegistryValueItems(items, Registry.LocalMachine, Wow6432Prefix + "Run", ApprovedRunKeyPath, StartupSource.RegistryRunHklmWow6432);
+        AddRegistryValueItems(items, Registry.LocalMachine, Wow6432Prefix + "Run", ApprovedRun32KeyPath, StartupSource.RegistryRunHklmWow6432);
 
         AddStartupFolderItems(items, Environment.GetFolderPath(Environment.SpecialFolder.Startup), Registry.CurrentUser, StartupSource.StartupFolderUser);
-        AddStartupFolderItems(items, Environment.GetFolderPath(Environment.SpecialFolder.CommonStartup), Registry.CurrentUser, StartupSource.StartupFolderAllUsers);
+        // All-users Startup-folder approvals live under HKLM (per-user ones under HKCU) - Explorer
+        // and the real Task Manager both read/write the machine hive for common-startup items.
+        AddStartupFolderItems(items, Environment.GetFolderPath(Environment.SpecialFolder.CommonStartup), Registry.LocalMachine, StartupSource.StartupFolderAllUsers);
 
         // #742: full autorun location sweep. None of these locations has a StartupApproved
         // equivalent, so approvedPath is always null here (IsEnabled always reads true - these
@@ -247,9 +253,9 @@ public sealed class StartupManagerService
             {
                 StartupSource.RegistryRunHkcu => (Registry.CurrentUser, ApprovedRunKeyPath, item.Name),
                 StartupSource.RegistryRunHklm => (Registry.LocalMachine, ApprovedRunKeyPath, item.Name),
-                StartupSource.RegistryRunHklmWow6432 => (Registry.LocalMachine, ApprovedRunKeyPath, item.Name),
+                StartupSource.RegistryRunHklmWow6432 => (Registry.LocalMachine, ApprovedRun32KeyPath, item.Name),
                 StartupSource.StartupFolderUser => (Registry.CurrentUser, ApprovedFolderKeyPath, Path.GetFileName(item.Command)),
-                StartupSource.StartupFolderAllUsers => (Registry.CurrentUser, ApprovedFolderKeyPath, Path.GetFileName(item.Command)),
+                StartupSource.StartupFolderAllUsers => (Registry.LocalMachine, ApprovedFolderKeyPath, Path.GetFileName(item.Command)),
                 _ => null,
             };
 

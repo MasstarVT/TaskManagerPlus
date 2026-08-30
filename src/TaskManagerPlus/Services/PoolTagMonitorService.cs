@@ -9,9 +9,10 @@ namespace TaskManagerPlus.Services;
 /// NtQuerySystemInformation(SystemPoolTagInformation) call - no documented tool or WMI class
 /// exposes this (poolmon.exe itself, when present, is just a WDK sample that calls the very same
 /// API), so this is the "no tool/WMI exists" justified raw-interop case CLAUDE.md carves out,
-/// following the exact same grow-the-buffer-and-retry / struct-layout pattern
-/// HandleInspectionService.ReadSystemHandles already establishes for SystemHandleInformation - the
-/// two APIs share the same "ULONG Count then a flexible array, 8-byte aligned on x64" header shape.
+/// following the same grow-the-buffer-and-retry pattern
+/// HandleInspectionService.ReadSystemHandles already establishes for SystemExtendedHandleInformation
+/// (whose own header is two pointer-sized fields - ULONG_PTR NumberOfHandles + ULONG_PTR Reserved -
+/// rather than this API's padded ULONG Count; see the parse below).
 ///
 /// Deliberately on-demand only (per this chunk's own instructions and CLAUDE.md's "on-demand vs.
 /// polled" convention) - the full system pool-tag table commonly has several thousand entries, so
@@ -56,8 +57,9 @@ public static class PoolTagMonitorService
 
                 // SYSTEM_POOLTAG_INFORMATION: ULONG Count, then SYSTEM_POOLTAG TagInfo[Count] - the
                 // array's own 8-byte alignment requirement (SIZE_T members) pads Count out to an
-                // 8-byte header on x64, the same "ULONG then 4 bytes padding" shape
-                // HandleInspectionService.ReadSystemHandles already relies on for SystemHandleInformation.
+                // 8-byte header on x64. (Not the header shape HandleInspectionService.ReadSystemHandles
+                // parses for SystemExtendedHandleInformation - that one is two pointer-sized fields,
+                // ULONG_PTR NumberOfHandles + ULONG_PTR Reserved.)
                 int count = Marshal.ReadInt32(buffer);
                 int entrySize = Marshal.SizeOf<SYSTEM_POOLTAG>();
                 IntPtr entryPtr = IntPtr.Add(buffer, 8);

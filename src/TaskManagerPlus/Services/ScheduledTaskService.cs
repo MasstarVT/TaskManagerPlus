@@ -1,10 +1,12 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using Microsoft.Win32;
 using TaskManagerPlus.Models;
+using TaskManagerPlus.Common;
 
 namespace TaskManagerPlus.Services;
 
@@ -62,7 +64,7 @@ public static class ScheduledTaskService
             var lines = SplitCsvLines(output);
             if (lines.Count < 2) return rows;
 
-            var header = ParseCsvLine(lines[0]);
+            var header = CsvLine.Split(lines[0]);
             int Idx(string name) => header.FindIndex(h => h.Equals(name, StringComparison.OrdinalIgnoreCase));
             int iName = Idx("TaskName"), iStatus = Idx("Status"), iNext = Idx("Next Run Time"),
                 iLast = Idx("Last Run Time"), iResult = Idx("Last Result"), iAuthor = Idx("Author"),
@@ -74,7 +76,7 @@ public static class ScheduledTaskService
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             for (int i = 1; i < lines.Count; i++)
             {
-                var fields = ParseCsvLine(lines[i]);
+                var fields = CsvLine.Split(lines[i]);
                 if (fields.Count <= iName) continue;
                 string name = fields[iName];
                 if (name.Length == 0 || name.Equals("TaskName", StringComparison.OrdinalIgnoreCase) || !seen.Add(name))
@@ -172,9 +174,12 @@ public static class ScheduledTaskService
 
     /// <summary>#979: the "pick a specific time" alternative to CreateOnStartAsync - a single
     /// one-time trigger at `whenLocal`, still as SYSTEM so it doesn't depend on a user session
-    /// being active at that time.</summary>
+    /// being active at that time. #1059: schtasks expects /sd in the machine's regional short-date
+    /// format, not a fixed MM/dd/yyyy - hardcoding the US shape meant a queued fix on a dd/MM
+    /// locale ran on the wrong date (or was rejected outright for day &gt; 12), so the date is
+    /// formatted with the current culture's short-date pattern instead.</summary>
     public static Task<(bool Success, string? Error)> CreateOnceAsync(string taskName, string command, DateTime whenLocal) =>
-        CreateAsync(taskName, command, $"/sc once /st {whenLocal:HH:mm} /sd {whenLocal:MM/dd/yyyy}");
+        CreateAsync(taskName, command, $"/sc once /st {whenLocal:HH:mm} /sd {whenLocal.ToString("d", CultureInfo.CurrentCulture)}");
 
     /// <summary>suggestions.md #997: a recurring daily/weekly trigger - used by
     /// UnattendedScanService to set up a nightly/weekly unattended `--scan` run. `dayOfWeek` is
@@ -660,48 +665,10 @@ public static class ScheduledTaskService
         return docs;
     }
 
-    /// <summary>
-    /// Shells out and captures combined stdout+stderr, bounded by a real timeout - the same
-    /// concurrent-read/bounded-wait/kill-on-timeout pattern TracerouteService.RunAsync already
-    /// established. The previous version read both streams synchronously to completion *before*
-    /// waiting for exit at all (the classic .NET Process redirection deadlock: both streams' OS
-    /// pipe buffers are small and fixed-size, so a child that fills one while nothing drains it
-    /// blocks forever, and the parent blocks reading right alongside it), then read
-    /// `proc.WaitForExit(10000)`'s bool result without checking it - so a process that legitimately
-    /// ran past 10s made the later `proc.ExitCode` read throw InvalidOperationException ("Process
-    /// must exit before requested information can be determined"), which every caller here
-    /// (List/SetEnabled/ReadLogonTriggerInfo) would have seen as an unexpected exception rather
-    /// than a clean "no output" result. A timed-out run now returns ExitCode: null instead, so
-    /// callers treat it exactly like any other non-zero/empty result already handled below.
-    /// </summary>
-    private static async Task<(string Output, int? ExitCode)> RunCapturedAsync(string exe, string args, int timeoutMs = 10000)
-    {
-        var psi = new ProcessStartInfo(exe, args)
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        using var proc = Process.Start(psi) ?? throw new InvalidOperationException($"couldn't start {exe}");
-
-        var outputTask = proc.StandardOutput.ReadToEndAsync();
-        var errorTask = proc.StandardError.ReadToEndAsync();
-
-        using var cts = new CancellationTokenSource(timeoutMs);
-        try
-        {
-            await proc.WaitForExitAsync(cts.Token);
-        }
-        catch (OperationCanceledException)
-        {
-            try { proc.Kill(); } catch { /* best-effort */ }
-            return ("(command timed out)", null);
-        }
-
-        string output = (await outputTask) + (await errorTask);
-        return (output, proc.ExitCode);
-    }
+    /// <summary>#1084: the shared <see cref="ToolRunner"/> owns the run/capture/kill-on-timeout
+    /// mechanism; this wrapper keeps the service's historical default timeout.</summary>
+    private static Task<(string Output, int? ExitCode)> RunCapturedAsync(string exe, string args, int timeoutMs = 10000)
+        => ToolRunner.RunCapturedAsync(exe, args, timeoutMs);
 
     private static List<string> SplitCsvLines(string text) =>
         text.Split('\n').Select(l => l.TrimEnd('\r')).Where(l => l.Length > 0).ToList();
@@ -709,33 +676,6 @@ public static class ScheduledTaskService
     // schtasks' CSV output quotes every field and escapes an embedded quote by doubling it ("") -
     // a small hand-rolled parser rather than a dependency, since this app takes no CSV library
     // anywhere else and the escaping rule here is simple and fixed.
-    private static List<string> ParseCsvLine(string line)
-    {
-        var fields = new List<string>();
-        var current = new StringBuilder();
-        bool inQuotes = false;
-        for (int i = 0; i < line.Length; i++)
-        {
-            char c = line[i];
-            if (inQuotes)
-            {
-                if (c == '"')
-                {
-                    if (i + 1 < line.Length && line[i + 1] == '"') { current.Append('"'); i++; }
-                    else inQuotes = false;
-                }
-                else current.Append(c);
-            }
-            else
-            {
-                if (c == '"') inQuotes = true;
-                else if (c == ',') { fields.Add(current.ToString()); current.Clear(); }
-                else current.Append(c);
-            }
-        }
-        fields.Add(current.ToString());
-        return fields;
-    }
 
     #region #765 - Task last-result decoder
 
@@ -856,12 +796,36 @@ public static class ScheduledTaskService
         return null;
     }
 
+    /// <summary>#1092: a File.Exists on a dead/unreachable UNC target can block for the full SMB
+    /// timeout (tens of seconds). This used to bound it with an abandoned Task.Run, which pinned a
+    /// thread-POOL thread for that whole block - and since EvaluateTarget runs per task entry under
+    /// a Parallel.ForEach, several dead-UNC targets at once starved every polling tab's own
+    /// Task.Run sampling. A dedicated background thread is abandoned instead (it dies blocked, or
+    /// with the process), the same pattern SignatureCheckService.TryCheckRevocation uses for a
+    /// native call that can hang forever.</summary>
     private static bool? FileExistsWithTimeout(string path, int timeoutMs = 2000)
     {
         try
         {
-            var task = Task.Run(() => File.Exists(path));
-            return task.Wait(timeoutMs) ? task.Result : null;
+            bool exists = false;
+            bool completed = false;
+            var thread = new Thread(() =>
+            {
+                try
+                {
+                    exists = File.Exists(path);
+                    completed = true;
+                }
+                catch
+                {
+                    // Leave completed = false - reported as "couldn't confirm in time" below.
+                }
+            })
+            { IsBackground = true };
+
+            thread.Start();
+            if (!thread.Join(timeoutMs) || !completed) return null;
+            return exists;
         }
         catch
         {

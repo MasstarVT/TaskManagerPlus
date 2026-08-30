@@ -71,14 +71,34 @@ public static class ProcessEnvironmentService
         }
     }
 
-    /// <summary>Reads the double-null-terminated UTF-16 environment block in bounded chunks, capped
-    /// well past what any real process's environment block needs, so a corrupt/garbage pointer
-    /// can't turn into an unbounded read.</summary>
+    /// <summary>Reads the double-null-terminated UTF-16 environment block, capped well past what
+    /// any real process's environment block needs, so a corrupt/garbage pointer can't turn into an
+    /// unbounded read. The block is typically only a few KB inside a small committed region, so a
+    /// flat 64KB read usually crosses out of the region and fails with ERROR_PARTIAL_COPY even
+    /// though the whole block was captured - the read is bounded to the containing region via
+    /// VirtualQueryEx, and a partial copy's bytesRead is accepted either way (the TakeWhile below
+    /// already discards a truncated trailing entry).</summary>
     private static List<string> ReadEnvironmentBlock(IntPtr hProcess, IntPtr address)
     {
         const int maxBytes = 64 * 1024;
-        byte[] buffer = new byte[maxBytes];
-        if (!ReadProcessMemory(hProcess, address, buffer, buffer.Length, out int bytesRead) || bytesRead <= 0)
+
+        int toRead = maxBytes;
+        try
+        {
+            if (VirtualQueryEx(hProcess, address, out var mbi, (IntPtr)Marshal.SizeOf<MEMORY_BASIC_INFORMATION>()) != IntPtr.Zero)
+            {
+                long available = mbi.BaseAddress.ToInt64() + mbi.RegionSize.ToInt64() - address.ToInt64();
+                if (available > 0 && available < toRead) toRead = (int)available;
+            }
+        }
+        catch
+        {
+            // Fall back to the capped read plus partial-copy acceptance below.
+        }
+
+        byte[] buffer = new byte[toRead];
+        ReadProcessMemory(hProcess, address, buffer, buffer.Length, out int bytesRead);
+        if (bytesRead <= 0)
             return new List<string> { "(couldn't read environment memory - it may have been paged out or the process exited)" };
 
         string raw = Encoding.Unicode.GetString(buffer, 0, bytesRead);
@@ -112,6 +132,20 @@ public static class ProcessEnvironmentService
         }
     }
 
+    // 64-bit layout; the WORD PartitionId following AllocationProtect lands in this struct's own
+    // alignment padding before RegionSize, so it needs no explicit field.
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MEMORY_BASIC_INFORMATION
+    {
+        public IntPtr BaseAddress;
+        public IntPtr AllocationBase;
+        public uint AllocationProtect;
+        public IntPtr RegionSize;
+        public uint State;
+        public uint Protect;
+        public uint Type;
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     private struct PROCESS_BASIC_INFORMATION
     {
@@ -133,6 +167,9 @@ public static class ProcessEnvironmentService
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool ReadProcessMemory(IntPtr hProcess, IntPtr baseAddress, [Out] byte[] buffer, int size, out int numberOfBytesRead);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr VirtualQueryEx(IntPtr hProcess, IntPtr lpAddress, out MEMORY_BASIC_INFORMATION lpBuffer, IntPtr dwLength);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]

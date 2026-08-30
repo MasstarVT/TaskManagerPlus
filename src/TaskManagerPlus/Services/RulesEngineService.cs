@@ -72,7 +72,6 @@ public sealed class RulesEngineService : IDisposable
 
     public IReadOnlyList<LoadedRule> Rules { get { lock (_lock) return _loadedRules.ToList(); } }
     public IReadOnlyList<RuleValidationResult> ValidationResults { get { lock (_lock) return _validationResults.ToList(); } }
-    public IReadOnlyList<RuleSuppression> Suppressions { get { lock (_lock) return _suppressions.ToList(); } }
 
     public RulesEngineService(PerformanceViewModel performance)
     {
@@ -86,12 +85,21 @@ public sealed class RulesEngineService : IDisposable
 
     // ----- loading / hot reload (#921) --------------------------------------------------------
 
+    /// <summary>#1050: version stamp for the built-in seed. Bump this whenever
+    /// <see cref="BuiltInPackJson"/> changes (rule added/corrected) so existing installs pick up
+    /// the new seed - the old code only wrote the file when absent, so an app update never reached
+    /// installs that already had a (now stale) copy. Rewriting the seed is safe: user edits live
+    /// exclusively in user-overrides.json (see <see cref="UserOverridesFileName"/>), never in
+    /// built-in-pack.json. The seed JSON carries a matching "PackVersion" field, which
+    /// RulePackFile deserialization simply ignores (System.Text.Json skips unknown properties).</summary>
+    private const int BuiltInPackVersion = 2;
+
     private static void EnsureBuiltInPackSeeded()
     {
         try
         {
             Directory.CreateDirectory(RulesDirectory);
-            if (!File.Exists(BuiltInPackPath))
+            if (!File.Exists(BuiltInPackPath) || ReadSeededPackVersion() != BuiltInPackVersion)
                 File.WriteAllText(BuiltInPackPath, BuiltInPackJson);
         }
         catch
@@ -99,6 +107,26 @@ public sealed class RulesEngineService : IDisposable
             // Best-effort - if the folder isn't writable yet, LoadPacks below just finds nothing
             // and the Health Check card falls back to whichever hand-rolled checks remain.
         }
+    }
+
+    /// <summary>#1050: the "PackVersion" stamp in the on-disk built-in pack, or 0 when the file
+    /// is unreadable/unparseable/unstamped (pre-versioning installs) - any of which reads as a
+    /// mismatch, so a corrupt or legacy copy gets refreshed to the current seed.</summary>
+    private static int ReadSeededPackVersion()
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(File.ReadAllText(BuiltInPackPath));
+            foreach (var prop in doc.RootElement.EnumerateObject())
+            {
+                if (string.Equals(prop.Name, "PackVersion", StringComparison.OrdinalIgnoreCase)
+                    && prop.Value.ValueKind == JsonValueKind.Number
+                    && prop.Value.TryGetInt32(out int v))
+                    return v;
+            }
+        }
+        catch { /* unreadable/corrupt - treat as unversioned */ }
+        return 0;
     }
 
     public void LoadPacks()
@@ -1097,6 +1125,7 @@ public sealed class RulesEngineService : IDisposable
     private const string BuiltInPackJson = """
     {
       "PackName": "Built-in",
+      "PackVersion": 2,
       "Rules": [
         {
           "Id": "builtin.disk.volume-full-warning",

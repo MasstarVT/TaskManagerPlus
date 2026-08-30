@@ -478,31 +478,7 @@ public sealed class EventLogEvidenceBundleService
 
     private static async Task<(string Output, int ExitCode)> RunCapturedAsync(string exe, string args, int timeoutMs, CancellationToken ct)
     {
-        var psi = new ProcessStartInfo(exe, args)
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        using var proc = Process.Start(psi) ?? throw new InvalidOperationException($"couldn't start {exe}");
-
-        var outputTask = proc.StandardOutput.ReadToEndAsync(ct);
-        var errorTask = proc.StandardError.ReadToEndAsync(ct);
-
-        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        timeoutCts.CancelAfter(timeoutMs);
-        try
-        {
-            await proc.WaitForExitAsync(timeoutCts.Token);
-        }
-        catch (OperationCanceledException)
-        {
-            try { proc.Kill(entireProcessTree: true); } catch { /* best-effort */ }
-            return ("(command timed out or was cancelled)", -1);
-        }
-
-        string output = (await outputTask) + (await errorTask);
-        return (output, proc.ExitCode);
+        var (output, exitCode) = await ToolRunner.RunCapturedAsync(exe, args, timeoutMs, ct, timeoutOutput: "(command timed out or was cancelled)");
+        return (output, exitCode ?? -1);
     }
 }

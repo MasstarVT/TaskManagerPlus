@@ -3,6 +3,7 @@ using System.Management;
 using System.Text;
 using System.Text.RegularExpressions;
 using TaskManagerPlus.Models;
+using TaskManagerPlus.Common;
 
 namespace TaskManagerPlus.Services;
 
@@ -372,7 +373,7 @@ public sealed class KernelEventFamilyService
             var lines = output.Replace("\r\n", "\n").Split('\n').Where(l => l.Length > 0).ToList();
             if (lines.Count < 2) return result;
 
-            var header = ParseCsvLine(lines[0]).Select(h => h.Trim()).ToList();
+            var header = CsvLine.Split(lines[0]).Select(h => h.Trim()).ToList();
             int IndexOf(string name) => header.FindIndex(h => h.Equals(name, StringComparison.OrdinalIgnoreCase));
             int moduleIdx = IndexOf("Module Name");
             int displayIdx = IndexOf("Display Name");
@@ -384,7 +385,7 @@ public sealed class KernelEventFamilyService
 
             for (int i = 1; i < lines.Count; i++)
             {
-                var fields = ParseCsvLine(lines[i]);
+                var fields = CsvLine.Split(lines[i]);
                 string Field(int idx) => idx >= 0 && idx < fields.Count ? fields[idx].Trim() : string.Empty;
                 string module = Field(moduleIdx);
                 if (module.Length == 0) continue;
@@ -540,63 +541,11 @@ public sealed class KernelEventFamilyService
 
     private static string Truncate(string s, int maxLen) => s.Length <= maxLen ? s : s[..maxLen] + "…";
 
-    /// <summary>Shells out and captures combined stdout+stderr, bounded by a real timeout - both
-    /// reads are started before the bounded wait (so a child that fills a pipe buffer before exiting
-    /// can't deadlock the caller), the same pattern EtwTraceService.RunCapturedAsync established;
-    /// this is the synchronous variant since every caller here already runs off the UI thread via
-    /// Task.Run from the ViewModel.</summary>
+    /// <summary>#1084: delegates to the shared <see cref="ToolRunner"/>, keeping this service's
+    /// historical shape ("(command timed out)" with -1 for a timed-out run).</summary>
     private static (string Output, int ExitCode) RunCaptured(string exe, string args, int timeoutMs)
     {
-        var psi = new ProcessStartInfo(exe, args)
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        using var proc = Process.Start(psi) ?? throw new InvalidOperationException($"couldn't start {exe}");
-
-        var outputTask = proc.StandardOutput.ReadToEndAsync();
-        var errorTask = proc.StandardError.ReadToEndAsync();
-
-        if (!proc.WaitForExit(timeoutMs))
-        {
-            try { proc.Kill(entireProcessTree: true); } catch { /* best-effort */ }
-            return ("(command timed out)", -1);
-        }
-
-        string output = outputTask.GetAwaiter().GetResult() + errorTask.GetAwaiter().GetResult();
-        return (output, proc.ExitCode);
-    }
-
-    /// <summary>Minimal CSV line parser (quoted fields, "" as an escaped quote) - .NET has no
-    /// built-in CSV reader and pulling in a package for one `driverquery /v /fo csv` parse isn't
-    /// worth a new dependency.</summary>
-    private static List<string> ParseCsvLine(string line)
-    {
-        var fields = new List<string>();
-        var sb = new StringBuilder();
-        bool inQuotes = false;
-        for (int i = 0; i < line.Length; i++)
-        {
-            char c = line[i];
-            if (inQuotes)
-            {
-                if (c == '"')
-                {
-                    if (i + 1 < line.Length && line[i + 1] == '"') { sb.Append('"'); i++; }
-                    else inQuotes = false;
-                }
-                else sb.Append(c);
-            }
-            else
-            {
-                if (c == '"') inQuotes = true;
-                else if (c == ',') { fields.Add(sb.ToString()); sb.Clear(); }
-                else sb.Append(c);
-            }
-        }
-        fields.Add(sb.ToString());
-        return fields;
+        var (output, exitCode) = ToolRunner.RunCaptured(exe, args, TimeSpan.FromMilliseconds(timeoutMs), timeoutOutput: "(command timed out)");
+        return (output, exitCode ?? -1);
     }
 }

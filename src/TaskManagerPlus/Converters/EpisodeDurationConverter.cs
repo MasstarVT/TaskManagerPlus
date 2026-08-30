@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Windows.Data;
+using TaskManagerPlus.Common;
 using TaskManagerPlus.Models;
 
 namespace TaskManagerPlus.Converters;
@@ -14,7 +15,7 @@ public sealed class EpisodeDurationConverter : IValueConverter
 
         var span = episode.End - episode.Start;
         if (span.TotalSeconds < 1) return "<1s";
-        return span.TotalMinutes >= 1 ? $"{(int)span.TotalMinutes}m {span.Seconds}s" : $"{span.Seconds}s";
+        return Formatting.FormatSpanMinutes(span);
     }
 
     public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)

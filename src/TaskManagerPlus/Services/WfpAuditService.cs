@@ -188,34 +188,13 @@ public static class WfpAuditService
         return map;
     }
 
+    /// <summary>#1084: delegates to the shared <see cref="ToolRunner"/>, keeping this service's
+    /// historical display strings ("{exe} timed out." / "Failed: ...").</summary>
     private static async Task<string> RunAsync(string exe, string args, int timeoutMs)
     {
         try
         {
-            var psi = new ProcessStartInfo(exe, args)
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return $"Couldn't start {exe}.";
-
-            var outputTask = proc.StandardOutput.ReadToEndAsync();
-            var errorTask = proc.StandardError.ReadToEndAsync();
-            using var cts = new CancellationTokenSource(timeoutMs);
-            try
-            {
-                await proc.WaitForExitAsync(cts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                try { proc.Kill(); } catch { /* best-effort */ }
-                return $"{exe} timed out.";
-            }
-
-            return ((await outputTask) + (await errorTask)).Trim();
+            return (await ToolRunner.RunCapturedAsync(exe, args, timeoutMs, timeoutOutput: $"{exe} timed out.")).Output.Trim();
         }
         catch (Exception ex)
         {

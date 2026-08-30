@@ -39,7 +39,10 @@ public sealed class RemoteMonitorService : IDisposable
     }
 
     /// <summary>Starts listening on every local interface (http://+:port/) - this app already
-    /// runs elevated, which HttpListener accepts in place of a separate URL-ACL reservation.</summary>
+    /// runs elevated, which HttpListener accepts in place of a separate URL-ACL reservation.
+    /// #1061: HttpListener offers no per-adapter binding worth the ACL gymnastics, so the
+    /// wildcard prefix stays - the LAN-only scope is enforced per request in HandleAsync
+    /// instead (see <see cref="IsLoopbackOrPrivate"/>).</summary>
     public (bool Success, string? Error) Start(int port)
     {
         Stop();
@@ -117,6 +120,19 @@ public sealed class RemoteMonitorService : IDisposable
     {
         try
         {
+            // #1061: the "+" wildcard prefix binds every interface, including any publicly
+            // routable one (public IP, unfiltered hotspot/VPN adapter) - and the token below is
+            // off by default. When no token is configured, only serve loopback/link-local/RFC1918
+            // source addresses, so this elevated process never answers beyond the "LAN-visible"
+            // scope the Settings drawer advertises. With a token configured, the token check is
+            // the gate instead. Bare 401 for the same no-free-confirmation reason as below.
+            if (string.IsNullOrEmpty(RequiredToken) && !IsLoopbackOrPrivate(ctx.Request.RemoteEndPoint?.Address))
+            {
+                ctx.Response.StatusCode = 401;
+                ctx.Response.OutputStream.Close();
+                return;
+            }
+
             // #97: optional shared-token check - see RemoteMonitorSettings.Token's remarks. A
             // missing/mismatched token gets a bare 401 (no body, no page) rather than a "wrong
             // token" message, so a scan doesn't get free confirmation the endpoint even exists.
@@ -137,7 +153,7 @@ public sealed class RemoteMonitorService : IDisposable
             if (path.Equals("/metrics.json", StringComparison.OrdinalIgnoreCase))
             {
                 ctx.Response.ContentType = "application/json";
-                body = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(_sample()));
+                body = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(_sample(), MetricsJsonOptions));
             }
             else
             {
@@ -156,6 +172,43 @@ public sealed class RemoteMonitorService : IDisposable
         {
             try { ctx.Response.OutputStream.Close(); } catch { /* already closed by the client */ }
         }
+    }
+
+    // #1064: the dashboard JS below reads camelCase keys (m.cpuPercent, ...), so the snapshot must
+    // serialize camelCase too - the optionless Serialize call emitted PascalCase, every field read
+    // undefined, and the page showed "Connection lost - retrying..." forever.
+    private static readonly JsonSerializerOptions MetricsJsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+    };
+
+    /// <summary>#1061: whether a request's source address is within the advertised "LAN-visible"
+    /// scope - loopback, RFC1918 private (10/8, 172.16/12, 192.168/16), IPv4 link-local
+    /// (169.254/16), or their IPv6 equivalents (link-local fe80::/10, site-local, unique-local
+    /// fc00::/7). An unknown/absent address fails closed.</summary>
+    private static bool IsLoopbackOrPrivate(IPAddress? address)
+    {
+        if (address is null) return false;
+        if (IPAddress.IsLoopback(address)) return true;
+        if (address.IsIPv4MappedToIPv6) address = address.MapToIPv4();
+
+        if (address.AddressFamily == AddressFamily.InterNetwork)
+        {
+            byte[] b = address.GetAddressBytes();
+            return b[0] == 10
+                || (b[0] == 172 && b[1] >= 16 && b[1] <= 31)
+                || (b[0] == 192 && b[1] == 168)
+                || (b[0] == 169 && b[1] == 254);
+        }
+
+        if (address.AddressFamily == AddressFamily.InterNetworkV6)
+        {
+            if (address.IsIPv6LinkLocal || address.IsIPv6SiteLocal) return true;
+            byte first = address.GetAddressBytes()[0];
+            return (first & 0xFE) == 0xFC; // fc00::/7 unique-local
+        }
+
+        return false;
     }
 
     // A single self-contained page (inline CSS/JS, no external references) that polls

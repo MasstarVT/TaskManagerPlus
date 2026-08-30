@@ -345,7 +345,8 @@ public sealed class GpuMonitorService : IDisposable
         var sb = new System.Text.StringBuilder();
         for (int i = 0; i < s.Length; i++)
         {
-            if (i > 0 && char.IsUpper(s[i]) && !char.IsUpper(s[i - 1])) sb.Append(' ');
+            // No break after a digit: "3D" (engtype_3D) is one token, not "3 D".
+            if (i > 0 && char.IsUpper(s[i]) && !char.IsUpper(s[i - 1]) && !char.IsDigit(s[i - 1])) sb.Append(' ');
             sb.Append(s[i]);
         }
         return sb.ToString();

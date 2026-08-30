@@ -75,6 +75,11 @@ public sealed class DpcLatencyService
     private readonly List<double> _allDpcSamplesUs = new();
 
     private DateTime _sessionStart;
+    // Round 18, #1054: the wall-clock _sessionStart above is display-only (StartedAt); the
+    // session's elapsed time - the denominator of DpcTimePercentOfWallClock - comes off this
+    // monotonic Stopwatch timestamp instead, so a DST/NTP clock step can't yield a negative
+    // Duration or a >100% figure presented as a measurement (the never-fabricate rule).
+    private long _sessionStartTimestamp;
     private double _sessionTotalDpcUs;
 
     public double HighestDpcUs { get; private set; }
@@ -93,6 +98,7 @@ public sealed class DpcLatencyService
         _spikes.Clear();
         _allDpcSamplesUs.Clear();
         _sessionStart = DateTime.Now;
+        _sessionStartTimestamp = Stopwatch.GetTimestamp();
         _sessionTotalDpcUs = 0;
         HighestDpcUs = 0;
         HighestDpcDriver = string.Empty;
@@ -143,7 +149,8 @@ public sealed class DpcLatencyService
     /// clock summary for the just-stopped measurement session.</summary>
     public MeasurementSessionSummary BuildSummary()
     {
-        var wall = DateTime.Now - _sessionStart;
+        // #1054: monotonic elapsed time, not a DateTime.Now delta - see _sessionStartTimestamp.
+        var wall = Stopwatch.GetElapsedTime(_sessionStartTimestamp);
         var perDriver = _dpcByDriver.Select(kv => new DriverSessionStat
         {
             DriverName = kv.Key,
@@ -382,38 +389,25 @@ public sealed class DpcLatencyService
         }
     }
 
+    /// <summary>#1084: delegates to the shared <see cref="ToolRunner"/> - notably, the local copy
+    /// this replaces never killed a timed-out child at all; the shared runner kills the whole
+    /// process tree. External cancellation still rethrows; a plain timeout reads (false, "timed
+    /// out"), and ignoreExitCode stays for the tools whose exit codes can't be trusted.</summary>
     private static async Task<(bool Ok, string Output)> RunProcessAsync(string exe, string args, TimeSpan timeout, CancellationToken ct, bool ignoreExitCode = false)
     {
         try
         {
-            var psi = new ProcessStartInfo(exe, args)
+            var (output, exitCode) = await ToolRunner.RunCapturedAsync(exe, args, (int)timeout.TotalMilliseconds, ct);
+            if (exitCode is null)
             {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return (false, "couldn't start process");
-
-            var outTask = proc.StandardOutput.ReadToEndAsync();
-            var errTask = proc.StandardError.ReadToEndAsync();
-
-            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            cts.CancelAfter(timeout);
-            await proc.WaitForExitAsync(cts.Token);
-
-            string combined = (await outTask) + (await errTask);
-            bool ok = ignoreExitCode || proc.ExitCode == 0;
-            return (ok, combined.Trim());
+                ct.ThrowIfCancellationRequested();
+                return (false, "timed out");
+            }
+            return (ignoreExitCode || exitCode == 0, output.Trim());
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             throw;
-        }
-        catch (OperationCanceledException)
-        {
-            return (false, "timed out");
         }
         catch (Exception ex)
         {

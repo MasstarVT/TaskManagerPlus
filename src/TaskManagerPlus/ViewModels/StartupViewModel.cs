@@ -498,7 +498,9 @@ public sealed class StartupViewModel : ObservableObject
 
         LoadBrowserExtensionsCommand = new AsyncRelayCommand(LoadBrowserExtensionsAsync);
         LoadShellExtensionsCommand = new AsyncRelayCommand(LoadShellExtensionsAsync);
-        ToggleShellExtensionApprovedCommand = new RelayCommand(param => ToggleShellExtensionApproved(param as ShellExtensionInfo ?? SelectedShellExtension));
+        // #1075: same read-only gate as ToggleEnabledCommand above - this flips an HKLM approval
+        // flag, so it's a mutation like any other toggle on this tab.
+        ToggleShellExtensionApprovedCommand = new RelayCommand(param => ToggleShellExtensionApproved(param as ShellExtensionInfo ?? SelectedShellExtension), _ => !ReadOnlyModeService.IsReadOnly);
 
         ArmBootLogCaptureCommand = new AsyncRelayCommand(ArmBootLogCaptureAsync, () => !IsBootLogCaptureArmed);
         DisarmBootLogCaptureCommand = new AsyncRelayCommand(DisarmBootLogCaptureAsync, () => IsBootLogCaptureArmed);
@@ -597,7 +599,8 @@ public sealed class StartupViewModel : ObservableObject
     {
         if (extension is null) return;
 
-        bool newState = !extension.IsApproved;
+        bool wasApproved = extension.IsApproved;
+        bool newState = !wasApproved;
         var (success, error) = ShellExtensionService.SetApproved(extension.Clsid, extension.Name, newState);
         if (success)
         {
@@ -608,6 +611,26 @@ public sealed class StartupViewModel : ObservableObject
         {
             StatusMessage = $"Couldn't change {extension.Name}: {error}";
         }
+
+        // #1075: record the mutation, same as Toggle() above. Kind reuses StartupToggle (the
+        // Startup tab's approval-flag family; ChangeKind has no shell-extension-specific value)
+        // but IsUndoable is false: the StartupToggle inverse path runs
+        // StartupManagerService.SetEnabled, which knows nothing about the Approved shell-extension
+        // registry list - re-toggling on this tab is the (one-click) way back.
+        ChangeJournalService.Append(new ChangeJournalEntry
+        {
+            Kind = ChangeKind.StartupToggle,
+            Target = extension.Name,
+            ActionDescription = newState ? "Approved shell extension" : "Unapproved shell extension",
+            BeforeValue = wasApproved ? "Approved" : "Unapproved",
+            AfterValue = success ? (newState ? "Approved" : "Unapproved") : (wasApproved ? "Approved" : "Unapproved"),
+            TriggeredBy = "Startup tab (shell extensions)",
+            Success = success,
+            IsUndoable = false,
+            NotUndoableReason = "Toggle the extension's Approved flag again on the Startup tab to reverse this.",
+            StartupItemName = extension.Name,
+            StartupItemCommand = extension.Clsid,
+        });
     }
 
     public void ApplyAxisTheme(System.Windows.Media.Color text, System.Windows.Media.Color separator)

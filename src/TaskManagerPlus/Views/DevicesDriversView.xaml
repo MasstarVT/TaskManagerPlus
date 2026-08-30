@@ -1061,7 +1061,7 @@
                     <ContextMenu>
                         <MenuItem Header="Enable device" Command="{Binding EnableDeviceCommand}">
                             <MenuItem.Style>
-                                <Style TargetType="MenuItem">
+                                <Style TargetType="MenuItem" BasedOn="{StaticResource {x:Type MenuItem}}">
                                     <Style.Triggers>
                                         <DataTrigger Binding="{Binding SelectedDeviceNode.IsPresent}" Value="False">
                                             <Setter Property="Visibility" Value="Collapsed" />
@@ -1075,7 +1075,7 @@
                         </MenuItem>
                         <MenuItem Header="Disable device" Command="{Binding DisableDeviceCommand}">
                             <MenuItem.Style>
-                                <Style TargetType="MenuItem">
+                                <Style TargetType="MenuItem" BasedOn="{StaticResource {x:Type MenuItem}}">
                                     <Style.Triggers>
                                         <DataTrigger Binding="{Binding SelectedDeviceNode.IsPresent}" Value="False">
                                             <Setter Property="Visibility" Value="Collapsed" />
@@ -1090,7 +1090,7 @@
                         <MenuItem Header="Restart device" Command="{Binding RestartDeviceCommand}"
                                   ToolTip="#475: pnputil /restart-device - reloads the driver without a reboot.">
                             <MenuItem.Style>
-                                <Style TargetType="MenuItem">
+                                <Style TargetType="MenuItem" BasedOn="{StaticResource {x:Type MenuItem}}">
                                     <Style.Triggers>
                                         <DataTrigger Binding="{Binding SelectedDeviceNode.IsPresent}" Value="False">
                                             <Setter Property="Visibility" Value="Collapsed" />
@@ -1107,7 +1107,7 @@
                         <MenuItem Header="Roll back driver..." Command="{Binding RollbackDriverCommand}"
                                   ToolTip="{Binding SelectedDeviceRollbackReasonText}">
                             <MenuItem.Style>
-                                <Style TargetType="MenuItem">
+                                <Style TargetType="MenuItem" BasedOn="{StaticResource {x:Type MenuItem}}">
                                     <Style.Triggers>
                                         <DataTrigger Binding="{Binding SelectedDeviceRollbackAvailable}" Value="False">
                                             <Setter Property="Visibility" Value="Collapsed" />
@@ -1120,7 +1120,7 @@
                         <MenuItem Header="Remove device entry" Command="{Binding RemoveDeviceCommand}"
                                   ToolTip="#472: pnputil /remove-device - only for a non-present ('ghost') device.">
                             <MenuItem.Style>
-                                <Style TargetType="MenuItem">
+                                <Style TargetType="MenuItem" BasedOn="{StaticResource {x:Type MenuItem}}">
                                     <Style.Triggers>
                                         <DataTrigger Binding="{Binding SelectedDeviceNode.IsPresent}" Value="True">
                                             <Setter Property="Visibility" Value="Collapsed" />
@@ -1578,7 +1578,7 @@
                             <DataGridCheckBoxColumn Header="Wake programmable" Binding="{Binding CanWakeProgrammable}" Width="130" />
                             <DataGridTextColumn Header="Windows may power off" Binding="{Binding AllowComputerToTurnOffText}" Width="150">
                                 <DataGridTextColumn.HeaderStyle>
-                                    <Style TargetType="DataGridColumnHeader">
+                                    <Style TargetType="DataGridColumnHeader" BasedOn="{StaticResource {x:Type DataGridColumnHeader}}">
                                         <Setter Property="ToolTip"
                                                 Value="Best-effort read of the 'Allow the computer to turn off this device to save power' checkbox - an undocumented registry convention, not a published API, so 'Unknown' just means no matching present device or no PNPCapabilities value was found." />
                                     </Style>
@@ -1676,7 +1676,7 @@
                          running... state" CLAUDE.md's on-demand-action convention calls for. -->
                     <ProgressBar Height="4" IsIndeterminate="True" Margin="0,0,0,8">
                         <ProgressBar.Style>
-                            <Style TargetType="ProgressBar">
+                            <Style TargetType="ProgressBar" BasedOn="{StaticResource {x:Type ProgressBar}}">
                                 <Setter Property="Visibility" Value="Collapsed" />
                                 <Style.Triggers>
                                     <DataTrigger Binding="{Binding IsExportingDrivers}" Value="True">

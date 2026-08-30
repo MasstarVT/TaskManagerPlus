@@ -10,8 +10,8 @@ namespace TaskManagerPlus.Services;
 /// "Event", "Section", "Mutant", "Semaphore", "Thread", ...), the closest honest equivalent this
 /// app can offer to Task Manager's own handle count without a much larger undertaking. Windows has
 /// no per-type handle count API - the only way to get one is to walk the *system-wide* handle table
-/// (NtQuerySystemInformation, SystemHandleInformation) and filter down to the target pid, then for
-/// each of its handles duplicate it into this process and ask NtQueryObject what type it is.
+/// (NtQuerySystemInformation, SystemExtendedHandleInformation) and filter down to the target pid,
+/// then for each of its handles duplicate it into this process and ask NtQueryObject what type it is.
 ///
 /// This is the same fragile territory the "what has this file open" feature (#9) deliberately
 /// avoided by using the documented Restart Manager API instead - here there's no equivalent
@@ -43,7 +43,7 @@ public static class HandleInspectionService
     /// handle-table entries" technique Process Explorer/Handle.exe use to answer "who else has this
     /// open", built entirely on the system handle walk this file already does for
     /// ReadHandleTypeCounts. A real, if best-effort, cross-process pointer, not a guess: two
-    /// processes' SYSTEM_HANDLE_TABLE_ENTRY_INFO.Object values only match when they reference the
+    /// processes' SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX.Object values only match when they reference the
     /// literal same kernel object.</summary>
     public sealed record HandleShareMatch(int Pid, string ObjectType, string? ObjectName);
 
@@ -65,7 +65,7 @@ public static class HandleInspectionService
             var all = ReadSystemHandles();
             if (all.Count == 0) return results;
 
-            var mine = all.Where(h => h.UniqueProcessId == pid).Take(maxHandlesToCheck * 3).ToList();
+            var mine = all.Where(h => (long)h.UniqueProcessId == pid).Take(maxHandlesToCheck * 3).ToList();
             if (mine.Count == 0) return results;
 
             sourceProcess = OpenProcess(ProcessDupHandle, false, pid);
@@ -87,13 +87,13 @@ public static class HandleInspectionService
                 // of this exact kernel object, not a coincidence of type alone.
                 foreach (var other in all)
                 {
-                    if (other.UniqueProcessId == pid || other.Object != entry.Object) continue;
-                    if (!seen.Add((other.UniqueProcessId, typeName))) continue;
+                    if ((long)other.UniqueProcessId == pid || other.Object != entry.Object) continue;
+                    if (!seen.Add(((int)other.UniqueProcessId, typeName))) continue;
 
                     string? name = typeName == "File"
                         ? TryResolveObjectName(sourceProcess, entry.HandleValue)
                         : null;
-                    results.Add(new HandleShareMatch(other.UniqueProcessId, typeName, name));
+                    results.Add(new HandleShareMatch((int)other.UniqueProcessId, typeName, name));
                 }
             }
         }
@@ -115,12 +115,12 @@ public static class HandleInspectionService
     /// worker-thread-with-timeout pattern as ResolveHandleType, since NtQueryObject's hang risk
     /// applies here too (a named pipe with no listener is the classic case for ObjectNameInformation
     /// as much as ObjectTypeInformation).</summary>
-    private static string? TryResolveObjectName(IntPtr sourceProcess, ushort handleValue)
+    private static string? TryResolveObjectName(IntPtr sourceProcess, IntPtr handleValue)
     {
         IntPtr dup = IntPtr.Zero;
         try
         {
-            int dupStatus = NtDuplicateObject(sourceProcess, (IntPtr)handleValue, GetCurrentProcess(),
+            int dupStatus = NtDuplicateObject(sourceProcess, handleValue, GetCurrentProcess(),
                 out dup, 0, 0, DuplicateSameAccess);
             if (dupStatus != 0 || dup == IntPtr.Zero) return null;
         }
@@ -190,7 +190,12 @@ public static class HandleInspectionService
                 if (QueryDosDevice(driveLetter, target, target.Capacity) == 0) continue;
 
                 string prefix = target.ToString();
-                if (devicePath.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                // The match must end on a path-segment boundary: "\Device\HarddiskVolume1" is a
+                // string prefix of "\Device\HarddiskVolume10\..." too, and matching it would
+                // splice the wrong drive letter onto a mangled remainder on machines with 10+
+                // volumes.
+                if (!devicePath.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
+                if (devicePath.Length == prefix.Length || devicePath[prefix.Length] == '\\')
                     return driveLetter + devicePath[prefix.Length..];
             }
         }
@@ -208,7 +213,7 @@ public static class HandleInspectionService
         IntPtr sourceProcess = IntPtr.Zero;
         try
         {
-            var entries = ReadSystemHandles().Where(h => h.UniqueProcessId == pid).Take(MaxHandlesToResolve * 2).ToList();
+            var entries = ReadSystemHandles().Where(h => (long)h.UniqueProcessId == pid).Take(MaxHandlesToResolve * 2).ToList();
             if (entries.Count == 0) return new List<(string, int)>();
 
             sourceProcess = OpenProcess(ProcessDupHandle, false, pid);
@@ -246,12 +251,12 @@ public static class HandleInspectionService
     /// Internal (not private) so #411's SharedMemoryInspectionService can reuse the exact same
     /// duplicate-then-query-with-timeout pattern to find "Section" handles specifically, rather
     /// than re-deriving it.</summary>
-    internal static string ResolveHandleType(IntPtr sourceProcess, ushort handleValue)
+    internal static string ResolveHandleType(IntPtr sourceProcess, IntPtr handleValue)
     {
         IntPtr dup = IntPtr.Zero;
         try
         {
-            int dupStatus = NtDuplicateObject(sourceProcess, (IntPtr)handleValue, GetCurrentProcess(),
+            int dupStatus = NtDuplicateObject(sourceProcess, handleValue, GetCurrentProcess(),
                 out dup, 0, 0, DuplicateSameAccess);
             if (dupStatus != 0 || dup == IntPtr.Zero) return "(unresolved)";
         }
@@ -311,12 +316,12 @@ public static class HandleInspectionService
     /// handles (anonymous sections, most other object types) have no name at all, which
     /// NtQueryObject reports as a zero-length string, not an error - returned here as null rather
     /// than "(unresolved)" so callers can tell "no name" apart from "the query failed/timed out".</summary>
-    internal static string? ResolveHandleName(IntPtr sourceProcess, ushort handleValue)
+    internal static string? ResolveHandleName(IntPtr sourceProcess, IntPtr handleValue)
     {
         IntPtr dup = IntPtr.Zero;
         try
         {
-            int dupStatus = NtDuplicateObject(sourceProcess, (IntPtr)handleValue, GetCurrentProcess(),
+            int dupStatus = NtDuplicateObject(sourceProcess, handleValue, GetCurrentProcess(),
                 out dup, 0, 0, DuplicateSameAccess);
             if (dupStatus != 0 || dup == IntPtr.Zero) return null;
         }
@@ -371,12 +376,12 @@ public static class HandleInspectionService
     /// NtQueryObject can on certain handle types (a named pipe with no listener), so this runs
     /// inline rather than on its own abandoned thread - it's still wrapped in try/catch so a
     /// surprise failure degrades to "size unknown" rather than throwing.</summary>
-    internal static long? ResolveSectionSizeBytes(IntPtr sourceProcess, ushort handleValue)
+    internal static long? ResolveSectionSizeBytes(IntPtr sourceProcess, IntPtr handleValue)
     {
         IntPtr dup = IntPtr.Zero;
         try
         {
-            int dupStatus = NtDuplicateObject(sourceProcess, (IntPtr)handleValue, GetCurrentProcess(),
+            int dupStatus = NtDuplicateObject(sourceProcess, handleValue, GetCurrentProcess(),
                 out dup, 0, 0, DuplicateSameAccess);
             if (dupStatus != 0 || dup == IntPtr.Zero) return null;
 
@@ -423,56 +428,65 @@ public static class HandleInspectionService
     /// and only meaningful to ReadHandleTypeCounts' own per-pid filtering above) outside this
     /// class.</summary>
     internal static List<(int ProcessId, ushort HandleValue)> ReadSystemHandlesAll() =>
-        ReadSystemHandles().Select(e => ((int)e.UniqueProcessId, e.HandleValue)).ToList();
+        // Keeps the historical (int, ushort) tuple shape SharedMemoryInspectionService binds to.
+        // The extended handle table carries pointer-sized handle values; the rare handle above
+        // 0xFFFF (a process holding >16k handles) is skipped rather than truncated, since a
+        // truncated value would resolve a DIFFERENT handle in the source process.
+        ReadSystemHandles()
+            .Where(e => (ulong)e.HandleValue <= ushort.MaxValue)
+            .Select(e => ((int)e.UniqueProcessId, (ushort)e.HandleValue))
+            .ToList();
 
     /// <summary>Internal (not private) so LsassHandleWatchService (#857) can reuse this same
     /// system-wide handle-table walk for its "who holds a handle to lsass.exe" scan, rather than
-    /// duplicating the NtQuerySystemInformation/SystemHandleInformation P/Invoke plumbing a second
+    /// duplicating the NtQuerySystemInformation/SystemExtendedHandleInformation P/Invoke plumbing a second
     /// time - see that class's remarks for how it uses these raw entries.</summary>
     /// <summary>Hard ceiling on the system handle table snapshot, in bytes. A healthy machine's
-    /// whole table is a few megabytes (roughly 24 bytes x a few hundred thousand handles), but a
+    /// whole table is a few megabytes (roughly 40 bytes x a few hundred thousand handles), but a
     /// process leaking handles drags it up without limit - a machine with a dozen runaway
-    /// processes measured 62 million live handles, which is a ~500 MB snapshot, and this method
-    /// was faithfully allocating a managed array that size (three live at once accounted for
+    /// processes measured 62 million live handles, which is a multi-hundred-MB snapshot, and this
+    /// method was faithfully allocating a managed array that size (three live at once accounted for
     /// 1.49 GB - 93% - of this app's entire heap). A diagnostic tool has to stay small on exactly
     /// the sick machine it exists to diagnose, so past this ceiling the walk reports nothing
     /// rather than trying: callers already treat an empty result as "couldn't read the handle
     /// table", which is CLAUDE.md's degrade-never-fabricate rule and is far better than pinning
     /// a gigabyte-plus to answer a "quick flag, not a verdict" question.</summary>
-    private const int MaxHandleTableBytes = 48 << 20; // 48 MB - ~2 million handles
+    private const int MaxHandleTableBytes = 48 << 20; // 48 MB - ~1.2 million handles
 
-    internal static List<SYSTEM_HANDLE_TABLE_ENTRY_INFO> ReadSystemHandles()
+    internal static List<SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX> ReadSystemHandles()
     {
         int size = 1 << 20; // 1 MB starting guess, grown below if needed
         for (int attempt = 0; attempt < 8; attempt++)
         {
-            if (size > MaxHandleTableBytes) return new List<SYSTEM_HANDLE_TABLE_ENTRY_INFO>();
+            if (size > MaxHandleTableBytes) return new List<SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX>();
 
             IntPtr buffer = Marshal.AllocHGlobal(size);
             try
             {
-                int status = NtQuerySystemInformation(SystemHandleInformation, buffer, size, out int returnLength);
+                int status = NtQuerySystemInformation(SystemExtendedHandleInformation, buffer, size, out int returnLength);
                 if (status == StatusInfoLengthMismatch)
                 {
                     size = returnLength > size ? returnLength + 0x10000 : size * 2;
                     continue;
                 }
-                if (status != 0) return new List<SYSTEM_HANDLE_TABLE_ENTRY_INFO>();
+                if (status != 0) return new List<SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX>();
 
-                int count = Marshal.ReadInt32(buffer); // ULONG HandleCount (top bytes zero on x64 ULONG)
-                int entrySize = Marshal.SizeOf<SYSTEM_HANDLE_TABLE_ENTRY_INFO>();
+                // SYSTEM_HANDLE_INFORMATION_EX header: ULONG_PTR NumberOfHandles + ULONG_PTR Reserved.
+                int headerSize = IntPtr.Size * 2;
+                long count = Marshal.ReadIntPtr(buffer).ToInt64();
+                int entrySize = Marshal.SizeOf<SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX>();
 
                 // Never trust the count past what this buffer actually holds. The kernel fills in
                 // as much as fits, so a count larger than the buffer would have sent the loop
                 // below reading unallocated memory - and sized the managed List to match.
-                int maxEntries = (size - 8) / entrySize;
+                long maxEntries = (size - headerSize) / entrySize;
                 if (count > maxEntries) count = maxEntries;
                 if (count < 0) count = 0;
 
-                var list = new List<SYSTEM_HANDLE_TABLE_ENTRY_INFO>(count);
-                IntPtr entryPtr = IntPtr.Add(buffer, 8); // ULONG HandleCount + 4 bytes padding before the array on x64
+                var list = new List<SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX>((int)count);
+                IntPtr entryPtr = IntPtr.Add(buffer, headerSize);
                 for (int i = 0; i < count; i++)
-                    list.Add(Marshal.PtrToStructure<SYSTEM_HANDLE_TABLE_ENTRY_INFO>(IntPtr.Add(entryPtr, i * entrySize)));
+                    list.Add(Marshal.PtrToStructure<SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX>(IntPtr.Add(entryPtr, i * entrySize)));
                 return list;
             }
             finally
@@ -480,10 +494,13 @@ public static class HandleInspectionService
                 Marshal.FreeHGlobal(buffer);
             }
         }
-        return new List<SYSTEM_HANDLE_TABLE_ENTRY_INFO>();
+        return new List<SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX>();
     }
 
-    private const int SystemHandleInformation = 16;
+    // Class 64 - the extended table. The legacy SystemHandleInformation (class 16) carries 16-bit
+    // UniqueProcessId/HandleValue fields, which silently truncate the >65535 pids Win10/11 assign
+    // routinely - crediting a process's handles to whatever pid equals (pid & 0xFFFF).
+    private const int SystemExtendedHandleInformation = 64;
     private const int ObjectNameInformation = 1;
     private const int ObjectTypeInformation = 2;
     private const int StatusInfoLengthMismatch = unchecked((int)0xC0000004);
@@ -491,15 +508,16 @@ public static class HandleInspectionService
     private const uint DuplicateSameAccess = 2;
 
     [StructLayout(LayoutKind.Sequential)]
-    internal struct SYSTEM_HANDLE_TABLE_ENTRY_INFO
+    internal struct SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX
     {
-        public ushort UniqueProcessId;
-        public ushort CreatorBackTraceIndex;
-        public byte ObjectTypeIndex;
-        public byte HandleAttributes;
-        public ushort HandleValue;
         public IntPtr Object;
+        public IntPtr UniqueProcessId;   // ULONG_PTR
+        public IntPtr HandleValue;       // ULONG_PTR
         public uint GrantedAccess;
+        public ushort CreatorBackTraceIndex;
+        public ushort ObjectTypeIndex;
+        public uint HandleAttributes;
+        public uint Reserved;
     }
 
     [DllImport("ntdll.dll")]

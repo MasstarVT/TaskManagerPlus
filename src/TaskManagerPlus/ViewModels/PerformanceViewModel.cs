@@ -777,11 +777,19 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
         var oldest = _historyTimestamps[0];
         var newest = _historyTimestamps[^1];
 
+        // Round 18, #1032: the value histories are pre-seeded with HistoryLength zeros, so the
+        // newest sample always sits at chart X = HistoryLength - 1 - but _historyTimestamps starts
+        // empty and grows one entry per tick. Until a full window of samples exists the two index
+        // spaces differ by (HistoryLength - Count); without this offset a marker for an event
+        // seconds ago (the prime use case right after a crash) draws up to a full chart-width left
+        // of the data it belongs to.
+        int chartOffset = HistoryLength - _historyTimestamps.Count;
+
         foreach (var marker in _markerEvents)
         {
             if (marker.Time < oldest || marker.Time > newest) continue;
 
-            int index = NearestHistoryIndex(marker.Time);
+            int index = NearestHistoryIndex(marker.Time) + chartOffset;
             bool isCritical = string.Equals(marker.Level, "Critical", StringComparison.OrdinalIgnoreCase);
             var color = isCritical ? SKColors.Red : SKColors.Orange;
 
@@ -817,6 +825,15 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
         try
         {
             await RefreshCoreAsync();
+        }
+        catch
+        {
+            // Round 18, #1033: this runs inside an async void DispatcherTimer tick, and
+            // RefreshCoreAsync's own catch only covers _hardware.Sample() - a recurring throw in
+            // the ~150 lines of post-sample work after it would otherwise reach
+            // App.OnDispatcherUnhandledException's modal dialog and, because the timer keeps
+            // ticking (pumped by the modal's own message loop), stack a fresh dialog every second.
+            // Skip the tick and degrade silently like every sibling polling ViewModel.
         }
         finally
         {

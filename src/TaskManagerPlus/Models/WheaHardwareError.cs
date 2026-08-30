@@ -1,3 +1,5 @@
+using TaskManagerPlus.Common;
+
 namespace TaskManagerPlus.Models;
 
 /// <summary>#487: broad classification of which WHEA error source produced a
@@ -139,5 +141,5 @@ public sealed class HardwareErrorCorrelation
 
     public string GapText => Gap.TotalSeconds < 60
         ? $"{Math.Max(0, (int)Gap.TotalSeconds)}s earlier"
-        : $"{(int)Gap.TotalMinutes}m {Gap.Seconds}s earlier";
+        : $"{Formatting.FormatSpanMinutes(Gap)} earlier";
 }

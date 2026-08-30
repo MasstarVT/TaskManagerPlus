@@ -47,7 +47,9 @@ public static class DriverVerifierService
     // Command Syntax" reference - used to turn /querysettings' raw Level value into plain English.
     // Bits this table doesn't recognize (a future Windows release, or a combination this app
     // hasn't seen) fall back to a bare "bit 0x..." label rather than being silently dropped.
-    private static readonly (uint Bit, string Name)[] FlagBits =
+    // Internal (not private) because DriverVerifierControlService below decodes the same
+    // VerifyDriverLevel bitmap and reuses this table rather than carrying a second copy.
+    internal static readonly (uint Bit, string Name)[] FlagBits =
     {
         (0x00000001, "Special Pool"),
         (0x00000002, "Force IRQL Checking"),
@@ -310,50 +312,14 @@ public static class DriverVerifierService
         return result;
     }
 
-    /// <summary>Shells out and captures combined stdout+stderr under a bounded timeout - the same
-    /// pattern CrashDumpConfigService.RunCapturedAsync/PowerPlanService.RunCapturedAsync already
-    /// establish elsewhere in this app. Returns a null exit code (rather than throwing) when the
-    /// tool itself couldn't be started at all (e.g. not present on this Windows edition).</summary>
+    /// <summary>#1084: delegates to the shared <see cref="ToolRunner"/>. Returns a null exit code
+    /// (rather than throwing) when the tool itself couldn't be started at all (e.g. not present on
+    /// this Windows edition) - callers treat null as "couldn't run", distinct from ran-and-failed
+    /// (#1019's load-bearing distinction).</summary>
     private static async Task<(string Output, int? ExitCode)> RunCapturedAsync(string exe, string args, int timeoutMs = 15000)
     {
-        var psi = new ProcessStartInfo(exe, args)
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-
-        Process? proc;
-        try
-        {
-            proc = Process.Start(psi);
-        }
-        catch
-        {
-            return (string.Empty, null);
-        }
-        if (proc is null) return (string.Empty, null);
-
-        using (proc)
-        {
-            var outputTask = proc.StandardOutput.ReadToEndAsync();
-            var errorTask = proc.StandardError.ReadToEndAsync();
-
-            using var cts = new CancellationTokenSource(timeoutMs);
-            try
-            {
-                await proc.WaitForExitAsync(cts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                try { proc.Kill(); } catch { /* best-effort */ }
-                return ("(command timed out)", null);
-            }
-
-            string output = (await outputTask) + (await errorTask);
-            return (output, proc.ExitCode);
-        }
+        try { return await ToolRunner.RunCapturedAsync(exe, args, timeoutMs); }
+        catch { return (string.Empty, null); }
     }
 }
 
@@ -375,26 +341,6 @@ public static class DriverVerifierControlService
 {
     private const string MemoryManagementKeyPath = @"SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management";
 
-    /// <summary>Microsoft's documented Driver Verifier flag bits (see "Driver Verifier flags" in
-    /// the WDK docs) - a best-effort decode. A bit not in this table shows as a raw hex value
-    /// instead of a guessed name, matching this app's degrade-never-fabricate convention.</summary>
-    private static readonly (uint Flag, string Name)[] KnownFlags =
-    {
-        (0x00000001u, "Special pool"),
-        (0x00000002u, "Pool tracking"),
-        (0x00000004u, "Force IRQL checking"),
-        (0x00000008u, "I/O verification"),
-        (0x00000010u, "Deadlock detection"),
-        (0x00000020u, "Enhanced I/O verification (DMA checking)"),
-        (0x00000080u, "Systematic low-resource simulation"),
-        (0x00000100u, "DDI compliance checking"),
-        (0x00000800u, "Security checks"),
-        (0x00002000u, "Miscellaneous checks"),
-        (0x00008000u, "Force pending I/O requests"),
-        (0x00020000u, "IRP logging"),
-        (0x00080000u, "Systematic Low Resource Simulation (dynamically enabled)"),
-    };
-
     // ------------------------------------------------------------------------------------------
     // #497: status.
     // ------------------------------------------------------------------------------------------
@@ -407,7 +353,7 @@ public static class DriverVerifierControlService
         string? queryError = null;
         try
         {
-            queryOutput = await RunCapturedAsync("verifier.exe", "/query", timeoutMs: 15000);
+            (queryOutput, _) = await RunCapturedAsync("verifier.exe", "/query", timeoutMs: 15000);
         }
         catch (Exception ex)
         {
@@ -465,7 +411,7 @@ public static class DriverVerifierControlService
         if (level == 0) return descriptions;
 
         uint remaining = level;
-        foreach (var (flag, name) in KnownFlags)
+        foreach (var (flag, name) in DriverVerifierService.FlagBits)
         {
             if ((level & flag) == flag)
             {
@@ -506,7 +452,7 @@ public static class DriverVerifierControlService
     {
         if (driverFileNames.Count == 0) return Task.FromResult((false, "No drivers selected."));
         string args = $"/standard /driver {string.Join(' ', driverFileNames)}";
-        return RunArgsAsync("verifier.exe", args, timeoutMs: 30000);
+        return RunArgsAsync("verifier.exe", args, timeoutMs: 30000, rebootNeededExitCodeOk: true);
     }
 
     // ------------------------------------------------------------------------------------------
@@ -515,7 +461,7 @@ public static class DriverVerifierControlService
     // ------------------------------------------------------------------------------------------
 
     public static Task<(bool Success, string Message)> ResetAsync() =>
-        RunArgsAsync("verifier.exe", "/reset", timeoutMs: 30000);
+        RunArgsAsync("verifier.exe", "/reset", timeoutMs: 30000, rebootNeededExitCodeOk: true);
 
     /// <summary>Reads whether {current}'s BCD entry currently has a safeboot value set, and which
     /// mode - `bcdedit /enum {current}` only ever prints a "safeboot" line when one is configured.</summary>
@@ -524,7 +470,7 @@ public static class DriverVerifierControlService
         string output;
         try
         {
-            output = await RunCapturedAsync("bcdedit.exe", "/enum {current}", timeoutMs: 15000);
+            (output, _) = await RunCapturedAsync("bcdedit.exe", "/enum {current}", timeoutMs: 15000);
         }
         catch
         {
@@ -549,12 +495,21 @@ public static class DriverVerifierControlService
 
     // ------------------------------------------------------------------------------------------
 
-    private static async Task<(bool Success, string Message)> RunArgsAsync(string exe, string args, int timeoutMs)
+    private static async Task<(bool Success, string Message)> RunArgsAsync(string exe, string args, int timeoutMs, bool rebootNeededExitCodeOk = false)
     {
         try
         {
-            string output = await RunCapturedAsync(exe, args, timeoutMs);
-            return (true, output.Trim().Length > 0 ? output.Trim() : "Done.");
+            var (output, exitCode) = await RunCapturedAsync(exe, args, timeoutMs);
+            string trimmed = output.Trim();
+            // A null exit code means the run timed out and was killed - never report that (or a
+            // nonzero exit) as success: SetSafeBootAsync/ResetAsync callers act on this answer
+            // while recovering from a Verifier bugcheck loop. verifier.exe exits 2 when the change
+            // applied but needs a reboot (EXIT_CODE_REBOOT_NEEDED - see the sibling
+            // DriverVerifierService.ResetAsync), which its callers opt into.
+            bool ok = exitCode == 0 || (rebootNeededExitCodeOk && exitCode == 2);
+            if (trimmed.Length == 0)
+                trimmed = ok ? "Done." : $"The command failed (exit code {exitCode?.ToString() ?? "unknown"}) with no output.";
+            return (ok, trimmed);
         }
         catch (Exception ex)
         {
@@ -562,34 +517,9 @@ public static class DriverVerifierControlService
         }
     }
 
-    /// <summary>Same concurrent-read/bounded-wait/kill-on-timeout shape PnpUtilService already
-    /// establishes - duplicated here rather than shared, matching this app's existing
-    /// self-contained-service convention.</summary>
-    private static async Task<string> RunCapturedAsync(string exe, string args, int timeoutMs)
-    {
-        var psi = new ProcessStartInfo(exe, args)
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        using var proc = Process.Start(psi) ?? throw new InvalidOperationException($"couldn't start {exe}");
-
-        var outputTask = proc.StandardOutput.ReadToEndAsync();
-        var errorTask = proc.StandardError.ReadToEndAsync();
-
-        using var cts = new CancellationTokenSource(timeoutMs);
-        try
-        {
-            await proc.WaitForExitAsync(cts.Token);
-        }
-        catch (OperationCanceledException)
-        {
-            try { proc.Kill(); } catch { /* best-effort */ }
-            return "(command timed out)";
-        }
-
-        return (await outputTask) + (await errorTask);
-    }
+    /// <summary>#1084: delegates to the shared <see cref="ToolRunner"/>. A null exit code means
+    /// the run timed out and the process tree was killed - RunArgsAsync's success check treats
+    /// that as failure (#1019).</summary>
+    private static Task<(string Output, int? ExitCode)> RunCapturedAsync(string exe, string args, int timeoutMs)
+        => ToolRunner.RunCapturedAsync(exe, args, timeoutMs);
 }

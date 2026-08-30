@@ -272,9 +272,9 @@ public static class RemediationActionCatalog
         {
             StartupSource.RegistryRunHkcu => ("HKCU", StartupManagerService.ApprovedRunKeyPath, item.Name),
             StartupSource.RegistryRunHklm => ("HKLM", StartupManagerService.ApprovedRunKeyPath, item.Name),
-            StartupSource.RegistryRunHklmWow6432 => ("HKLM", StartupManagerService.ApprovedRunKeyPath, item.Name),
+            StartupSource.RegistryRunHklmWow6432 => ("HKLM", StartupManagerService.ApprovedRun32KeyPath, item.Name),
             StartupSource.StartupFolderUser => ("HKCU", StartupManagerService.ApprovedFolderKeyPath, Path.GetFileName(item.Command)),
-            StartupSource.StartupFolderAllUsers => ("HKCU", StartupManagerService.ApprovedFolderKeyPath, Path.GetFileName(item.Command)),
+            StartupSource.StartupFolderAllUsers => ("HKLM", StartupManagerService.ApprovedFolderKeyPath, Path.GetFileName(item.Command)),
             _ => ("HKCU", StartupManagerService.ApprovedRunKeyPath, item.Name),
         };
         string fullKey = $"{hiveText}\\{subPath}";

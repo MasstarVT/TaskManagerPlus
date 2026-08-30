@@ -906,8 +906,48 @@
                                     Background="{TemplateBinding Foreground}"
                                     CornerRadius="3"
                                     HorizontalAlignment="Left" />
+                            <!-- suggestions.md #1068: indeterminate visual. WPF sizes PART_Indicator to
+                                 100% when IsIndeterminate, so without this every indeterminate bar read
+                                 as a full, finished bar. The glow is a Foreground-colored pulse swept
+                                 across the track by animating its opacity mask's relative transform
+                                 (mask colors are alpha-only, so the color itself still comes from the
+                                 style's DynamicResource-driven Foreground and re-themes). Deliberately
+                                 no explicit Width and no framework margin animation - the sweep below
+                                 is the only animation, and it scales to any bar width. -->
+                            <Border x:Name="PART_GlowRect" CornerRadius="3" Visibility="Collapsed"
+                                    Background="{TemplateBinding Foreground}">
+                                <Border.OpacityMask>
+                                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                                        <LinearGradientBrush.RelativeTransform>
+                                            <TranslateTransform x:Name="GlowSweepTransform" X="-1" />
+                                        </LinearGradientBrush.RelativeTransform>
+                                        <GradientStop Color="Transparent" Offset="0" />
+                                        <GradientStop Color="#CC000000" Offset="0.4" />
+                                        <GradientStop Color="#CC000000" Offset="0.6" />
+                                        <GradientStop Color="Transparent" Offset="1" />
+                                    </LinearGradientBrush>
+                                </Border.OpacityMask>
+                            </Border>
                         </Grid>
                     </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsIndeterminate" Value="True">
+                            <Setter TargetName="PART_Indicator" Property="Visibility" Value="Collapsed" />
+                            <Setter TargetName="PART_GlowRect" Property="Visibility" Value="Visible" />
+                            <Trigger.EnterActions>
+                                <BeginStoryboard x:Name="GlowSweepStoryboard">
+                                    <Storyboard RepeatBehavior="Forever">
+                                        <DoubleAnimation Storyboard.TargetName="GlowSweepTransform"
+                                                         Storyboard.TargetProperty="X"
+                                                         From="-1" To="1" Duration="0:0:1.6" />
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </Trigger.EnterActions>
+                            <Trigger.ExitActions>
+                                <RemoveStoryboard BeginStoryboardName="GlowSweepStoryboard" />
+                            </Trigger.ExitActions>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
                 </ControlTemplate>
             </Setter.Value>
         </Setter>

@@ -478,6 +478,14 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
     private bool _isSchedulerSampling;
     private List<SchedulerService.ThreadSnapshot> _lastSchedulerSweep = new();
 
+    // #1081: the same sweep, indexed by pid - GetProcessResponsivenessScore is called for every
+    // Processes row each 1s tick, and a Where(t => t.Pid == pid) full scan of the ~3-5k-thread
+    // sweep per row was ~1-1.7M predicate evaluations per second on the UI thread. Built once per
+    // sweep (inside SampleSchedulerAsync's Task.Run); the indexer returns an empty sequence for a
+    // pid with no threads in the sweep, so callers need no null/miss handling.
+    private ILookup<int, SchedulerService.ThreadSnapshot> _schedulerSweepByPid =
+        Enumerable.Empty<SchedulerService.ThreadSnapshot>().ToLookup(t => t.Pid);
+
     public ObservableCollection<LongestBlockedThreadRow> LongestBlockedThreads { get; } = new();
     public ObservableCollection<ThreadCsRateRow> BusiestThreads { get; } = new();
     public ObservableCollection<ContextSwitchAttributionRow> ContextSwitchAttribution { get; } = new();
@@ -2037,7 +2045,7 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
         _isSchedulerSampling = true;
         try
         {
-            var (snapshot, longestBlocked, topRates, attribution, inversions, stuckHints) = await Task.Run(() =>
+            var (snapshot, byPid, longestBlocked, topRates, attribution, inversions, stuckHints) = await Task.Run(() =>
             {
                 var snap = _scheduler.Sweep();
                 var kernelModules = DpcModuleMapService.GetModuleMap();
@@ -2048,10 +2056,13 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
                 var inv = _scheduler.DetectPriorityInversions(snap);
                 // #272: new aggregation over data this same sweep already produces, not a new syscall.
                 var stuck = _scheduler.DetectStuckProcesses(snap);
-                return (snap, longest, topRates, attrib, inv, stuck);
+                // #1081: pid index built off-thread alongside everything else derived from the sweep.
+                var lookup = snap.ToLookup(t => t.Pid);
+                return (snap, lookup, longest, topRates, attrib, inv, stuck);
             });
 
             _lastSchedulerSweep = snapshot;
+            _schedulerSweepByPid = byPid;
 
             LongestBlockedThreads.Clear();
             foreach (var r in longestBlocked) LongestBlockedThreads.Add(r);
@@ -2650,14 +2661,17 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
             if (hungWithDuration.Count > 0) hungForSeconds = hungWithDuration.Max(w => w.HungFor!.Value.TotalSeconds);
         }
 
+        // #1081: indexed lookup into the sweep (built once per sweep in SampleSchedulerAsync)
+        // instead of a full ~3-5k-thread scan per row per tick; single pass, no allocations.
         double? readyRatio = null;
-        var threads = _lastSchedulerSweep.Count > 0 ? _lastSchedulerSweep.Where(t => t.Pid == pid).ToList() : new List<SchedulerService.ThreadSnapshot>();
-        if (threads.Count > 0)
+        const int ThreadStateReady = 1, ThreadStateDeferredReady = 7;
+        int threadCount = 0, readyCount = 0;
+        foreach (var t in _schedulerSweepByPid[pid])
         {
-            const int ThreadStateReady = 1, ThreadStateDeferredReady = 7;
-            int readyCount = threads.Count(t => t.ThreadState is ThreadStateReady or ThreadStateDeferredReady);
-            readyRatio = readyCount / (double)threads.Count;
+            threadCount++;
+            if (t.ThreadState is ThreadStateReady or ThreadStateDeferredReady) readyCount++;
         }
+        if (threadCount > 0) readyRatio = readyCount / (double)threadCount;
 
         // #279 fallback: TopPageFaultProcesses only ever holds the top 15 by rate (see
         // PageFaultService.SampleTopProcesses) - a pid outside that list genuinely has a low rate

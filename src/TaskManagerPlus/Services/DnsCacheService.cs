@@ -28,7 +28,7 @@ public static class DnsCacheService
         var entries = new List<DnsCacheEntry>();
         try
         {
-            string output = await RunIpconfigAsync("/displaydns");
+            string output = (await RunIpconfigAsync("/displaydns")).Output;
             entries = ParseDisplayDns(output);
         }
         catch
@@ -112,10 +112,11 @@ public static class DnsCacheService
     {
         try
         {
-            string output = await RunIpconfigAsync("/flushdns");
+            var (output, exitCode) = await RunIpconfigAsync("/flushdns");
             // English-locale success text, same documented limitation as every other netsh/ipconfig
-            // text parse in this app - a non-English install falls back to the process exit code.
-            return output.Contains("Successfully flushed", StringComparison.OrdinalIgnoreCase);
+            // text parse in this app - #1056: a non-English install won't print this string, so a
+            // clean exit code counts as success too (ipconfig exits nonzero when the flush fails).
+            return output.Contains("Successfully flushed", StringComparison.OrdinalIgnoreCase) || exitCode == 0;
         }
         catch
         {
@@ -123,7 +124,7 @@ public static class DnsCacheService
         }
     }
 
-    private static async Task<string> RunIpconfigAsync(string args)
+    private static async Task<(string Output, int? ExitCode)> RunIpconfigAsync(string args)
     {
         var psi = new ProcessStartInfo("ipconfig.exe", args)
         {
@@ -133,15 +134,20 @@ public static class DnsCacheService
             CreateNoWindow = true,
         };
         using var proc = Process.Start(psi);
-        if (proc is null) return string.Empty;
+        if (proc is null) return (string.Empty, null);
 
         var outputTask = proc.StandardOutput.ReadToEndAsync();
         var errorTask = proc.StandardError.ReadToEndAsync();
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         try { await proc.WaitForExitAsync(cts.Token); }
-        catch (OperationCanceledException) { try { proc.Kill(); } catch { /* best-effort */ } }
+        catch (OperationCanceledException)
+        {
+            // Timed out - killed, so there's no meaningful exit code to report.
+            try { proc.Kill(); } catch { /* best-effort */ }
+            return ((await outputTask) + (await errorTask), null);
+        }
 
-        return (await outputTask) + (await errorTask);
+        return ((await outputTask) + (await errorTask), proc.ExitCode);
     }
 }

@@ -3843,10 +3843,18 @@ public sealed class StorageViewModel : ObservableObject
         {
             try
             {
-                var samples = new List<(string Letter, long Free, long Total)>();
+                // #1082: RecordSample (and with it FreeSpaceHistoryService's debounced store
+                // write) runs here on the background thread - the dispatcher only ever applies
+                // the already-recorded results to the UI-bound rows.
+                var samples = new List<(string Letter, long Free, long Total, List<FreeSpaceDailyPoint> History)>();
                 foreach (var d in DriveInfo.GetDrives().Where(d => d.DriveType == DriveType.Fixed && d.IsReady))
                 {
-                    try { samples.Add((d.Name.TrimEnd('\\'), d.AvailableFreeSpace, d.TotalSize)); }
+                    try
+                    {
+                        string letter = d.Name.TrimEnd('\\');
+                        long free = d.AvailableFreeSpace, total = d.TotalSize;
+                        samples.Add((letter, free, total, FreeSpaceHistoryService.RecordSample(letter, free, total)));
+                    }
                     catch { /* transient read failure - skip this drive for this tick */ }
                 }
                 System.Windows.Application.Current?.Dispatcher.Invoke(() => ApplyFreeSpaceSample(samples));
@@ -3858,9 +3866,9 @@ public sealed class StorageViewModel : ObservableObject
         });
     }
 
-    private void ApplyFreeSpaceSample(List<(string Letter, long Free, long Total)> samples)
+    private void ApplyFreeSpaceSample(List<(string Letter, long Free, long Total, List<FreeSpaceDailyPoint> History)> samples)
     {
-        foreach (var (letter, free, total) in samples)
+        foreach (var (letter, free, total, history) in samples)
         {
             var row = FreeSpaceVolumes.FirstOrDefault(r => r.DriveLetter == letter);
             if (row is null)
@@ -3869,7 +3877,6 @@ public sealed class StorageViewModel : ObservableObject
                 FreeSpaceVolumes.Add(row);
             }
 
-            var history = FreeSpaceHistoryService.RecordSample(letter, free, total);
             row.Apply(history, free, total, FreeSpaceChartColor);
 
             // #355: edge-triggered per volume, same "one toast per crossing, not one per tick"

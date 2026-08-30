@@ -5,6 +5,7 @@ using System.IO;
 using System.Management;
 using System.Text.RegularExpressions;
 using Microsoft.Win32;
+using TaskManagerPlus.Common;
 using TaskManagerPlus.Models;
 
 namespace TaskManagerPlus.Services;
@@ -350,13 +351,11 @@ public static class CrashCorrelationService
         return result;
     }
 
+    /// <summary>Formatting.FormatSpan (#1086) above one minute, plus a seconds rung of its own
+    /// below it - a crash gap can genuinely be sub-minute, where the shared minute-floor ladder
+    /// would read "0m".</summary>
     public static string FormatTimeSpan(TimeSpan span)
-    {
-        if (span.TotalDays >= 1) return $"{(int)span.TotalDays}d {span.Hours}h";
-        if (span.TotalHours >= 1) return $"{(int)span.TotalHours}h {span.Minutes}m";
-        if (span.TotalMinutes >= 1) return $"{(int)span.TotalMinutes}m";
-        return $"{Math.Max(0, (int)span.TotalSeconds)}s";
-    }
+        => span.TotalMinutes >= 1 ? Formatting.FormatSpan(span) : $"{Math.Max(0, (int)span.TotalSeconds)}s";
 
     // =====================================================================================
     // Items 92-94: "what changed in the 48 hours before this cluster's first occurrence" - the
@@ -785,44 +784,13 @@ public static class CrashCorrelationService
 
     private static string Truncate(string s, int maxLen) => s.Length <= maxLen ? s : s[..maxLen] + "…";
 
-    /// <summary>Shells out and captures stdout under a bounded timeout - the same pattern
-    /// CrashDumpConfigService/PowerPlanService/DriverVerifierService each already establish
-    /// independently elsewhere in this app.</summary>
+    /// <summary>#1084: delegates to the shared <see cref="ToolRunner"/>. This service's historical
+    /// shape is preserved: stdout only (pnputil's stderr noise isn't parsed), empty output rather
+    /// than a sentinel on timeout, and soft degradation when the tool can't start.</summary>
     private static async Task<(string Output, int? ExitCode)> RunCapturedAsync(string exe, string args, int timeoutMs)
     {
-        var psi = new ProcessStartInfo(exe, args)
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-
-        Process? proc;
-        try { proc = Process.Start(psi); }
+        try { return await ToolRunner.RunCapturedAsync(exe, args, timeoutMs, timeoutOutput: string.Empty, includeStderr: false); }
         catch { return (string.Empty, null); }
-        if (proc is null) return (string.Empty, null);
-
-        using (proc)
-        {
-            var outputTask = proc.StandardOutput.ReadToEndAsync();
-            var errorTask = proc.StandardError.ReadToEndAsync();
-
-            using var cts = new CancellationTokenSource(timeoutMs);
-            try
-            {
-                await proc.WaitForExitAsync(cts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                try { proc.Kill(true); } catch { /* best-effort */ }
-                return (string.Empty, null);
-            }
-
-            string output = await outputTask;
-            await errorTask;
-            return (output, proc.ExitCode);
-        }
     }
 
     // =====================================================================================

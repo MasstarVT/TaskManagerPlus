@@ -6,7 +6,7 @@ namespace TaskManagerPlus.Services;
 /// <summary>
 /// Round 16, #857: "who's holding a handle to lsass.exe" - reuses the same system-wide handle-table
 /// walk HandleInspectionService already established (NtQuerySystemInformation/
-/// SystemHandleInformation, now exposed as internal ReadSystemHandles for this second consumer), but
+/// SystemExtendedHandleInformation, now exposed as internal ReadSystemHandles for this second consumer), but
 /// in the opposite direction: instead of "what does process X have open" (#12), this asks "which
 /// processes have a handle open to process lsass.exe specifically".
 ///
@@ -73,7 +73,7 @@ public static class LsassHandleWatchService
         {
             var entries = HandleInspectionService.ReadSystemHandles();
             var groups = entries
-                .Where(e => e.UniqueProcessId != lsassPid) // a process's handles to itself aren't a "watcher"
+                .Where(e => (long)e.UniqueProcessId != lsassPid) // a process's handles to itself aren't a "watcher"
                 .GroupBy(e => (int)e.UniqueProcessId);
 
             foreach (var group in groups)
@@ -129,12 +129,12 @@ public static class LsassHandleWatchService
 
     /// <summary>Duplicates one handle and asks GetProcessId whether it refers to lsassPid - see the
     /// class remarks for why this needs no NtQueryObject call (and so no hang-guard) at all.</summary>
-    private static bool TryMatchesLsass(IntPtr sourceProcess, ushort handleValue, int lsassPid)
+    private static bool TryMatchesLsass(IntPtr sourceProcess, IntPtr handleValue, int lsassPid)
     {
         IntPtr dup = IntPtr.Zero;
         try
         {
-            int status = NtDuplicateObject(sourceProcess, (IntPtr)handleValue, GetCurrentProcess(),
+            int status = NtDuplicateObject(sourceProcess, handleValue, GetCurrentProcess(),
                 out dup, 0, 0, DuplicateSameAccess);
             if (status != 0 || dup == IntPtr.Zero) return false;
 

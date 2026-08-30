@@ -41,6 +41,20 @@ public sealed class GpuViewModel : ObservableObject, IDisposable
     private readonly EnergyThermalsViewModel _energyThermals;
     private readonly ProcessesViewModel _processes;
 
+    // Round 18, #1020: the busiest adapter's overall utilization, published under a lock for the
+    // stress-test safety supervisor's background thread - which must never enumerate the UI-owned
+    // LiveAdapters collection while the UI thread's Clear+Add rebuild is mid-flight.
+    private readonly object _stressSnapshotLock = new();
+    private double? _stressMaxAdapterUtilizationPercent;
+
+    /// <summary>Round 18, #1020: thread-safe max-across-adapters utilization snapshot for
+    /// StressTestViewModel's background safety supervisor (null when no live adapter data) - the
+    /// one supported way to read this ViewModel's live GPU utilization off the UI thread.</summary>
+    public double? GetMaxAdapterUtilizationSnapshot()
+    {
+        lock (_stressSnapshotLock) return _stressMaxAdapterUtilizationPercent;
+    }
+
     /// <summary>#678: CPU core-saturation evidence for the bottleneck verdict below - the shared
     /// sampler every other tab already reads from, not a new poll.</summary>
     private readonly PerformanceViewModel _performance;
@@ -487,6 +501,11 @@ public sealed class GpuViewModel : ObservableObject, IDisposable
             var snapshot = await Task.Run(() => _service.Sample());
             LiveAdapters.Clear();
             foreach (var a in snapshot) LiveAdapters.Add(a);
+
+            // Round 18, #1020: publish the scalar the stress-test safety supervisor reads from its
+            // background thread - computed off the local snapshot list, not the collection above.
+            double? maxUtilization = snapshot.Count > 0 ? snapshot.Max(a => a.TotalUtilizationPercent) : null;
+            lock (_stressSnapshotLock) _stressMaxAdapterUtilizationPercent = maxUtilization;
 
             var primary = snapshot.FirstOrDefault(a => a.NameIsExact) ?? snapshot.FirstOrDefault();
 

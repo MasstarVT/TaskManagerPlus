@@ -425,7 +425,7 @@
                            Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,10" />
                 <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
                     <RadioButton GroupName="UnattendedScanFrequency" Content="Daily" Margin="0,0,14,0"
-                                 IsChecked="{Binding DataContext.UnattendedScanWeekly, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource InverseBooleanConverter}}" />
+                                 IsChecked="{Binding DataContext.UnattendedScanWeekly, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource InverseBoolConverter}}" />
                     <RadioButton GroupName="UnattendedScanFrequency" Content="Weekly (Sunday)"
                                  IsChecked="{Binding DataContext.UnattendedScanWeekly, RelativeSource={RelativeSource AncestorType=Window}}" />
                 </StackPanel>
@@ -505,7 +505,7 @@
                                     <TextBlock FontSize="{StaticResource FontBody}" FontWeight="SemiBold" TextWrapping="Wrap" Text="{Binding Description}" />
                                     <TextBlock FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextTertiaryBrush}" Text="{Binding Timestamp, StringFormat={}{0:g}}" Margin="0,0,0,4" />
                                     <Button Content="Undo" FontSize="{StaticResource FontCaption}" Padding="6,2" HorizontalAlignment="Left"
-                                            Command="{Binding DataContext.UndoRegistryChangeCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                            Command="{Binding DataContext.WindowsHealth.UndoRegistryChangeCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                                             CommandParameter="{Binding}" />
                                 </StackPanel>
                             </Border>

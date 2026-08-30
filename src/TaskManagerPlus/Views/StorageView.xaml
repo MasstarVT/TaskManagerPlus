@@ -2678,12 +2678,24 @@
                                     <DataGridTextColumn Header="Filter instances" Binding="{Binding InstanceCount}" Width="120" />
                                 </DataGrid.Columns>
                                 <DataGrid.RowStyle>
-                                    <Style TargetType="DataGridRow">
+                                    <!-- suggestions.md #1072: BasedOn keeps the implicit selection/hover
+                                         triggers. The flag pairs WarningBrush with BgBrush text (dark
+                                         text on the light ambers of the dark families, light text on the
+                                         Light/CB-safe families' dark ambers - passes AA in every family,
+                                         where TextPrimary on amber was ~1.6:1). Gated to unselected rows
+                                         because the implicit DataGridCell style forces TextPrimary
+                                         foreground on selected cells, which is unreadable on amber - the
+                                         base style's selection highlight wins while selected. -->
+                                    <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
                                         <Style.Triggers>
-                                            <DataTrigger Binding="{Binding IsDeepStack}" Value="True">
+                                            <MultiDataTrigger>
+                                                <MultiDataTrigger.Conditions>
+                                                    <Condition Binding="{Binding IsDeepStack}" Value="True" />
+                                                    <Condition Binding="{Binding IsSelected, RelativeSource={RelativeSource Self}}" Value="False" />
+                                                </MultiDataTrigger.Conditions>
                                                 <Setter Property="Background" Value="{DynamicResource WarningBrush}" />
-                                                <Setter Property="Opacity" Value="0.85" />
-                                            </DataTrigger>
+                                                <Setter Property="Foreground" Value="{DynamicResource BgBrush}" />
+                                            </MultiDataTrigger>
                                         </Style.Triggers>
                                     </Style>
                                 </DataGrid.RowStyle>

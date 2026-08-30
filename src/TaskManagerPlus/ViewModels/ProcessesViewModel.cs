@@ -582,6 +582,28 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
             var existing = Processes[i];
             if (latestByPid.TryGetValue(existing.Pid, out var fresh))
             {
+                // Round 18, #1031: same PID, different process - Windows reused the PID within one
+                // poll interval (likelier at raised intervals). Matching on PID alone would graft
+                // the new process's numbers onto the dead process's Name/Path/User/StartTime row
+                // (those are deliberately never reassigned below), fire a phantom working-set-trim,
+                // and skip the exit bookkeeping entirely. Detect the identity change via name or
+                // (when both sides know it) start time, and treat it as exit + add: run the same
+                // removal path the "pid gone" branch below uses, and leave `fresh` in latestByPid
+                // so the add loop at the bottom inserts it as the genuinely new row it is.
+                bool identityChanged =
+                    !string.Equals(existing.Name, fresh.Name, StringComparison.OrdinalIgnoreCase) ||
+                    (existing.StartTime is { } oldStart && fresh.StartTime is { } newStart && oldStart != newStart);
+                if (identityChanged)
+                {
+                    if (_exitRecorded.Add(existing.Pid))
+                        AddRecentlyExited(existing.Pid, existing.Name, null);
+                    UntrackProcess(existing.Pid);
+                    if (existing.NotRespondingSeconds > 0)
+                        HangHistoryService.RecordHang(existing.Name, existing.NotRespondingSeconds);
+                    Processes.RemoveAt(i);
+                    continue;
+                }
+
                 existing.CpuPercent = fresh.CpuPercent;
                 existing.CpuPercent10sAvg = fresh.CpuPercent10sAvg;
                 // #283: detect a working-set trim before overwriting MemoryBytes with this tick's

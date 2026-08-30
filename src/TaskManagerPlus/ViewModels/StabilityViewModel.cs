@@ -3526,7 +3526,7 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
         TdrSettings = snapshot.TdrSettings;
 
         TimeSinceLastCrashText = snapshot.LastCrashTime is { } crash
-            ? FormatSince(DateTime.Now - crash)
+            ? $"{Formatting.FormatSpan(DateTime.Now - crash)} ago"
             : "No crash found in the last 30 days";
 
         LowMemoryEventCount = snapshot.LowMemoryEventCount;
@@ -3978,12 +3978,5 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
 
         KnownBadIdScorecard.Clear();
         foreach (var row in rows) KnownBadIdScorecard.Add(row);
-    }
-
-    private static string FormatSince(TimeSpan since)
-    {
-        if (since.TotalDays >= 1) return $"{(int)since.TotalDays}d {since.Hours}h ago";
-        if (since.TotalHours >= 1) return $"{(int)since.TotalHours}h {since.Minutes}m ago";
-        return $"{(int)since.TotalMinutes}m ago";
     }
 }

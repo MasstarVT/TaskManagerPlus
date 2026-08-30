@@ -64,9 +64,19 @@ public static class ArpCacheService
             using var proc = Process.Start(psi);
             if (proc is not null)
             {
-                string output = await proc.StandardOutput.ReadToEndAsync();
+                // Start both stream reads before waiting (the shape every other shell-out here
+                // uses): awaiting ReadToEndAsync first would block forever on a wedged arp.exe -
+                // the timeout CTS wouldn't even exist yet, so the kill-on-timeout was unreachable
+                // and the caller's IsRefreshingArp flag latched for the session. stderr is drained
+                // too so a chatty error stream can't fill its pipe and wedge the process.
+                var outputTask = proc.StandardOutput.ReadToEndAsync();
+                var errorTask = proc.StandardError.ReadToEndAsync();
+
                 using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
                 try { await proc.WaitForExitAsync(cts.Token); } catch (OperationCanceledException) { try { proc.Kill(); } catch { /* best-effort */ } }
+
+                string output = await outputTask;
+                await errorTask;
 
                 string currentInterfaceIp = string.Empty;
                 foreach (var rawLine in output.Split('\n'))

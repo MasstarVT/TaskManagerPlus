@@ -10,9 +10,11 @@ namespace TaskManagerPlus.Services;
 /// compatibility settings, but a Debugger value there redirects every launch of that executable to
 /// run the debugger command instead (with the original exe passed as an argument) - the classic
 /// "sticky keys backdoor" technique (replacing sethc.exe's Debugger with cmd.exe) as well as a
-/// legitimate way real debuggers and compatibility shims attach. SilentProcessExit\MonitorProcess
-/// under the same subkey is a separate, less well-known hook: it launches MonitorProcess whenever
-/// the named executable exits, silently, with no user-visible prompt.
+/// legitimate way real debuggers and compatibility shims attach. The MonitorProcess hook is a
+/// separate, less well-known one: it launches MonitorProcess whenever the named executable exits,
+/// silently, with no user-visible prompt. Windows stores it under its own
+/// HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SilentProcessExit\&lt;exeName&gt; tree - only
+/// the enabling GlobalFlag bit (0x200, FLG_MONITOR_SILENT_PROCESS_EXIT) lives under IFEO itself.
 ///
 /// Quick flag, not a verdict (see CLAUDE.md's cross-cutting conventions) - this only lists
 /// subkeys that actually carry a Debugger, a nonzero GlobalFlag, or a SilentProcessExit monitor;
@@ -22,51 +24,98 @@ namespace TaskManagerPlus.Services;
 public static class ImageFileExecutionOptionsService
 {
     private const string IfeoPath = @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options";
+    private const string SilentProcessExitPath = @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\SilentProcessExit";
 
     public static List<ImageFileExecutionOptionsEntry> Read()
     {
         var result = new List<ImageFileExecutionOptionsEntry>();
+        var silentMonitors = ReadSilentProcessExitMonitors();
+        var listedExeNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         try
         {
             using var root = Registry.LocalMachine.OpenSubKey(IfeoPath);
-            if (root is null) return result;
-
-            foreach (var exeName in root.GetSubKeyNames())
+            if (root is not null)
             {
-                try
+                foreach (var exeName in root.GetSubKeyNames())
                 {
-                    using var exeKey = root.OpenSubKey(exeName);
-                    if (exeKey is null) continue;
-
-                    string? debugger = exeKey.GetValue("Debugger") as string;
-                    int? globalFlag = exeKey.GetValue("GlobalFlag") as int?;
-
-                    string? monitorProcess = null;
-                    using (var silentKey = exeKey.OpenSubKey("SilentProcessExit"))
-                        monitorProcess = silentKey?.GetValue("MonitorProcess") as string;
-
-                    bool hasDebugger = !string.IsNullOrEmpty(debugger);
-                    bool hasGlobalFlag = globalFlag is not (null or 0);
-                    bool hasMonitor = !string.IsNullOrEmpty(monitorProcess);
-                    if (!hasDebugger && !hasGlobalFlag && !hasMonitor) continue;
-
-                    result.Add(new ImageFileExecutionOptionsEntry
+                    try
                     {
-                        ExecutableName = exeName,
-                        Debugger = debugger,
-                        GlobalFlagHex = hasGlobalFlag ? $"0x{globalFlag:X}" : null,
-                        MonitorProcess = monitorProcess,
-                        IsCurrentlyRunning = IsProcessRunning(exeName),
-                    });
+                        using var exeKey = root.OpenSubKey(exeName);
+                        if (exeKey is null) continue;
+
+                        string? debugger = exeKey.GetValue("Debugger") as string;
+                        int? globalFlag = exeKey.GetValue("GlobalFlag") as int?;
+                        silentMonitors.TryGetValue(exeName, out string? monitorProcess);
+
+                        bool hasDebugger = !string.IsNullOrEmpty(debugger);
+                        bool hasGlobalFlag = globalFlag is not (null or 0);
+                        bool hasMonitor = !string.IsNullOrEmpty(monitorProcess);
+                        if (!hasDebugger && !hasGlobalFlag && !hasMonitor) continue;
+
+                        listedExeNames.Add(exeName);
+                        result.Add(new ImageFileExecutionOptionsEntry
+                        {
+                            ExecutableName = exeName,
+                            Debugger = debugger,
+                            GlobalFlagHex = hasGlobalFlag ? $"0x{globalFlag:X}" : null,
+                            MonitorProcess = monitorProcess,
+                            IsCurrentlyRunning = IsProcessRunning(exeName),
+                        });
+                    }
+                    catch { /* per-entry - skip and continue */ }
                 }
-                catch { /* per-entry - skip and continue */ }
             }
         }
         catch
         {
             // Key inaccessible - degrade to no rows rather than fabricating a result.
         }
+
+        // A SilentProcessExit monitor configured with no IFEO subkey for the exe at all (or one
+        // this scan couldn't read) still deserves a row - it's the T1546.012 payload itself.
+        foreach (var (exeName, monitor) in silentMonitors)
+        {
+            if (listedExeNames.Contains(exeName)) continue;
+            result.Add(new ImageFileExecutionOptionsEntry
+            {
+                ExecutableName = exeName,
+                Debugger = null,
+                GlobalFlagHex = null,
+                MonitorProcess = monitor,
+                IsCurrentlyRunning = IsProcessRunning(exeName),
+            });
+        }
+
         return result.OrderBy(e => e.ExecutableName, StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    /// <summary>Reads the whole SilentProcessExit tree once: exe name -> its MonitorProcess
+    /// command. This is the location Windows actually honors for the exit hook; a
+    /// "SilentProcessExit" subkey under IFEO\&lt;exe&gt; itself is inert.</summary>
+    private static Dictionary<string, string> ReadSilentProcessExitMonitors()
+    {
+        var monitors = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            using var root = Registry.LocalMachine.OpenSubKey(SilentProcessExitPath);
+            if (root is null) return monitors;
+
+            foreach (var exeName in root.GetSubKeyNames())
+            {
+                try
+                {
+                    using var key = root.OpenSubKey(exeName);
+                    if (key?.GetValue("MonitorProcess") is string monitor && monitor.Length > 0)
+                        monitors[exeName] = monitor;
+                }
+                catch { /* per-entry - skip and continue */ }
+            }
+        }
+        catch
+        {
+            // Key inaccessible - degrade to none rather than fabricating a result.
+        }
+        return monitors;
     }
 
     /// <summary>#745: whether a process matching this exe name is currently running - gates the

@@ -3,6 +3,7 @@ using System.Management;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
+using TaskManagerPlus.Common;
 
 namespace TaskManagerPlus.Services;
 
@@ -160,27 +161,20 @@ public static class DhcpAddressingService
         var now = DateTime.Now;
         var age = now - info.LeaseObtained.Value;
         var remaining = info.LeaseExpires.Value - now;
-        string ageText = FormatDuration(age.Duration());
+        string ageText = Formatting.FormatSpan(age.Duration());
 
         if (remaining <= TimeSpan.Zero)
         {
             info.LeaseExpiringSoon = true;
-            info.LeaseStatusText = $"Lease expired {FormatDuration(remaining.Duration())} ago (obtained {ageText} ago) - Windows should be renewing automatically.";
+            info.LeaseStatusText = $"Lease expired {Formatting.FormatSpan(remaining.Duration())} ago (obtained {ageText} ago) - Windows should be renewing automatically.";
         }
         else
         {
             info.LeaseExpiringSoon = remaining <= TimeSpan.FromMinutes(15);
             info.LeaseStatusText = info.LeaseExpiringSoon
-                ? $"Lease expires in {FormatDuration(remaining)} (obtained {ageText} ago) - renewing soon."
-                : $"Lease age {ageText}, expires in {FormatDuration(remaining)}.";
+                ? $"Lease expires in {Formatting.FormatSpan(remaining)} (obtained {ageText} ago) - renewing soon."
+                : $"Lease age {ageText}, expires in {Formatting.FormatSpan(remaining)}.";
         }
-    }
-
-    private static string FormatDuration(TimeSpan span)
-    {
-        if (span.TotalDays >= 1) return $"{(int)span.TotalDays}d {span.Hours}h";
-        if (span.TotalHours >= 1) return $"{(int)span.TotalHours}h {span.Minutes}m";
-        return $"{Math.Max(0, (int)span.TotalMinutes)}m";
     }
 
     /// <summary>#534: derived flags for an implausible mask, a missing default gateway, an IP

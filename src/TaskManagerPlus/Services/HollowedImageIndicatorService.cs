@@ -127,7 +127,13 @@ public static class HollowedImageIndicatorService
                 if (QueryDosDevice(driveLetter, target, target.Capacity) == 0) continue;
 
                 string devicePrefix = target.ToString();
-                if (devicePath.StartsWith(devicePrefix, StringComparison.OrdinalIgnoreCase))
+                // The match must end on a path-segment boundary: "\Device\HarddiskVolume1" is a
+                // string prefix of "\Device\HarddiskVolume10\..." too, and matching it would
+                // splice the wrong drive letter onto a mangled remainder ("D:2\apps\x.exe") -
+                // which then never equals the reported path, i.e. a false hollowing flag on an
+                // innocent process on any machine with 10+ volumes.
+                if (!devicePath.StartsWith(devicePrefix, StringComparison.OrdinalIgnoreCase)) continue;
+                if (devicePath.Length == devicePrefix.Length || devicePath[devicePrefix.Length] == '\\')
                     return driveLetter + devicePath[devicePrefix.Length..];
             }
         }

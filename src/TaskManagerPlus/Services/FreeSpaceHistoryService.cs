@@ -11,6 +11,15 @@ namespace TaskManagerPlus.Services;
 /// by an in-memory cache (loaded lazily, written back only when a sample actually changes
 /// something) rather than a fresh disk read/write on every StorageViewModel.OnPerformanceSampled
 /// tick, since this is now called unthrottled on every shared-sampler tick per #352's brief.
+///
+/// #1082: the write-back is debounced, not per-change - during any sustained download/build,
+/// "today's low-water mark dropped" is true on nearly every 1s tick, and each one used to
+/// re-serialize and rewrite the whole 180-day store (originally inside StorageViewModel's
+/// Dispatcher.Invoke, i.e. on the UI thread). Changes now just mark the cache dirty; the actual
+/// file write happens at most once per PersistIntervalMs, immediately on a day rollover (so a
+/// completed day's mark isn't left in memory for long), and on <see cref="Flush"/> at app exit -
+/// and RecordSample's only caller now runs on a background thread, so the debounced write is off
+/// the dispatcher too.
 /// </summary>
 public static class FreeSpaceHistoryService
 {
@@ -20,8 +29,13 @@ public static class FreeSpaceHistoryService
     // projection while keeping the JSON file small - older points are dropped, oldest first.
     private const int MaxDaysPerDrive = 180;
 
+    // #1082: minimum spacing between persisted writes of the store (except day rollover/Flush).
+    private const long PersistIntervalMs = 60_000;
+
     private static readonly object Lock = new();
     private static FreeSpaceHistoryStore? _cache;
+    private static bool _dirty;
+    private static long _lastPersistMs = long.MinValue;
 
     private static FreeSpaceHistoryStore LoadCache()
     {
@@ -47,18 +61,32 @@ public static class FreeSpaceHistoryService
         return _cache;
     }
 
-    private static void Persist(FreeSpaceHistoryStore store)
+    /// <summary>Writes the store now and, on success, clears the dirty flag - on failure the
+    /// cache stays dirty so the next debounce window (or Flush) retries. Call under Lock.</summary>
+    private static void PersistLocked(FreeSpaceHistoryStore store)
     {
+        _lastPersistMs = Environment.TickCount64;
         try
         {
             var dir = Path.GetDirectoryName(SettingsPath)!;
             Directory.CreateDirectory(dir);
             var json = JsonSerializer.Serialize(store, new JsonSerializerOptions { WriteIndented = true });
             File.WriteAllText(SettingsPath, json);
+            _dirty = false;
         }
         catch
         {
             // Best-effort - if we can't persist, this session's history just resets next launch.
+        }
+    }
+
+    /// <summary>#1082: persists any unwritten changes - called once from MainViewModel.Dispose so
+    /// the last debounce window's low-water marks survive a clean exit.</summary>
+    public static void Flush()
+    {
+        lock (Lock)
+        {
+            if (_dirty && _cache is not null) PersistLocked(_cache);
         }
     }
 
@@ -79,6 +107,7 @@ public static class FreeSpaceHistoryService
 
             var today = DateTime.Today;
             bool changed = false;
+            bool newDay = false;
             if (list.Count > 0 && list[^1].Date == today)
             {
                 if (freeBytes < list[^1].FreeBytes)
@@ -93,9 +122,18 @@ public static class FreeSpaceHistoryService
                 list.Add(new FreeSpaceDailyPoint { Date = today, FreeBytes = freeBytes, TotalBytes = totalBytes });
                 if (list.Count > MaxDaysPerDrive) list.RemoveAt(0);
                 changed = true;
+                newDay = true;
             }
 
-            if (changed) Persist(store);
+            // #1082: debounced write-back - a change only marks the cache dirty; the file is
+            // rewritten at most once per PersistIntervalMs (a low-water mark that keeps dropping
+            // during a download used to rewrite the whole 180-day store nearly every 1s tick), or
+            // immediately when a new day's entry starts. Environment.TickCount64 is monotonic, so
+            // a clock step can't stall or double the writes.
+            if (changed) _dirty = true;
+            if (_dirty && (newDay || _lastPersistMs == long.MinValue || Environment.TickCount64 - _lastPersistMs >= PersistIntervalMs))
+                PersistLocked(store);
+
             return new List<FreeSpaceDailyPoint>(list);
         }
     }

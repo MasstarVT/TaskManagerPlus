@@ -33,6 +33,37 @@ public sealed class SecurityViewModel : ObservableObject
     public ObservableCollection<AutorunEntry> AutorunEntries { get; } = new();
     public ObservableCollection<SecurityFinding> Findings { get; } = new();
 
+    // ==================================================================================
+    // #1025: findings are tracked per scan section and the shared Findings aggregate is rebuilt
+    // from those buckets. Re-running a section replaces only its own rows (previously every
+    // section appended blindly, so each re-scan duplicated its findings in the grid, the exported
+    // report, and the evidence bundle), and no section's scan can wipe another section's findings
+    // (ScanAutorunsAsync's old Findings.Clear() did exactly that).
+    // ==================================================================================
+
+    private const string WritePermissionsSection = "WritePermissions";
+    private const string RevocationSectionPrefix = "Revocation:"; // one bucket per checked path
+
+    private readonly Dictionary<string, List<SecurityFinding>> _findingsBySection = new(StringComparer.Ordinal);
+
+    /// <summary>Replaces one section's findings and rebuilds the aggregate. An empty set removes
+    /// the section entirely (a re-scan that comes back clean clears its stale findings).</summary>
+    private void ReplaceSectionFindings(string section, IEnumerable<SecurityFinding> findings)
+    {
+        var list = findings as List<SecurityFinding> ?? findings.ToList();
+        if (list.Count == 0) _findingsBySection.Remove(section);
+        else _findingsBySection[section] = list;
+        RebuildFindings();
+    }
+
+    private void RebuildFindings()
+    {
+        Findings.Clear();
+        foreach (var sectionFindings in _findingsBySection.Values)
+            foreach (var f in sectionFindings)
+                Findings.Add(f);
+    }
+
     /// <summary>Round 16, #857: results of the lsass.exe handle-watch scan - see
     /// LsassHandleWatchService. "A short list to eyeball, not an alert."</summary>
     public ObservableCollection<LsassHandleWatchService.Finding> LsassHandleFindings { get; } = new();
@@ -340,7 +371,7 @@ public sealed class SecurityViewModel : ObservableObject
             AsrRules.Clear();
             foreach (var r in result.asrRules) AsrRules.Add(r);
 
-            foreach (var f in result.allFindings) Findings.Add(f);
+            ReplaceSectionFindings("ProtectionStatus", result.allFindings);
 
             ProtectionStatusMessage = result.status.Available
                 ? $"Protection status refreshed - {result.exclusions.Count} exclusion(s), {result.allFindings.Count} new finding(s). ASR rule configuration {(result.asrQueryOk ? "read" : "unavailable")}."
@@ -403,7 +434,7 @@ public sealed class SecurityViewModel : ObservableObject
             ThreatEventTimeline.Clear();
             foreach (var e in result.events) ThreatEventTimeline.Add(e);
 
-            foreach (var f in result.findings) Findings.Add(f);
+            ReplaceSectionFindings("ThreatHistory", result.findings);
 
             string logNote = result.logOk ? string.Empty : " (couldn't read the Defender Operational event log)";
             ThreatHistoryStatus = $"{result.detections.Count} WMI detection(s), {result.events.Count} event(s) in the last 90 days{logNote}" +
@@ -522,8 +553,11 @@ public sealed class SecurityViewModel : ObservableObject
         {
             string exe = DefenderService.ResolveMpCmdRunPath();
             string args = DefenderService.BuildScanArgs(type, customPath);
-            _runningScanProcess = DefenderService.StartStreamingProcess(exe, args, AppendScanOutputLine);
-            _runningScanProcess.Exited += (_, _) => OnScanProcessExited();
+            // #1035: the Exited handler is passed in (subscribed before Start) - attaching it to
+            // the returned Process could miss a fast exit (bad args), latching IsScanRunning true
+            // and permanently disabling every scan button.
+            _runningScanProcess = DefenderService.StartStreamingProcess(exe, args, AppendScanOutputLine,
+                (_, _) => OnScanProcessExited());
         }
         catch (Exception ex)
         {
@@ -559,8 +593,9 @@ public sealed class SecurityViewModel : ObservableObject
         try
         {
             var (exe, args) = DefenderService.BuildOfflineScanCommand();
-            _runningScanProcess = DefenderService.StartStreamingProcess(exe, args, AppendScanOutputLine);
-            _runningScanProcess.Exited += (_, _) => OnScanProcessExited();
+            // #1035: same subscribe-before-Start shape as RunScan - see the remarks there.
+            _runningScanProcess = DefenderService.StartStreamingProcess(exe, args, AppendScanOutputLine,
+                (_, _) => OnScanProcessExited());
         }
         catch (Exception ex)
         {
@@ -613,8 +648,15 @@ public sealed class SecurityViewModel : ObservableObject
             AutorunEntries.Clear();
             foreach (var entry in entries) AutorunEntries.Add(entry);
 
-            Findings.Clear();
-            foreach (var finding in findings) Findings.Add(finding);
+            // #1025: replace only this section's findings - the old Findings.Clear() here wiped
+            // every OTHER section's findings out of the grid/report/evidence bundle too. The
+            // write-permission and per-path revocation buckets ARE dropped, since they were
+            // derived from the entries this scan just replaced (same staleness rationale as the
+            // baseline-diff clear below).
+            _findingsBySection.Remove(WritePermissionsSection);
+            foreach (var stale in _findingsBySection.Keys.Where(k => k.StartsWith(RevocationSectionPrefix, StringComparison.Ordinal)).ToList())
+                _findingsBySection.Remove(stale);
+            ReplaceSectionFindings("Autoruns", findings);
 
             // A previous baseline diff no longer corresponds to the grid contents just replaced.
             BaselineAdded.Clear();
@@ -888,19 +930,26 @@ public sealed class SecurityViewModel : ObservableObject
             if (revoked)
             {
                 StatusMessage = $"Revocation check: {entry.Name}'s certificate is reported REVOKED.";
-                Findings.Add(new SecurityFinding
+                // #1025: one bucket per checked path - re-checking the same file replaces its
+                // prior finding instead of stacking a duplicate.
+                ReplaceSectionFindings(RevocationSectionPrefix + entry.ResolvedPath, new[]
                 {
-                    Severity = FindingSeverity.High,
-                    Title = $"Revoked certificate: {entry.Name}",
-                    Reason = $"\"{entry.ResolvedPath}\"'s signing certificate is reported revoked by an online revocation check. Quick flag, not a verdict - always confirm independently before acting.",
-                    Path = entry.ResolvedPath,
-                    WhatDisablingDoes = "A revoked certificate means the issuer no longer vouches for it - treat this file with real suspicion if you don't recognize it.",
-                    RelatedEntry = entry,
+                    new SecurityFinding
+                    {
+                        Severity = FindingSeverity.High,
+                        Title = $"Revoked certificate: {entry.Name}",
+                        Reason = $"\"{entry.ResolvedPath}\"'s signing certificate is reported revoked by an online revocation check. Quick flag, not a verdict - always confirm independently before acting.",
+                        Path = entry.ResolvedPath,
+                        WhatDisablingDoes = "A revoked certificate means the issuer no longer vouches for it - treat this file with real suspicion if you don't recognize it.",
+                        RelatedEntry = entry,
+                    },
                 });
             }
             else
             {
                 StatusMessage = $"Revocation check: {entry.Name}'s certificate is not revoked.";
+                // A now-clean re-check clears any stale revoked finding for this same path.
+                ReplaceSectionFindings(RevocationSectionPrefix + entry.ResolvedPath, Array.Empty<SecurityFinding>());
             }
         }
         finally
@@ -924,7 +973,7 @@ public sealed class SecurityViewModel : ObservableObject
         {
             var snapshot = AutorunEntries.ToList();
             var newFindings = await Task.Run(() => AutorunsService.CheckWritePermissions(snapshot));
-            foreach (var finding in newFindings) Findings.Add(finding);
+            ReplaceSectionFindings(WritePermissionsSection, newFindings);
             StatusMessage = newFindings.Count > 0
                 ? $"Write-permission check: {newFindings.Count} finding(s) added."
                 : "Write-permission check: no weak ACLs found among the current scan's targets.";
@@ -975,7 +1024,7 @@ public sealed class SecurityViewModel : ObservableObject
             var result = await Task.Run(() => PlatformSecurityService.ReadAll(persistenceSnapshot));
 
             PlatformSecurity = result.Info;
-            foreach (var f in result.Findings) Findings.Add(f);
+            ReplaceSectionFindings("PlatformSecurity", result.Findings);
 
             PlatformSecurityStatus = $"Platform security posture refreshed - {result.Findings.Count} new finding(s).";
         }
@@ -1167,7 +1216,7 @@ public sealed class SecurityViewModel : ObservableObject
             foreach (var a in adapterProfiles) AdapterFirewallProfiles.Add(a);
 
             var findings = FirewallService.BuildProfileFindings(profiles);
-            foreach (var f in findings) Findings.Add(f);
+            ReplaceSectionFindings("FirewallPosture", findings);
 
             FirewallPostureStatus = profiles.Count == 0
                 ? "Couldn't read firewall profile posture (WMI unavailable/denied)."
@@ -1314,7 +1363,7 @@ public sealed class SecurityViewModel : ObservableObject
             var (shares, findings) = await Task.Run(ShareAuditService.Scan);
             Shares.Clear();
             foreach (var s in shares) Shares.Add(s);
-            foreach (var f in findings) Findings.Add(f);
+            ReplaceSectionFindings("Shares", findings);
 
             int userShares = shares.Count(s => !s.IsAdministrative);
             ShareScanStatus = $"{shares.Count} share(s) found ({userShares} user-created, {shares.Count - userShares} administrative) - {findings.Count} new finding(s).";
@@ -1402,7 +1451,7 @@ public sealed class SecurityViewModel : ObservableObject
                 var posture = DnsPostureService.ReadPosture();
                 return (DnsPostureService.BuildFindings(posture), posture.Adapters.Count);
             });
-            foreach (var f in findings) Findings.Add(f);
+            ReplaceSectionFindings("DnsPosture", findings);
             DnsPostureFindingStatus = $"{adapterCount} adapter(s) checked - {findings.Count} new finding(s). Full DNS posture detail (per-adapter servers, DoH, NRPT) is on the Network tab.";
         }
         catch (Exception ex)
@@ -1432,7 +1481,7 @@ public sealed class SecurityViewModel : ObservableObject
 
             ProxyConfig = perUser;
             MachineProxyConfig = machine;
-            foreach (var f in findings) Findings.Add(f);
+            ReplaceSectionFindings("ProxyPosture", findings);
 
             ProxyPostureStatus = $"Per-user proxy: {(perUser.Enabled ? "Enabled" : "Disabled")}. Machine WinHTTP proxy: {(machine.DirectAccess ? "Direct (no proxy)" : machine.ProxyServer)}. {findings.Count} new finding(s).";
         }
@@ -1487,7 +1536,7 @@ public sealed class SecurityViewModel : ObservableObject
             CertificateAnomalies.Clear();
             foreach (var r in rows) CertificateAnomalies.Add(r);
             DisallowedCertificateCount = disallowedCount;
-            foreach (var f in findings) Findings.Add(f);
+            ReplaceSectionFindings("CertificateStore", findings);
 
             CertificateScanStatus = $"{rows.Count} certificate(s) flagged for review across LocalMachine/CurrentUser Root+CA stores ({disallowedCount} already in the Disallowed store, reported as a count only - Windows itself already flagged those). \"Installed recently\" isn't determinable via X509Certificate2 (not implemented - see class remarks).";
         }
@@ -1638,7 +1687,7 @@ public sealed class SecurityViewModel : ObservableObject
             var (accounts, findings) = await Task.Run(AccountSecurityService.ReadLocalAccounts);
             LocalAccounts.Clear();
             foreach (var a in accounts) LocalAccounts.Add(a);
-            foreach (var f in findings) Findings.Add(f);
+            ReplaceSectionFindings("LocalAccounts", findings);
 
             LocalAccountsStatus = accounts.Count == 0
                 ? "Couldn't read local accounts (WMI unavailable/denied)."
@@ -1663,7 +1712,8 @@ public sealed class SecurityViewModel : ObservableObject
         {
             var (info, finding) = await Task.Run(AccountSecurityService.ReadAutologonExposure);
             AutologonExposure = info;
-            if (finding is not null) Findings.Add(finding);
+            // #1025: null finding replaces with empty, clearing any stale prior finding too.
+            ReplaceSectionFindings("Autologon", finding is null ? Array.Empty<SecurityFinding>() : new[] { finding });
 
             AutologonExposureStatus = info.Enabled
                 ? $"AutoAdminLogon is ON for \"{info.UserName}\"" + (info.DefaultPasswordPresent ? " - a DefaultPassword value IS present (value itself never read)." : " - no DefaultPassword value present.")
@@ -1688,7 +1738,8 @@ public sealed class SecurityViewModel : ObservableObject
         {
             var (info, finding) = await Task.Run(AccountSecurityService.ReadRdpExposure);
             RdpExposure = info;
-            if (finding is not null) Findings.Add(finding);
+            // #1025: null finding replaces with empty, clearing any stale prior finding too.
+            ReplaceSectionFindings("RdpExposure", finding is null ? Array.Empty<SecurityFinding>() : new[] { finding });
 
             bool listedAsExposed = ExposedListeners.Any(l => l.Connection.LocalPort == info.Port) || OtherListeners.Any(l => l.Connection.LocalPort == info.Port);
             string exposureNote = listedAsExposed
@@ -1721,7 +1772,7 @@ public sealed class SecurityViewModel : ObservableObject
             var (events, logAvailable, findings) = await Task.Run(AccountSecurityService.ReadSignInTimeline);
             SignInTimeline.Clear();
             foreach (var e in events) SignInTimeline.Add(e);
-            foreach (var f in findings) Findings.Add(f);
+            ReplaceSectionFindings("SignInTimeline", findings);
 
             SignInTimelineStatus = logAvailable
                 ? $"{events.Count} event(s) in the last 30 days. {findings.Count} new finding(s)."
@@ -1846,7 +1897,7 @@ public sealed class SecurityViewModel : ObservableObject
             var (findings, securityFindings) = await Task.Run(BrowserHijackCheckService.Scan);
             BrowserHijackFindings.Clear();
             foreach (var f in findings) BrowserHijackFindings.Add(f);
-            foreach (var f in securityFindings) Findings.Add(f);
+            ReplaceSectionFindings("BrowserHijack", securityFindings);
 
             bool anyForced = findings.Any(f => f.Category.Contains("Force-installed", StringComparison.OrdinalIgnoreCase) || f.Category.Contains("External Extensions", StringComparison.OrdinalIgnoreCase));
             BrowserHijackScanStatus = $"{findings.Count} item(s) checked across Chrome/Edge/Firefox profiles and policy. {securityFindings.Count} new finding(s)."

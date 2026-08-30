@@ -1,3 +1,5 @@
+using TaskManagerPlus.Common;
+
 namespace TaskManagerPlus.Models;
 
 /// <summary>#749/#750/#751: one Service Control Manager failure/crash event (7000 failed to start,
@@ -121,7 +123,7 @@ public sealed class HungServiceDiagnosis
             if (!IsPending) return $"{ServiceName} is not currently pending (state: {StateText}) - nothing to diagnose.";
 
             string durationText = PendingDuration is { } d
-                ? FormatDuration(d)
+                ? Formatting.FormatSpanMinutes(d)
                 : "an unknown duration (this app only just started watching it)";
             string advancingText = CheckpointAdvancing
                 ? "the checkpoint is advancing - it looks like it's still making progress"
@@ -130,9 +132,6 @@ public sealed class HungServiceDiagnosis
                    $"(checkpoint {Checkpoint}, wait hint {WaitHintMs}ms, ServicesPipeTimeout {ServicesPipeTimeoutMs / 1000}s).";
         }
     }
-
-    private static string FormatDuration(TimeSpan d) =>
-        d.TotalMinutes >= 1 ? $"{(int)d.TotalMinutes}m {d.Seconds}s" : $"{(int)d.TotalSeconds}s";
 }
 
 /// <summary>#759: one System-log Service Control Manager event 7040 ("the start type of the X

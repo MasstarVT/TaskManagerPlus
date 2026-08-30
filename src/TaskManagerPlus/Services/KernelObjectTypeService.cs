@@ -10,7 +10,7 @@ namespace TaskManagerPlus.Services;
 /// object is piling up" without a kernel debugger attached.
 ///
 /// This is the least stable struct layout in this app's whole native-interop surface: unlike
-/// SYSTEM_POOLTAG (a fixed-size array of fixed-size structs) or SYSTEM_HANDLE_TABLE_ENTRY_INFO,
+/// SYSTEM_POOLTAG (a fixed-size array of fixed-size structs) or SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX,
 /// each OBJECT_TYPE_INFORMATION entry is followed immediately by its own variable-length name
 /// buffer, then the next entry is realigned to a pointer boundary - a genuinely undocumented,
 /// version-sensitive layout. Every offset computed while walking it is sanity-checked against the

@@ -1313,7 +1313,7 @@
                             </WrapPanel>
                             <ProgressBar Height="8" Minimum="0" Maximum="100" Value="{Binding PatternTestProgressPercent, Mode=OneWay}" Margin="0,0,0,8">
                                 <ProgressBar.Style>
-                                    <Style TargetType="ProgressBar">
+                                    <Style TargetType="ProgressBar" BasedOn="{StaticResource {x:Type ProgressBar}}">
                                         <Setter Property="Visibility" Value="Collapsed" />
                                         <Style.Triggers>
                                             <DataTrigger Binding="{Binding IsPatternTestRunning}" Value="True">

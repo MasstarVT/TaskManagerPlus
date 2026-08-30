@@ -14,6 +14,10 @@ namespace TaskManagerPlus.Services;
 /// </summary>
 public static class ChangeJournalService
 {
+    // #1091: same FileLock shape as RegistryChangeJournalService - every current caller runs on
+    // the UI dispatcher thread, but the moment an Append lands inside a Task.Run or timer callback
+    // an unlocked MarkUndone rewrite would clobber the concurrent append.
+    private static readonly object FileLock = new();
     private static string JournalPath => AppPaths.GetPath("change-journal.jsonl");
 
     private static readonly JsonSerializerOptions JsonOpts = new()
@@ -26,15 +30,18 @@ public static class ChangeJournalService
     /// fails).</summary>
     public static void Append(ChangeJournalEntry entry)
     {
-        try
+        lock (FileLock)
         {
-            var dir = Path.GetDirectoryName(JournalPath)!;
-            Directory.CreateDirectory(dir);
-            File.AppendAllText(JournalPath, JsonSerializer.Serialize(entry, JsonOpts) + Environment.NewLine);
-        }
-        catch
-        {
-            // Best-effort - see remarks above.
+            try
+            {
+                var dir = Path.GetDirectoryName(JournalPath)!;
+                Directory.CreateDirectory(dir);
+                File.AppendAllText(JournalPath, JsonSerializer.Serialize(entry, JsonOpts) + Environment.NewLine);
+            }
+            catch
+            {
+                // Best-effort - see remarks above.
+            }
         }
     }
 
@@ -45,9 +52,14 @@ public static class ChangeJournalService
         var result = new List<ChangeJournalEntry>();
         try
         {
-            if (!File.Exists(JournalPath)) return result;
+            string[] lines;
+            lock (FileLock)
+            {
+                if (!File.Exists(JournalPath)) return result;
+                lines = File.ReadAllLines(JournalPath);
+            }
 
-            foreach (var line in File.ReadAllLines(JournalPath))
+            foreach (var line in lines)
             {
                 if (string.IsNullOrWhiteSpace(line)) continue;
                 try
@@ -76,34 +88,41 @@ public static class ChangeJournalService
     /// lifetime of use through this app).</summary>
     public static void MarkUndone(string entryId)
     {
-        try
+        lock (FileLock)
         {
-            if (!File.Exists(JournalPath)) return;
-
-            var lines = File.ReadAllLines(JournalPath);
-            var rewritten = new List<string>(lines.Length);
-            foreach (var line in lines)
+            try
             {
-                if (string.IsNullOrWhiteSpace(line)) { rewritten.Add(line); continue; }
-                try
+                if (!File.Exists(JournalPath)) return;
+
+                var lines = File.ReadAllLines(JournalPath);
+                var rewritten = new List<string>(lines.Length);
+                foreach (var line in lines)
                 {
-                    var entry = JsonSerializer.Deserialize<ChangeJournalEntry>(line, JsonOpts);
-                    if (entry is not null && string.Equals(entry.Id, entryId, StringComparison.Ordinal))
+                    if (string.IsNullOrWhiteSpace(line)) { rewritten.Add(line); continue; }
+                    try
                     {
-                        entry.Undone = true;
-                        entry.UndoneAtUtc = DateTime.UtcNow;
-                        rewritten.Add(JsonSerializer.Serialize(entry, JsonOpts));
-                        continue;
+                        var entry = JsonSerializer.Deserialize<ChangeJournalEntry>(line, JsonOpts);
+                        if (entry is not null && string.Equals(entry.Id, entryId, StringComparison.Ordinal))
+                        {
+                            entry.Undone = true;
+                            entry.UndoneAtUtc = DateTime.UtcNow;
+                            rewritten.Add(JsonSerializer.Serialize(entry, JsonOpts));
+                            continue;
+                        }
                     }
+                    catch { /* leave the line as-is */ }
+                    rewritten.Add(line);
                 }
-                catch { /* leave the line as-is */ }
-                rewritten.Add(line);
+                // #1026: rewrite via temp-file+rename so a crash mid-write can't truncate the
+                // whole journal to partial JSONL.
+                string tempPath = JournalPath + ".tmp";
+                File.WriteAllLines(tempPath, rewritten);
+                File.Move(tempPath, JournalPath, overwrite: true);
             }
-            File.WriteAllLines(JournalPath, rewritten);
-        }
-        catch
-        {
-            // Best-effort - see Append's remarks.
+            catch
+            {
+                // Best-effort - see Append's remarks.
+            }
         }
     }
 }

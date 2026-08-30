@@ -90,8 +90,6 @@ public sealed class LoggingViewModel : ObservableObject, IDisposable
         }
     }
 
-    public IReadOnlyList<int> SampleIntervalOptions { get; } = new[] { 1, 5, 10 };
-
     /// <summary>Round 11, #77: whether old rotated log parts get swept automatically - see
     /// LoggingService.CleanupOldRotatedParts.</summary>
     public bool AutoCleanupEnabled

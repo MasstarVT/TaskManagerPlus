@@ -117,7 +117,7 @@ public sealed class HungWindowService : IDisposable
             if (hwnd == IntPtr.Zero) return;
             GetWindowThreadProcessId(hwnd, out int pid);
             _foregroundPid = pid;
-            _foregroundProcessName = TryGetProcessName(pid) ?? string.Empty;
+            _foregroundProcessName = ProcessNameLookup.TryGetProcessName(pid) ?? string.Empty;
         }
         catch { /* best-effort */ }
     }
@@ -160,7 +160,7 @@ public sealed class HungWindowService : IDisposable
                 Hwnd = w.Hwnd,
                 Pid = w.Pid,
                 ThreadId = w.ThreadId,
-                ProcessName = TryGetProcessName(w.Pid) ?? "(exited)",
+                ProcessName = ProcessNameLookup.TryGetProcessName(w.Pid) ?? "(exited)",
                 WindowTitle = w.Title,
                 IsHung = w.IsHung,
                 ResponseMs = _lastResponseMs.ContainsKey(w.Hwnd) ? respMs : null,
@@ -180,9 +180,13 @@ public sealed class HungWindowService : IDisposable
             _chainCache.TryRemove(hwnd, out _);
 
             var match = raw.FirstOrDefault(w => w.Hwnd == hwnd);
+            // A window that vanished entirely matches nothing: default(RawWindow) carries Pid 0,
+            // which Process.GetProcessById resolves to the "Idle" pseudo-process rather than
+            // failing - so a crash-after-hang would be logged as AppName="Idle". Guard to
+            // "(unknown)" instead.
             recovered.Add(new HangLogEntry
             {
-                AppName = TryGetProcessName(match.Pid) ?? "(unknown)",
+                AppName = match.Pid != 0 ? ProcessNameLookup.TryGetProcessName(match.Pid) ?? "(unknown)" : "(unknown)",
                 WindowTitle = match.Title ?? string.Empty,
                 StartTime = start,
                 DurationSeconds = Math.Max(0, (now - start).TotalSeconds),
@@ -225,7 +229,7 @@ public sealed class HungWindowService : IDisposable
             if (pending.Hwnd != IntPtr.Zero)
             {
                 _lastChainResolveUtc = DateTime.UtcNow;
-                string appName = TryGetProcessName(pending.Pid) ?? pending.Title;
+                string appName = ProcessNameLookup.TryGetProcessName(pending.Pid) ?? pending.Title;
                 _chainCache[pending.Hwnd] = ResolveHangChain(pending.Pid, appName);
             }
         }
@@ -344,7 +348,7 @@ public sealed class HungWindowService : IDisposable
             var best = matches.FirstOrDefault(m => m.Pid > 4 && m.Pid != pid);
             if (best is null) return null;
 
-            string otherName = TryGetProcessName(best.Pid) is { } n ? $"{n} (pid {best.Pid})" : $"pid {best.Pid}";
+            string otherName = ProcessNameLookup.TryGetProcessName(best.Pid) is { } n ? $"{n} (pid {best.Pid})" : $"pid {best.Pid}";
 
             if (best.ObjectType == "File" && !string.IsNullOrEmpty(best.ObjectName))
             {
@@ -362,19 +366,6 @@ public sealed class HungWindowService : IDisposable
                 _ => $"sharing a {best.ObjectType} handle",
             };
             return $"{appName} is waiting on {otherName} — {reason}. Quick flag, not a confirmed deadlock.";
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    private static string? TryGetProcessName(int pid)
-    {
-        try
-        {
-            using var p = Process.GetProcessById(pid);
-            return p.ProcessName;
         }
         catch
         {

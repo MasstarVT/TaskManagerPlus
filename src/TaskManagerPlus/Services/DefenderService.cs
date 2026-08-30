@@ -502,8 +502,12 @@ public static class DefenderService
     /// <summary>Starts a process with stdout/stderr redirected and streamed line-by-line via
     /// onLine (fired on a background thread - callers marshal to the UI thread themselves, the
     /// same pattern this app already uses elsewhere for cross-thread ObservableCollection updates).
-    /// Returns the live, already-started Process so the caller can Kill() it to cancel.</summary>
-    public static Process StartStreamingProcess(string exe, string args, Action<string> onLine)
+    /// Returns the live, already-started Process so the caller can Kill() it to cancel.
+    /// #1035: pass the Exited handler here rather than attaching it to the returned Process - a
+    /// fast-exiting process (bad args) can fire Exited before the caller's subscription lands,
+    /// permanently latching the caller's "scan running" state. Subscribing before Start() (with
+    /// EnableRaisingEvents already true) guarantees the handler fires even for an instant exit.</summary>
+    public static Process StartStreamingProcess(string exe, string args, Action<string> onLine, EventHandler? onExited = null)
     {
         var psi = new ProcessStartInfo(exe, args)
         {
@@ -515,6 +519,7 @@ public static class DefenderService
         var proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
         proc.OutputDataReceived += (_, e) => { if (e.Data is not null) onLine(e.Data); };
         proc.ErrorDataReceived += (_, e) => { if (e.Data is not null) onLine(e.Data); };
+        if (onExited is not null) proc.Exited += onExited; // #1035: before Start - see remarks
         proc.Start();
         proc.BeginOutputReadLine();
         proc.BeginErrorReadLine();
@@ -523,29 +528,12 @@ public static class DefenderService
 
     /// <summary>Blocking capture-with-exit-code, for the short-lived MpCmdRun calls that don't need
     /// streaming (quarantine list/restore/purge, and the Processes tab's "Scan this process's image
-    /// file" trigger). Mirrors AutorunsService.RunCapturedSync's kill-on-timeout shape.</summary>
+    /// file" trigger). #1084: delegates to the shared <see cref="ToolRunner"/>, keeping this
+    /// method's historical timed-out shape (-1 plus "(timed out)").</summary>
     public static (int ExitCode, string Output) RunCapturedWithExitCode(string exe, string args, TimeSpan timeout)
     {
-        var psi = new ProcessStartInfo(exe, args)
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        using var proc = Process.Start(psi) ?? throw new InvalidOperationException($"couldn't start {exe}");
-
-        var outputTask = proc.StandardOutput.ReadToEndAsync();
-        var errorTask = proc.StandardError.ReadToEndAsync();
-
-        if (!proc.WaitForExit((int)timeout.TotalMilliseconds))
-        {
-            try { proc.Kill(entireProcessTree: true); } catch { /* best-effort */ }
-            return (-1, "(timed out)");
-        }
-
-        string text = outputTask.GetAwaiter().GetResult() + errorTask.GetAwaiter().GetResult();
-        return (proc.ExitCode, text);
+        var (output, exitCode) = ToolRunner.RunCaptured(exe, args, timeout, timeoutOutput: "(timed out)");
+        return (exitCode ?? -1, output);
     }
 
     // ==================================================================================

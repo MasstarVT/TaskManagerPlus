@@ -52,11 +52,22 @@ public sealed class PerCoreDpcService : IDisposable
     private long[]? _prevInterrupt;
     private DateTime _prevTime;
 
-    private readonly List<PerformanceCounter> _queuedCounters = new();
-    private readonly List<PerformanceCounter> _rateCounters = new();
-    private readonly List<PerformanceCounter> _interruptRateCounters = new();
+    // #1077: one whole-category CategorySampler read serves every per-core counter value - the
+    // replacement for the old one-PerformanceCounter-per-(counter, core) lists, where every
+    // NextValue() re-read the ENTIRE "Processor Information" category (up to ~72 full category
+    // reads per 2s tick on a 24-thread machine; see CategorySampler's remarks). SampleQueueRates
+    // and SampleInterruptStorm are called back-to-back from ResponsivenessViewModel's light tick,
+    // so EnsureTicked coalesces them onto a single ReadCategory per cycle.
+    private readonly CategorySampler _processorInfo = new("Processor Information");
     private readonly List<string> _coreInstanceNames = new();
     private bool _queueCountersReady;
+    private bool _hasInterruptCounter;
+    private long _lastCategoryTickMs = long.MinValue;
+
+    /// <summary>Minimum spacing between whole-category reads - well under the 2s light-timer
+    /// cadence, so the two sample methods called within the same timer tick share one read while
+    /// consecutive timer ticks each get a fresh one.</summary>
+    private const long CategoryTickCoalesceMs = 500;
 
     // #215: separate prev-sample state from #205's SampleCoreDpcInterrupt above, so the two
     // methods can be called independently (in any order, any tick) without entangling each other's
@@ -78,37 +89,44 @@ public sealed class PerCoreDpcService : IDisposable
 
     /// <summary>Best-effort - some systems/virtualized environments don't expose the "Processor
     /// Information" category's queue counters at all, in which case SampleQueueRates just returns
-    /// an empty list (the #206 tiles stay hidden) rather than throwing.</summary>
+    /// an empty list (the #206 tiles stay hidden) rather than throwing. The initial Tick() here is
+    /// the priming read (CategorySampler's rate counters need a previous sample), replacing the old
+    /// per-counter priming NextValue() loop - which itself cost one full category read per counter.</summary>
     private void TryInitQueueCounters()
     {
         try
         {
             if (!PerformanceCounterCategory.Exists("Processor Information")) return;
-            var category = new PerformanceCounterCategory("Processor Information");
-            var instances = category.GetInstanceNames()
+
+            _processorInfo.Tick();
+            _lastCategoryTickMs = Environment.TickCount64;
+
+            var instances = _processorInfo.InstanceNames("DPCs Queued/sec")
                 .Where(n => n.Contains(',') && !n.Contains("_Total", StringComparison.OrdinalIgnoreCase))
                 .OrderBy(n => n, StringComparer.Ordinal)
                 .ToList();
 
-            bool hasInterruptCounter = PerformanceCounterCategory.CounterExists("Interrupts/sec", "Processor Information");
-
-            foreach (var inst in instances)
-            {
-                _queuedCounters.Add(new PerformanceCounter("Processor Information", "DPCs Queued/sec", inst, readOnly: true));
-                _rateCounters.Add(new PerformanceCounter("Processor Information", "DPC Rate", inst, readOnly: true));
-                if (hasInterruptCounter)
-                    _interruptRateCounters.Add(new PerformanceCounter("Processor Information", "Interrupts/sec", inst, readOnly: true));
-                _coreInstanceNames.Add(inst);
-            }
-            foreach (var c in _queuedCounters) _ = c.NextValue();
-            foreach (var c in _rateCounters) _ = c.NextValue();
-            foreach (var c in _interruptRateCounters) _ = c.NextValue();
-            _queueCountersReady = _queuedCounters.Count > 0;
+            _hasInterruptCounter = _processorInfo.HasCounter("Interrupts/sec");
+            _coreInstanceNames.AddRange(instances);
+            _queueCountersReady = _coreInstanceNames.Count > 0;
         }
         catch
         {
             _queueCountersReady = false;
         }
+    }
+
+    /// <summary>#1077: reads the whole "Processor Information" category at most once per
+    /// <see cref="CategoryTickCoalesceMs"/> window, so the sample methods called within one light-
+    /// timer tick share a single ReadCategory (and each timer tick still gets fresh data). Uses
+    /// Environment.TickCount64 (monotonic) rather than wall-clock so a clock step can't starve or
+    /// double the reads.</summary>
+    private void EnsureTicked()
+    {
+        long now = Environment.TickCount64;
+        if (_lastCategoryTickMs != long.MinValue && now - _lastCategoryTickMs < CategoryTickCoalesceMs) return;
+        _processorInfo.Tick();
+        _lastCategoryTickMs = now;
     }
 
     public List<CoreDpcRow> SampleCoreDpcInterrupt()
@@ -174,7 +192,7 @@ public sealed class PerCoreDpcService : IDisposable
     /// just read via a different API, so either source is equally honest.</summary>
     public List<CoreInterruptRow> SampleInterruptStorm()
     {
-        var rates = _interruptRateCounters.Count > 0 ? SampleFromCounters() : SampleFromSyscall();
+        var rates = _queueCountersReady && _hasInterruptCounter ? SampleFromCounters() : SampleFromSyscall();
         if (rates is null || rates.Count == 0) return new List<CoreInterruptRow>();
 
         var sorted = rates.OrderBy(r => r).ToList();
@@ -195,8 +213,9 @@ public sealed class PerCoreDpcService : IDisposable
     {
         try
         {
-            var rates = new List<double>(_interruptRateCounters.Count);
-            foreach (var c in _interruptRateCounters) rates.Add(c.NextValue());
+            EnsureTicked();
+            var rates = new List<double>(_coreInstanceNames.Count);
+            foreach (var inst in _coreInstanceNames) rates.Add(_processorInfo.Value("Interrupts/sec", inst));
             return rates;
         }
         catch
@@ -262,13 +281,14 @@ public sealed class PerCoreDpcService : IDisposable
         if (!_queueCountersReady) return rows;
         try
         {
-            for (int i = 0; i < _queuedCounters.Count; i++)
+            EnsureTicked();
+            foreach (var inst in _coreInstanceNames)
             {
                 rows.Add(new CoreDpcQueueRow
                 {
-                    CoreLabel = $"Core {_coreInstanceNames[i]}",
-                    DpcsQueuedPerSec = _queuedCounters[i].NextValue(),
-                    DpcRate = _rateCounters[i].NextValue(),
+                    CoreLabel = $"Core {inst}",
+                    DpcsQueuedPerSec = _processorInfo.Value("DPCs Queued/sec", inst),
+                    DpcRate = _processorInfo.Value("DPC Rate", inst),
                 });
             }
         }
@@ -281,8 +301,7 @@ public sealed class PerCoreDpcService : IDisposable
 
     public void Dispose()
     {
-        foreach (var c in _queuedCounters) c.Dispose();
-        foreach (var c in _rateCounters) c.Dispose();
-        foreach (var c in _interruptRateCounters) c.Dispose();
+        // #1077: nothing to dispose anymore - CategorySampler holds no PerformanceCounter objects,
+        // only the previous tick's samples. Kept so the owning ViewModel's Dispose wiring stands.
     }
 }

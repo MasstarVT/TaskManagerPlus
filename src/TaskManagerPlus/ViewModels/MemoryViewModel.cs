@@ -940,7 +940,7 @@ public sealed class MemoryViewModel : ObservableObject, IDisposable
             _thrashingStartUtc ??= DateTime.UtcNow;
             var elapsed = DateTime.UtcNow - _thrashingStartUtc.Value;
             IsThrashing = true;
-            ThrashingStatusText = $"Thrashing for {FormatDuration(elapsed)} - heavy page-file I/O with the page file nearly full"
+            ThrashingStatusText = $"Thrashing for {Formatting.FormatSpanHours(elapsed)} - heavy page-file I/O with the page file nearly full"
                 + (Performance.PageFileVolumeQueueLength is { } ql ? $" and its disk queue backed up ({ql:0.0})." : ".");
         }
         else
@@ -950,9 +950,6 @@ public sealed class MemoryViewModel : ObservableObject, IDisposable
             ThrashingStatusText = "Not thrashing";
         }
     }
-
-    private static string FormatDuration(TimeSpan span)
-        => span.TotalHours >= 1 ? $"{(int)span.TotalHours}h {span.Minutes}m" : $"{(int)span.TotalMinutes}m {span.Seconds}s";
 
     /// <summary>#433: repeated Process\Page Faults/sec sampling over a 30-second window (via
     /// ProcessPerfCounterService, already used elsewhere in this app for the same category/rate-

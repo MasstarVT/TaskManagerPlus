@@ -187,34 +187,13 @@ public static class NetworkStackInventoryService
         }
     }
 
+    /// <summary>#1084: delegates to the shared <see cref="ToolRunner"/>, keeping this service's
+    /// degrade-to-empty shape (empty string on timeout or when the tool can't start).</summary>
     private static async Task<string> RunAsync(string exe, string args, int timeoutMs)
     {
         try
         {
-            var psi = new ProcessStartInfo(exe, args)
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return string.Empty;
-
-            var outputTask = proc.StandardOutput.ReadToEndAsync();
-            var errorTask = proc.StandardError.ReadToEndAsync();
-            using var cts = new CancellationTokenSource(timeoutMs);
-            try
-            {
-                await proc.WaitForExitAsync(cts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                try { proc.Kill(); } catch { /* best-effort */ }
-                return string.Empty;
-            }
-
-            return (await outputTask) + (await errorTask);
+            return (await ToolRunner.RunCapturedAsync(exe, args, timeoutMs, timeoutOutput: string.Empty)).Output;
         }
         catch
         {

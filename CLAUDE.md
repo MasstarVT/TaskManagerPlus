@@ -157,8 +157,10 @@ container — everything is `new`'d directly). Layers:
   for new tiles.
 - **Common/** — `ObservableObject` (minimal `INotifyPropertyChanged` base),
   `RelayCommand` (`ICommand` implementation), `ColorMath` (HSL saturation
-  adjustment), `Formatting` (shared byte/rate formatting helpers) — the
-  entire "MVVM framework" for this project, intentionally hand-rolled.
+  adjustment), `Formatting` (shared byte/rate and TimeSpan formatting
+  helpers), `CsvLine` (quoted-CSV line splitter for shelled-out tools'
+  CSV output) — the entire "MVVM framework" for this project, intentionally
+  hand-rolled.
 - **Converters/** — value converters for display formatting (bytes,
   percentages, status colors, bool→text, color↔brush/hex, percent→width, ...).
 - **Themes/Dark.xaml** — the (only) app theme resource dictionary; also
@@ -443,7 +445,11 @@ per file:
   struct layout.** `schtasks.exe`, `sc.exe`, `vssadmin.exe`, `fsutil.exe`,
   `defrag.exe`, `tracert.exe`, `powercfg.exe`, `netsh` are all shelled out
   to and their text output parsed, rather than reimplementing what they do
-  via COM/registry/native structs. Raw P/Invoke (`CpuTopologyService`,
+  via COM/registry/native structs. The run-tool/capture-output/kill-on-
+  timeout mechanics live in one shared `Services/ToolRunner` (the timeout
+  kill is always `Kill(entireProcessTree: true)`); each service keeps only
+  a thin adapter for its own timeout/sentinel/exit-code semantics — don't
+  hand-roll a new `RunCaptured` copy. Raw P/Invoke (`CpuTopologyService`,
   `NetworkConnectionsService`'s `GetExtendedTcpTable`, the process-
   environment PEB walk, the system-wide handle-table walk) is reserved for
   cases with no tool or WMI class available at all, and is always wrapped
@@ -675,9 +681,11 @@ per file:
   (`dotnet-trace collect -- <exe>`) rather than assuming `async` means
   off-thread.
 
-- **The Services poll caches what can't change without a reboot/reinstall**
-  (Description, DelayedAutostart, both dependency directions — see
-  `ServiceControlService.StaticServiceInfo`) and reads pid + last exit
+- **The Services poll caches rarely-changing metadata** (Description,
+  DelayedAutostart, both dependency directions — see
+  `ServiceControlService.StaticServiceInfo`; the cache refreshes on a slow
+  cadence, every 30th tick, so an external `sc config` change lands within
+  about a minute) and reads pid + last exit
   code for all services from one `EnumServicesStatusEx` syscall
   (`NativeServiceStatusReader`, WMI fallback inside, values verified
   bit-identical to `Win32_Service`); the logon-account WMI query runs
@@ -687,8 +695,13 @@ per file:
   queues the path for one background worker and reports Unknown until the
   verify lands; `ProcessesViewModel.MergeInto` reassigns
   `SignatureStatus`/`Publisher`/`IsSelfSigned` every tick so the real
-  values appear once computed. The synchronous `GetResult` stays for
-  button-driven callers (Startup refresh, Security scans). This matters
+  values appear once computed. Indeterminate (Unknown) results are never
+  persisted to `signature-cache.json` and get only a short in-memory TTL,
+  so a transient verify failure can't poison future sessions. The
+  synchronous `GetResult` stays for button-driven callers (Startup
+  refresh, Security scans) and deliberately re-verifies rather than
+  trusting the cross-session disk cache, since the `path|size|mtime` cache
+  key is forgeable. This matters
   mainly when elevated: `MainModule.FileName` then resolves for
   essentially every process, and the first tick used to verify 150+
   uncached system binaries synchronously before the first row appeared.

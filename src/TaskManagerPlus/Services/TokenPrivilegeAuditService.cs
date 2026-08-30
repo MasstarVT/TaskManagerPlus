@@ -56,7 +56,7 @@ public static class TokenPrivilegeAuditService
 
             // TOKEN_PRIVILEGES is { DWORD PrivilegeCount; LUID_AND_ATTRIBUTES Privileges[]; } -
             // LUID_AND_ATTRIBUTES has no pointer-sized member (unlike, e.g.,
-            // HandleInspectionService's SYSTEM_HANDLE_TABLE_ENTRY_INFO), so its natural alignment is
+            // HandleInspectionService's SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX), so its natural alignment is
             // 4 bytes and the array starts immediately at offset 4 with no x64 padding gap.
             int count = Marshal.ReadInt32(buffer, 0);
             IntPtr arrayPtr = IntPtr.Add(buffer, 4);

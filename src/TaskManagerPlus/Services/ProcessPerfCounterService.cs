@@ -20,15 +20,20 @@ namespace TaskManagerPlus.Services;
 /// genuinely-per-process syscalls, was why the Processes tab took ~10s to first populate and
 /// refreshed far slower than its configured interval). ReadCategory returns every instance's
 /// samples in that single read; CounterSample.Calculate does the type-correct math, including
-/// the two-sample delta a rate counter needs (the previous tick's samples are kept per instance,
-/// so a rate reads 0 on the first tick it's seen - same behavior the old priming produced).
+/// the two-sample delta a rate counter needs (the previous tick's samples are kept per resolved
+/// pid - not per instance name, which Windows renumbers on same-named-process exit - so a rate
+/// reads 0 on the first tick a pid is seen, same behavior the old priming produced).
 /// </summary>
 public sealed class ProcessPerfCounterService : IDisposable
 {
     private readonly string _categoryName;
     private readonly string _valueCounterName;
     private readonly bool _isRate;
-    private readonly Dictionary<string, CounterSample> _previousSamples = new();
+    // Round 18, #1030: keyed by resolved pid, NOT by instance name - Windows renumbers same-named
+    // instances when one of them exits ("chrome#2" becomes "chrome#1"), so a name-keyed previous
+    // sample would be delta'd against a *different* process's raw counter, attributing a garbage
+    // rate spike to an innocent pid (which MemoryViewModel then latches as that pid's Peak).
+    private readonly Dictionary<int, CounterSample> _previousSamples = new();
 
     /// <param name="categoryName">"Process" or "Process V2".</param>
     /// <param name="valueCounterName">e.g. "Page Faults/sec" or "Working Set - Private".</param>
@@ -55,7 +60,7 @@ public sealed class ProcessPerfCounterService : IDisposable
             var valueData = category[_valueCounterName];
             if (idData is null || valueData is null) return result;
 
-            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var seenPids = new HashSet<int>();
             foreach (InstanceData instance in valueData.Values)
             {
                 string name = instance.InstanceName;
@@ -63,22 +68,23 @@ public sealed class ProcessPerfCounterService : IDisposable
                 // expose - it doesn't map to any real pid, so it's skipped rather than
                 // mis-attributed. "Idle" reports pid 0, which the pid<=0 guard below drops.
                 if (name.Equals("_Total", StringComparison.OrdinalIgnoreCase)) continue;
-                seen.Add(name);
 
                 if (idData[name] is not { } idInstance) continue;
                 int pid = (int)idInstance.Sample.RawValue;
                 if (pid <= 0) continue;
+                seenPids.Add(pid);
 
                 var sample = instance.Sample;
                 double value;
                 if (_isRate)
                 {
-                    // A rate needs last tick's sample for this same instance name; a brand-new
-                    // instance reads 0 this tick and a real value from the next one on.
-                    value = _previousSamples.TryGetValue(name, out var previous)
+                    // A rate needs last tick's sample for this same pid (#1030: pid, not the
+                    // churning instance name - see _previousSamples' remarks); a brand-new pid
+                    // reads 0 this tick and a real value from the next one on.
+                    value = _previousSamples.TryGetValue(pid, out var previous)
                         ? CounterSample.Calculate(previous, sample)
                         : 0;
-                    _previousSamples[name] = sample;
+                    _previousSamples[pid] = sample;
                 }
                 else
                 {
@@ -90,7 +96,7 @@ public sealed class ProcessPerfCounterService : IDisposable
 
             if (_isRate)
             {
-                foreach (var stale in _previousSamples.Keys.Where(k => !seen.Contains(k)).ToList())
+                foreach (var stale in _previousSamples.Keys.Where(k => !seenPids.Contains(k)).ToList())
                     _previousSamples.Remove(stale);
             }
         }

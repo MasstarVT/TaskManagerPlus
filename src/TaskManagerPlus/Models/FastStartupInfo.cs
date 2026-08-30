@@ -33,12 +33,12 @@ public sealed class FastStartupInfo
     /// PerformanceViewModel.Uptime without this whole snapshot needing to be re-read.</summary>
     public string UptimeReconciliationText(TimeSpan currentUptime)
     {
-        string upText = FormatSpan(currentUptime);
+        string upText = Formatting.FormatSpan(currentUptime);
         if (!IsFastStartupEnabled || SinceLastFullRestart is not { } sinceFull)
             return $"Uptime {upText}";
         if (Math.Abs((sinceFull - currentUptime).TotalMinutes) < 5)
             return $"Uptime {upText}";
-        return $"Uptime {upText} — but {FormatSpan(sinceFull)} since your last full restart";
+        return $"Uptime {upText} — but {Formatting.FormatSpan(sinceFull)} since your last full restart";
     }
 
     public int? DaysSinceFullRestart => SinceLastFullRestart is { } s ? (int)s.TotalDays : null;
@@ -46,13 +46,6 @@ public sealed class FastStartupInfo
     public string HiberbootEnabledText => HiberbootEnabled switch { true => "On", false => "Off", null => "Unknown" };
     public string LastFullBootText => LastFullBootTime is { } t ? t.ToString("g") : "Unknown (no full-boot record found in the last 30 days)";
     public string LastBootUpTimeWmiText => LastBootUpTimeWmi is { } t ? t.ToString("g") : "Unknown";
-
-    internal static string FormatSpan(TimeSpan span)
-    {
-        if (span.TotalDays >= 1) return $"{(int)span.TotalDays}d {span.Hours}h";
-        if (span.TotalHours >= 1) return $"{(int)span.TotalHours}h {span.Minutes}m";
-        return $"{(int)span.TotalMinutes}m";
-    }
 }
 
 /// <summary>#735: persisted "dismiss this prompt for 7 days" state for the "you haven't fully

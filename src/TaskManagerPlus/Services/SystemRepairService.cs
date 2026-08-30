@@ -76,42 +76,16 @@ public static class SystemRepairService
         }
     }
 
-    /// <summary>Shells out and captures combined stdout+stderr under a bounded timeout - the same
-    /// pattern as every other shelled-out call in this domain, just with RepairTimeoutMs's much
-    /// larger ceiling for the two long-running callers above.</summary>
+    /// <summary>#1084: delegates to the shared <see cref="ToolRunner"/>; this wrapper keeps the
+    /// repair flow's soft-start degradation (a tool that can't start reports failure text, never
+    /// throws) and its human-readable timeout message.</summary>
     private static async Task<(bool Ok, string Output)> RunCapturedAsync(string exe, string args, int timeoutMs)
     {
-        var psi = new ProcessStartInfo(exe, args)
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-
-        Process? proc;
-        try { proc = Process.Start(psi); }
+        (string Output, int? ExitCode) result;
+        try { result = await ToolRunner.RunCapturedAsync(exe, args, timeoutMs); }
         catch (Exception ex) { return (false, $"Couldn't start {exe}: {ex.Message}"); }
-        if (proc is null) return (false, $"Couldn't start {exe}.");
-
-        using (proc)
-        {
-            var outputTask = proc.StandardOutput.ReadToEndAsync();
-            var errorTask = proc.StandardError.ReadToEndAsync();
-
-            using var cts = new CancellationTokenSource(timeoutMs);
-            try
-            {
-                await proc.WaitForExitAsync(cts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                try { proc.Kill(); } catch { /* best-effort */ }
-                return (false, $"{exe} {args} timed out after {timeoutMs / 60000} minute(s) and was stopped.");
-            }
-
-            string output = (await outputTask) + (await errorTask);
-            return (proc.ExitCode == 0, output);
-        }
+        if (result.ExitCode is null)
+            return (false, $"{exe} {args} timed out after {timeoutMs / 60000} minute(s) and was stopped.");
+        return (result.ExitCode == 0, result.Output);
     }
 }

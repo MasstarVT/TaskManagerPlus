@@ -948,34 +948,16 @@ public static class PlatformSecurityService
     private static string Fmt(int? v) => v?.ToString() ?? "not set";
 
     // ==================================================================================
-    // Small local shell-out-and-capture helper, mirroring AutorunsService.RunCapturedSync /
-    // DefenderService.RunCapturedWithExitCode's kill-on-timeout shape - not shared directly since
-    // both of those are private to their own files; #876/#877 each need this exactly once.
+    // #1084: thin adapters over the shared ToolRunner run/capture/kill-on-timeout
+    // implementation, keeping this file's historical shapes (-1 exit code and empty
+    // output for a timed-out run).
     // ==================================================================================
 
     private static string RunCapturedSync(string exe, string args, TimeSpan timeout) => RunCapturedWithExitCode(exe, args, timeout).Output;
 
     private static (int ExitCode, string Output) RunCapturedWithExitCode(string exe, string args, TimeSpan timeout)
     {
-        var psi = new ProcessStartInfo(exe, args)
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        using var proc = Process.Start(psi) ?? throw new InvalidOperationException($"couldn't start {exe}");
-
-        var outputTask = proc.StandardOutput.ReadToEndAsync();
-        var errorTask = proc.StandardError.ReadToEndAsync();
-
-        if (!proc.WaitForExit((int)timeout.TotalMilliseconds))
-        {
-            try { proc.Kill(entireProcessTree: true); } catch { /* best-effort */ }
-            return (-1, string.Empty);
-        }
-
-        string text = outputTask.GetAwaiter().GetResult() + errorTask.GetAwaiter().GetResult();
-        return (proc.ExitCode, text);
+        var (output, exitCode) = ToolRunner.RunCaptured(exe, args, timeout);
+        return (exitCode ?? -1, output);
     }
 }

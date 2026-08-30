@@ -43,7 +43,11 @@ public static class SecurityActionJournalService
             var dir = Path.GetDirectoryName(JournalPath)!;
             Directory.CreateDirectory(dir);
             var json = JsonSerializer.Serialize(entries, new JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(JournalPath, json);
+            // #1026: write-to-temp-then-rename so a crash mid-write can't leave partial JSON that
+            // Load silently degrades to an empty journal, destroying the whole action history.
+            string tempPath = JournalPath + ".tmp";
+            File.WriteAllText(tempPath, json);
+            File.Move(tempPath, JournalPath, overwrite: true);
         }
         catch
         {

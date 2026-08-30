@@ -56,11 +56,11 @@ public static class Ipv6DiagnosticsService
     private static readonly Ipv6DisabledComponentFlag[] KnownFlags =
     {
         new(0x01, "Tunnel interfaces (6to4, ISATAP, Teredo) disabled"),
+        new(0x02, "6to4 specifically disabled"),
+        new(0x04, "ISATAP specifically disabled"),
+        new(0x08, "Teredo specifically disabled"),
         new(0x10, "IPv6 disabled on LAN/Wi-Fi/PPP interfaces (native IPv6 off)"),
         new(0x20, "IPv4 preferred over IPv6 (prefix policy table reprioritised)"),
-        new(0x100, "Teredo specifically disabled"),
-        new(0x1000, "6to4 specifically disabled"),
-        new(0x100000, "ISATAP specifically disabled"),
     };
 
     public static Ipv6DisabledComponentsInfo ReadDisabledComponents()

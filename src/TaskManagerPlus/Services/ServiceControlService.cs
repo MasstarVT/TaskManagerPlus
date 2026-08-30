@@ -27,16 +27,25 @@ public sealed class ServiceControlService
 
     public static bool IsProtectedCoreService(string serviceName) => ProtectedCoreServiceNames.Contains(serviceName);
 
-    /// <summary>Per-service data that can't change without a service reinstall or a reboot -
-    /// computed on first sight of a service name and reused every later tick. Description and the
-    /// DelayedAutostart flag are registry reads, and the two dependency directions are the
-    /// genuinely expensive part: ServicesDependedOn opens each service's config and
-    /// DependentServices enumerates the whole service table per service (~120ms combined per tick
-    /// across ~290 services, on top of ~300ms of per-service registry reads - most of the old
-    /// ~450ms tick).</summary>
+    /// <summary>Per-service data that rarely changes - computed on first sight of a service name
+    /// and reused on later ticks. Description and the DelayedAutostart flag are registry reads,
+    /// and the two dependency directions are the genuinely expensive part: ServicesDependedOn
+    /// opens each service's config and DependentServices enumerates the whole service table per
+    /// service (~120ms combined per tick across ~290 services, on top of ~300ms of per-service
+    /// registry reads - most of the old ~450ms tick). "Rarely" isn't "never": all of these change
+    /// instantly via `sc config`, so the cache is fully refreshed on a slow cadence too - see
+    /// StaticInfoRefreshTicks (#1051).</summary>
     private sealed record StaticServiceInfo(string Description, bool IsDelayedAutoStart, List<string> DependsOn, List<string> DependentServices);
 
     private readonly Dictionary<string, StaticServiceInfo> _staticInfoCache = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>#1051: ticks between full refreshes of _staticInfoCache, so an external `sc config`
+    /// change (description, delayed-autostart, dependencies) eventually lands instead of staying
+    /// stale for the whole session - the same slow-cadence shape as AccountRefreshTicks below.
+    /// The counter starts offset by half a period so the static-info rebuild and the logon-account
+    /// WMI query don't both land on the same tick.</summary>
+    private const int StaticInfoRefreshTicks = 30;
+    private int _ticksSinceStaticInfoRefresh = StaticInfoRefreshTicks / 2;
 
     /// <summary>Ticks between refreshes of the cached logon-account map. Accounts effectively
     /// never change mid-session (and only via an explicit reconfiguration when they do), but the
@@ -57,6 +66,14 @@ public sealed class ServiceControlService
             _accountCache = ReadServiceAccounts();
             _ticksSinceAccountRefresh = 0;
         }
+        // #1051: periodically drop the whole static-info cache so the loop below re-reads
+        // Description/DelayedAutostart/dependencies - they all change instantly via `sc config`,
+        // and eviction-on-disappearance alone left an external change invisible all session.
+        if (++_ticksSinceStaticInfoRefresh >= StaticInfoRefreshTicks)
+        {
+            _staticInfoCache.Clear();
+            _ticksSinceStaticInfoRefresh = 0;
+        }
         int autoStartDelaySeconds = ReadGlobalAutoStartDelaySeconds();
         var rows = new List<ServiceRow>();
         var seenNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -70,7 +87,8 @@ public sealed class ServiceControlService
                 {
                     // #37: dependency graph - so a user understands the blast radius before
                     // stopping a service. Cached per name: dependencies, the registry Description,
-                    // and the #755 DelayedAutostart flag can't change without a reboot/reinstall.
+                    // and the #755 DelayedAutostart flag rarely change - and the whole cache is
+                    // dropped every StaticInfoRefreshTicks so `sc config` changes land (#1051).
                     List<string> dependsOn = new(), dependents = new();
                     try { dependsOn = sc.ServicesDependedOn.Select(s => s.DisplayName).ToList(); }
                     catch { /* leave empty */ }
@@ -260,35 +278,6 @@ public sealed class ServiceControlService
         catch
         {
             // WMI unavailable - PID column will just show 0.
-        }
-        return result;
-    }
-
-    /// <summary>
-    /// Win32_Service.ExitCode from each service's last start attempt. Deliberately not filtered
-    /// to Automatic-and-not-running services here (that heuristic was tried and is too noisy in
-    /// practice - most Windows systems have several Automatic services that are legitimately
-    /// stopped most of the time: delayed-auto-start, or "Automatic (Trigger Start)" services that
-    /// only run when triggered, e.g. WbioSrvc, MapsBroker. Both report ExitCode 0 when simply not
-    /// started yet, same as a real clean stop - so a nonzero ExitCode is the actually-reliable
-    /// "this service tried to start and failed" signal, computed per-row in ServiceRow.HasFailedToStart).
-    /// </summary>
-    private static Dictionary<string, uint> ReadServiceExitCodes()
-    {
-        var result = new Dictionary<string, uint>(StringComparer.OrdinalIgnoreCase);
-        try
-        {
-            using var searcher = new ManagementObjectSearcher("SELECT Name, ExitCode FROM Win32_Service");
-            foreach (ManagementObject mo in searcher.Get())
-            {
-                var name = mo["Name"] as string;
-                if (name is null) continue;
-                result[name] = Convert.ToUInt32(mo["ExitCode"] ?? 0u);
-            }
-        }
-        catch
-        {
-            // WMI unavailable - every row falls back to ExitCode 0 (never flagged as failed).
         }
         return result;
     }
@@ -924,32 +913,8 @@ public sealed class ServiceControlService
     /// third caller (SetFailureActionsAsync, QueryExAsync) needed the identical shape.</summary>
     private static async Task<(bool Success, string Output, int ExitCode)> RunScAsync(string args, int timeoutMs = 10000)
     {
-        var psi = new ProcessStartInfo("sc.exe", args)
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        using var proc = Process.Start(psi);
-        if (proc is null) return (false, "(couldn't run sc.exe)", -1);
-
-        var outputTask = proc.StandardOutput.ReadToEndAsync();
-        var errorTask = proc.StandardError.ReadToEndAsync();
-
-        using var cts = new CancellationTokenSource(timeoutMs);
-        try
-        {
-            await proc.WaitForExitAsync(cts.Token);
-        }
-        catch (OperationCanceledException)
-        {
-            try { proc.Kill(); } catch { /* best-effort */ }
-            return (false, "(sc.exe timed out)", -1);
-        }
-
-        string output = (await outputTask) + (await errorTask);
-        return (proc.ExitCode == 0, output, proc.ExitCode);
+        var (output, exitCode) = await ToolRunner.RunCapturedAsync("sc.exe", args, timeoutMs, timeoutOutput: "(sc.exe timed out)");
+        return (exitCode == 0, output, exitCode ?? -1);
     }
 
     #region #757 - Bulk recovery-action audit
