@@ -41,6 +41,11 @@ src/TaskManagerPlus/bin/Release/net8.0-windows10.0.19041.0/TaskManagerPlus.exe
 There is no test project and no lint/format config in this repo — don't
 invent test or lint commands.
 
+To run the app or verify UI changes, use the `run` project skill
+(`.claude/skills/run/`): it covers the real elevated launch and a no-UAC
+asInvoker build with a per-tab screenshot sweep — don't hand-roll launch
+or capture scripts.
+
 Alternative: open `TaskManagerPlus.sln` in Visual Studio/Rider and Run.
 VS's debugger runs elevated automatically if VS itself is elevated;
 otherwise the UAC prompt appears the same as `dotnet run`.
