@@ -113,30 +113,15 @@ public static class PortReservationService
 
     private static async Task<string> RunNetshAsync(string args)
     {
-        var psi = new ProcessStartInfo("netsh.exe", args)
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        using var proc = Process.Start(psi);
-        if (proc is null) return string.Empty;
-
-        var outputTask = proc.StandardOutput.ReadToEndAsync();
-        var errorTask = proc.StandardError.ReadToEndAsync();
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         try
         {
-            await proc.WaitForExitAsync(cts.Token);
+            var (output, _) = await ToolRunner.RunCapturedAsync("netsh.exe", args, 10_000, timeoutOutput: string.Empty);
+            return output;
         }
-        catch (OperationCanceledException)
+        catch
         {
-            try { proc.Kill(); } catch { /* best-effort */ }
             return string.Empty;
         }
-
-        return (await outputTask) + (await errorTask);
     }
 
     // Matches a data row of `netsh int ipv4 show excludedportrange` - two right-aligned numeric

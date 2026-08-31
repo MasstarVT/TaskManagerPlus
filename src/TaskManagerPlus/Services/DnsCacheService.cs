@@ -124,30 +124,6 @@ public static class DnsCacheService
         }
     }
 
-    private static async Task<(string Output, int? ExitCode)> RunIpconfigAsync(string args)
-    {
-        var psi = new ProcessStartInfo("ipconfig.exe", args)
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        using var proc = Process.Start(psi);
-        if (proc is null) return (string.Empty, null);
-
-        var outputTask = proc.StandardOutput.ReadToEndAsync();
-        var errorTask = proc.StandardError.ReadToEndAsync();
-
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        try { await proc.WaitForExitAsync(cts.Token); }
-        catch (OperationCanceledException)
-        {
-            // Timed out - killed, so there's no meaningful exit code to report.
-            try { proc.Kill(); } catch { /* best-effort */ }
-            return ((await outputTask) + (await errorTask), null);
-        }
-
-        return ((await outputTask) + (await errorTask), proc.ExitCode);
-    }
+    private static Task<(string Output, int? ExitCode)> RunIpconfigAsync(string args)
+        => ToolRunner.RunCapturedAsync("ipconfig.exe", args, 10_000, timeoutOutput: string.Empty);
 }

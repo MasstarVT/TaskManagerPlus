@@ -49,29 +49,9 @@ public static class AdapterDriverStoreService
         string output;
         try
         {
-            var psi = new ProcessStartInfo("pnputil.exe", "/enum-drivers")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return packages;
-
-            var outputTask = proc.StandardOutput.ReadToEndAsync();
-            var errorTask = proc.StandardError.ReadToEndAsync();
-            using var cts = new CancellationTokenSource(TimeoutMs);
-            try
-            {
-                await proc.WaitForExitAsync(cts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                try { proc.Kill(); } catch { /* best-effort */ }
-                return packages;
-            }
-            output = (await outputTask) + (await errorTask);
+            var (captured, exitCode) = await ToolRunner.RunCapturedAsync("pnputil.exe", "/enum-drivers", TimeoutMs, timeoutOutput: string.Empty);
+            if (exitCode is null) return packages;
+            output = captured;
         }
         catch
         {

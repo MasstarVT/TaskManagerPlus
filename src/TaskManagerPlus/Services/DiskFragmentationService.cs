@@ -117,38 +117,8 @@ public static class DiskFragmentationService
             // a trailing colon already (see StorageViewModel), so this strips one off before
             // re-appending it rather than risking a "C::" argument if a caller passes it either way.
             string letter = driveLetter.TrimEnd(':');
-            var psi = new ProcessStartInfo("defrag.exe", $"{letter}: /A /V")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return new FragmentationAnalysis(false, "Couldn't start defrag.exe.", null, null, null, null, null);
-
-            // Concurrent async reads + a bounded WaitForExitAsync + Kill()-on-timeout - the same
-            // pattern TracerouteService.RunAsync uses. The previous version already checked
-            // WaitForExit's result and killed the process on timeout, but only *after* the
-            // unbounded synchronous ReadToEnd() calls above it had already returned - so a defrag
-            // run whose verbose report filled the stdout/stderr pipe buffers before exiting could
-            // still deadlock (and never reach the timeout/kill logic at all). Starting both reads
-            // and the bounded wait concurrently fixes that ordering.
-            var outputTask = proc.StandardOutput.ReadToEndAsync();
-            var errorTask = proc.StandardError.ReadToEndAsync();
-
-            using var cts = new CancellationTokenSource(120_000);
-            try
-            {
-                await proc.WaitForExitAsync(cts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                try { proc.Kill(); } catch { /* best-effort */ }
-                return new FragmentationAnalysis(false, "Analysis timed out.", null, null, null, null, null);
-            }
-
-            string output = (await outputTask) + (await errorTask);
+            var (output, exitCode) = await ToolRunner.RunCapturedAsync("defrag.exe", $"{letter}: /A /V", 120_000);
+            if (exitCode is null) return new FragmentationAnalysis(false, "Analysis timed out.", null, null, null, null, null);
 
             int? percent = null;
             string message;

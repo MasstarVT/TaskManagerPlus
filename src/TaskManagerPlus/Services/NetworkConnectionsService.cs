@@ -636,35 +636,8 @@ public static class WifiDiagnosticsService
     {
         try
         {
-            var psi = new ProcessStartInfo("netsh", "wlan show interfaces")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return null;
-
-            // Concurrent async reads + a bounded WaitForExitAsync + Kill()-on-timeout - the same
-            // pattern TracerouteService.RunAsync uses, rather than the previous synchronous
-            // ReadToEnd() followed by an unchecked WaitForExit(2000), which risked a deadlock and
-            // an orphaned netsh.exe process if it ever ran long.
-            var outputTask = proc.StandardOutput.ReadToEndAsync();
-            var errorTask = proc.StandardError.ReadToEndAsync();
-
-            using var cts = new CancellationTokenSource(2000);
-            try
-            {
-                await proc.WaitForExitAsync(cts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                try { proc.Kill(); } catch { /* best-effort */ }
-                return null;
-            }
-
-            string output = (await outputTask) + (await errorTask);
+            var (output, exitCode) = await ToolRunner.RunCapturedAsync("netsh", "wlan show interfaces", 2000);
+            if (exitCode is null) return null;
 
             string? ssid = ExtractField(output, "SSID");
             if (string.IsNullOrWhiteSpace(ssid)) return null;

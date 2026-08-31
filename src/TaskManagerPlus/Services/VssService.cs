@@ -16,9 +16,8 @@ namespace TaskManagerPlus.Services;
 /// Protection per-drive state + "create a restore point now" (#398), and registered VSS provider
 /// inventory (#400).
 ///
-/// Every `vssadmin` call here follows the same concurrent-read + bounded-WaitForExitAsync +
-/// Kill()-on-timeout shell-out shape VolumeDiagnosticsService's fsutil/vssadmin calls already use
-/// (see RunVssAdminAsync). #397 folds the "Used/Allocated/Maximum Shadow Copy Storage space"
+/// Every `vssadmin` call here goes through the shared ToolRunner (#1084) via RunVssAdminAsync.
+/// #397 folds the "Used/Allocated/Maximum Shadow Copy Storage space"
 /// figures into the SAME `vssadmin list shadowstorage` parse VolumeDiagnosticsService already ran
 /// for #42's aggregate-bytes-used card, rather than shelling out to the same command twice - this
 /// class now owns that one read (ReadShadowStorageAsync), and
@@ -32,39 +31,15 @@ namespace TaskManagerPlus.Services;
 public static class VssService
 {
     // ================================================================================
-    // Shared vssadmin shell-out - concurrent async reads + bounded WaitForExitAsync +
-    // Kill()-on-timeout, the same pattern VolumeDiagnosticsService.ReadShadowCopyUsageByVolumeAsync
-    // and ReclaimableSpaceService.RunProcessAsync already use.
+    // Shared vssadmin shell-out - a thin adapter over the shared ToolRunner (#1084), keeping this
+    // file's degrade-to-empty timeout semantics.
     // ================================================================================
     private static async Task<string> RunVssAdminAsync(string arguments, int timeoutMs = 15000)
     {
         try
         {
-            var psi = new ProcessStartInfo("vssadmin.exe", arguments)
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return string.Empty;
-
-            var outputTask = proc.StandardOutput.ReadToEndAsync();
-            var errorTask = proc.StandardError.ReadToEndAsync();
-
-            using var cts = new CancellationTokenSource(timeoutMs);
-            try
-            {
-                await proc.WaitForExitAsync(cts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                try { proc.Kill(); } catch { /* best-effort */ }
-                return string.Empty;
-            }
-
-            return (await outputTask) + (await errorTask);
+            var (output, _) = await ToolRunner.RunCapturedAsync("vssadmin.exe", arguments, timeoutMs, timeoutOutput: string.Empty);
+            return output;
         }
         catch
         {
@@ -502,45 +477,24 @@ public static class VssService
         // because callers create these as the rollback point *before* a destructive change.
         string safeDescription = trimmed.Replace("'", "''").Replace("\"", "\\\"");
 
-        var psi = new ProcessStartInfo("powershell.exe",
-            $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"Checkpoint-Computer -Description '{safeDescription}' -RestorePointType MODIFY_SETTINGS\"")
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-
         try
         {
-            using var proc = Process.Start(psi);
-            if (proc is null) return (false, "Couldn't start powershell.exe.");
-
-            var outputTask = proc.StandardOutput.ReadToEndAsync();
-            var errorTask = proc.StandardError.ReadToEndAsync();
-
             // Checkpoint-Computer can genuinely take a while (it waits on the VSS writers) - a
             // longer timeout than the read-only vssadmin queries above.
-            using var cts = new CancellationTokenSource(90_000);
-            try
-            {
-                await proc.WaitForExitAsync(cts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                try { proc.Kill(); } catch { /* best-effort */ }
-                return (false, "Timed out waiting for Checkpoint-Computer.");
-            }
+            var (captured, exitCode) = await ToolRunner.RunCapturedAsync("powershell.exe",
+                $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"Checkpoint-Computer -Description '{safeDescription}' -RestorePointType MODIFY_SETTINGS\"",
+                90_000);
+            if (exitCode is null) return (false, "Timed out waiting for Checkpoint-Computer.");
 
-            string output = ((await outputTask) + (await errorTask)).Trim();
+            string output = captured.Trim();
             bool looksLikeFailure = output.Contains("Exception", StringComparison.OrdinalIgnoreCase)
                 || output.Contains("Error", StringComparison.OrdinalIgnoreCase)
                 || output.Contains("cannot be loaded", StringComparison.OrdinalIgnoreCase);
 
-            if (proc.ExitCode == 0 && !looksLikeFailure)
+            if (exitCode == 0 && !looksLikeFailure)
                 return (true, "Checkpoint-Computer completed.");
 
-            return (false, output.Length > 0 ? Truncate(output, 400) : $"Checkpoint-Computer exited with code {proc.ExitCode}.");
+            return (false, output.Length > 0 ? Truncate(output, 400) : $"Checkpoint-Computer exited with code {exitCode}.");
         }
         catch (Exception ex)
         {

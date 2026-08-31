@@ -81,31 +81,9 @@ public static class WindowsUpdateErrorCatalog
     {
         try
         {
-            var psi = new ProcessStartInfo("certutil.exe", $"-error {normalizedHex}")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return null;
-
-            var outputTask = proc.StandardOutput.ReadToEndAsync();
-            var errorTask = proc.StandardError.ReadToEndAsync();
-            using var cts = new CancellationTokenSource(5000);
-            try
-            {
-                await proc.WaitForExitAsync(cts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                try { proc.Kill(); } catch { /* best-effort */ }
-                return null;
-            }
-
-            string output = ((await outputTask) + (await errorTask)).Trim();
-            if (output.Length == 0 || proc.ExitCode != 0) return null;
+            var (captured, exitCode) = await ToolRunner.RunCapturedAsync("certutil.exe", $"-error {normalizedHex}", 5000);
+            string output = captured.Trim();
+            if (output.Length == 0 || exitCode != 0) return null; // timed out (null) or failed
 
             // First non-empty line is the useful one - later lines are usually "CertUtil: -error
             // command completed successfully." noise.

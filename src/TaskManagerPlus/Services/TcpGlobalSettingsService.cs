@@ -50,30 +50,8 @@ public static class TcpGlobalSettingsService
     {
         try
         {
-            var psi = new ProcessStartInfo("netsh.exe", "int tcp show global")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return Unknown;
-
-            var outputTask = proc.StandardOutput.ReadToEndAsync();
-            var errorTask = proc.StandardError.ReadToEndAsync();
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-            try
-            {
-                await proc.WaitForExitAsync(cts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                try { proc.Kill(); } catch { /* best-effort */ }
-                return Unknown;
-            }
-
-            string output = (await outputTask) + (await errorTask);
+            var (output, exitCode) = await ToolRunner.RunCapturedAsync("netsh.exe", "int tcp show global", 10_000);
+            if (exitCode is null) return Unknown;
             return Parse(output);
         }
         catch

@@ -274,30 +274,8 @@ public static class DhcpAddressingService
     {
         try
         {
-            var psi = new ProcessStartInfo("ipconfig.exe", args)
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return "Couldn't start ipconfig.exe.";
-
-            var outputTask = proc.StandardOutput.ReadToEndAsync();
-            var errorTask = proc.StandardError.ReadToEndAsync();
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20)); // release/renew can take a few seconds to negotiate a new lease
-            try
-            {
-                await proc.WaitForExitAsync(cts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                try { proc.Kill(); } catch { /* best-effort */ }
-                return "ipconfig.exe timed out.";
-            }
-
-            string output = (await outputTask) + (await errorTask);
+            // 20s: release/renew can take a few seconds to negotiate a new lease.
+            var (output, _) = await ToolRunner.RunCapturedAsync("ipconfig.exe", args, 20_000, timeoutOutput: "ipconfig.exe timed out.");
             return string.IsNullOrWhiteSpace(output) ? "Done." : output.Trim();
         }
         catch (Exception ex)

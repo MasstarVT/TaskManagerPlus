@@ -96,30 +96,8 @@ public static class ClusterMappingService
         try
         {
             long clusterNumber = diskRelativeLba * bytesPerSector / Math.Max(bytesPerCluster, 1);
-            var psi = new ProcessStartInfo("fsutil.exe", $"volume querycluster {driveLetter}: {clusterNumber}")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return "fsutil unavailable";
-
-            var outputTask = proc.StandardOutput.ReadToEndAsync();
-            var errorTask = proc.StandardError.ReadToEndAsync();
-            using var cts = new CancellationTokenSource(10000);
-            try
-            {
-                await proc.WaitForExitAsync(cts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                try { proc.Kill(); } catch { /* best-effort */ }
-                return "Timed out";
-            }
-
-            string output = (await outputTask) + (await errorTask);
+            var (output, exitCode) = await ToolRunner.RunCapturedAsync("fsutil.exe", $"volume querycluster {driveLetter}: {clusterNumber}", 10000);
+            if (exitCode is null) return "Timed out";
             var match = ClusterFileRegex.Match(output);
             if (match.Success) return match.Groups[1].Value.Trim();
             if (output.Contains("Free", StringComparison.OrdinalIgnoreCase)) return "Free (unallocated) cluster";

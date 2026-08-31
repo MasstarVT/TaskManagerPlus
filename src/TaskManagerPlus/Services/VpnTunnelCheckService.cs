@@ -128,30 +128,8 @@ public static class VpnTunnelCheckService
     {
         try
         {
-            var psi = new ProcessStartInfo("nslookup.exe", hostname)
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return (null, "Couldn't start nslookup.exe.");
-
-            var outputTask = proc.StandardOutput.ReadToEndAsync();
-            var errorTask = proc.StandardError.ReadToEndAsync();
-            using var cts = new CancellationTokenSource(5000);
-            try
-            {
-                await proc.WaitForExitAsync(cts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                try { proc.Kill(); } catch { /* best-effort */ }
-                return (null, "nslookup timed out.");
-            }
-
-            string output = (await outputTask) + (await errorTask);
+            var (output, exitCode) = await ToolRunner.RunCapturedAsync("nslookup.exe", hostname, 5000);
+            if (exitCode is null) return (null, "nslookup timed out.");
             string normalized = output.Replace("\r\n", "\n");
             // nslookup's own header block (before the blank-line separator from the answer block):
             //   Server:  resolver.example.com

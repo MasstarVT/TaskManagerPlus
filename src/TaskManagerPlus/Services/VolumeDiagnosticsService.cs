@@ -117,38 +117,8 @@ public static class VolumeDiagnosticsService
     {
         try
         {
-            var psi = new ProcessStartInfo("fsutil.exe", $"behavior query DisableDeleteNotify {driveLetter}")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return null;
-
-            // Concurrent async reads + a bounded WaitForExitAsync + Kill()-on-timeout - the same
-            // pattern TracerouteService.RunAsync uses. The previous version already checked
-            // WaitForExit's result and killed the process on timeout, but only *after* the
-            // unbounded synchronous ReadToEnd() calls above it had already returned - so fsutil
-            // filling its stdout/stderr pipe buffer before exiting could still deadlock before the
-            // timeout/kill logic was ever reached. Starting both reads and the bounded wait
-            // concurrently fixes that ordering.
-            var outputTask = proc.StandardOutput.ReadToEndAsync();
-            var errorTask = proc.StandardError.ReadToEndAsync();
-
-            using var cts = new CancellationTokenSource(5000);
-            try
-            {
-                await proc.WaitForExitAsync(cts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                try { proc.Kill(); } catch { /* best-effort */ }
-                return null;
-            }
-
-            string output = (await outputTask) + (await errorTask);
+            var (output, exitCode) = await ToolRunner.RunCapturedAsync("fsutil.exe", $"behavior query DisableDeleteNotify {driveLetter}", 5000);
+            if (exitCode is null) return null;
 
             var match = Regex.Match(output, @"=\s*([01])");
             if (!match.Success) return null;

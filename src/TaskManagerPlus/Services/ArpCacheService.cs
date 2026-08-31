@@ -54,63 +54,41 @@ public static class ArpCacheService
         var interfaceNames = BuildInterfaceIpToName();
         try
         {
-            var psi = new ProcessStartInfo("arp.exe", "-a")
+            var (output, _) = await ToolRunner.RunCapturedAsync("arp.exe", "-a", 10_000,
+                timeoutOutput: string.Empty, includeStderr: false);
+
+            string currentInterfaceIp = string.Empty;
+            foreach (var rawLine in output.Split('\n'))
             {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is not null)
-            {
-                // Start both stream reads before waiting (the shape every other shell-out here
-                // uses): awaiting ReadToEndAsync first would block forever on a wedged arp.exe -
-                // the timeout CTS wouldn't even exist yet, so the kill-on-timeout was unreachable
-                // and the caller's IsRefreshingArp flag latched for the session. stderr is drained
-                // too so a chatty error stream can't fill its pipe and wedge the process.
-                var outputTask = proc.StandardOutput.ReadToEndAsync();
-                var errorTask = proc.StandardError.ReadToEndAsync();
+                string line = rawLine.TrimEnd('\r').Trim();
+                if (line.Length == 0) continue;
 
-                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-                try { await proc.WaitForExitAsync(cts.Token); } catch (OperationCanceledException) { try { proc.Kill(); } catch { /* best-effort */ } }
-
-                string output = await outputTask;
-                await errorTask;
-
-                string currentInterfaceIp = string.Empty;
-                foreach (var rawLine in output.Split('\n'))
+                if (line.StartsWith("Interface:", StringComparison.OrdinalIgnoreCase))
                 {
-                    string line = rawLine.TrimEnd('\r').Trim();
-                    if (line.Length == 0) continue;
-
-                    if (line.StartsWith("Interface:", StringComparison.OrdinalIgnoreCase))
-                    {
-                        var header = line.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
-                        currentInterfaceIp = header.Length >= 2 ? header[1] : string.Empty;
-                        continue;
-                    }
-                    if (line.StartsWith("Internet Address", StringComparison.OrdinalIgnoreCase)) continue;
-
-                    var cols = line.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
-                    if (cols.Length < 3) continue;
-                    string ip = cols[0];
-                    if (!IPAddress.TryParse(ip, out _)) continue;
-
-                    bool incomplete = cols[1].Replace("-", string.Empty).Replace(":", string.Empty).TrimStart('0').Length == 0;
-                    string mac = incomplete ? string.Empty : NormalizeMac(cols[1]);
-
-                    entries.Add(new ArpEntry
-                    {
-                        IpAddress = ip,
-                        MacAddress = mac,
-                        InterfaceIp = currentInterfaceIp,
-                        InterfaceName = interfaceNames.TryGetValue(currentInterfaceIp, out var name) ? name : string.Empty,
-                        EntryType = cols[2],
-                        Vendor = mac.Length == 0 ? "(incomplete)" : LookupVendor(mac),
-                        IsGateway = gatewayIp is not null && ip.Equals(gatewayIp, StringComparison.OrdinalIgnoreCase),
-                    });
+                    var header = line.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+                    currentInterfaceIp = header.Length >= 2 ? header[1] : string.Empty;
+                    continue;
                 }
+                if (line.StartsWith("Internet Address", StringComparison.OrdinalIgnoreCase)) continue;
+
+                var cols = line.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+                if (cols.Length < 3) continue;
+                string ip = cols[0];
+                if (!IPAddress.TryParse(ip, out _)) continue;
+
+                bool incomplete = cols[1].Replace("-", string.Empty).Replace(":", string.Empty).TrimStart('0').Length == 0;
+                string mac = incomplete ? string.Empty : NormalizeMac(cols[1]);
+
+                entries.Add(new ArpEntry
+                {
+                    IpAddress = ip,
+                    MacAddress = mac,
+                    InterfaceIp = currentInterfaceIp,
+                    InterfaceName = interfaceNames.TryGetValue(currentInterfaceIp, out var name) ? name : string.Empty,
+                    EntryType = cols[2],
+                    Vendor = mac.Length == 0 ? "(incomplete)" : LookupVendor(mac),
+                    IsGateway = gatewayIp is not null && ip.Equals(gatewayIp, StringComparison.OrdinalIgnoreCase),
+                });
             }
         }
         catch

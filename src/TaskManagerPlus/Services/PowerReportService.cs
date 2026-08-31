@@ -234,29 +234,14 @@ public static class PowerReportService
 
         try
         {
-            var psi = new ProcessStartInfo("powercfg.exe", args)
+            var (combined, exitCode) = await ToolRunner.RunCapturedAsync(
+                "powercfg.exe", args, (int)timeout.TotalMilliseconds, ct, timeoutOutput: string.Empty);
+            if (exitCode is null)
             {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return (false, "couldn't start powercfg.exe");
-
-            var outTask = proc.StandardOutput.ReadToEndAsync();
-            var errTask = proc.StandardError.ReadToEndAsync();
-
-            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            cts.CancelAfter(timeout);
-            try { await proc.WaitForExitAsync(cts.Token); }
-            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-            {
-                try { proc.Kill(); } catch { /* best-effort */ }
+                ct.ThrowIfCancellationRequested(); // an external cancel propagates; only a genuine timeout reports
                 return (false, "powercfg timed out");
             }
 
-            string combined = (await outTask) + (await errTask);
             return (File.Exists(outputPath), combined.Trim());
         }
         catch (OperationCanceledException) { throw; }

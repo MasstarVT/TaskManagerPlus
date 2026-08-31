@@ -101,28 +101,14 @@ public static class ProcessDumpService
             if (!File.Exists(comsvcs))
                 return (false, "comsvcs.dll wasn't found on this system - can't create a dump this way.");
 
-            var psi = new ProcessStartInfo("rundll32.exe", $"\"{comsvcs}\", MiniDump {pid} \"{outputPath}\" full")
-            {
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return (false, "Couldn't start rundll32.exe.");
-
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-            try { await proc.WaitForExitAsync(cts.Token); }
-            catch (OperationCanceledException)
-            {
-                try { proc.Kill(); } catch { /* best-effort */ }
-                return (false, "Dump timed out after 30 seconds.");
-            }
+            var (_, exitCode) = await ToolRunner.RunCapturedAsync(
+                "rundll32.exe", $"\"{comsvcs}\", MiniDump {pid} \"{outputPath}\" full", 30_000);
+            if (exitCode is null) return (false, "Dump timed out after 30 seconds.");
 
             if (!File.Exists(outputPath))
-                return (false, proc.ExitCode == 0
+                return (false, exitCode == 0
                     ? "rundll32 reported success but no dump file was written - the target process may have exited."
-                    : $"Dump failed - rundll32 exited with code {proc.ExitCode} (access denied is common for a protected process).");
+                    : $"Dump failed - rundll32 exited with code {exitCode} (access denied is common for a protected process).");
 
             return (true, $"Dump written: {outputPath}");
         }

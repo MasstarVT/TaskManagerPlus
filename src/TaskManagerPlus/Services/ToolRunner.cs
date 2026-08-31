@@ -32,18 +32,38 @@ internal static class ToolRunner
     /// <paramref name="includeStderr"/> false to capture stdout only; stderr is still drained
     /// either way so the child can never block on a full pipe.
     /// </summary>
-    public static async Task<(string Output, int? ExitCode)> RunCapturedAsync(
+    public static Task<(string Output, int? ExitCode)> RunCapturedAsync(
         string exe, string args, int timeoutMs, CancellationToken ct = default,
         string timeoutOutput = "(command timed out)", bool includeStderr = true)
+        => RunCoreAsync(Configure(new ProcessStartInfo(exe, args)), timeoutMs, ct, timeoutOutput, includeStderr);
+
+    /// <summary>
+    /// Overload for callers whose arguments need per-item escaping via
+    /// <see cref="ProcessStartInfo.ArgumentList"/> (a PowerShell -Command script, paths with
+    /// embedded quotes) rather than one pre-joined string. Same semantics otherwise.
+    /// </summary>
+    public static Task<(string Output, int? ExitCode)> RunCapturedAsync(
+        string exe, IEnumerable<string> argumentList, int timeoutMs, CancellationToken ct = default,
+        string timeoutOutput = "(command timed out)", bool includeStderr = true)
     {
-        var psi = new ProcessStartInfo(exe, args)
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        using var proc = Process.Start(psi) ?? throw new InvalidOperationException($"couldn't start {exe}");
+        var psi = Configure(new ProcessStartInfo(exe));
+        foreach (var arg in argumentList) psi.ArgumentList.Add(arg);
+        return RunCoreAsync(psi, timeoutMs, ct, timeoutOutput, includeStderr);
+    }
+
+    private static ProcessStartInfo Configure(ProcessStartInfo psi)
+    {
+        psi.RedirectStandardOutput = true;
+        psi.RedirectStandardError = true;
+        psi.UseShellExecute = false;
+        psi.CreateNoWindow = true;
+        return psi;
+    }
+
+    private static async Task<(string Output, int? ExitCode)> RunCoreAsync(
+        ProcessStartInfo psi, int timeoutMs, CancellationToken ct, string timeoutOutput, bool includeStderr)
+    {
+        using var proc = Process.Start(psi) ?? throw new InvalidOperationException($"couldn't start {psi.FileName}");
 
         var outputTask = proc.StandardOutput.ReadToEndAsync(ct);
         var errorTask = proc.StandardError.ReadToEndAsync(ct);
@@ -72,15 +92,9 @@ internal static class ToolRunner
     /// sync copy this consolidates returned.
     /// </summary>
     public static (string Output, int? ExitCode) RunCaptured(
-        string exe, string args, TimeSpan timeout, string timeoutOutput = "")
+        string exe, string args, TimeSpan timeout, string timeoutOutput = "", bool includeStderr = true)
     {
-        var psi = new ProcessStartInfo(exe, args)
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
+        var psi = Configure(new ProcessStartInfo(exe, args));
         using var proc = Process.Start(psi) ?? throw new InvalidOperationException($"couldn't start {exe}");
 
         var outputTask = proc.StandardOutput.ReadToEndAsync();
@@ -92,6 +106,8 @@ internal static class ToolRunner
             return (timeoutOutput, null);
         }
 
-        return (outputTask.GetAwaiter().GetResult() + errorTask.GetAwaiter().GetResult(), proc.ExitCode);
+        string stdout = outputTask.GetAwaiter().GetResult();
+        string stderr = errorTask.GetAwaiter().GetResult();
+        return (includeStderr ? stdout + stderr : stdout, proc.ExitCode);
     }
 }

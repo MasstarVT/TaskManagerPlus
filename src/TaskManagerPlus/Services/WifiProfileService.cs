@@ -140,35 +140,18 @@ public static class WifiProfileService
 
     private static string EscapeArg(string value) => value.Replace("\"", "\\\"");
 
-    /// <summary>Same shelling-out shape WifiDiagnosticsService.ReadCurrentWifiAsync already
-    /// establishes - duplicated rather than shared per that method's own remarks (it's private to a
-    /// different class).</summary>
+    /// <summary>Thin adapter over the shared ToolRunner (#1084) - empty string on timeout or
+    /// launch failure, this file's historical degrade-to-nothing shape.</summary>
     private static async Task<string> RunNetshAsync(string arguments, int timeoutMs = TimeoutMs)
     {
-        var psi = new ProcessStartInfo("netsh", arguments)
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        using var proc = Process.Start(psi);
-        if (proc is null) return string.Empty;
-
-        var outputTask = proc.StandardOutput.ReadToEndAsync();
-        var errorTask = proc.StandardError.ReadToEndAsync();
-
-        using var cts = new CancellationTokenSource(timeoutMs);
         try
         {
-            await proc.WaitForExitAsync(cts.Token);
+            var (output, _) = await ToolRunner.RunCapturedAsync("netsh", arguments, timeoutMs, timeoutOutput: string.Empty);
+            return output;
         }
-        catch (OperationCanceledException)
+        catch
         {
-            try { proc.Kill(); } catch { /* best-effort */ }
             return string.Empty;
         }
-
-        return (await outputTask) + (await errorTask);
     }
 }

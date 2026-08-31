@@ -103,29 +103,12 @@ public static class DebuggerToolsService
     {
         try
         {
-            var psi = new ProcessStartInfo(cdbPath, $"-z \"{dumpPath}\" -c \"!analyze -v; q\"")
+            var (output, exitCode) = await ToolRunner.RunCapturedAsync(
+                cdbPath, $"-z \"{dumpPath}\" -c \"!analyze -v; q\"",
+                (int)AnalyzeTimeout.TotalMilliseconds, cancellationToken, timeoutOutput: string.Empty);
+            if (exitCode is null)
             {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null)
-                return new CdbAnalysisResult { AnalyzedAt = DateTime.Now, Error = "Couldn't start cdb.exe." };
-
-            var outputTask = proc.StandardOutput.ReadToEndAsync(cancellationToken);
-            var errorTask = proc.StandardError.ReadToEndAsync(cancellationToken);
-
-            using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            cts.CancelAfter(AnalyzeTimeout);
-            try
-            {
-                await proc.WaitForExitAsync(cts.Token);
-            }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-            {
-                try { proc.Kill(entireProcessTree: true); } catch { /* best-effort */ }
+                cancellationToken.ThrowIfCancellationRequested(); // an external cancel propagates; only a genuine timeout reports
                 return new CdbAnalysisResult
                 {
                     AnalyzedAt = DateTime.Now,
@@ -133,7 +116,6 @@ public static class DebuggerToolsService
                 };
             }
 
-            string output = (await outputTask) + Environment.NewLine + (await errorTask);
             return ParseAnalyzeOutput(output);
         }
         catch (OperationCanceledException)

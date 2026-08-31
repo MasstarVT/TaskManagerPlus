@@ -67,19 +67,8 @@ public static class RoutingTableService
         var results = new List<RouteEntry>();
         try
         {
-            var psi = new ProcessStartInfo("route.exe", $"print {familyFlag}")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return results;
-
-            string output = await proc.StandardOutput.ReadToEndAsync();
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-            try { await proc.WaitForExitAsync(cts.Token); } catch (OperationCanceledException) { try { proc.Kill(); } catch { /* best-effort */ } }
+            var (output, _) = await ToolRunner.RunCapturedAsync("route.exe", $"print {familyFlag}", 10_000,
+                timeoutOutput: string.Empty, includeStderr: false);
 
             bool inActiveSection = false;
             string af = familyFlag == "-4" ? "IPv4" : "IPv6";

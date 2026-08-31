@@ -39,19 +39,8 @@ public static class InterfaceMtuService
         var results = new List<InterfaceMtuInfo>();
         try
         {
-            var psi = new ProcessStartInfo("netsh.exe", $"interface {family} show subinterfaces")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return results;
-
-            string output = await proc.StandardOutput.ReadToEndAsync();
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-            try { await proc.WaitForExitAsync(cts.Token); } catch (OperationCanceledException) { try { proc.Kill(); } catch { /* best-effort */ } }
+            var (output, _) = await ToolRunner.RunCapturedAsync("netsh.exe", $"interface {family} show subinterfaces", 10_000,
+                timeoutOutput: string.Empty, includeStderr: false);
 
             string af = family == "ipv4" ? "IPv4" : "IPv6";
             foreach (var rawLine in output.Split('\n'))

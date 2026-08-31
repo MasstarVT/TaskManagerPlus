@@ -68,33 +68,8 @@ public static class BadSectorService
     {
         try
         {
-            var psi = new ProcessStartInfo("fsutil.exe", $"volume allocationreport {driveLetter}")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return null;
-
-            // Concurrent async reads + a bounded WaitForExitAsync + Kill()-on-timeout - the same
-            // pattern TracerouteService.RunAsync/VolumeDiagnosticsService already use elsewhere.
-            var outputTask = proc.StandardOutput.ReadToEndAsync();
-            var errorTask = proc.StandardError.ReadToEndAsync();
-
-            using var cts = new CancellationTokenSource(15000);
-            try
-            {
-                await proc.WaitForExitAsync(cts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                try { proc.Kill(); } catch { /* best-effort */ }
-                return null;
-            }
-
-            string output = (await outputTask) + (await errorTask);
+            var (output, exitCode) = await ToolRunner.RunCapturedAsync("fsutil.exe", $"volume allocationreport {driveLetter}", 15000);
+            if (exitCode is null) return null;
             var match = BadClusBytesRegex.Match(output);
             if (match.Success && long.TryParse(match.Groups[1].Value.Replace(",", string.Empty), out long bytes))
                 return bytes;

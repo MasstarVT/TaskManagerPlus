@@ -80,23 +80,8 @@ public static class DnsConfigService
         bool commandSupported;
         try
         {
-            var psi = new ProcessStartInfo("netsh.exe", "dns show encryption")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return new DohConfigResult(new(), string.Empty, registryPresent, false);
-
-            var outputTask = proc.StandardOutput.ReadToEndAsync();
-            var errorTask = proc.StandardError.ReadToEndAsync();
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-            try { await proc.WaitForExitAsync(cts.Token); }
-            catch (OperationCanceledException) { try { proc.Kill(); } catch { /* best-effort */ } }
-
-            raw = ((await outputTask) + (await errorTask)).Trim();
+            var (output, _) = await ToolRunner.RunCapturedAsync("netsh.exe", "dns show encryption", 10_000, timeoutOutput: string.Empty);
+            raw = output.Trim();
             // Older Windows builds don't recognize the "dns" netsh context at all - netsh's own
             // "The following command was not found" text is how that shows up.
             commandSupported = raw.Length > 0 &&

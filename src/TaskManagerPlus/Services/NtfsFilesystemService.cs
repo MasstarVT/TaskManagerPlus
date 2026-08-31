@@ -12,11 +12,9 @@ namespace TaskManagerPlus.Services;
 /// single MSFT_Volume query (root\Microsoft\Windows\Storage) plus a handful of fsutil/chkntfs
 /// shell-outs and one registry read - all cheap enough to read once at Storage-tab load time (or on
 /// an explicit refresh click), never on a poll tick, per this round's brief. Every fsutil/chkntfs
-/// call goes through RunToolAsync at the bottom of this file, which centralizes the app's standard
-/// shell-out shape (concurrent stdout/stderr reads + a bounded wait + Kill()-on-timeout, the same
-/// pattern VolumeDiagnosticsService/DiskFragmentationService/BadSectorService/ClusterMappingService
-/// each inline once) - centralized here specifically because this one file needs that exact shape
-/// five separate times, unlike any of those single-shell-out-per-file services.
+/// call goes through RunToolAsync at the bottom of this file - a thin adapter over the shared
+/// ToolRunner (#1084) that also carries the one shape ToolRunner doesn't: feeding stdin (chkdsk's
+/// "schedule on next restart? Y" prompt).
 /// </summary>
 public static class NtfsFilesystemService
 {
@@ -535,31 +533,34 @@ public static class NtfsFilesystemService
     {
         try
         {
+            if (stdin is null)
+            {
+                var (toolOutput, toolExitCode) = await ToolRunner.RunCapturedAsync(exe, args, timeoutMs, timeoutOutput: "Timed out.");
+                return (toolExitCode ?? -1, toolOutput);
+            }
+
+            // The stdin-feeding variant (chkdsk /f /r's "schedule on next restart? Y" prompt) is
+            // the one shape ToolRunner deliberately doesn't cover - same mechanism otherwise.
             var psi = new ProcessStartInfo(exe, args)
             {
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
-                RedirectStandardInput = stdin is not null,
+                RedirectStandardInput = true,
                 UseShellExecute = false,
                 CreateNoWindow = true,
             };
             using var proc = Process.Start(psi);
             if (proc is null) return (-1, $"Couldn't start {exe}.");
 
-            if (stdin is not null)
+            try
             {
-                try
-                {
-                    await proc.StandardInput.WriteAsync(stdin);
-                    proc.StandardInput.Close();
-                }
-                catch { /* best-effort - if the process never reads stdin (didn't prompt), this is harmless */ }
+                await proc.StandardInput.WriteAsync(stdin);
+                proc.StandardInput.Close();
             }
+            catch { /* best-effort - if the process never reads stdin (didn't prompt), this is harmless */ }
 
-            // Concurrent async reads + a bounded WaitForExitAsync + Kill()-on-timeout - the same
-            // pattern VolumeDiagnosticsService/DiskFragmentationService/BadSectorService/
-            // ClusterMappingService each already use (see VolumeDiagnosticsService's remarks for why
-            // the read/wait ordering matters).
+            // Concurrent async reads + a bounded WaitForExitAsync + kill-on-timeout - the same
+            // ordering ToolRunner uses (see its remarks for why the read/wait ordering matters).
             var outputTask = proc.StandardOutput.ReadToEndAsync();
             var errorTask = proc.StandardError.ReadToEndAsync();
 
@@ -570,7 +571,7 @@ public static class NtfsFilesystemService
             }
             catch (OperationCanceledException)
             {
-                try { proc.Kill(); } catch { /* best-effort */ }
+                try { proc.Kill(entireProcessTree: true); } catch { /* best-effort */ }
                 return (-1, "Timed out.");
             }
 

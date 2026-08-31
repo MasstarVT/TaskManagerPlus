@@ -125,39 +125,15 @@ public static class KernelModuleService
     /// <summary>
     /// #424: shells out to `driverquery /v /fo csv` for a "Display Name" per driver, matched back
     /// to the raw enumeration above by "Module Name" (driverquery's own file-base-name column) -
-    /// same concurrent-read/bounded-wait/kill-on-timeout process pattern ScheduledTaskService's
-    /// RunCapturedAsync already established, reused here directly rather than re-derived.
+    /// run through the shared ToolRunner (#1084), degrading to an empty map on timeout or a
+    /// nonzero exit.
     /// </summary>
     private static async Task<Dictionary<string, string>> ReadFriendlyNamesAsync()
     {
         var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-        var psi = new ProcessStartInfo("driverquery.exe", "/v /fo csv")
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        using var proc = Process.Start(psi);
-        if (proc is null) return result;
-
-        var outputTask = proc.StandardOutput.ReadToEndAsync();
-        var errorTask = proc.StandardError.ReadToEndAsync();
-
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-        try
-        {
-            await proc.WaitForExitAsync(cts.Token);
-        }
-        catch (OperationCanceledException)
-        {
-            try { proc.Kill(); } catch { /* best-effort */ }
-            return result;
-        }
-
-        string output = (await outputTask) + (await errorTask);
-        if (proc.ExitCode != 0) return result;
+        var (output, exitCode) = await ToolRunner.RunCapturedAsync("driverquery.exe", "/v /fo csv", 15_000, timeoutOutput: string.Empty);
+        if (exitCode != 0) return result; // timed out (null) or failed
 
         var lines = output.Split('\n').Select(l => l.TrimEnd('\r')).Where(l => l.Length > 0).ToList();
         if (lines.Count < 2) return result;
