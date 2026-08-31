@@ -67,32 +67,14 @@ public static class TracerouteService
 
         try
         {
-            var psi = new ProcessStartInfo("tracert.exe", $"-d -h 20 -w 1000 {host}")
+            var (output, exitCode) = await ToolRunner.RunCapturedAsync(
+                "tracert.exe", $"-d -h 20 -w 1000 {host}", 30_000, cancellationToken, timeoutOutput: string.Empty);
+            if (exitCode is null)
             {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return "Couldn't start tracert.exe.";
-
-            var outputTask = proc.StandardOutput.ReadToEndAsync(cancellationToken);
-            var errorTask = proc.StandardError.ReadToEndAsync(cancellationToken);
-
-            using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            cts.CancelAfter(TimeSpan.FromSeconds(30));
-            try
-            {
-                await proc.WaitForExitAsync(cts.Token);
-            }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-            {
-                try { proc.Kill(); } catch { /* best-effort */ }
+                cancellationToken.ThrowIfCancellationRequested(); // an external cancel propagates; only a genuine timeout reports
                 return "Traceroute timed out after 30 seconds (a hop count of 20 with a 1s-per-hop timeout can still run long on a lossy path).";
             }
 
-            string output = (await outputTask) + (await errorTask);
             return string.IsNullOrWhiteSpace(output) ? "No output." : output.Trim();
         }
         catch (OperationCanceledException)

@@ -111,28 +111,8 @@ public static class WifiScanStormService
     {
         try
         {
-            var psi = new ProcessStartInfo("netsh", "wlan show interfaces")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return (null, null, null);
-
-            var outputTask = proc.StandardOutput.ReadToEndAsync();
-            var errorTask = proc.StandardError.ReadToEndAsync();
-
-            using var cts = new CancellationTokenSource(4000);
-            try { await proc.WaitForExitAsync(cts.Token); }
-            catch (OperationCanceledException)
-            {
-                try { proc.Kill(); } catch { /* best-effort */ }
-                return (null, null, null);
-            }
-
-            string output = (await outputTask) + (await errorTask);
+            var (output, exitCode) = await ToolRunner.RunCapturedAsync("netsh", "wlan show interfaces", 4000);
+            if (exitCode is null) return (null, null, null);
             string? name = ExtractField(output, "Name");
             string? ssid = ExtractField(output, "SSID");
             string? state = ExtractField(output, "State");

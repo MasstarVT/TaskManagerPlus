@@ -79,19 +79,7 @@ public static class NvidiaSmiService
     }
 
     private static string RunNvidiaSmi(string args)
-    {
-        var psi = new ProcessStartInfo(ExePath, args)
-        {
-            RedirectStandardOutput = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        using var proc = Process.Start(psi);
-        if (proc is null) return string.Empty;
-        string output = proc.StandardOutput.ReadToEnd();
-        proc.WaitForExit(10_000);
-        return output;
-    }
+        => ToolRunner.RunCaptured(ExePath, args, TimeSpan.FromSeconds(10), includeStderr: false).Output;
 
     private static List<string> SplitIntoGpuBlocks(string report)
     {

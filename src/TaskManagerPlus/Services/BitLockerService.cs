@@ -313,31 +313,8 @@ public static class BitLockerService
     {
         try
         {
-            var psi = new ProcessStartInfo("manage-bde.exe", $"-status {driveLetter}")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return null;
-
-            var outputTask = proc.StandardOutput.ReadToEndAsync();
-            var errorTask = proc.StandardError.ReadToEndAsync();
-
-            using var cts = new CancellationTokenSource(5000);
-            try
-            {
-                await proc.WaitForExitAsync(cts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                try { proc.Kill(); } catch { /* best-effort */ }
-                return null;
-            }
-
-            string output = (await outputTask) + (await errorTask);
+            var (output, exitCode) = await ToolRunner.RunCapturedAsync("manage-bde.exe", $"-status {driveLetter}", 5000);
+            if (exitCode is null) return null;
             foreach (var rawLine in output.Split('\n'))
             {
                 string line = rawLine.Trim();

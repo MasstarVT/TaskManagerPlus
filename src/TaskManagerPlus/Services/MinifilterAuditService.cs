@@ -132,37 +132,14 @@ public static class MinifilterAuditService
 
     private static bool IsSeparatorLine(string line) => line.Length > 0 && line.All(c => c == '-' || c == ' ');
 
-    /// <summary>Concurrent async reads + a bounded WaitForExitAsync + Kill()-on-timeout - the same
-    /// pattern VolumeDiagnosticsService's fsutil/vssadmin shell-outs use.</summary>
+    /// <summary>Thin adapter over the shared ToolRunner (#1084) - null on timeout or launch
+    /// failure, this file's historical degrade-to-nothing shape.</summary>
     private static async Task<string?> RunFltmcAsync(string args)
     {
         try
         {
-            var psi = new ProcessStartInfo("fltmc.exe", args)
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return null;
-
-            var outputTask = proc.StandardOutput.ReadToEndAsync();
-            var errorTask = proc.StandardError.ReadToEndAsync();
-
-            using var cts = new CancellationTokenSource(10000);
-            try
-            {
-                await proc.WaitForExitAsync(cts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                try { proc.Kill(); } catch { /* best-effort */ }
-                return null;
-            }
-
-            return (await outputTask) + (await errorTask);
+            var (output, exitCode) = await ToolRunner.RunCapturedAsync("fltmc.exe", args, 10000);
+            return exitCode is null ? null : output;
         }
         catch
         {

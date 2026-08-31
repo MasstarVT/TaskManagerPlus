@@ -38,34 +38,15 @@ public static class NetworkStackResetService
         StackResetActionResult result;
         try
         {
-            var psi = new ProcessStartInfo(exe, args)
+            var (captured, exitCode) = await ToolRunner.RunCapturedAsync(exe, args, TimeoutMs);
+            if (exitCode is null)
             {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null)
-            {
-                result = new StackResetActionResult(actionName, false, $"Couldn't start {exe}.", ranAt);
+                result = new StackResetActionResult(actionName, false, $"{exe} timed out.", ranAt);
             }
             else
             {
-                var outputTask = proc.StandardOutput.ReadToEndAsync();
-                var errorTask = proc.StandardError.ReadToEndAsync();
-                using var cts = new CancellationTokenSource(TimeoutMs);
-                try
-                {
-                    await proc.WaitForExitAsync(cts.Token);
-                    string output = ((await outputTask) + (await errorTask)).Trim();
-                    result = new StackResetActionResult(actionName, proc.ExitCode == 0, output.Length == 0 ? "(no output)" : output, ranAt);
-                }
-                catch (OperationCanceledException)
-                {
-                    try { proc.Kill(); } catch { /* best-effort */ }
-                    result = new StackResetActionResult(actionName, false, $"{exe} timed out.", ranAt);
-                }
+                string output = captured.Trim();
+                result = new StackResetActionResult(actionName, exitCode == 0, output.Length == 0 ? "(no output)" : output, ranAt);
             }
         }
         catch (Exception ex)

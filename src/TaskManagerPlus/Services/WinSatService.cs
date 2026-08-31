@@ -83,26 +83,20 @@ public static class WinSatService
     /// <summary>Runs `winsat formal` (the same full formal assessment Windows Setup itself
     /// performs) and re-reads the cache afterward. Only ever called from an explicit user action -
     /// see the class remarks. Elevation is already a given for this whole app (CLAUDE.md), so no
-    /// separate elevation handling is needed here. Honors `ct` for cancellation; the caller decides
-    /// how long "too long" is rather than a second hardcoded timeout in here.</summary>
+    /// separate elevation handling is needed here. Honors `ct` for cancellation (killing the
+    /// winsat process tree, which the pre-ToolRunner version never did - it rethrew and orphaned
+    /// the run); the 10-minute ceiling is a safety net well above a real formal assessment's
+    /// several-minute runtime, since the only caller passes CancellationToken.None.</summary>
     public static async Task<Scores?> RunFormalAsync(CancellationToken ct)
     {
         try
         {
-            var psi = new ProcessStartInfo("winsat.exe", "formal")
+            var (_, exitCode) = await ToolRunner.RunCapturedAsync("winsat.exe", "formal", 600_000, ct);
+            if (exitCode is null)
             {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return null;
-
-            var stdoutTask = proc.StandardOutput.ReadToEndAsync();
-            var stderrTask = proc.StandardError.ReadToEndAsync();
-            await proc.WaitForExitAsync(ct);
-            await Task.WhenAll(stdoutTask, stderrTask);
+                ct.ThrowIfCancellationRequested();
+                return null; // genuine timeout - the run was killed, so there's no fresh cache to trust
+            }
         }
         catch (OperationCanceledException) { throw; }
         catch

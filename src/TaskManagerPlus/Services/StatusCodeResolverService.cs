@@ -54,34 +54,10 @@ public sealed class StatusCodeResolverService
     {
         try
         {
-            var psi = new ProcessStartInfo("certutil.exe", $"-error {code}")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return null;
+            var (captured, exitCode) = await ToolRunner.RunCapturedAsync("certutil.exe", $"-error {code}", 5000);
+            if (exitCode is null) return null;
 
-            // Concurrent async reads + a bounded WaitForExitAsync + Kill()-on-timeout - the same
-            // pattern VolumeDiagnosticsService's fsutil/vssadmin shell-outs use, so a certutil that
-            // somehow hangs can't wedge the caller.
-            var outputTask = proc.StandardOutput.ReadToEndAsync();
-            var errorTask = proc.StandardError.ReadToEndAsync();
-
-            using var cts = new CancellationTokenSource(5000);
-            try
-            {
-                await proc.WaitForExitAsync(cts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                try { proc.Kill(); } catch { /* best-effort */ }
-                return null;
-            }
-
-            string output = ((await outputTask) + Environment.NewLine + (await errorTask)).Trim();
+            string output = captured.Trim();
             if (output.Length == 0) return null;
 
             // certutil's happy-path output looks like:

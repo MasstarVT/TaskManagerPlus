@@ -90,39 +90,11 @@ else { Write-Output ($results | ConvertTo-Json -Compress) }
         var raw = new List<RawEntry>();
         try
         {
-            var psi = new ProcessStartInfo("powershell.exe")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            psi.ArgumentList.Add("-NoProfile");
-            psi.ArgumentList.Add("-NonInteractive");
-            psi.ArgumentList.Add("-ExecutionPolicy");
-            psi.ArgumentList.Add("Bypass");
-            psi.ArgumentList.Add("-Command");
-            psi.ArgumentList.Add(Script);
-
-            using var proc = Process.Start(psi);
-            if (proc is null) return new List<PciLinkInfo>();
-
-            var outputTask = proc.StandardOutput.ReadToEndAsync();
-            var errorTask = proc.StandardError.ReadToEndAsync();
-
-            using var cts = new CancellationTokenSource(20_000);
-            try
-            {
-                await proc.WaitForExitAsync(cts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                try { proc.Kill(); } catch { /* best-effort */ }
-                return new List<PciLinkInfo>();
-            }
-
-            string output = await outputTask;
-            await errorTask; // drain, ignored - stderr noise (module load warnings etc.) isn't surfaced
+            // stderr noise (module load warnings etc.) isn't surfaced - stdout only.
+            var (output, exitCode) = await ToolRunner.RunCapturedAsync("powershell.exe",
+                new[] { "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", Script },
+                20_000, timeoutOutput: string.Empty, includeStderr: false);
+            if (exitCode is null) return new List<PciLinkInfo>();
 
             if (!string.IsNullOrWhiteSpace(output))
             {

@@ -13,10 +13,9 @@ namespace TaskManagerPlus.Services;
 /// this feature comes from MemoryViewModel's separate perf-counter-sampling pass
 /// (ScanPageFaultsAsync) that runs alongside this capture, not from this file's contents.
 ///
-/// Every logman invocation is wrapped the same defensive way DiskFragmentationService.Analyze
-/// shells out to defrag.exe: redirected output, a bounded wait, and a Kill() on timeout - logman
-/// itself returns almost immediately for both start and stop, but a hung/blocked child process
-/// should never be able to wedge this on-demand feature.
+/// Every logman invocation goes through the shared ToolRunner (#1084) - logman itself returns
+/// almost immediately for both start and stop, but a hung/blocked child process should never be
+/// able to wedge this on-demand feature.
 /// </summary>
 public static class PageFaultTraceService
 {
@@ -62,33 +61,10 @@ public static class PageFaultTraceService
     {
         try
         {
-            var psi = new ProcessStartInfo("logman.exe", arguments)
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return (false, string.Empty, "Couldn't start logman.exe.");
-
-            var outputTask = proc.StandardOutput.ReadToEndAsync();
-            var errorTask = proc.StandardError.ReadToEndAsync();
-
-            using var cts = new CancellationTokenSource(CommandTimeout);
-            try
-            {
-                await proc.WaitForExitAsync(cts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                try { proc.Kill(); } catch { /* best-effort */ }
-                return (false, string.Empty, "logman.exe timed out.");
-            }
-
-            string output = await outputTask;
-            string error = await errorTask;
-            return (proc.ExitCode == 0, output, string.IsNullOrWhiteSpace(error) ? output : error);
+            var (output, exitCode) = await ToolRunner.RunCapturedAsync(
+                "logman.exe", arguments, (int)CommandTimeout.TotalMilliseconds);
+            if (exitCode is null) return (false, string.Empty, "logman.exe timed out.");
+            return (exitCode == 0, output, output);
         }
         catch (Exception ex)
         {

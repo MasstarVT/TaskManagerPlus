@@ -381,43 +381,11 @@ public sealed class ServiceControlService
 
         try
         {
-            var psi = new ProcessStartInfo("sc.exe", $"config \"{serviceName}\" start= {startType}")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return (false, previous, "couldn't start sc.exe");
-
-            // Both streams are redirected, so they must be drained *concurrently* with the wait -
-            // reading one to completion before the other is the classic .NET Process redirection
-            // deadlock (the OS pipe buffers are small and fixed-size: if sc.exe fills stderr while
-            // this thread is blocked in stdout's ReadToEnd, the child blocks writing and this
-            // blocks reading, forever - and the WaitForExit timeout below is never even reached).
-            // Same concurrent-read/bounded-wait/kill-on-timeout shape PowerPlanService.RunCapturedAsync
-            // and DiskFragmentationService already use; kept synchronous here because this method's
-            // callers already wrap it in Task.Run.
-            var outputTask = proc.StandardOutput.ReadToEndAsync();
-            var errorTask = proc.StandardError.ReadToEndAsync();
-            if (!proc.WaitForExit(10000))
-            {
-                try { proc.Kill(); } catch { /* best-effort */ }
-                return (false, previous, "sc.exe timed out");
-            }
-
-            // The process has exited, so both pipes are at EOF and these complete promptly; the
-            // bounded wait is belt-and-braces so a wedged reader can't hang the caller either.
-            string output;
-            try
-            {
-                Task.WaitAll(new Task[] { outputTask, errorTask }, 5000);
-                output = (outputTask.IsCompletedSuccessfully ? outputTask.Result : string.Empty)
-                       + (errorTask.IsCompletedSuccessfully ? errorTask.Result : string.Empty);
-            }
-            catch { output = string.Empty; }
-            return proc.ExitCode == 0 ? (true, previous, null) : (false, previous, output.Trim());
+            // Kept synchronous (the sync ToolRunner twin) because this method's callers already
+            // wrap it in Task.Run.
+            var (output, exitCode) = ToolRunner.RunCaptured("sc.exe", $"config \"{serviceName}\" start= {startType}", TimeSpan.FromSeconds(10));
+            if (exitCode is null) return (false, previous, "sc.exe timed out");
+            return exitCode == 0 ? (true, previous, null) : (false, previous, output.Trim());
         }
         catch (Exception ex)
         {
@@ -439,36 +407,8 @@ public sealed class ServiceControlService
     {
         try
         {
-            var psi = new ProcessStartInfo("sc.exe", $"qfailure \"{serviceName}\"")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return "(couldn't run sc.exe)";
-
-            // Concurrent async reads + a bounded WaitForExitAsync + Kill()-on-timeout - the same
-            // pattern TracerouteService.RunAsync uses, rather than the previous synchronous
-            // ReadToEnd() followed by an unchecked WaitForExit(5000), which could deadlock if
-            // sc.exe's output filled its pipe buffer before exiting and would otherwise leave the
-            // process running past the 5s mark with nothing to kill it.
-            var outputTask = proc.StandardOutput.ReadToEndAsync();
-            var errorTask = proc.StandardError.ReadToEndAsync();
-
-            using var cts = new CancellationTokenSource(5000);
-            try
-            {
-                await proc.WaitForExitAsync(cts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                try { proc.Kill(); } catch { /* best-effort */ }
-                return "(sc.exe timed out)";
-            }
-
-            string output = (await outputTask) + (await errorTask);
+            var (output, exitCode) = await ToolRunner.RunCapturedAsync("sc.exe", $"qfailure \"{serviceName}\"", 5000);
+            if (exitCode is null) return "(sc.exe timed out)";
 
             // Strip the "[SC] QueryServiceConfig2 SUCCESS" boilerplate line sc.exe always prints
             // first - everything after it is the actual recovery-action report.
@@ -749,31 +689,8 @@ public sealed class ServiceControlService
     {
         try
         {
-            var psi = new ProcessStartInfo("sc.exe", $"qtriggerinfo \"{serviceName}\"")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return "(couldn't run sc.exe)";
-
-            var outputTask = proc.StandardOutput.ReadToEndAsync();
-            var errorTask = proc.StandardError.ReadToEndAsync();
-
-            using var cts = new CancellationTokenSource(5000);
-            try
-            {
-                await proc.WaitForExitAsync(cts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                try { proc.Kill(); } catch { /* best-effort */ }
-                return "(sc.exe timed out)";
-            }
-
-            string output = (await outputTask) + (await errorTask);
+            var (output, exitCode) = await ToolRunner.RunCapturedAsync("sc.exe", $"qtriggerinfo \"{serviceName}\"", 5000);
+            if (exitCode is null) return "(sc.exe timed out)";
             return ParseTriggerInfo(output);
         }
         catch (Exception ex)
@@ -874,32 +791,9 @@ public sealed class ServiceControlService
     {
         try
         {
-            var psi = new ProcessStartInfo("sc.exe", $"delete \"{serviceName}\"")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return (false, "couldn't run sc.exe");
-
-            var outputTask = proc.StandardOutput.ReadToEndAsync();
-            var errorTask = proc.StandardError.ReadToEndAsync();
-
-            using var cts = new CancellationTokenSource(10000);
-            try
-            {
-                await proc.WaitForExitAsync(cts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                try { proc.Kill(); } catch { /* best-effort */ }
-                return (false, "sc.exe timed out");
-            }
-
-            string output = (await outputTask) + (await errorTask);
-            return proc.ExitCode == 0 ? (true, null) : (false, output.Trim());
+            var (output, exitCode) = await ToolRunner.RunCapturedAsync("sc.exe", $"delete \"{serviceName}\"", 10000);
+            if (exitCode is null) return (false, "sc.exe timed out");
+            return exitCode == 0 ? (true, null) : (false, output.Trim());
         }
         catch (Exception ex)
         {

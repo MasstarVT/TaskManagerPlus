@@ -941,19 +941,7 @@ public static class EtwTraceService
 
         private static void RunBlockingBestEffort(string exe, string args, int timeoutMs)
         {
-            try
-            {
-                var psi = new ProcessStartInfo(exe, args)
-                {
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                };
-                using var p = Process.Start(psi);
-                if (p is null) return;
-                if (!p.WaitForExit(timeoutMs)) { try { p.Kill(entireProcessTree: true); } catch { /* best-effort */ } }
-            }
+            try { ToolRunner.RunCaptured(exe, args, TimeSpan.FromMilliseconds(timeoutMs)); }
             catch { /* best-effort teardown */ }
         }
     }

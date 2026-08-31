@@ -131,29 +131,8 @@ public static class OrphanedAdapterService
         var packages = new List<(string, string, string)>();
         try
         {
-            var psi = new ProcessStartInfo("pnputil.exe", "/enum-drivers")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return packages;
-
-            var outputTask = proc.StandardOutput.ReadToEndAsync();
-            var errorTask = proc.StandardError.ReadToEndAsync();
-            using var cts = new CancellationTokenSource(20000);
-            try
-            {
-                await proc.WaitForExitAsync(cts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                try { proc.Kill(); } catch { /* best-effort */ }
-                return packages;
-            }
-            string output = (await outputTask) + (await errorTask);
+            var (output, exitCode) = await ToolRunner.RunCapturedAsync("pnputil.exe", "/enum-drivers", 20000, timeoutOutput: string.Empty);
+            if (exitCode is null) return packages;
 
             var block = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             void Flush()

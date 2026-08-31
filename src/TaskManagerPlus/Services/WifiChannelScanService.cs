@@ -194,37 +194,19 @@ public static class WifiChannelScanService
         return "Unknown";
     }
 
-    /// <summary>Same shelling-out shape WifiDiagnosticsService.ReadCurrentWifiAsync already
-    /// establishes (concurrent async reads, bounded WaitForExitAsync, Kill()-on-timeout) -
-    /// duplicated rather than shared since that method is private to a different class and this
-    /// scan needs a much longer timeout (an active multi-band scan takes longer than a plain
-    /// `show interfaces` read).</summary>
+    /// <summary>Thin adapter over the shared ToolRunner (#1084) - kept separate from
+    /// WifiDiagnosticsService's own call since this scan needs a much longer timeout (an active
+    /// multi-band scan takes longer than a plain `show interfaces` read).</summary>
     private static async Task<string> RunNetshAsync(string arguments)
     {
-        var psi = new ProcessStartInfo("netsh", arguments)
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        using var proc = Process.Start(psi);
-        if (proc is null) return string.Empty;
-
-        var outputTask = proc.StandardOutput.ReadToEndAsync();
-        var errorTask = proc.StandardError.ReadToEndAsync();
-
-        using var cts = new CancellationTokenSource(TimeoutMs);
         try
         {
-            await proc.WaitForExitAsync(cts.Token);
+            var (output, _) = await ToolRunner.RunCapturedAsync("netsh", arguments, TimeoutMs, timeoutOutput: string.Empty);
+            return output;
         }
-        catch (OperationCanceledException)
+        catch
         {
-            try { proc.Kill(); } catch { /* best-effort */ }
             return string.Empty;
         }
-
-        return (await outputTask) + (await errorTask);
     }
 }

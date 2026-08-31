@@ -126,34 +126,10 @@ public static class DnsResolverService
         var sw = Stopwatch.StartNew();
         try
         {
-            var psi = new ProcessStartInfo("nslookup.exe", $"{hostname} {resolverIp}")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null)
-                return new DnsResolverAnswer(resolverIp, isConfigured, adapterName, false, new(), 0, "Couldn't start nslookup.exe");
-
-            var outputTask = proc.StandardOutput.ReadToEndAsync();
-            var errorTask = proc.StandardError.ReadToEndAsync();
-
-            using var cts = new CancellationTokenSource(NslookupTimeoutMs);
-            try
-            {
-                await proc.WaitForExitAsync(cts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                try { proc.Kill(); } catch { /* best-effort */ }
-                sw.Stop();
-                return new DnsResolverAnswer(resolverIp, isConfigured, adapterName, false, new(), sw.ElapsedMilliseconds, "Timed out");
-            }
-
-            string output = (await outputTask) + (await errorTask);
+            var (output, exitCode) = await ToolRunner.RunCapturedAsync("nslookup.exe", $"{hostname} {resolverIp}", NslookupTimeoutMs);
             sw.Stop();
+            if (exitCode is null)
+                return new DnsResolverAnswer(resolverIp, isConfigured, adapterName, false, new(), sw.ElapsedMilliseconds, "Timed out");
 
             var (answers, error) = ParseNslookupOutput(output);
             bool success = answers.Count > 0;

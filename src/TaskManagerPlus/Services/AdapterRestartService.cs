@@ -33,31 +33,8 @@ public static class AdapterRestartService
     {
         try
         {
-            var psi = new ProcessStartInfo("netsh.exe", arguments)
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return "Couldn't start netsh.exe.";
-
-            var outputTask = proc.StandardOutput.ReadToEndAsync();
-            var errorTask = proc.StandardError.ReadToEndAsync();
-            using var cts = new CancellationTokenSource(TimeoutMs);
-            try
-            {
-                await proc.WaitForExitAsync(cts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                try { proc.Kill(); } catch { /* best-effort */ }
-                return "netsh.exe timed out.";
-            }
-
-            string output = ((await outputTask) + (await errorTask)).Trim();
-            return output;
+            var (output, _) = await ToolRunner.RunCapturedAsync("netsh.exe", arguments, TimeoutMs, timeoutOutput: "netsh.exe timed out.");
+            return output.Trim();
         }
         catch (Exception ex)
         {

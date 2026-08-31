@@ -2681,28 +2681,11 @@ public sealed class EventLogService
 
         try
         {
-            var psi = new ProcessStartInfo("wevtutil.exe", "gl System")
+            var (output, exitCode) = ToolRunner.RunCaptured("wevtutil.exe", "gl System", TimeSpan.FromSeconds(5));
+            if (exitCode is not null)
             {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is not null)
-            {
-                var outputTask = proc.StandardOutput.ReadToEndAsync();
-                var errorTask = proc.StandardError.ReadToEndAsync();
-                if (proc.WaitForExit(5000))
-                {
-                    string output = outputTask.GetAwaiter().GetResult() + errorTask.GetAwaiter().GetResult();
-                    var sizeMatch = Regex.Match(output, @"maxSize:\s*(\d+)", RegexOptions.IgnoreCase);
-                    if (sizeMatch.Success && long.TryParse(sizeMatch.Groups[1].Value, out var sz)) maxSize = sz;
-                }
-                else
-                {
-                    try { proc.Kill(); } catch { /* best-effort */ }
-                }
+                var sizeMatch = Regex.Match(output, @"maxSize:\s*(\d+)", RegexOptions.IgnoreCase);
+                if (sizeMatch.Success && long.TryParse(sizeMatch.Groups[1].Value, out var sz)) maxSize = sz;
             }
         }
         catch
@@ -3702,31 +3685,10 @@ public sealed class EventLogService
     {
         try
         {
-            var psi = new ProcessStartInfo("wevtutil.exe", $"sl \"{TaskSchedulerOperationalLog}\" /e:true")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return (false, "couldn't run wevtutil.exe");
-
-            var outputTask = proc.StandardOutput.ReadToEndAsync();
-            var errorTask = proc.StandardError.ReadToEndAsync();
-            using var cts = new CancellationTokenSource(10000);
-            try
-            {
-                await proc.WaitForExitAsync(cts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                try { proc.Kill(); } catch { /* best-effort */ }
-                return (false, "wevtutil timed out");
-            }
-
-            string output = (await outputTask) + (await errorTask);
-            return proc.ExitCode == 0 ? (true, null) : (false, output.Trim());
+            var (output, exitCode) = await ToolRunner.RunCapturedAsync(
+                "wevtutil.exe", $"sl \"{TaskSchedulerOperationalLog}\" /e:true", 10000);
+            if (exitCode is null) return (false, "wevtutil timed out");
+            return exitCode == 0 ? (true, null) : (false, output.Trim());
         }
         catch (Exception ex)
         {

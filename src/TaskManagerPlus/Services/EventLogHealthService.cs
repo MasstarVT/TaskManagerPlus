@@ -201,30 +201,9 @@ public sealed class EventLogHealthService
     {
         try
         {
-            var psi = new ProcessStartInfo("wevtutil.exe", args)
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return (false, "Couldn't start wevtutil.exe.");
-
-            var outputTask = proc.StandardOutput.ReadToEndAsync(ct);
-            var errorTask = proc.StandardError.ReadToEndAsync(ct);
-
-            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeoutCts.CancelAfter(15000);
-            try { await proc.WaitForExitAsync(timeoutCts.Token); }
-            catch (OperationCanceledException)
-            {
-                try { proc.Kill(entireProcessTree: true); } catch { /* best-effort */ }
-                return (false, "wevtutil.exe timed out.");
-            }
-
-            string output = (await outputTask) + (await errorTask);
-            return (proc.ExitCode == 0, string.IsNullOrWhiteSpace(output) ? "OK" : output.Trim());
+            var (output, exitCode) = await ToolRunner.RunCapturedAsync("wevtutil.exe", args, 15000, ct);
+            if (exitCode is null) return (false, "wevtutil.exe timed out.");
+            return (exitCode == 0, string.IsNullOrWhiteSpace(output) ? "OK" : output.Trim());
         }
         catch (Exception ex)
         {

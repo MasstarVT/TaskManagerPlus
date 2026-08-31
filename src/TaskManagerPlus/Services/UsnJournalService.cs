@@ -8,11 +8,11 @@ namespace TaskManagerPlus.Services;
 
 /// <summary>
 /// Round 16, #346/#347/#348: USN (Update Sequence Number) change-journal status, churn hot-spot
-/// aggregation, and create/resize/delete controls - all `fsutil usn ...` shell-outs. Follows the same
-/// RunToolAsync shape NtfsFilesystemService/VolumeDiagnosticsService already use (concurrent stdout/
-/// stderr reads + a bounded wait + Kill()-on-timeout) - duplicated here rather than shared, same call
-/// NtfsFilesystemService's own remarks already make for this app's small, self-contained shell-out
-/// helpers.
+/// aggregation, and create/resize/delete controls - all `fsutil usn ...` shell-outs. The buffered
+/// calls go through a thin RunToolAsync adapter over the shared ToolRunner (#1084); only the churn
+/// hot-spot reader keeps its own Process plumbing, since it streams `fsutil usn readjournal`'s
+/// line-by-line output through OutputDataReceived rather than buffering it (see #1044's remarks on
+/// its post-timeout drain).
 /// </summary>
 public static class UsnJournalService
 {
@@ -215,7 +215,7 @@ public static class UsnJournalService
         {
             if (!proc.HasExited)
             {
-                try { proc.Kill(); } catch { /* best-effort */ }
+                try { proc.Kill(entireProcessTree: true); } catch { /* best-effort */ }
             }
         }
 
@@ -375,32 +375,8 @@ public static class UsnJournalService
     {
         try
         {
-            var psi = new ProcessStartInfo(exe, args)
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return (-1, $"Couldn't start {exe}.");
-
-            var outputTask = proc.StandardOutput.ReadToEndAsync();
-            var errorTask = proc.StandardError.ReadToEndAsync();
-
-            using var cts = new CancellationTokenSource(timeoutMs);
-            try
-            {
-                await proc.WaitForExitAsync(cts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                try { proc.Kill(); } catch { /* best-effort */ }
-                return (-1, "Timed out.");
-            }
-
-            string output = (await outputTask) + (await errorTask);
-            return (proc.ExitCode, output);
+            var (output, exitCode) = await ToolRunner.RunCapturedAsync(exe, args, timeoutMs, timeoutOutput: "Timed out.");
+            return (exitCode ?? -1, output);
         }
         catch (Exception ex)
         {
