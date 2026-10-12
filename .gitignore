@@ -20,3 +20,4 @@ suggestions.md
 # hence .claude/* plus the negations.)
 .claude/*
 !.claude/skills/
+graphify-out/
