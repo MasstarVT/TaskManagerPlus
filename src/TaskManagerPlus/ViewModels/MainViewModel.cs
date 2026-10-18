@@ -746,9 +746,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Stability.Dispose();
         Events.Dispose();
         LeakWatch.Dispose();
-        // Stops the driver-load ETW session if one is running. Cast via object so this compiles
-        // whether or not DevicesDriversViewModel (sealed) implements IDisposable on this branch.
-        ((object)DevicesDrivers as IDisposable)?.Dispose();
+        // Stops the driver-load ETW session if one is running.
+        DevicesDrivers.Dispose();
         ProcessHistory.Flush();
         // #1082: same clean-exit persist as ProcessHistory above - writes any free-space low-water
         // marks still inside FreeSpaceHistoryService's debounce window.

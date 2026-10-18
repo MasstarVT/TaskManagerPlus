@@ -164,8 +164,9 @@ public static class ScheduledTaskService
 
     private static string At(List<string> fields, int index) => index >= 0 && index < fields.Count ? fields[index] : string.Empty;
 
-    /// <summary>#979: creates a one-shot task that runs `command` the next time this machine
-    /// boots, as SYSTEM - used by the remediation review dialog's "Queue for next boot" option for
+    /// <summary>#979: creates a task that runs `command` as SYSTEM at boot. `/sc onstart` fires on
+    /// EVERY boot, so a caller that wants it once must make `command` delete the task itself (the
+    /// remediation review dialog's queue path does) - used by its "Queue for next boot" option for
     /// an action that needs its target volume offline (chkdsk /f being the catalog's one example
     /// so far). `/f` overwrites a same-named task left over from a prior queue/cancel cycle rather
     /// than erroring on it.</summary>
