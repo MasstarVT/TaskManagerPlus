@@ -63,7 +63,7 @@ public static class NetworkStackResetService
                 }
                 catch (OperationCanceledException)
                 {
-                    try { proc.Kill(); } catch { /* best-effort */ }
+                    try { proc.Kill(entireProcessTree: true); } catch { /* best-effort */ }
                     result = new StackResetActionResult(actionName, false, $"{exe} timed out.", ranAt);
                 }
             }

@@ -77,7 +77,7 @@ public sealed class StatusCodeResolverService
             }
             catch (OperationCanceledException)
             {
-                try { proc.Kill(); } catch { /* best-effort */ }
+                try { proc.Kill(entireProcessTree: true); } catch { /* best-effort */ }
                 return null;
             }
 

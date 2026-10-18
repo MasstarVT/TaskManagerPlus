@@ -252,7 +252,7 @@ public static class PowerReportService
             try { await proc.WaitForExitAsync(cts.Token); }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
-                try { proc.Kill(); } catch { /* best-effort */ }
+                try { proc.Kill(entireProcessTree: true); } catch { /* best-effort */ }
                 return (false, "powercfg timed out");
             }
 

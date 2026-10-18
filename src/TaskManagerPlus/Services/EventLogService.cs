@@ -2774,7 +2774,7 @@ public sealed class EventLogService
                 }
                 else
                 {
-                    try { proc.Kill(); } catch { /* best-effort */ }
+                    try { proc.Kill(entireProcessTree: true); } catch { /* best-effort */ }
                 }
             }
         }
@@ -3814,7 +3814,7 @@ public sealed class EventLogService
             }
             catch (OperationCanceledException)
             {
-                try { proc.Kill(); } catch { /* best-effort */ }
+                try { proc.Kill(entireProcessTree: true); } catch { /* best-effort */ }
                 return (false, "wevtutil timed out");
             }
 

@@ -147,7 +147,7 @@ public static class DnsResolverService
             }
             catch (OperationCanceledException)
             {
-                try { proc.Kill(); } catch { /* best-effort */ }
+                try { proc.Kill(entireProcessTree: true); } catch { /* best-effort */ }
                 sw.Stop();
                 return new DnsResolverAnswer(resolverIp, isConfigured, adapterName, false, new(), sw.ElapsedMilliseconds, "Timed out");
             }

@@ -221,7 +221,7 @@ public static class UsnJournalService
         {
             if (!proc.HasExited)
             {
-                try { proc.Kill(); } catch { /* best-effort */ }
+                try { proc.Kill(entireProcessTree: true); } catch { /* best-effort */ }
             }
         }
 
@@ -401,7 +401,7 @@ public static class UsnJournalService
             }
             catch (OperationCanceledException)
             {
-                try { proc.Kill(); } catch { /* best-effort */ }
+                try { proc.Kill(entireProcessTree: true); } catch { /* best-effort */ }
                 return (-1, "Timed out.");
             }
 

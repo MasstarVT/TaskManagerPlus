@@ -65,14 +65,14 @@ public static class ChkdskService
 
         // Kill on cancel rather than waiting for chkdsk to finish on its own - a /scan pass can run
         // for minutes on a large volume.
-        using var registration = token.Register(() => { try { proc.Kill(); } catch { /* best-effort */ } });
+        using var registration = token.Register(() => { try { proc.Kill(entireProcessTree: true); } catch { /* best-effort */ } });
         try
         {
             await proc.WaitForExitAsync(token);
         }
         catch (OperationCanceledException)
         {
-            try { proc.Kill(); } catch { /* best-effort - registration above likely already did this */ }
+            try { proc.Kill(entireProcessTree: true); } catch { /* best-effort - registration above likely already did this */ }
             throw;
         }
 

@@ -94,7 +94,7 @@ public static class DnsConfigService
             var errorTask = proc.StandardError.ReadToEndAsync();
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
             try { await proc.WaitForExitAsync(cts.Token); }
-            catch (OperationCanceledException) { try { proc.Kill(); } catch { /* best-effort */ } }
+            catch (OperationCanceledException) { try { proc.Kill(entireProcessTree: true); } catch { /* best-effort */ } }
 
             raw = ((await outputTask) + (await errorTask)).Trim();
             // Older Windows builds don't recognize the "dns" netsh context at all - netsh's own

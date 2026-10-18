@@ -128,7 +128,7 @@ public static class WifiScanStormService
             try { await proc.WaitForExitAsync(cts.Token); }
             catch (OperationCanceledException)
             {
-                try { proc.Kill(); } catch { /* best-effort */ }
+                try { proc.Kill(entireProcessTree: true); } catch { /* best-effort */ }
                 return (null, null, null);
             }
 

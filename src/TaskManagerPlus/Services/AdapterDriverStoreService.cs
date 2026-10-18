@@ -68,7 +68,7 @@ public static class AdapterDriverStoreService
             }
             catch (OperationCanceledException)
             {
-                try { proc.Kill(); } catch { /* best-effort */ }
+                try { proc.Kill(entireProcessTree: true); } catch { /* best-effort */ }
                 return packages;
             }
             output = (await outputTask) + (await errorTask);

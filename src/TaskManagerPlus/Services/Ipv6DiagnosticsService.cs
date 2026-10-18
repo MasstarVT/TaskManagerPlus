@@ -185,7 +185,7 @@ public static class Ipv6DiagnosticsService
             try { await proc.WaitForExitAsync(cts.Token); }
             catch (OperationCanceledException)
             {
-                try { proc.Kill(); } catch { /* best-effort */ }
+                try { proc.Kill(entireProcessTree: true); } catch { /* best-effort */ }
                 return string.Empty;
             }
             return (await outputTask) + (await errorTask);

@@ -407,7 +407,7 @@ public sealed class ServiceControlService
             var errorTask = proc.StandardError.ReadToEndAsync();
             if (!proc.WaitForExit(10000))
             {
-                try { proc.Kill(); } catch { /* best-effort */ }
+                try { proc.Kill(entireProcessTree: true); } catch { /* best-effort */ }
                 return (false, previous, "sc.exe timed out");
             }
 
@@ -468,7 +468,7 @@ public sealed class ServiceControlService
             }
             catch (OperationCanceledException)
             {
-                try { proc.Kill(); } catch { /* best-effort */ }
+                try { proc.Kill(entireProcessTree: true); } catch { /* best-effort */ }
                 return "(sc.exe timed out)";
             }
 
@@ -788,7 +788,7 @@ public sealed class ServiceControlService
             }
             catch (OperationCanceledException)
             {
-                try { proc.Kill(); } catch { /* best-effort */ }
+                try { proc.Kill(entireProcessTree: true); } catch { /* best-effort */ }
                 return "(sc.exe timed out)";
             }
 
@@ -913,7 +913,7 @@ public sealed class ServiceControlService
             }
             catch (OperationCanceledException)
             {
-                try { proc.Kill(); } catch { /* best-effort */ }
+                try { proc.Kill(entireProcessTree: true); } catch { /* best-effort */ }
                 return (false, "sc.exe timed out");
             }
 

@@ -150,7 +150,7 @@ public static class OrphanedAdapterService
             }
             catch (OperationCanceledException)
             {
-                try { proc.Kill(); } catch { /* best-effort */ }
+                try { proc.Kill(entireProcessTree: true); } catch { /* best-effort */ }
                 return packages;
             }
             string output = (await outputTask) + (await errorTask);

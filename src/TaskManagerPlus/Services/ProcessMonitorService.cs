@@ -783,7 +783,7 @@ public sealed class ProcessMonitorService : IDisposable
         try
         {
             using var proc = Process.GetProcessById(pid);
-            proc.Kill();
+            proc.Kill(entireProcessTree: true);
             return (true, null);
         }
         catch (Exception ex)
