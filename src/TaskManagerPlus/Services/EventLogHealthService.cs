@@ -300,11 +300,11 @@ public sealed class EventLogHealthService
 
     // ==================== #199: log-clearing and gap detection ====================
 
-    /// <summary>#199: System event 104 ("the System log was cleared") and Security event 1102 ("the
-    /// audit log was cleared"), each scoped to the specific channel it's about (a clear is always
-    /// logged into the log it cleared, so no provider-name guess is needed - just the right channel
-    /// + event ID). A cleared log must be flagged prominently, never silently folded into "no
-    /// problems found" - see StabilityViewModel/StabilityView.xaml for where this surfaces.</summary>
+    /// <summary>#199: System event 104 ("the &lt;channel&gt; log file was cleared" - logged into
+    /// System for a clear of any log, so the cleared channel is read from the event itself) and
+    /// Security event 1102 ("the audit log was cleared"), both from the Eventlog provider. A cleared
+    /// log must be flagged prominently, never silently folded into "no problems found" - see
+    /// StabilityViewModel/StabilityView.xaml for where this surfaces.</summary>
     public List<LogClearEvent> DetectLogClearEvents(int lookbackDays = 30)
     {
         var results = new List<LogClearEvent>();
@@ -315,7 +315,7 @@ public sealed class EventLogHealthService
         List<LogClearEvent> ReadClearEvents(string channel, int eventId, string clearedName)
         {
             long maxAgeMs = lookbackDays * 24L * 60 * 60 * 1000;
-            string xpath = $"*[System[(EventID={eventId}) and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]";
+            string xpath = $"*[System[(Provider[@Name='Microsoft-Windows-Eventlog'] or Provider[@Name='Eventlog']) and (EventID={eventId}) and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]";
             try
             {
                 var result = _explorer.ReadPage(channel, xpath, null, 200);
@@ -325,7 +325,7 @@ public sealed class EventLogHealthService
                 {
                     TimeCreated = r.TimeCreated,
                     SourceChannel = channel,
-                    ClearedChannelName = ExtractClearedLogName(r.Message) ?? clearedName,
+                    ClearedChannelName = (eventId == 104 ? ClearedChannelOf(r) : ExtractClearedLogName(r.Message)) ?? clearedName,
                     Account = _explorer.ResolveUserAccount(r.UserSid),
                 }).ToList();
             }
@@ -340,6 +340,19 @@ public sealed class EventLogHealthService
         var match = ClearedLogNameRegex.Match(message);
         return match.Success ? match.Groups[1].Value.Trim() : null;
     }
+
+    // 104/1102 belong to Microsoft-Windows-Eventlog; the legacy "Eventlog" name is accepted too in
+    // case an older build renders it that way.
+    private static bool IsEventlogProvider(string providerName)
+        => string.Equals(providerName, "Microsoft-Windows-Eventlog", StringComparison.OrdinalIgnoreCase)
+           || string.Equals(providerName, "Eventlog", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Event 104's template is SubjectUserName, SubjectDomainName, Channel, BackupPath -
+    /// the Channel property is locale-independent, so it's preferred over the message regex.</summary>
+    private static string? ClearedChannelOf(EventRecordRow row)
+        => row.PropertyValues.Count > 2 && !string.IsNullOrWhiteSpace(row.PropertyValues[2])
+            ? row.PropertyValues[2].Trim()
+            : ExtractClearedLogName(row.Message);
 
     // Heuristic thresholds for #199's gap flag - deliberately conservative (a wide margin over the
     // sample's own median inter-record time) since a channel that simply logs rarely can show a wide
@@ -367,7 +380,13 @@ public sealed class EventLogHealthService
         var rows = result.Rows; // newest-first (ReadPage uses ReverseDirection=true)
         if (rows.Count < 2) return flags;
 
-        foreach (var row in rows.Where(r => r.EventId == 104))
+        // Event 104 is Microsoft-Windows-Eventlog's "The <channel> log file was cleared", always
+        // logged into System whichever log was cleared - so it only means *this* log was cleared
+        // when it comes from that provider and names this channel. Any other provider's 104 is
+        // unrelated.
+        foreach (var row in rows.Where(r => r.EventId == 104
+            && IsEventlogProvider(r.ProviderName)
+            && string.Equals(ClearedChannelOf(r), channelName, StringComparison.OrdinalIgnoreCase)))
         {
             flags.Add(new LogGapFlag
             {

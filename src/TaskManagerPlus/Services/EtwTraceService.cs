@@ -941,19 +941,9 @@ public static class EtwTraceService
 
         private static void RunBlockingBestEffort(string exe, string args, int timeoutMs)
         {
-            try
-            {
-                var psi = new ProcessStartInfo(exe, args)
-                {
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                };
-                using var p = Process.Start(psi);
-                if (p is null) return;
-                if (!p.WaitForExit(timeoutMs)) { try { p.Kill(entireProcessTree: true); } catch { /* best-effort */ } }
-            }
+            // ToolRunner drains both redirected pipes (an undrained pipe can block the child until
+            // the timeout kill) and kills the tree on timeout.
+            try { ToolRunner.RunCaptured(exe, args, TimeSpan.FromMilliseconds(timeoutMs)); }
             catch { /* best-effort teardown */ }
         }
     }
@@ -1082,6 +1072,10 @@ public static class EtwTraceService
     /// success signal across wpr/logman/netsh (see this file's other logman/wpr remarks for the same
     /// point about those two specifically) - this reports exactly what the tool printed rather than
     /// guessing success/failure from an unreliable code alone.
+    ///
+    /// The recipe file is user-writable but runs elevated, so the tool is limited to the in-box
+    /// trace tools, run from their System32 copies (see <see cref="ResolveRecipeTool"/>); the
+    /// arguments themselves - including any output paths - are still the recipe's own.
     /// </summary>
     public static async Task<(bool Success, string Message)> RunRecipeAsync(EtwCaptureRecipe recipe, string outputPath, CancellationToken ct = default)
     {
@@ -1089,13 +1083,58 @@ public static class EtwTraceService
         if (string.IsNullOrWhiteSpace(recipe.Tool)) return (false, "This recipe has no tool set.");
 
         string args = (recipe.Arguments ?? string.Empty).Replace("%OUTPUT%", $"\"{outputPath}\"");
-        var (output, exitCode) = await RunCapturedAsync(recipe.Tool, args, 60000, ct);
+        string? toolPath = ResolveRecipeTool(recipe.Tool, args, out string? refusal);
+        if (toolPath is null) return (false, refusal ?? "This recipe's tool isn't allowed.");
+
+        string output;
+        int? exitCode;
+        try { (output, exitCode) = await RunCapturedAsync(toolPath, args, 60000, ct); }
+        catch (Exception ex) { return (false, $"Couldn't run {recipe.Tool}: {ex.Message}"); }
         string trimmed = output.Trim();
-        bool success = exitCode is 0 or null;
+        // A null exit code is a timeout/cancel (the tree was killed) - never a success.
+        bool success = exitCode == 0;
         string message = trimmed.Length == 0
             ? $"{recipe.Tool} ran with no output (exit code {(exitCode?.ToString() ?? "timed out")})."
             : trimmed;
         return (success, message);
+    }
+
+    private static readonly string[] AllowedRecipeTools = { "wpr.exe", "logman.exe", "tracerpt.exe", "netsh.exe" };
+
+    /// <summary>Maps a recipe's tool to the full System32 path of an allowed in-box trace tool, or
+    /// null with a reason. Only a bare name is accepted (a path could point at a planted binary, and
+    /// a bare name is otherwise resolved through the exe/current-directory search order), and netsh
+    /// only for its `trace` context - its other contexts include `add helper &lt;dll&gt;`, which
+    /// loads arbitrary code.</summary>
+    internal static string? ResolveRecipeTool(string tool, string args, out string? refusal)
+    {
+        refusal = null;
+        string name = tool.Trim().Trim('"');
+        if (name.Length == 0 || name.IndexOfAny(new[] { '\\', '/', ':' }) >= 0)
+        {
+            refusal = $"Recipe tool \"{tool}\" must be a bare tool name (wpr, logman, tracerpt or netsh), not a path.";
+            return null;
+        }
+        if (!name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) name += ".exe";
+        if (!AllowedRecipeTools.Contains(name, StringComparer.OrdinalIgnoreCase))
+        {
+            refusal = $"Recipe tool \"{tool}\" isn't allowed - recipes can only run wpr, logman, tracerpt or netsh trace.";
+            return null;
+        }
+        if (string.Equals(name, "netsh.exe", StringComparison.OrdinalIgnoreCase)
+            && !Regex.IsMatch(args, @"^\s*trace(\s|$)", RegexOptions.IgnoreCase))
+        {
+            refusal = "netsh recipes are limited to the \"netsh trace ...\" context.";
+            return null;
+        }
+
+        string fullPath = Path.Combine(Environment.SystemDirectory, name);
+        if (!File.Exists(fullPath))
+        {
+            refusal = $"{name} wasn't found in {Environment.SystemDirectory}.";
+            return null;
+        }
+        return fullPath;
     }
 
     // ==================== #159: stale trace-artifact finder ====================

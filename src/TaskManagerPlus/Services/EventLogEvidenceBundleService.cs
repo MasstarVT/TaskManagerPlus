@@ -320,7 +320,9 @@ public sealed class EventLogEvidenceBundleService
             using var proc = Process.Start(psi);
             if (proc is null) return new EvidenceBundleStepResult { StepName = stepName, Succeeded = false, Detail = "Couldn't start msinfo32.exe." };
 
-            bool settled = await WaitForFileToSettleAsync(outPath, timeoutMs: 120000, ct);
+            bool settled = false;
+            try { settled = await WaitForFileToSettleAsync(outPath, timeoutMs: 120000, ct); }
+            finally { if (!settled) KillIfRunning(proc); }
             return settled
                 ? new EvidenceBundleStepResult { StepName = stepName, Succeeded = true, Detail = "msinfo32.txt" }
                 : new EvidenceBundleStepResult { StepName = stepName, Succeeded = false, Detail = "Timed out waiting for msinfo32's report to finish writing - skipped." };
@@ -343,7 +345,9 @@ public sealed class EventLogEvidenceBundleService
             using var proc = Process.Start(psi);
             if (proc is null) return new EvidenceBundleStepResult { StepName = stepName, Succeeded = false, Detail = "Couldn't start dxdiag.exe." };
 
-            bool settled = await WaitForFileToSettleAsync(outPath, timeoutMs: 90000, ct);
+            bool settled = false;
+            try { settled = await WaitForFileToSettleAsync(outPath, timeoutMs: 90000, ct); }
+            finally { if (!settled) KillIfRunning(proc); }
             return settled
                 ? new EvidenceBundleStepResult { StepName = stepName, Succeeded = true, Detail = "dxdiag.txt" }
                 : new EvidenceBundleStepResult { StepName = stepName, Succeeded = false, Detail = "Timed out waiting for dxdiag's report to finish writing - skipped." };
@@ -352,6 +356,13 @@ public sealed class EventLogEvidenceBundleService
         {
             return new EvidenceBundleStepResult { StepName = stepName, Succeeded = false, Detail = ex.Message };
         }
+    }
+
+    /// <summary>A report tool that timed out or was cancelled is otherwise left running (msinfo32
+    /// can keep going for minutes); a settled report's process is left alone to exit on its own.</summary>
+    private static void KillIfRunning(Process proc)
+    {
+        try { if (!proc.HasExited) proc.Kill(entireProcessTree: true); } catch { /* best-effort */ }
     }
 
     private static async Task<bool> WaitForFileToSettleAsync(string path, int timeoutMs, CancellationToken ct)

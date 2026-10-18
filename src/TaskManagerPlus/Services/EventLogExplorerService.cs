@@ -223,24 +223,15 @@ public sealed class EventLogExplorerService
         try
         {
             var query = new EventLogQuery(channelName, pathType, xpath) { ReverseDirection = true };
+            // EventLogReader(query, bookmark) seeks to the record *after* the bookmark, so nothing
+            // needs skipping to avoid repeating the previous page's last row.
             using var reader = bookmark is null ? new EventLogReader(query) : new EventLogReader(query, bookmark);
 
-            // Continuing from a bookmark re-returns the bookmarked record itself first (documented
-            // EventLogReader behavior) - skip it so paging doesn't repeat the last row of the
-            // previous page.
-            bool skipFirst = bookmark is not null;
             int count = 0;
             while (count < pageSize)
             {
                 using var record = reader.ReadEvent();
                 if (record is null) break;
-
-                if (skipFirst)
-                {
-                    skipFirst = false;
-                    lastBookmark = SafeBookmark(record) ?? lastBookmark;
-                    continue;
-                }
 
                 rows.Add(ConvertRecord(record, channelName));
                 lastBookmark = SafeBookmark(record) ?? lastBookmark;
@@ -704,19 +695,11 @@ public sealed class EventLogExplorerService
             var query = new EventLogQuery(null, PathType.LogName, structuredXml) { ReverseDirection = true };
             using var reader = bookmark is null ? new EventLogReader(query) : new EventLogReader(query, bookmark);
 
-            bool skipFirst = bookmark is not null;
             int count = 0;
             while (count < pageSize)
             {
                 using var record = reader.ReadEvent();
                 if (record is null) break;
-
-                if (skipFirst)
-                {
-                    skipFirst = false;
-                    lastBookmark = SafeBookmark(record) ?? lastBookmark;
-                    continue;
-                }
 
                 rows.Add(ConvertRecord(record, string.Empty));
                 lastBookmark = SafeBookmark(record) ?? lastBookmark;

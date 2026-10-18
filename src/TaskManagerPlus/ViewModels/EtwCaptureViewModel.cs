@@ -683,17 +683,19 @@ public sealed class EtwCaptureViewModel : ObservableObject, IDisposable
     private async Task CollectBootTraceAsync()
     {
         if (_bootTraceMarker is null) return;
+        // Captured up front - ClearBootTraceMarker below nulls the marker.
+        string etlPath = _bootTraceMarker.EtlPath;
         IsBootTraceBusy = true;
         try
         {
-            var (success, message) = await EtwTraceService.CollectBootTraceAsync(_bootTraceMarker.EtlPath);
+            var (success, message) = await EtwTraceService.CollectBootTraceAsync(etlPath);
             BootTraceStatusText = message;
             if (!success) return;
 
-            LastEtlPath = _bootTraceMarker.EtlPath;
-            ExtractSourceEtlPath = _bootTraceMarker.EtlPath;
+            LastEtlPath = etlPath;
+            ExtractSourceEtlPath = etlPath;
             ClearBootTraceMarker();
-            _ = SummarizeAsync(_bootTraceMarker.EtlPath);
+            _ = SummarizeAsync(etlPath);
         }
         finally
         {
@@ -1069,7 +1071,9 @@ public sealed class EtwCaptureViewModel : ObservableObject, IDisposable
         NotesStatusText = "Reading machine specs...";
         try
         {
-            var specs = await new SystemSpecsService().QueryAsync();
+            // QueryAsync does its WMI/registry reads synchronously before its first await, so it
+            // runs on the thread pool rather than the dispatcher.
+            var specs = await Task.Run(() => new SystemSpecsService().QueryAsync());
             var (_, message, _) = await EtwTraceService.GenerateNotesStubAsync(LastEtlPath, NotesSymptomText, specs);
             NotesStatusText = message;
         }
@@ -1116,7 +1120,7 @@ public sealed class EtwCaptureViewModel : ObservableObject, IDisposable
         AddRecipeCommand = new RelayCommand(_ => AddRecipe());
         RemoveRecipeCommand = new RelayCommand(_ => RemoveRecipe(), _ => SelectedRecipe is not null);
         ResetRecipesToDefaultsCommand = new RelayCommand(_ => ResetRecipesToDefaults());
-        RunRecipeCommand = new AsyncRelayCommand(RunRecipeAsync, () => !IsRunningRecipe && SelectedRecipe is not null);
+        RunRecipeCommand = new AsyncRelayCommand(RunRecipeAsync, () => !IsRunningRecipe && SelectedRecipe is not null && !ReadOnlyModeService.IsReadOnly);
         LoadRecipes();
 
         ScanStaleArtifactsCommand = new AsyncRelayCommand(ScanStaleArtifactsAsync, () => !IsScanningStaleArtifacts);
@@ -1126,13 +1130,13 @@ public sealed class EtwCaptureViewModel : ObservableObject, IDisposable
         OpenInWpaCommand = new RelayCommand(_ => OpenInWpa(), _ => IsWpaInstalled == true && LastEtlPath is not null);
         GenerateNotesCommand = new AsyncRelayCommand(GenerateNotesAsync, () => !IsGeneratingNotes && LastEtlPath is not null);
 
-        ArmBootTraceCommand = new RelayCommand(_ => ArmBootTrace(), _ => !IsBootTraceBusy && !IsBootTracePending);
+        ArmBootTraceCommand = new RelayCommand(_ => ArmBootTrace(), _ => !IsBootTraceBusy && !IsBootTracePending && !ReadOnlyModeService.IsReadOnly);
         CollectBootTraceCommand = new AsyncRelayCommand(CollectBootTraceAsync, () => !IsBootTraceBusy && IsBootTracePending);
         CancelBootTraceCommand = new AsyncRelayCommand(CancelBootTraceAsync, () => !IsBootTraceBusy && IsBootTracePending);
         DismissBootTraceBannerCommand = new RelayCommand(_ => DismissBootTraceBanner());
 
         RefreshWprStatusCommand = new AsyncRelayCommand(RefreshWprStatusAsync, () => !IsStatusLoading);
-        RescueCancelCommand = new AsyncRelayCommand(RescueCancelAsync, () => !IsStatusLoading);
+        RescueCancelCommand = new AsyncRelayCommand(RescueCancelAsync, () => !IsStatusLoading && !ReadOnlyModeService.IsReadOnly);
 
         SummarizeLastTraceCommand = new AsyncRelayCommand(SummarizeLastTraceAsync, () => !IsSummarizing && LastEtlPath is not null);
         PickAndSummarizeCommand = new RelayCommand(_ => PickAndSummarize(), _ => !IsSummarizing);

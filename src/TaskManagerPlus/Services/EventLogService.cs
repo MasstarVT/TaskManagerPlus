@@ -74,7 +74,9 @@ public sealed class EventLogService
         bool wasUnexpected = mostRecentShutdownEvent is not null &&
             Math.Abs((mostRecentShutdownEvent.TimeCreated - approxLastBoot).TotalMinutes) < 5;
 
-        var tdrEvents = events.Where(e => e.EventId == TdrEventId).OrderByDescending(e => e.TimeCreated).ToList();
+        // Display 4101 is Warning-level, so the Level=1|2 `events` list above never contains one -
+        // the count and last-seen time come from the dedicated 4101 query instead.
+        var tdrEvents = ReadTdrEventDetails();
 
         var crashLikeIds = new HashSet<int> { KernelPowerEventId, LegacyUncleanShutdownEventId, BlueScreenEventId };
         var lastCrash = events.Where(e => crashLikeIds.Contains(e.EventId)).OrderByDescending(e => e.TimeCreated).FirstOrDefault();
@@ -86,8 +88,10 @@ public sealed class EventLogService
         // (unexpected shutdown, BSOD report, and - unlike crashLikeIds above - also TDR) that #492
         // correlates it against.
         var wheaEvents = ReadWheaHardwareErrors();
-        var crashTimelineIds = new HashSet<int> { KernelPowerEventId, LegacyUncleanShutdownEventId, BlueScreenEventId, TdrEventId };
+        // TDRs come from tdrEvents (Warning-level, never in `events`).
+        var crashTimelineIds = new HashSet<int> { KernelPowerEventId, LegacyUncleanShutdownEventId, BlueScreenEventId };
         var crashTimelineEvents = events.Where(e => crashTimelineIds.Contains(e.EventId))
+            .Concat(tdrEvents.Select(t => new StabilityEvent { TimeCreated = t.TimeCreated, LogName = "System", ProviderName = "Display", EventId = TdrEventId }))
             .OrderByDescending(e => e.TimeCreated).ToList();
 
         // Round 13: items 1/2/8 (authoritative bugcheck record + WER join + WER-summary fallback),
@@ -139,7 +143,7 @@ public sealed class EventLogService
             LastTdrEvent = tdrEvents.FirstOrDefault()?.TimeCreated,
             LastCrashTime = lastCrash?.TimeCreated,
             Minidumps = ReadMinidumps(shutdownEvents, bugChecks, werBugchecks),
-            DailyCounts = BuildDailyCounts(events),
+            DailyCounts = BuildDailyCounts(),
             LowMemoryEventCount = lowMemCount,
             LastLowMemoryEvent = lowMemLast,
             LatestBugCheck = bugChecks.FirstOrDefault(),
@@ -150,7 +154,7 @@ public sealed class EventLogService
             WheaErrors = wheaErrors,
             ReliabilityMetrics = ReadReliabilityMetrics(),
             LogHealth = ReadLogHealth(),
-            TdrEventDetails = ReadTdrEventDetails(),
+            TdrEventDetails = tdrEvents,
             TdrSettings = ReadTdrRegistrySettings(),
             PoolExhaustionEvents = ReadPoolExhaustionEvents(),
             OutOfMemoryIncidents = ReadOutOfMemoryIncidents(),
@@ -277,8 +281,9 @@ public sealed class EventLogService
     /// reset (property 1) - read positionally like every other legacy-provider parse in this file,
     /// with a regex fallback against the formatted message text (which always names the driver)
     /// when the named property isn't present. This is a separate targeted query rather than
-    /// reusing the Level-filtered `events` list the plain TdrEventCount tile is built from, the
-    /// same "Warning-level event needs its own query" shape ReadLowMemoryEvents already uses.</summary>
+    /// reusing the Level-filtered `events` list, the same "Warning-level event needs its own
+    /// query" shape ReadLowMemoryEvents already uses - and Query() builds the TdrEventCount/
+    /// LastTdrEvent tile from this list too, since 4101 never appears in `events`.</summary>
     private static List<TdrEventDetail> ReadTdrEventDetails()
     {
         var result = new List<TdrEventDetail>();
@@ -327,8 +332,8 @@ public sealed class EventLogService
         }
         catch
         {
-            // Provider/log unavailable - degrade to "no TDR event detail available" (the plain
-            // count/last-seen tile above still works independently via the Level-filtered scan).
+            // Provider/log unavailable - degrade to "no TDR events found" (the count/last-seen tile
+            // is built from this same list).
         }
         return result;
     }
@@ -572,12 +577,13 @@ public sealed class EventLogService
         return results;
     }
 
-    // #449: the built-in Windows Memory Diagnostic's own results provider/event IDs - documented
-    // by Microsoft (Event Viewer's own "MemoryDiagnostics-Results" log/source). 1101 fires whether
-    // or not errors were found; 1201 is used on some Windows versions for the same purpose - both
-    // are queried together and the newest match wins.
+    // #449: the built-in Windows Memory Diagnostic's own results provider/event IDs, per the
+    // provider's manifest: 1101/1201 = "tested ... and detected no errors", 1102/1202 = "detected
+    // hardware errors" (the two pairs carry identical messages). All four are queried together,
+    // the newest wins, and the outcome is decided by the ID.
     private const string MemoryDiagnosticsProvider = "Microsoft-Windows-MemoryDiagnostics-Results";
-    private static readonly int[] MemoryDiagnosticsResultEventIds = { 1101, 1201 };
+    private static readonly int[] MemoryDiagnosticsResultEventIds = { 1101, 1102, 1201, 1202 };
+    private static bool IsMemoryDiagnosticsErrorEventId(int id) => id is 1102 or 1202;
 
     /// <summary>Public for the same reason ReadCorrectedMemoryErrors is - SystemSpecsService reads
     /// this directly for the System Specs "last diagnostic run" card (#449), independent of the
@@ -605,22 +611,9 @@ public sealed class EventLogService
                 try { message = record.FormatDescription() ?? string.Empty; }
                 catch { message = string.Empty; }
 
-                // The rendered message states the outcome in plain English ("no memory problems
-                // ... " vs. "... detected ... errors ..."); this is the documented, stable wording
-                // Microsoft uses across Windows versions for this specific event, but is still
-                // treated as best-effort text matching rather than a structured field - an
-                // unrecognized wording degrades to null (shown as "couldn't determine the result"),
-                // never a guessed pass/fail.
-                bool? passed = null;
-                if (message.Length > 0)
-                {
-                    if (message.Contains("did not detect any errors", StringComparison.OrdinalIgnoreCase) ||
-                        message.Contains("no memory problems", StringComparison.OrdinalIgnoreCase))
-                        passed = true;
-                    else if (message.Contains("detected", StringComparison.OrdinalIgnoreCase) &&
-                             message.Contains("error", StringComparison.OrdinalIgnoreCase))
-                        passed = false;
-                }
+                // The event ID itself is the outcome (the message text "detected no errors" vs.
+                // "detected hardware errors" is too close to text-match reliably, and is localized).
+                bool? passed = !IsMemoryDiagnosticsErrorEventId(record.Id);
 
                 return new LatestMemoryDiagnosticResult
                 {
@@ -1537,22 +1530,62 @@ public sealed class EventLogService
         }
     }
 
-    /// <summary>#1: Reliability History - buckets the same events already read into one count per
-    /// calendar day across the full lookback window, zero-filled for days with no Critical/Error
-    /// entries at all (Reliability Monitor's own chart shows the flat baseline too, not just spikes).</summary>
-    private static List<DailyEventCount> BuildDailyCounts(List<StabilityEvent> events)
+    // Safety cap for the count-only Reliability History pass - far above a normal month of
+    // Critical/Error entries, and each record read there costs only its TimeCreated.
+    private const int MaxDailyCountRecordsPerLog = 10000;
+
+    /// <summary>#1: Reliability History - one Critical/Error count per calendar day across the full
+    /// lookback window, zero-filled for days with no entries at all (Reliability Monitor's own chart
+    /// shows the flat baseline too, not just spikes). Counted by its own pass over System +
+    /// Application rather than from the 60-per-log RecentEvents read, which on a busy machine stops
+    /// days or weeks short of the window and would zero-fill real history. If a log hits the safety
+    /// cap, days at or before the oldest (partially) counted day are left out rather than shown as
+    /// zero; if neither log can be read the list is empty.</summary>
+    private static List<DailyEventCount> BuildDailyCounts()
     {
-        var counts = events
-            .GroupBy(e => e.TimeCreated.Date)
-            .ToDictionary(g => g.Key, g => g.Count());
+        var counts = new Dictionary<DateTime, int>();
+        var today = DateTime.Now.Date;
+        var firstDay = today.AddDays(-(LookbackDays - 1));
+        bool anyLogRead = false;
+
+        foreach (var logName in new[] { "System", "Application" })
+        {
+            try
+            {
+                long maxAgeMs = LookbackDays * 24L * 60 * 60 * 1000;
+                var query = new EventLogQuery(logName, PathType.LogName,
+                    $"*[System[(Level=1 or Level=2) and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]")
+                {
+                    ReverseDirection = true,
+                };
+                using var reader = new EventLogReader(query);
+                int read = 0;
+                DateTime? oldestDay = null;
+                while (read < MaxDailyCountRecordsPerLog && reader.ReadEvent() is { } record)
+                {
+                    using (record)
+                    {
+                        read++;
+                        if (record.TimeCreated is not { } time) continue;
+                        var day = time.Date;
+                        counts[day] = counts.TryGetValue(day, out var c) ? c + 1 : 1;
+                        oldestDay = day;
+                    }
+                }
+                anyLogRead = true;
+                if (read >= MaxDailyCountRecordsPerLog && oldestDay is { } cutoff && cutoff.AddDays(1) > firstDay)
+                    firstDay = cutoff.AddDays(1);
+            }
+            catch
+            {
+                // Log unavailable/access denied - contributes nothing, same as ReadLog.
+            }
+        }
 
         var result = new List<DailyEventCount>();
-        var today = DateTime.Now.Date;
-        for (int i = LookbackDays - 1; i >= 0; i--)
-        {
-            var day = today.AddDays(-i);
+        if (!anyLogRead) return result;
+        for (var day = firstDay; day <= today; day = day.AddDays(1))
             result.Add(new DailyEventCount { Date = day, Count = counts.TryGetValue(day, out var c) ? c : 0 });
-        }
         return result;
     }
 
@@ -2071,8 +2104,9 @@ public sealed class EventLogService
     /// Items 5/6: builds the merged "shutdown &amp; restart timeline" from three independent
     /// sources - User32 1074 (who/what/why initiated each shutdown or restart, item 5), the
     /// EventLog service's own start/stop markers (6005/6006/6009/6013, item 5), and a chronological
-    /// pairing walk over Kernel-General 12/13 + Kernel-Boot 20/27 boot/shutdown markers that flags
-    /// any boot not preceded by a matching clean-shutdown marker as dirty (item 6) - catching a
+    /// pairing walk over Kernel-General 12/13 boot/shutdown markers that flags any cold boot not
+    /// preceded by a matching clean-shutdown marker as dirty (item 6; Fast Startup/hibernate
+    /// resumes from Kernel-Boot 27 are listed as clean boots, never paired) - catching a
     /// dirty boot even when Kernel-Power 41 itself was never logged (e.g. the power was held past
     /// the point the OS could log anything at all).
     ///
@@ -2187,10 +2221,16 @@ public sealed class EventLogService
         }
         catch { /* contributes nothing to pairing detection below */ }
 
+        // A cold boot logs Kernel-General 12, Kernel-Boot 20 and Kernel-Boot 27 (boot type 0) at the
+        // same instant, so only 12 is the pairing marker - counting all three made every boot after
+        // the first look dirty. Kernel-Boot 27 with boot type 1 (Fast Startup hybrid boot) or 2
+        // (resume from hibernation) has no 12 and no preceding 13 by design; those are listed as
+        // clean boots outside the pairing walk so they can't consume a later cold boot's 13.
+        var fastBoots = new List<(DateTime Time, int BootType)>();
         try
         {
             var query = new EventLogQuery("System", PathType.LogName,
-                $"*[System[Provider[@Name='Microsoft-Windows-Kernel-Boot'] and (EventID=20 or EventID=27) and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]");
+                $"*[System[Provider[@Name='Microsoft-Windows-Kernel-Boot'] and (EventID=27) and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]");
             using var reader = new EventLogReader(query);
             int count = 0;
             const int maxEvents = 300;
@@ -2199,11 +2239,31 @@ public sealed class EventLogService
                 using (record)
                 {
                     count++;
-                    boots.Add(record.TimeCreated ?? DateTime.MinValue);
+                    int? bootType = null;
+                    try
+                    {
+                        if (record.Properties.Count > 0 && record.Properties[0].Value is { } v)
+                            bootType = Convert.ToInt32(v, CultureInfo.InvariantCulture);
+                    }
+                    catch { /* unreadable boot type - skipped below */ }
+
+                    if (bootType is 1 or 2 && record.TimeCreated is { } t)
+                        fastBoots.Add((t, bootType.Value));
                 }
             }
         }
-        catch { /* contributes nothing to pairing detection below */ }
+        catch { /* contributes nothing to the timeline */ }
+
+        foreach (var (time, bootType) in fastBoots)
+        {
+            entries.Add(new ShutdownTimelineEntry
+            {
+                TimeCreated = time,
+                Kind = "Boot",
+                Reason = bootType == 1 ? "Fast Startup (hybrid boot)" : "Resume from hibernation",
+                IsDirtyBoot = false,
+            });
+        }
 
         boots.Sort();
         var remainingShutdowns = shutdowns.OrderBy(s => s).ToList();
@@ -2659,6 +2719,9 @@ public sealed class EventLogService
     // Round 13, item 12: event-log health / coverage check.
     // ---------------------------------------------------------------------------------------
 
+    // Message-text fallback for event 104's cleared channel, same pattern EventLogHealthService uses.
+    private static readonly Regex ClearedLogNameRegex = new(@"The\s+(.+?)\s+log (?:file )?was cleared", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
     /// <summary>
     /// Item 12: "is the 30-day lookback window even trustworthy" check - a log that was cleared
     /// recently, or is small enough that its actual retention doesn't cover the full lookback
@@ -2667,8 +2730,8 @@ public sealed class EventLogService
     /// EventLogReader.ReadEvent() call - cheap, since it only reads one record). MaxSizeBytes comes
     /// from `wevtutil gl System` (shelled out, matching VolumeDiagnosticsService's established
     /// "known tool, redirect stdout, bounded wait, kill on timeout" pattern). WasClearedRecently/
-    /// LastClearedTime come from System-log event 104 (Eventlog provider, "The System log file was
-    /// cleared").
+    /// LastClearedTime come from System-log event 104 (Microsoft-Windows-Eventlog provider, "The
+    /// System log file was cleared") naming the System channel itself.
     /// </summary>
     private static EventLogHealth ReadLogHealth()
     {
@@ -2722,19 +2785,39 @@ public sealed class EventLogService
 
         try
         {
+            // Event 104 belongs to Microsoft-Windows-Eventlog (the legacy "Eventlog" name is kept as
+            // an alternative), and is logged into System whichever log was cleared - so only a 104
+            // whose Channel property (template: SubjectUserName, SubjectDomainName, Channel,
+            // BackupPath) names System counts here.
             long maxAgeMs = LookbackDays * 24L * 60 * 60 * 1000;
             var query = new EventLogQuery("System", PathType.LogName,
-                $"*[System[Provider[@Name='Eventlog'] and (EventID=104) and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]")
+                $"*[System[(Provider[@Name='Microsoft-Windows-Eventlog'] or Provider[@Name='Eventlog']) and (EventID=104) and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]")
             {
                 ReverseDirection = true,
             };
             using var reader = new EventLogReader(query);
-            if (reader.ReadEvent() is { } record)
+            int scanned = 0;
+            while (scanned < 50 && reader.ReadEvent() is { } record)
             {
                 using (record)
                 {
+                    scanned++;
+                    string? channel = null;
+                    try { if (record.Properties.Count > 2) channel = record.Properties[2].Value as string; }
+                    catch { /* fall back to the message text below */ }
+                    if (string.IsNullOrWhiteSpace(channel))
+                    {
+                        string message;
+                        try { message = record.FormatDescription() ?? string.Empty; }
+                        catch { message = string.Empty; }
+                        var m = ClearedLogNameRegex.Match(message);
+                        channel = m.Success ? m.Groups[1].Value.Trim() : null;
+                    }
+                    if (!string.Equals(channel, "System", StringComparison.OrdinalIgnoreCase)) continue;
+
                     lastCleared = record.TimeCreated;
                     wasCleared = true;
+                    break;
                 }
             }
         }
@@ -3255,15 +3338,14 @@ public sealed class EventLogService
     // runs entirely outside Windows (before any OS loads) and only ever reports its own result
     // once, as a toast right after the triggering reboot finishes - easy to miss, and gone for
     // good once dismissed. The tool logs its own verdict as one event under the
-    // Microsoft-Windows-MemoryDiagnostics-Results provider on the System log (1201 = no problems
-    // found, 1101 = hardware errors were detected), so reading it back here means the Stability
-    // tab can show the answer any time after the fact, not just in the moment. Same
-    // EventLogReader/EventLogQuery shape as every other targeted provider+ID read in this file.
+    // Microsoft-Windows-MemoryDiagnostics-Results provider on the System log (1101/1201 = no
+    // errors detected, 1102/1202 = hardware errors detected - see MemoryDiagnosticsResultEventIds
+    // above), so reading it back here means the Stability tab can show the answer any time after
+    // the fact, not just in the moment. Same EventLogReader/EventLogQuery shape as every other
+    // targeted provider+ID read in this file.
     // ---------------------------------------------------------------------------------------
 
     private const string MemoryDiagnosticsProviderName = "Microsoft-Windows-MemoryDiagnostics-Results";
-    private const int MemoryDiagnosticsNoErrorsEventId = 1201;
-    private const int MemoryDiagnosticsErrorsFoundEventId = 1101;
 
     public List<Models.MemoryDiagnosticResultInfo> ReadMemoryDiagnosticsResults(int lookbackDays)
     {
@@ -3271,8 +3353,9 @@ public sealed class EventLogService
         try
         {
             long maxAgeMs = lookbackDays * 24L * 60 * 60 * 1000;
+            string idFilter = string.Join(" or ", MemoryDiagnosticsResultEventIds.Select(id => $"EventID={id}"));
             var query = new EventLogQuery("System", PathType.LogName,
-                $"*[System[Provider[@Name='{MemoryDiagnosticsProviderName}'] and (EventID={MemoryDiagnosticsNoErrorsEventId} or EventID={MemoryDiagnosticsErrorsFoundEventId}) and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]")
+                $"*[System[Provider[@Name='{MemoryDiagnosticsProviderName}'] and ({idFilter}) and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]")
             {
                 ReverseDirection = true,
             };
@@ -3292,10 +3375,10 @@ public sealed class EventLogService
                     result.Add(new Models.MemoryDiagnosticResultInfo
                     {
                         TimeCreated = record.TimeCreated ?? DateTime.MinValue,
-                        HadErrors = record.Id == MemoryDiagnosticsErrorsFoundEventId,
+                        HadErrors = IsMemoryDiagnosticsErrorEventId(record.Id),
                         ResultText = message.Length > 0
                             ? Truncate(message, 400)
-                            : (record.Id == MemoryDiagnosticsErrorsFoundEventId
+                            : (IsMemoryDiagnosticsErrorEventId(record.Id)
                                 ? "Hardware errors were detected."
                                 : "No memory problems were detected."),
                     });

@@ -189,6 +189,9 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
 
     // ---- Live tail (#107) ----
     private EventLogExplorerService.EventWatchHandle? _watchHandle;
+    // Bumped on every start/stop: watcher callbacks are posted (BeginInvoke), so one queued just
+    // before a stop can still run afterwards and must be dropped rather than land in a new list.
+    private int _followGeneration;
     private bool _isFollowing;
     public bool IsFollowing
     {
@@ -483,6 +486,7 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
     // ---- #136: live watchlist alerts ----
     public ObservableCollection<WatchlistEntry> Watchlist { get; } = new();
     private readonly Dictionary<string, EventLogExplorerService.EventWatchHandle> _watchlistHandles = new(StringComparer.OrdinalIgnoreCase);
+    private int _watchlistGeneration; // same stale-callback guard as _followGeneration
 
     public RelayCommand AddSelectedToWatchlistCommand { get; }
     public RelayCommand RemoveFromWatchlistCommand { get; }
@@ -545,15 +549,15 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
             p => _ = CorrelateByActivityIdAsync(p as EventRecordRow),
             p => (p as EventRecordRow)?.ActivityId is { } id && id != Guid.Empty);
 
-        RunKbActionCommand = new RelayCommand(_ => RunKbAction(), _ => _kbActionTargetRow is not null);
+        RunKbActionCommand = new RelayCommand(_ => RunKbAction(), _ => _kbActionTargetRow is not null && !ReadOnlyModeService.IsReadOnly);
         ExportUnknownEventsCommand = new RelayCommand(_ => ExportUnknownEvents(), _ => UnknownEventCount > 0);
 
         // #198: each gated behind its own explicit MessageBox confirmation - same shape as #165/
         // #172's registry writes elsewhere in this app.
-        ApplyRetentionCommand = new RelayCommand(ApplyRetention, () => ChannelRetentionRecommendation is { SuggestEnabling: false });
-        EnableSelectedChannelCommand = new RelayCommand(EnableSelectedChannel, () => ChannelRetentionRecommendation is { SuggestEnabling: true });
-        RevertChannelMaxSizeCommand = new RelayCommand(RevertChannelMaxSize, () => CanRevertChannelMaxSize);
-        RevertChannelEnabledCommand = new RelayCommand(RevertChannelEnabled, () => CanRevertChannelEnabled);
+        ApplyRetentionCommand = new RelayCommand(ApplyRetention, () => ChannelRetentionRecommendation is { SuggestEnabling: false } && !ReadOnlyModeService.IsReadOnly);
+        EnableSelectedChannelCommand = new RelayCommand(EnableSelectedChannel, () => ChannelRetentionRecommendation is { SuggestEnabling: true } && !ReadOnlyModeService.IsReadOnly);
+        RevertChannelMaxSizeCommand = new RelayCommand(RevertChannelMaxSize, () => CanRevertChannelMaxSize && !ReadOnlyModeService.IsReadOnly);
+        RevertChannelEnabledCommand = new RelayCommand(RevertChannelEnabled, () => CanRevertChannelEnabled && !ReadOnlyModeService.IsReadOnly);
 
         RunAnomalyScanCommand = new AsyncRelayCommand(RunAnomalyScanAsync, () => !IsAnomalyScanRunning);
         CancelAnomalyScanCommand = new RelayCommand(_ => _anomalyScanCts?.Cancel(), _ => IsAnomalyScanRunning);
@@ -1065,7 +1069,12 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
         }
 
         _services.SelectedService = target;
-        if (_services.RestartCommand.CanExecute(null)) _services.RestartCommand.Execute(null);
+        if (!_services.RestartCommand.CanExecute(null))
+        {
+            StatusText = $"\"{target.ServiceName}\" can't be restarted right now - see the Services tab.";
+            return;
+        }
+        _services.RestartCommand.Execute(null);
         StatusText = $"Requested a restart of \"{target.ServiceName}\" from the Services tab.";
     }
 
@@ -1198,16 +1207,23 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
 
         StopFollow();
         string xpath = string.IsNullOrWhiteSpace(RawXPathText) ? "*" : RawXPathText;
+        int generation = ++_followGeneration;
+        // BeginInvoke, never Invoke: disposing the watcher (StopFollow, on the UI thread) waits for
+        // any in-flight callback to return, so a callback blocked on the UI thread would deadlock.
         _watchHandle = _service.StartWatch(channel.Name, xpath,
-            row => Application.Current?.Dispatcher.Invoke(() =>
+            row => Application.Current?.Dispatcher.BeginInvoke(() =>
             {
+                if (generation != _followGeneration) return;
                 RegisterKbCoverage(new[] { row });
                 Events.Insert(0, row);
                 StatusText = $"{Events.Count} event(s) loaded (following live).";
                 UpdateHiddenNoiseText();
                 if (ShowBurstCollapsedView) RecomputeCollapsedBursts();
             }),
-            err => Application.Current?.Dispatcher.Invoke(() => StatusText = $"Follow stopped: {err}"));
+            err => Application.Current?.Dispatcher.BeginInvoke(() =>
+            {
+                if (generation == _followGeneration) StatusText = $"Follow stopped: {err}";
+            }));
 
         if (_watchHandle is null)
         {
@@ -1221,6 +1237,7 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
     /// EventsViewModel.OnTabDeactivated).</summary>
     public void StopFollow()
     {
+        _followGeneration++;
         _watchHandle?.Dispose();
         _watchHandle = null;
         if (_isFollowing)
@@ -1881,6 +1898,7 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
     private void StartWatchlist()
     {
         StopWatchlistHandles();
+        int generation = ++_watchlistGeneration;
 
         foreach (var channelGroup in Watchlist.GroupBy(w => w.Channel, StringComparer.OrdinalIgnoreCase))
         {
@@ -1893,9 +1911,11 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
             if (clauses.Count == 0) continue;
             string xpath = "*[System[" + string.Join(" or ", clauses) + "]]";
 
+            // BeginInvoke for the same deadlock reason as StartFollow.
             var handle = _service.StartWatch(channel, xpath,
-                row => Application.Current?.Dispatcher.Invoke(() =>
+                row => Application.Current?.Dispatcher.BeginInvoke(() =>
                 {
+                    if (generation != _watchlistGeneration) return;
                     var entry = Watchlist.FirstOrDefault(w =>
                         string.Equals(w.Channel, row.ChannelName, StringComparison.OrdinalIgnoreCase)
                         && string.Equals(w.Provider, row.ProviderName, StringComparison.OrdinalIgnoreCase)
@@ -1904,7 +1924,10 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
                     string message = string.IsNullOrWhiteSpace(row.Message) ? $"Fired in {row.ChannelName}." : TruncateForToast(row.Message);
                     ToastService.Show($"Watchlist: {title}", message, isCritical: row.LevelValue is 1 or 2);
                 }),
-                err => Application.Current?.Dispatcher.Invoke(() => StatusText = $"Watchlist alert on \"{channel}\" stopped: {err}"));
+                err => Application.Current?.Dispatcher.BeginInvoke(() =>
+                {
+                    if (generation == _watchlistGeneration) StatusText = $"Watchlist alert on \"{channel}\" stopped: {err}";
+                }));
 
             if (handle is not null) _watchlistHandles[channel] = handle;
         }
@@ -1916,6 +1939,7 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
 
     private void StopWatchlistHandles()
     {
+        _watchlistGeneration++;
         foreach (var h in _watchlistHandles.Values) h.Dispose();
         _watchlistHandles.Clear();
     }
