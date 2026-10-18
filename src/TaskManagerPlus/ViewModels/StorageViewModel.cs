@@ -1484,7 +1484,9 @@ public sealed class StorageViewModel : ObservableObject
         CancelBootCheckCommand = new AsyncRelayCommand(param => CancelBootCheckForRowAsync(param as VolumeFilesystemRow), _ => !ReadOnlyModeService.IsReadOnly);
 
         // #340/#341
-        RunChkdskScanCommand = new AsyncRelayCommand(RunChkdskScanAsync, () => !IsChkdskScanning && SelectedChkdskVolume is not null);
+        // chkdsk /scan repairs what it can online (its own /forceofflinefix help: "Bypass all
+        // online repair"), so it counts as a change, unlike Repair-Volume -Scan below.
+        RunChkdskScanCommand = new AsyncRelayCommand(RunChkdskScanAsync, () => !IsChkdskScanning && SelectedChkdskVolume is not null && !ReadOnlyModeService.IsReadOnly);
         CancelChkdskScanCommand = new RelayCommand(() => _chkdskScanCts?.Cancel(), () => IsChkdskScanning);
         RunVolumeScanCommand = new AsyncRelayCommand(() => RunVolumeRepairAsync(VolumeRepairMode.Scan), () => !IsRunningVolumeRepair && SelectedChkdskVolume is not null);
         RunVolumeSpotFixCommand = new AsyncRelayCommand(() => RunVolumeRepairAsync(VolumeRepairMode.SpotFix), () => !IsRunningVolumeRepair && SelectedChkdskVolume is not null && !ReadOnlyModeService.IsReadOnly);

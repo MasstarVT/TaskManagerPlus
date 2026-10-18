@@ -340,6 +340,18 @@ public static class NtfsFilesystemService
             var (exitCode, output) = await RunToolAsync("chkdsk.exe", $"{letter}: /f /r", 10_000, stdin: answers);
             string text = output.Trim();
 
+            // A volume chkdsk can't dismount at all (e.g. one holding a page file) skips the
+            // dismount prompt, so the "N" above declined the schedule prompt instead - ask again
+            // with just "Y" (the held handle still keeps chkdsk from locking the volume).
+            if (!isSystemVolume
+                && text.Contains("schedule this volume", StringComparison.OrdinalIgnoreCase)
+                && !text.Contains("force a dismount", StringComparison.OrdinalIgnoreCase)
+                && !text.Contains("will be checked", StringComparison.OrdinalIgnoreCase))
+            {
+                (exitCode, output) = await RunToolAsync("chkdsk.exe", $"{letter}: /f /r", 10_000, stdin: "Y\r\n");
+                text = output.Trim();
+            }
+
             if (exitCode == -1 && text == "Timed out.")
                 return (false, "chkdsk didn't finish answering its prompts within 10 seconds and was stopped. Nothing is known to have been scheduled - check the boot-check status above.");
 
