@@ -472,7 +472,7 @@ public sealed class RemediationReviewViewModel : ObservableObject
 
             DeferredQueueStatusText = atSpecificTime
                 ? $"Queued for {whenLocal:g} - cancellable from the Troubleshoot tab's Changes panel."
-                : "Queued for next boot - cancellable from the Troubleshoot tab's Changes panel.";
+                : $"Queued for next boot as: {command} - cancellable from the Troubleshoot tab's Changes panel.";
         }
         finally
         {
